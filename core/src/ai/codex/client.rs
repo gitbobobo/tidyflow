@@ -222,6 +222,7 @@ impl CodexAppServerClient {
         model_id: Option<String>,
         model_provider: Option<String>,
         collaboration_mode: Option<String>,
+        reasoning_effort: Option<String>,
     ) -> Result<String, String> {
         let explicit_model_id = model_id.clone();
         let mut params = serde_json::json!({
@@ -257,11 +258,15 @@ impl CodexAppServerClient {
             if explicit_model_id.is_none() && mode_model != "default" {
                 params["model"] = Value::String(mode_model.clone());
             }
+            let effort_value = reasoning_effort
+                .as_deref()
+                .map(Value::from)
+                .unwrap_or(Value::Null);
             params["collaborationMode"] = serde_json::json!({
                 "mode": mode,
                 "settings": {
                     "model": mode_model,
-                    "reasoning_effort": null,
+                    "reasoning_effort": effort_value,
                     "developer_instructions": null
                 }
             });

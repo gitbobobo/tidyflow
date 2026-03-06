@@ -83,6 +83,7 @@ impl AiAgent for CodexAppServerAgent {
                 model_id.clone(),
                 model_provider.clone(),
                 collaboration_mode.clone(),
+                None,
             )
             .await
         {
@@ -106,6 +107,7 @@ impl AiAgent for CodexAppServerAgent {
                         model_id,
                         model_provider,
                         collaboration_mode,
+                        None,
                     )
                     .await?
             }
@@ -483,6 +485,160 @@ impl AiAgent for CodexAppServerAgent {
         };
         self.client
             .send_approval_response(pending.id, response)
+            .await
+    }
+
+    /// Codex 静态思考强度配置项，用于在未接收到动态配置时提供 reasoning_effort 选项。
+    async fn list_session_config_options(
+        &self,
+        _directory: &str,
+        _session_id: Option<&str>,
+    ) -> Result<Vec<AiSessionConfigOption>, String> {
+        Ok(vec![AiSessionConfigOption {
+            option_id: "thought_level".to_string(),
+            category: Some("thought_level".to_string()),
+            name: "思考强度".to_string(),
+            description: Some("控制 Codex 推理深度：low 快速，medium 均衡，high 深入".to_string()),
+            current_value: None,
+            options: vec![
+                AiSessionConfigOptionChoice {
+                    value: serde_json::json!("low"),
+                    label: "low".to_string(),
+                    description: None,
+                },
+                AiSessionConfigOptionChoice {
+                    value: serde_json::json!("medium"),
+                    label: "medium".to_string(),
+                    description: None,
+                },
+                AiSessionConfigOptionChoice {
+                    value: serde_json::json!("high"),
+                    label: "high".to_string(),
+                    description: None,
+                },
+            ],
+            option_groups: vec![],
+            raw: None,
+        }])
+    }
+
+    /// 支持 config_overrides 的发送消息，提取 thought_level 并写入 reasoning_effort。
+    async fn send_message_with_config(
+        &self,
+        directory: &str,
+        session_id: &str,
+        message: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
+        config_overrides: Option<HashMap<String, AiSessionConfigValue>>,
+    ) -> Result<AiEventStream, String> {
+        self.client.ensure_started().await?;
+
+        let effective_message = Self::append_audio_fallback_text(message, audio_parts.as_deref());
+        let mut input = vec![CodexAppServerClient::text_input(&effective_message)];
+        if let Some(files) = file_refs {
+            for file in files {
+                let absolute = format!("{}/{}", directory.trim_end_matches('/'), file);
+                let name = PathBuf::from(&file)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("file")
+                    .to_string();
+                input.push(CodexAppServerClient::mention_input(&name, &absolute));
+            }
+        }
+        if let Some(images) = image_parts {
+            let temp_dir = std::env::temp_dir().join("tidyflow-codex-images");
+            tokio::fs::create_dir_all(&temp_dir)
+                .await
+                .map_err(|e| format!("Failed to create Codex image temp dir: {}", e))?;
+            for img in images {
+                let filename = format!(
+                    "{}-{}",
+                    Uuid::new_v4(),
+                    Self::normalize_filename(&img.filename)
+                );
+                let path = temp_dir.join(filename);
+                tokio::fs::write(&path, &img.data)
+                    .await
+                    .map_err(|e| format!("Failed to write image temp file: {}", e))?;
+                input.push(CodexAppServerClient::local_image_input(path));
+            }
+        }
+
+        // 从 config_overrides 中提取 thought_level 作为 reasoning_effort
+        let reasoning_effort = config_overrides.as_ref().and_then(|overrides| {
+            overrides
+                .get("thought_level")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| matches!(s.as_str(), "low" | "medium" | "high"))
+        });
+
+        let (model_id, model_provider) = Self::parse_model_selection(model);
+        let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
+        let outbound_hint = AiSessionSelectionHint {
+            agent: collaboration_mode.clone(),
+            model_provider_id: model_provider.clone(),
+            model_id: model_id.clone(),
+            config_options: None,
+        };
+        let turn_id = match self
+            .client
+            .turn_start(
+                session_id,
+                input.clone(),
+                model_id.clone(),
+                model_provider.clone(),
+                collaboration_mode.clone(),
+                reasoning_effort.clone(),
+            )
+            .await
+        {
+            Ok(turn_id) => turn_id,
+            Err(err) if Self::is_thread_not_found_error(&err) => {
+                let resume = self.client.thread_resume(directory, session_id).await?;
+                if let Some(hint) = Self::selection_hint_from_thread_payload(&resume) {
+                    self.selection_hints
+                        .lock()
+                        .await
+                        .insert(session_id.to_string(), hint.clone());
+                    info!(
+                        "Codex session hint from thread/resume (with_config): session_id={}, agent={:?}",
+                        session_id, hint.agent
+                    );
+                }
+                self.client
+                    .turn_start(
+                        session_id,
+                        input,
+                        model_id,
+                        model_provider,
+                        collaboration_mode,
+                        reasoning_effort,
+                    )
+                    .await?
+            }
+            Err(err) => return Err(err),
+        };
+        if outbound_hint.agent.is_some()
+            || outbound_hint.model_provider_id.is_some()
+            || outbound_hint.model_id.is_some()
+        {
+            self.selection_hints
+                .lock()
+                .await
+                .insert(session_id.to_string(), outbound_hint);
+        }
+        self.active_turns
+            .lock()
+            .await
+            .insert(session_id.to_string(), turn_id.clone());
+
+        self.build_turn_stream(session_id.to_string(), turn_id, effective_message)
             .await
     }
 }

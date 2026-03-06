@@ -8,8 +8,8 @@ use crate::ai::shared::json_search::json_value_to_trimmed_string as shared_json_
 use crate::ai::shared::request_id::request_id_key as shared_request_id_key;
 use crate::ai::{
     AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
-    AiModelSelection, AiPart, AiProviderInfo, AiQuestionRequest, AiSession, AiSessionSelectionHint,
-    AiSlashCommand,
+    AiModelSelection, AiPart, AiProviderInfo, AiQuestionRequest, AiSession, AiSessionConfigOption,
+    AiSessionConfigOptionChoice, AiSessionConfigValue, AiSessionSelectionHint, AiSlashCommand,
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
