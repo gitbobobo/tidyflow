@@ -78,6 +78,35 @@ struct MobileWorkspaceGitSummary: Equatable {
     let defaultBranch: String?
 }
 
+/// iOS 端 Git 详细状态，复用共享协议模型中的 GitStatusItem / GitBranchItem
+struct MobileWorkspaceGitDetailState {
+    var currentBranch: String?
+    var defaultBranch: String?
+    var branches: [GitBranchItem]
+    var stagedItems: [GitStatusItem]
+    var unstagedItems: [GitStatusItem]
+    var isGitRepo: Bool
+    var aheadBy: Int?
+    var behindBy: Int?
+    var isCommitting: Bool
+    var commitResult: String?
+
+    static func empty() -> MobileWorkspaceGitDetailState {
+        MobileWorkspaceGitDetailState(
+            currentBranch: nil,
+            defaultBranch: nil,
+            branches: [],
+            stagedItems: [],
+            unstagedItems: [],
+            isGitRepo: false,
+            aheadBy: nil,
+            behindBy: nil,
+            isCommitting: false,
+            commitResult: nil
+        )
+    }
+}
+
 private struct MobileTerminalPresentation {
     let icon: String
     let name: String
@@ -162,6 +191,7 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitSummary: [String: MobileWorkspaceGitSummary] = [:]
+    @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
     // 资源管理器（按 project/workspace/path 分桶）
@@ -677,6 +707,7 @@ final class MobileAppState: ObservableObject {
     func refreshWorkspaceDetail(project: String, workspace: String) {
         wsClient.requestTermList()
         wsClient.requestGitStatus(project: project, workspace: workspace)
+        wsClient.requestGitBranches(project: project, workspace: workspace)
         fetchExplorerFileList(project: project, workspace: workspace, path: ".")
     }
 
@@ -916,6 +947,42 @@ final class MobileAppState: ObservableObject {
     func gitSummaryForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitSummary {
         workspaceGitSummary[globalWorkspaceKey(project: project, workspace: workspace)] ??
         MobileWorkspaceGitSummary(additions: 0, deletions: 0, defaultBranch: nil)
+    }
+
+    func gitDetailStateForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitDetailState {
+        workspaceGitDetailState[globalWorkspaceKey(project: project, workspace: workspace)] ??
+        MobileWorkspaceGitDetailState.empty()
+    }
+
+    /// 向 Core 请求指定工作区的 Git 状态与分支列表
+    func fetchGitDetailForWorkspace(project: String, workspace: String) {
+        wsClient.requestGitStatus(project: project, workspace: workspace)
+        wsClient.requestGitBranches(project: project, workspace: workspace)
+    }
+
+    /// Git 暂存操作
+    func gitStage(project: String, workspace: String, path: String?, scope: String) {
+        wsClient.requestGitStage(project: project, workspace: workspace, path: path, scope: scope)
+    }
+
+    /// Git 取消暂存操作
+    func gitUnstage(project: String, workspace: String, path: String?, scope: String) {
+        wsClient.requestGitUnstage(project: project, workspace: workspace, path: path, scope: scope)
+    }
+
+    /// Git 丢弃更改操作
+    func gitDiscard(project: String, workspace: String, path: String?, scope: String) {
+        wsClient.requestGitDiscard(project: project, workspace: workspace, path: path, scope: scope)
+    }
+
+    /// Git 提交操作
+    func gitCommit(project: String, workspace: String, message: String) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var state = workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
+        state.isCommitting = true
+        state.commitResult = nil
+        workspaceGitDetailState[key] = state
+        wsClient.requestGitCommit(project: project, workspace: workspace, message: message)
     }
 
     func tasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
@@ -2215,6 +2282,26 @@ final class MobileAppState: ObservableObject {
             aiChatStore.setAbortPendingSessionId(nil)
             aiChatStore.clearMessages()
         }
+    }
+
+    /// 加载更早的 AI 聊天消息（历史分页）
+    func loadOlderAIChatMessages() {
+        guard let sessionId = aiCurrentSessionId, !sessionId.isEmpty,
+              aiChatStore.historyHasMore else { return }
+        guard let beforeMessageId = aiChatStore.historyNextBeforeMessageId,
+              !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            aiChatStore.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
+            return
+        }
+        aiChatStore.setHistoryLoading(true)
+        wsClient.requestAISessionMessages(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: sessionId,
+            limit: 40,
+            beforeMessageId: beforeMessageId
+        )
     }
 
     /// 发送消息；返回 true 表示已受理（包括本地命令）
@@ -3833,6 +3920,41 @@ final class MobileAppState: ObservableObject {
                 deletions: deletions,
                 defaultBranch: result.defaultBranch
             )
+            // 同步更新 Git 详情状态
+            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
+            detail.currentBranch = result.currentBranch
+            detail.defaultBranch = result.defaultBranch
+            detail.isGitRepo = result.isGitRepo
+            detail.aheadBy = result.aheadBy
+            detail.behindBy = result.behindBy
+            let staged = result.items.filter { $0.staged == true }
+            let unstaged = result.items.filter { $0.staged != true }
+            detail.stagedItems = staged
+            detail.unstagedItems = unstaged
+            self.workspaceGitDetailState[key] = detail
+        }
+
+        wsClient.onGitBranchesResult = { [weak self] result in
+            guard let self else { return }
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
+            detail.currentBranch = result.current
+            detail.branches = result.branches
+            self.workspaceGitDetailState[key] = detail
+        }
+
+        wsClient.onGitCommitResult = { [weak self] result in
+            guard let self else { return }
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
+            detail.isCommitting = false
+            detail.commitResult = result.ok ? "提交成功" : (result.message ?? "提交失败")
+            // 提交成功后刷新 Git 状态
+            if result.ok {
+                detail.stagedItems = []
+                self.wsClient.requestGitStatus(project: result.project, workspace: result.workspace)
+            }
+            self.workspaceGitDetailState[key] = detail
         }
 
         wsClient.onTermList = { [weak self] result in

@@ -15,7 +15,15 @@ struct WorkspaceTasksView: View {
     }
 
     private var completedTasks: [MobileWorkspaceTask] {
-        tasks.filter { !$0.status.isActive }
+        tasks.filter { $0.status == .completed }
+    }
+
+    private var failedTasks: [MobileWorkspaceTask] {
+        tasks.filter { $0.status == .failed }
+    }
+
+    private var cancelledTasks: [MobileWorkspaceTask] {
+        tasks.filter { $0.status == .cancelled }
     }
 
     var body: some View {
@@ -31,9 +39,25 @@ struct WorkspaceTasksView: View {
                     }
                 }
 
+                if !failedTasks.isEmpty {
+                    Section("失败") {
+                        ForEach(failedTasks) { task in
+                            taskRow(task)
+                        }
+                    }
+                }
+
                 if !completedTasks.isEmpty {
                     Section("已完成") {
                         ForEach(completedTasks) { task in
+                            taskRow(task)
+                        }
+                    }
+                }
+
+                if !cancelledTasks.isEmpty {
+                    Section("已取消") {
+                        ForEach(cancelledTasks) { task in
                             taskRow(task)
                         }
                     }
@@ -43,7 +67,7 @@ struct WorkspaceTasksView: View {
         .navigationTitle("后台任务")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !completedTasks.isEmpty {
+            if !completedTasks.isEmpty || !failedTasks.isEmpty || !cancelledTasks.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         appState.clearCompletedTasks(project: project, workspace: workspace)

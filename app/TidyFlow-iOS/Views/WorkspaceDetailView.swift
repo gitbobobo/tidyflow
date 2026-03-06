@@ -38,14 +38,22 @@ struct WorkspaceDetailView: View {
     var body: some View {
         List {
             Section("代码变更") {
-                HStack(spacing: 16) {
-                    Label("+\(gitSummary.additions)", systemImage: "plus")
-                        .foregroundColor(.green)
-                    Label("-\(gitSummary.deletions)", systemImage: "minus")
-                        .foregroundColor(.red)
+                NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
+                    HStack(spacing: 16) {
+                        Label("+\(gitSummary.additions)", systemImage: "plus")
+                            .foregroundColor(.green)
+                        Label("-\(gitSummary.deletions)", systemImage: "minus")
+                            .foregroundColor(.red)
+                        Spacer()
+                        if let branch = gitSummary.defaultBranch, !branch.isEmpty {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .font(.headline)
+                    .padding(.vertical, 4)
                 }
-                .font(.headline)
-                .padding(.vertical, 4)
             }
 
             Section("资源管理器") {

@@ -214,6 +214,9 @@ struct MobileAIChatView: View {
                 MessageListView(
                     messages: aiChatStore.messages,
                     sessionToken: appState.aiCurrentSessionId,
+                    canLoadOlderMessages: appState.aiCurrentSessionId != nil && aiChatStore.historyHasMore,
+                    isLoadingOlderMessages: aiChatStore.historyIsLoading,
+                    onLoadOlderMessages: loadOlderMessages,
                     onQuestionReply: { request, answers in
                         handleQuestionReply(request: request, answers: answers)
                     },
@@ -246,6 +249,10 @@ struct MobileAIChatView: View {
             return
         }
         aiChatHintMessage = message
+    }
+
+    private func loadOlderMessages() {
+        appState.loadOlderAIChatMessages()
     }
 
     private var inputArea: some View {
