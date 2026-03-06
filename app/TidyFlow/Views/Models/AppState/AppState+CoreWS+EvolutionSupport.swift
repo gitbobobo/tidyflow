@@ -570,7 +570,9 @@ extension AppState {
         over existing: [EvolutionStageProfileInfoV2]
     ) -> Bool {
         if existing.isEmpty { return true }
-        return isDefaultEvolutionProfiles(existing) && !isDefaultEvolutionProfiles(candidate)
+        // 客户端设置（用户显式配置）始终优先于服务端同步配置，确保 settings 中的工具选择
+        // 在不同项目下都能正确反映到 AI 工具图标和运行逻辑中
+        return !candidate.isEmpty
     }
 
     func isDefaultEvolutionProfiles(_ profiles: [EvolutionStageProfileInfoV2]) -> Bool {

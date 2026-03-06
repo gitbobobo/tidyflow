@@ -82,4 +82,78 @@ final class EvolutionAgentProfileNormalizationTests: XCTestCase {
         let hasInvalid = normalized.contains { $0.stage == "nonexistent_stage" }
         XCTAssertFalse(hasInvalid, "无效阶段名不应出现在归一化结果中")
     }
+
+    // MARK: - 各阶段 AI 工具图标来源映射
+
+    func testImplementGeneralCopilotIconAsset() {
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "implement_general", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let stage = normalized.first { $0.stage == "implement_general" }
+        XCTAssertEqual(stage?.aiTool, .copilot)
+        XCTAssertEqual(stage?.aiTool.iconAssetName, "copilot-icon", "implement_general 配置 copilot 应使用 copilot-icon 资源")
+    }
+
+    func testImplementGeneralOpencodeIconAsset() {
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "implement_general", aiTool: .opencode, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let stage = normalized.first { $0.stage == "implement_general" }
+        XCTAssertEqual(stage?.aiTool, .opencode)
+        XCTAssertEqual(stage?.aiTool.iconAssetName, "opencode-icon", "implement_general 配置 opencode 应使用 opencode-icon 资源")
+    }
+
+    func testImplementVisualCopilotIconAsset() {
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "implement_visual", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let stage = normalized.first { $0.stage == "implement_visual" }
+        XCTAssertEqual(stage?.aiTool, .copilot)
+        XCTAssertEqual(stage?.aiTool.iconAssetName, "copilot-icon", "implement_visual 配置 copilot 应使用 copilot-icon 资源")
+    }
+
+    func testAutoCommitCopilotIconAsset() {
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "auto_commit", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let stage = normalized.first { $0.stage == "auto_commit" }
+        XCTAssertEqual(stage?.aiTool, .copilot)
+        XCTAssertEqual(stage?.aiTool.iconAssetName, "copilot-icon", "auto_commit 配置 copilot 应使用 copilot-icon 资源")
+    }
+
+    func testAutoCommitOpencodeIconAsset() {
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "auto_commit", aiTool: .opencode, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let stage = normalized.first { $0.stage == "auto_commit" }
+        XCTAssertEqual(stage?.aiTool, .opencode)
+        XCTAssertEqual(stage?.aiTool.iconAssetName, "opencode-icon", "auto_commit 配置 opencode 应使用 opencode-icon 资源")
+    }
+
+    // MARK: - AI 工具图标资源名称固定契约
+
+    func testAIToolIconAssetNames() {
+        XCTAssertEqual(AIChatTool.copilot.iconAssetName, "copilot-icon")
+        XCTAssertEqual(AIChatTool.opencode.iconAssetName, "opencode-icon")
+        XCTAssertEqual(AIChatTool.codex.iconAssetName, "codex-icon")
+    }
+
+    // MARK: - 显式配置与 legacy 混合时各关键阶段图标来源正确
+
+    func testExplicitCopilotOverridesLegacyOpencodeForImplementGeneral() {
+        // 服务端返回 legacy implement(opencode)，客户端覆写 implement_general(copilot)
+        let profiles: [EvolutionStageProfileInfoV2] = [
+            EvolutionStageProfileInfoV2(stage: "implement", aiTool: .opencode, mode: nil, model: nil, configOptions: [:]),
+            EvolutionStageProfileInfoV2(stage: "implement_general", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+        ]
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        let general = normalized.first { $0.stage == "implement_general" }
+        XCTAssertEqual(general?.aiTool, .copilot, "显式 implement_general(copilot) 图标来源应为 copilot-icon，不受 legacy opencode 影响")
+        XCTAssertEqual(general?.aiTool.iconAssetName, "copilot-icon")
+    }
 }

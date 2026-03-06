@@ -404,6 +404,15 @@ struct EvolutionPipelineView: View {
         )
     }
 
+    /// 从 latestMessage 中提取最近若干行，用于卡片摘要显示
+    private func recentLogLines(from message: String?, maxCount: Int = 3) -> [String] {
+        guard let message = message, !message.isEmpty else { return [] }
+        let lines = message.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return Array(lines.suffix(maxCount))
+    }
+
     // MARK: - 待命队列（横向胶囊）
 
     private var standbySection: some View {
@@ -1309,6 +1318,15 @@ struct EvolutionPipelineView: View {
                 }
             }
         }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                #if os(macOS)
+                .fill(Color(NSColor.windowBackgroundColor))
+                #else
+                .fill(Color(.systemGray6))
+                #endif
+        )
     }
 
     // MARK: - 本轮循环已完成时间线（上方详情）
