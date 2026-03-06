@@ -785,11 +785,11 @@ struct EvolutionPipelineView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isHistory ? Color.gray.opacity(0.06) : color.opacity(0.08))
+                .fill(isHistory ? Color.secondary.opacity(0.05) : color.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(isHistory ? Color.secondary.opacity(0.12) : color.opacity(0.22), lineWidth: 1)
+                .stroke(isHistory ? Color.secondary.opacity(0.10) : color.opacity(0.22), lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onTapGesture(perform: action)
