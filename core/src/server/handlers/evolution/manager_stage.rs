@@ -6610,6 +6610,7 @@ mod tests {
     fn base_plan_json(work_items: Vec<serde_json::Value>) -> serde_json::Value {
         serde_json::json!({
             "$schema_version": "2.0",
+            "stage": "plan",
             "cycle_id": "c-1",
             "selected_direction_type": "播放体验 升级",
             "goal": "demo",
@@ -6673,26 +6674,35 @@ mod tests {
 
     fn base_implement_result_with_updates(updates: Vec<serde_json::Value>) -> serde_json::Value {
         let mut value = base_implement_result_json(Vec::new(), Vec::new());
-        value
+        let obj = value
             .as_object_mut()
-            .expect("implement result must be object")
-            .insert(
-                "backlog_resolution_updates".to_string(),
-                serde_json::Value::Array(updates),
-            );
+            .expect("implement result must be object");
+        obj.insert(
+            "stage".to_string(),
+            serde_json::Value::String("implement_general".to_string()),
+        );
+        obj.insert(
+            "backlog_resolution_updates".to_string(),
+            serde_json::Value::Array(updates),
+        );
         value
     }
 
     fn write_empty_implement_result_triplet(dir: &Path) {
-        for file in [
-            "implement_general.jsonc",
-            "implement_visual.jsonc",
-            "implement_advanced.jsonc",
+        for (file, stage) in [
+            ("implement_general.jsonc", "implement_general"),
+            ("implement_visual.jsonc", "implement_visual"),
+            ("implement_advanced.jsonc", "implement_advanced"),
         ] {
-            write_json(
-                &dir.join(file),
-                base_implement_result_json(Vec::new(), Vec::new()),
-            );
+            let mut value = base_implement_result_json(Vec::new(), Vec::new());
+            value
+                .as_object_mut()
+                .expect("implement result must be object")
+                .insert(
+                    "stage".to_string(),
+                    serde_json::Value::String(stage.to_string()),
+                );
+            write_json(&dir.join(file), value);
         }
     }
 
@@ -6781,6 +6791,7 @@ mod tests {
             &dir.join("direction.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
+                "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
                 "cycle_title": "标题",
@@ -7213,6 +7224,7 @@ mod tests {
             &dir.path().join("direction.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
+                "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
                 "cycle_title": "",
@@ -7668,7 +7680,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -7705,7 +7718,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -7975,7 +7989,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "verify_iteration_limit": 2,
@@ -8037,7 +8052,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -8089,7 +8105,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -8141,7 +8158,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -8224,7 +8242,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -8308,7 +8327,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -8399,7 +8419,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -8471,7 +8492,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -8539,7 +8561,8 @@ mod tests {
         write_json(
             &dir.path().join("verify.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
+                "stage": "verify",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
