@@ -226,14 +226,46 @@ struct StageValidationContext {
 struct ArtifactValidationError {
     code: &'static str,
     message: String,
+    issues: Vec<String>,
 }
 
 impl ArtifactValidationError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
             code,
-            message: message.into(),
+            message: message.clone(),
+            issues: vec![message],
         }
+    }
+
+    fn with_issues(code: &'static str, message: impl Into<String>, issues: Vec<String>) -> Self {
+        let message = message.into();
+        let issues = if issues.is_empty() {
+            vec![message.clone()]
+        } else {
+            issues
+        };
+        Self {
+            code,
+            message,
+            issues,
+        }
+    }
+
+    fn issues(&self) -> &[String] {
+        &self.issues
+    }
+
+    #[cfg(test)]
+    fn contains(&self, needle: &str) -> bool {
+        let needle = needle.trim();
+        if needle.is_empty() {
+            return false;
+        }
+        self.message.contains(needle)
+            || self.issues.iter().any(|issue| issue.contains(needle))
+            || self.to_stage_error().contains(needle)
     }
 
     fn to_stage_error(&self) -> String {
@@ -241,11 +273,71 @@ impl ArtifactValidationError {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct ValidationReport {
+    issues: Vec<String>,
+}
+
+impl ValidationReport {
+    fn push(&mut self, issue: impl Into<String>) {
+        let issue = issue.into();
+        let normalized = issue.trim();
+        if normalized.is_empty() {
+            return;
+        }
+        if !self.issues.iter().any(|existing| existing == normalized) {
+            self.issues.push(normalized.to_string());
+        }
+    }
+
+    fn capture<T>(&mut self, result: Result<T, String>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.push(err);
+                None
+            }
+        }
+    }
+
+    fn merge(&mut self, other: ValidationReport) {
+        for issue in other.issues {
+            self.push(issue);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    fn summary(&self) -> String {
+        match self.issues.len() {
+            0 => "未提供详细错误信息（artifact_contract_violation）".to_string(),
+            1 => self.issues[0].clone(),
+            count => format!("共 {} 项问题；首项：{}", count, self.issues[0]),
+        }
+    }
+
+    fn into_error(self, code: &'static str) -> Result<(), ArtifactValidationError> {
+        if self.is_empty() {
+            Ok(())
+        } else {
+            let summary = self.summary();
+            Err(ArtifactValidationError::with_issues(
+                code,
+                summary,
+                self.issues,
+            ))
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ValidationReminderSpec {
     error_code: String,
-    root_cause: String,
-    expected_format: String,
+    summary: String,
+    issues: Vec<String>,
+    fix_hints: Vec<String>,
     immediate_fix_actions: Vec<String>,
     raw_error: String,
 }
@@ -336,7 +428,9 @@ fn parse_handoff_info(
 }
 
 fn validate_handoff_info(label: &str, value: &serde_json::Value) -> Result<(), String> {
-    parse_handoff_info(value).map(|_| ()).map_err(|err| format!("{}.{}", label, err))
+    parse_handoff_info(value)
+        .map(|_| ())
+        .map_err(|err| format!("{}.{}", label, err))
 }
 
 fn sanitize_ai_config_options(
@@ -388,152 +482,208 @@ fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTables, String> {
+fn parse_plan_routing_tables_report(
+    value: &serde_json::Value,
+) -> (Option<PlanRoutingTables>, ValidationReport) {
+    let mut report = ValidationReport::default();
+
     let checks = value
         .pointer("/verification_plan/checks")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "plan.jsonc 缺少 verification_plan.checks".to_string())?;
+        .and_then(|v| v.as_array());
     let mut check_ids = HashSet::new();
-    for (idx, check) in checks.iter().enumerate() {
-        let check_id = id_from_value(check, &["id"])
-            .ok_or_else(|| format!("verification_plan.checks[{}] 缺少有效 id", idx))?;
-        if !check_ids.insert(check_id.clone()) {
-            return Err(format!(
-                "verification_plan.checks 存在重复 id: {}",
-                check_id
-            ));
+    match checks {
+        Some(checks) => {
+            for (idx, check) in checks.iter().enumerate() {
+                match id_from_value(check, &["id"]) {
+                    Some(check_id) => {
+                        if !check_ids.insert(check_id.clone()) {
+                            report.push(format!(
+                                "verification_plan.checks 存在重复 id: {}",
+                                check_id
+                            ));
+                        }
+                    }
+                    None => report.push(format!("verification_plan.checks[{}] 缺少有效 id", idx)),
+                }
+            }
+            if check_ids.is_empty() {
+                report.push("verification_plan.checks 不能为空");
+            }
         }
-    }
-    if check_ids.is_empty() {
-        return Err("verification_plan.checks 不能为空".to_string());
+        None => report.push("plan.jsonc 缺少 verification_plan.checks"),
     }
 
-    let work_items = value
-        .pointer("/work_items")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "plan.jsonc 缺少 work_items".to_string())?;
-    if work_items.is_empty() {
-        return Err("work_items 不能为空".to_string());
-    }
-
+    let work_items = value.pointer("/work_items").and_then(|v| v.as_array());
     let mut work_item_ids = HashSet::new();
     let mut lane_presence: HashSet<PlanImplementationAgent> = HashSet::new();
     let mut check_to_agents: HashMap<String, HashSet<PlanImplementationAgent>> = HashMap::new();
-
-    for (idx, item) in work_items.iter().enumerate() {
-        let item_obj = item
-            .as_object()
-            .ok_or_else(|| format!("work_items[{}] 必须是对象", idx))?;
-        let work_id = item_obj
-            .get("id")
-            .and_then(parse_non_empty_string)
-            .ok_or_else(|| format!("work_items[{}] 缺少 id", idx))?;
-        if !work_item_ids.insert(work_id.clone()) {
-            return Err(format!("work_items.id 存在重复值: {}", work_id));
-        }
-
-        let agent_raw = item_obj
-            .get("implementation_agent")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("work_items[{}] 缺少 implementation_agent", idx))?;
-        let agent = PlanImplementationAgent::parse(agent_raw).ok_or_else(|| {
-            format!(
-                "work_items[{}].implementation_agent 非法: {}",
-                idx, agent_raw
-            )
-        })?;
-        lane_presence.insert(agent);
-
-        let linked = item_obj
-            .get("linked_check_ids")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("work_items[{}] 缺少 linked_check_ids", idx))?;
-        if linked.is_empty() {
-            return Err(format!("work_items[{}].linked_check_ids 不能为空", idx));
-        }
-        for (check_idx, check_value) in linked.iter().enumerate() {
-            let check_id = check_value
-                .as_str()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "work_items[{}].linked_check_ids[{}] 必须是非空字符串",
-                        idx, check_idx
-                    )
-                })?;
-            if !check_ids.contains(&check_id) {
-                return Err(format!(
-                    "work_items[{}].linked_check_ids 包含未知 check_id: {}",
-                    idx, check_id
-                ));
+    match work_items {
+        Some(work_items) => {
+            if work_items.is_empty() {
+                report.push("work_items 不能为空");
             }
-            check_to_agents.entry(check_id).or_default().insert(agent);
+            for (idx, item) in work_items.iter().enumerate() {
+                let Some(item_obj) = item.as_object() else {
+                    report.push(format!("work_items[{}] 必须是对象", idx));
+                    continue;
+                };
+
+                let work_id = match item_obj.get("id").and_then(parse_non_empty_string) {
+                    Some(work_id) => {
+                        if !work_item_ids.insert(work_id.clone()) {
+                            report.push(format!("work_items.id 存在重复值: {}", work_id));
+                        }
+                        Some(work_id)
+                    }
+                    None => {
+                        report.push(format!("work_items[{}] 缺少 id", idx));
+                        None
+                    }
+                };
+
+                let agent = match item_obj
+                    .get("implementation_agent")
+                    .and_then(|v| v.as_str())
+                {
+                    Some(agent_raw) => match PlanImplementationAgent::parse(agent_raw) {
+                        Some(agent) => {
+                            lane_presence.insert(agent);
+                            Some(agent)
+                        }
+                        None => {
+                            report.push(format!(
+                                "work_items[{}].implementation_agent 非法: {}",
+                                idx, agent_raw
+                            ));
+                            None
+                        }
+                    },
+                    None => {
+                        report.push(format!("work_items[{}] 缺少 implementation_agent", idx));
+                        None
+                    }
+                };
+
+                let linked = match item_obj.get("linked_check_ids").and_then(|v| v.as_array()) {
+                    Some(linked) => linked,
+                    None => {
+                        report.push(format!("work_items[{}] 缺少 linked_check_ids", idx));
+                        continue;
+                    }
+                };
+                if linked.is_empty() {
+                    report.push(format!("work_items[{}].linked_check_ids 不能为空", idx));
+                }
+                for (check_idx, check_value) in linked.iter().enumerate() {
+                    let Some(check_id) = check_value
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                    else {
+                        report.push(format!(
+                            "work_items[{}].linked_check_ids[{}] 必须是非空字符串",
+                            idx, check_idx
+                        ));
+                        continue;
+                    };
+                    if !check_ids.contains(&check_id) {
+                        report.push(format!(
+                            "work_items[{}].linked_check_ids 包含未知 check_id: {}",
+                            idx, check_id
+                        ));
+                        continue;
+                    }
+                    if let Some(agent) = agent {
+                        let _ = &work_id;
+                        check_to_agents.entry(check_id).or_default().insert(agent);
+                    }
+                }
+            }
         }
+        None => report.push("plan.jsonc 缺少 work_items"),
     }
 
     let acceptance_mapping = value
         .pointer("/verification_plan/acceptance_mapping")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
-        })?;
-
+        .and_then(|v| v.as_array());
     let mut criteria_to_checks: HashMap<String, Vec<String>> = HashMap::new();
-    for (idx, item) in acceptance_mapping.iter().enumerate() {
-        let item_obj = item
-            .as_object()
-            .ok_or_else(|| format!("acceptance_mapping[{}] 必须是对象", idx))?;
-        let criteria_id = item_obj
-            .get("criteria_id")
-            .and_then(parse_non_empty_string)
-            .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))?;
-        let check_ids_raw = item_obj
-            .get("check_ids")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 check_ids", idx))?;
-        if check_ids_raw.is_empty() {
-            return Err(format!("acceptance_mapping[{}].check_ids 不能为空", idx));
-        }
+    match acceptance_mapping {
+        Some(acceptance_mapping) => {
+            for (idx, item) in acceptance_mapping.iter().enumerate() {
+                let Some(item_obj) = item.as_object() else {
+                    report.push(format!("acceptance_mapping[{}] 必须是对象", idx));
+                    continue;
+                };
+                let Some(criteria_id) =
+                    item_obj.get("criteria_id").and_then(parse_non_empty_string)
+                else {
+                    report.push(format!("acceptance_mapping[{}] 缺少 criteria_id", idx));
+                    continue;
+                };
+                let Some(check_ids_raw) = item_obj.get("check_ids").and_then(|v| v.as_array())
+                else {
+                    report.push(format!("acceptance_mapping[{}] 缺少 check_ids", idx));
+                    continue;
+                };
+                if check_ids_raw.is_empty() {
+                    report.push(format!("acceptance_mapping[{}].check_ids 不能为空", idx));
+                }
 
-        let mut mapped_to_work_item = false;
-        let mut mapped_checks = Vec::with_capacity(check_ids_raw.len());
-        for (check_idx, value) in check_ids_raw.iter().enumerate() {
-            let check_id = value
-                .as_str()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "acceptance_mapping[{}].check_ids[{}] 必须是非空字符串",
-                        idx, check_idx
-                    )
-                })?;
-            if !check_ids.contains(&check_id) {
-                return Err(format!(
-                    "acceptance_mapping[{}].check_ids 包含未知 check_id: {}",
-                    idx, check_id
-                ));
+                let mut mapped_to_work_item = false;
+                let mut mapped_checks = Vec::with_capacity(check_ids_raw.len());
+                for (check_idx, value) in check_ids_raw.iter().enumerate() {
+                    let Some(check_id) = value
+                        .as_str()
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                    else {
+                        report.push(format!(
+                            "acceptance_mapping[{}].check_ids[{}] 必须是非空字符串",
+                            idx, check_idx
+                        ));
+                        continue;
+                    };
+                    if !check_ids.contains(&check_id) {
+                        report.push(format!(
+                            "acceptance_mapping[{}].check_ids 包含未知 check_id: {}",
+                            idx, check_id
+                        ));
+                        continue;
+                    }
+                    if check_to_agents.contains_key(&check_id) {
+                        mapped_to_work_item = true;
+                    }
+                    mapped_checks.push(check_id);
+                }
+                if !mapped_to_work_item {
+                    report.push(format!(
+                        "acceptance_mapping[{}].check_ids 未关联任何 work_item",
+                        idx
+                    ));
+                }
+                criteria_to_checks.insert(criteria_id, mapped_checks);
             }
-            if check_to_agents.contains_key(&check_id) {
-                mapped_to_work_item = true;
-            }
-            mapped_checks.push(check_id);
         }
-        if !mapped_to_work_item {
-            return Err(format!(
-                "acceptance_mapping[{}].check_ids 未关联任何 work_item",
-                idx
-            ));
-        }
-        criteria_to_checks.insert(criteria_id, mapped_checks);
+        None => report.push("plan.jsonc 缺少 verification_plan.acceptance_mapping"),
     }
 
-    Ok(PlanRoutingTables {
-        lane_presence,
-        criteria_to_checks,
-        check_to_agents,
-    })
+    if report.is_empty() {
+        (
+            Some(PlanRoutingTables {
+                lane_presence,
+                criteria_to_checks,
+                check_to_agents,
+            }),
+            report,
+        )
+    } else {
+        (None, report)
+    }
+}
+
+fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTables, String> {
+    let (tables, report) = parse_plan_routing_tables_report(value);
+    tables.ok_or_else(|| report.summary())
 }
 
 fn is_criteria_failure_status(status: &str) -> bool {
@@ -1074,6 +1224,479 @@ fn validate_requirement_selector_against_plan(
     Ok(())
 }
 
+fn render_jsonc_template(template: &str, replacements: &[(&str, String)]) -> String {
+    let mut output = template.to_string();
+    for (key, value) in replacements {
+        output = output.replace(key, value);
+    }
+    output
+}
+
+fn direction_stage_template(cycle_id: &str) -> String {
+    render_jsonc_template(
+        r#"{
+  // Direction 阶段模板：只填写注释标明的可写字段
+  // schema 版本，由系统维护
+  "$schema_version": "2.0",
+  // 固定阶段名，不可修改
+  "stage": "direction",
+  // 当前循环 ID，必须与 cycle.jsonc 保持一致
+  "cycle_id": "__CYCLE_ID__",
+  // 阶段状态；运行中写 running，完成后写 completed/failed/blocked
+  "status": "running",
+  // 本轮标题，必须是非空字符串
+  "cycle_title": "",
+  "decision": {
+    // 决策结果；direction 阶段通常保留 n/a
+    "result": "n/a",
+    // 方向决策原因，必须非空
+    "reason": "",
+    "context": {
+      "capability_assessment": {
+        // UI 能力评估：none | partial | full
+        "ui_capability": "none",
+        // 测试能力评估：none | partial | full
+        "test_capability": "none",
+        // 构建能力评估：none | partial | full
+        "build_capability": "none",
+        // 运行/验证能力评估：none | partial | full
+        "runtime_capability": "none",
+        // 上述结论的证据说明，必须非空
+        "rationale": ""
+      }
+    }
+  },
+  // 项目类型，必须非空
+  "project_type": "",
+  // 本轮 UI 能力结论：none | partial | full
+  "ui_capability": "none",
+  // 关注领域列表。保持数组；按下方注释示例对象复制并填写字段。
+  "domains": [
+    // 示例对象：请复制该结构填写 1..N 个领域对象，不要保留本注释对象本身。
+    // {
+    //   "domain": "desktop_player",
+    //   "name": "桌面端播放器",
+    //   "priority": "high",
+    //   "status": "active",
+    //   "evidence_paths": [],
+    //   "findings": [],
+    //   "opportunities": [
+    //     {
+    //       "title": "播放控制体验补齐",
+    //       "summary": "描述机会与价值",
+    //       "mapped_direction_type": "feature"
+    //     }
+    //   ]
+    // }
+  ],
+  // 本轮最终选中的方向类型，必须命中系统允许枚举
+  "selected_direction_type": "",
+  // 候选方向评分，必须提供 3..5 个并按 score 降序排列
+  "candidate_scores": [
+    // {
+    //   "direction_type": "feature",
+    //   "score": 0.85,
+    //   "rationale": "排序理由"
+    // }
+  ],
+  // 最终方向说明，必须非空
+  "final_reason": "",
+  // 可验证验收标准，必须非空数组
+  "acceptance_criteria": [
+    // {
+    //   "criteria_id": "AC-001",
+    //   "description": "可验证描述"
+    // }
+  ],
+  // 阶段交接信息：三个字段都必须是数组
+  "handoff": {
+    "completed": [],
+    "risks": [],
+    "next": []
+  },
+  // 阶段流转：direction 完成后必须进入 plan
+  "next_action": {
+    "type": "goto_stage",
+    "target": "plan"
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[("__CYCLE_ID__", cycle_id.to_string())],
+    )
+}
+
+fn plan_stage_template(cycle_id: &str) -> String {
+    render_jsonc_template(
+        r#"{
+  // Plan 阶段模板：拆解 work_items 与验证计划
+  "$schema_version": "2.0",
+  // 固定阶段名，不可修改
+  "stage": "plan",
+  // 当前循环 ID，必须与 direction.jsonc / cycle.jsonc 保持一致
+  "cycle_id": "__CYCLE_ID__",
+  // 阶段状态；运行中写 running，完成后写 completed/failed/blocked
+  "status": "running",
+  "decision": {
+    // 决策结果；plan 阶段通常保留 n/a
+    "result": "n/a",
+    // 规划原因或约束说明，必须非空
+    "reason": ""
+  },
+  // 本轮计划摘要，必须非空
+  "summary": "",
+  // 必须与 direction.jsonc.selected_direction_type 一致
+  "selected_direction_type": "",
+  // 工作项列表，不能为空
+  "work_items": [
+    // {
+    //   "id": "WI-001",
+    //   "title": "实现播放控制入口",
+    //   "type": "code",
+    //   "priority": "p0",
+    //   "depends_on": [],
+    //   "targets": ["clients/desktop/src/player.tsx"],
+    //   "definition_of_done": ["按钮可触发播放/暂停"],
+    //   "risk": "low",
+    //   "rollback": "git restore --source=HEAD -- <path>",
+    //   "implementation_agent": "implement_general",
+    //   "linked_check_ids": ["CHK-001"]
+    // }
+  ],
+  "verification_plan": {
+    // 验证检查项，id 必须唯一且可执行
+    "checks": [
+      // {
+      //   "id": "CHK-001",
+      //   "name": "cargo test",
+      //   "kind": "command",
+      //   "command": "cargo test -p tidyflow-core evolution",
+      //   "expected": "exit_code=0"
+      // }
+    ],
+    // 验收标准与检查项的映射，必须完整覆盖 direction.acceptance_criteria
+    "acceptance_mapping": [
+      // {
+      //   "criteria_id": "AC-001",
+      //   "description": "播放控制可验证",
+      //   "check_ids": ["CHK-001"]
+      // }
+    ]
+  },
+  // 阶段交接信息：三个字段都必须是数组
+  "handoff": {
+    "completed": [],
+    "risks": [],
+    "next": []
+  },
+  // 阶段流转：plan 完成后进入 implement_general
+  "next_action": {
+    "type": "goto_stage",
+    "target": "implement_general"
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[("__CYCLE_ID__", cycle_id.to_string())],
+    )
+}
+
+fn implement_stage_template(
+    stage: &str,
+    cycle_id: &str,
+    verify_iteration: u32,
+    backlog_contract_version: u32,
+) -> String {
+    render_jsonc_template(
+        r#"{
+  // Implement 阶段模板：仅回填当前 lane 负责的执行结果
+  "$schema_version": "2.0",
+  // 当前实现阶段名，固定为系统调度值
+  "stage": "__STAGE__",
+  // 当前循环 ID，必须与 cycle.jsonc 保持一致
+  "cycle_id": "__CYCLE_ID__",
+  // 阶段状态；完成后写 done/blocked/failed/skipped
+  "status": "running",
+  "decision": {
+    // 实施阶段通常保留 n/a；如需说明可写 reason
+    "result": "n/a",
+    "reason": ""
+  },
+  // 本 lane 的实施摘要，必须存在
+  "summary": "",
+  // 工作项执行结果，仅填写当前 lane 处理的 work_items
+  "work_item_results": [
+    // {
+    //   "work_item_id": "WI-001",
+    //   "status": "done",
+    //   "summary": "完成内容摘要",
+    //   "evidence_paths": []
+    // }
+  ],
+  // 实际变更文件路径数组，可为空
+  "changed_files": [],
+  // 执行过的命令数组，可为空
+  "commands_executed": [],
+  // 快速检查结果数组；即使没有检查项也必须保留 []
+  "quick_checks": [
+    // {
+    //   "name": "cargo test -p tidyflow-core evolution",
+    //   "result": "pass",
+    //   "details": "可选补充说明"
+    // }
+  ],
+  // 当前 verify 重试轮次，由系统注入，不可改为其它数字
+  "verify_iteration": __VERIFY_ITERATION__,
+  // backlog 契约版本，由系统注入
+  "backlog_contract_version": __BACKLOG_CONTRACT_VERSION__,
+  // backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。
+  "backlog_resolution_updates": [
+    // {
+    //   "source_criteria_id": "AC-001",
+    //   "source_check_id": "CHK-001",
+    //   "work_item_id": "WI-001",
+    //   "implementation_agent": "__STAGE__",
+    //   "status": "done",
+    //   "evidence": null,
+    //   "notes": ""
+    // }
+  ],
+  // 以下三个字段由系统同步回填；代理不要伪造主键或改写系统统计
+  "failure_backlog": [],
+  "backlog_coverage": [],
+  "backlog_coverage_summary": {
+    "total": 0,
+    "done": 0,
+    "blocked": 0,
+    "not_done": 0
+  },
+  // 阶段交接信息：三个字段都必须是数组
+  "handoff": {
+    "completed": [],
+    "risks": [],
+    "next": []
+  },
+  // 默认流转到 verify；是否跳过由系统调度决定
+  "next_action": {
+    "type": "goto_stage",
+    "target": "verify"
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[
+            ("__STAGE__", stage.to_string()),
+            ("__CYCLE_ID__", cycle_id.to_string()),
+            ("__VERIFY_ITERATION__", verify_iteration.to_string()),
+            (
+                "__BACKLOG_CONTRACT_VERSION__",
+                backlog_contract_version.to_string(),
+            ),
+        ],
+    )
+}
+
+fn verify_stage_template(
+    cycle_id: &str,
+    verify_iteration: u32,
+    verify_iteration_limit: u32,
+) -> String {
+    render_jsonc_template(
+        r#"{
+  // Verify 阶段模板：统一写入验证结果与裁决结果
+  "$schema_version": "2.0",
+  // 固定阶段名，不可修改
+  "stage": "verify",
+  // 当前循环 ID，必须与 cycle.jsonc 保持一致
+  "cycle_id": "__CYCLE_ID__",
+  // 阶段状态；完成后写 done/failed/blocked
+  "status": "running",
+  "decision": {
+    // verify 阶段通常保留 n/a；如需说明可写 reason
+    "result": "n/a",
+    "reason": ""
+  },
+  // 当前 verify 重试轮次，由系统注入
+  "verify_iteration": __VERIFY_ITERATION__,
+  // verify 最大轮次，由系统注入
+  "verify_iteration_limit": __VERIFY_ITERATION_LIMIT__,
+  // 本轮验证摘要，必须存在
+  "summary": "",
+  // 检查项执行结果数组，可为空但字段必须存在
+  "check_results": [
+    // {
+    //   "check_id": "CHK-001",
+    //   "result": "pass",
+    //   "details": "执行结果摘要"
+    // }
+  ],
+  // 验收标准评估，必须完整覆盖 plan.verification_plan.acceptance_mapping
+  "acceptance_evaluation": [
+    // {
+    //   "criteria_id": "AC-001",
+    //   "status": "pass",
+    //   "evidence_paths": [],
+    //   "reason": "判定原因"
+    // }
+  ],
+  "verification_overall": {
+    // 总体验证结果：pass | fail
+    "result": "fail",
+    // 总结原因，必须存在
+    "reason": ""
+  },
+  // 重实现轮的延续验证覆盖；VERIFY_ITERATION>0 时必须完整维护
+  "carryover_verification": {
+    "items": [],
+    "summary": {
+      "total": 0,
+      "covered": 0,
+      "missing": 0,
+      "blocked": 0
+    }
+  },
+  "adjudication": {
+    // 验收标准裁决，必须完整覆盖 acceptance_evaluation
+    "criteria_judgement": [
+      // {
+      //   "criteria_id": "AC-001",
+      //   "result": "pass",
+      //   "reason": "裁决原因"
+      // }
+    ],
+    "overall_result": {
+      // 裁决总结果：pass | fail
+      "result": "fail",
+      "reason": ""
+    },
+    "next_action": {
+      // pass => goto_stage:auto_commit
+      // fail 且未达上限 => goto_stage:implement_general 或 implement_advanced
+      // fail 且达到上限 => stop_cycle,target:null
+      "type": "goto_stage",
+      "target": "implement_general"
+    },
+    // 需要重实现时必须输出完整 selector 信息
+    "full_next_iteration_requirements": [
+      // {
+      //   "requirement_id": "REQ-001",
+      //   "description": "下一轮必须完成的整改项",
+      //   "source_criteria_id": "AC-001",
+      //   "source_check_id": "CHK-001",
+      //   "work_item_id": "WI-001",
+      //   "implementation_agent": "implement_general"
+      // }
+    ]
+  },
+  // 阶段交接信息：三个字段都必须是数组
+  "handoff": {
+    "completed": [],
+    "risks": [],
+    "next": []
+  },
+  // verify 默认流转到 auto_commit；最终是否合法以 adjudication 为准
+  "next_action": {
+    "type": "goto_stage",
+    "target": "auto_commit"
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[
+            ("__CYCLE_ID__", cycle_id.to_string()),
+            ("__VERIFY_ITERATION__", verify_iteration.to_string()),
+            (
+                "__VERIFY_ITERATION_LIMIT__",
+                verify_iteration_limit.to_string(),
+            ),
+        ],
+    )
+}
+
+fn auto_commit_stage_template(cycle_id: &str) -> String {
+    render_jsonc_template(
+        r#"{
+  // Auto commit 阶段模板：仅记录提交决策与结果
+  "$schema_version": "2.0",
+  // 固定阶段名，不可修改
+  "stage": "auto_commit",
+  // 当前循环 ID，必须与 cycle.jsonc 保持一致
+  "cycle_id": "__CYCLE_ID__",
+  // 阶段状态；完成后写 done/failed/blocked
+  "status": "running",
+  "decision": {
+    // 自动提交结果；通常保留 n/a，并在 reason 中说明
+    "result": "n/a",
+    // 若无可提交变更，需明确写出“无可提交变更”或 no changes to commit
+    "reason": ""
+  },
+  // 阶段交接信息：三个字段都必须是数组
+  "handoff": {
+    "completed": [],
+    "risks": [],
+    "next": []
+  },
+  // auto_commit 完成后回到下一轮 direction
+  "next_action": {
+    "type": "goto_stage",
+    "target": "direction"
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[("__CYCLE_ID__", cycle_id.to_string())],
+    )
+}
+
+fn managed_backlog_template(cycle_id: &str, verify_iteration: u32) -> String {
+    render_jsonc_template(
+        r#"{
+  // 托管 backlog 模板：系统维护 selector 与统计，代理仅按注释填写 backlog_resolution_updates
+  "$schema_version": "2.0",
+  // 当前循环 ID，由系统注入
+  "cycle_id": "__CYCLE_ID__",
+  // 当前 verify 重试轮次，由系统注入
+  "verify_iteration": __VERIFY_ITERATION__,
+  // 托管整改项列表；系统生成，不要手工伪造主键
+  "items": [
+    // {
+    //   "id": "fb-001",
+    //   "source_criteria_id": "AC-001",
+    //   "source_check_id": "CHK-001",
+    //   "work_item_id": "WI-001",
+    //   "implementation_agent": "implement_general",
+    //   "requirement_ref": "REQ-001",
+    //   "description": "系统生成的整改项描述",
+    //   "status": "not_done",
+    //   "evidence": null,
+    //   "notes": "",
+    //   "created_at": "2026-03-06T00:00:00Z",
+    //   "updated_at": "2026-03-06T00:00:00Z"
+    // }
+  ],
+  // 系统维护的统计汇总
+  "summary": {
+    "total": 0,
+    "done": 0,
+    "blocked": 0,
+    "not_done": 0
+  },
+  // 更新时间，必须是 RFC3339 字符串
+  "updated_at": ""
+}
+"#,
+        &[
+            ("__CYCLE_ID__", cycle_id.to_string()),
+            ("__VERIFY_ITERATION__", verify_iteration.to_string()),
+        ],
+    )
+}
+
 fn should_force_advanced_reimplementation(verify_iteration: u32) -> bool {
     verify_iteration >= 2
 }
@@ -1082,99 +1705,126 @@ impl EvolutionManager {
     fn validate_plan_artifact(
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let value = read_json_file(cycle_dir, "plan.jsonc")?;
-        parse_plan_routing_tables(&value)?;
+    ) -> Result<(), ArtifactValidationError> {
+        let value = read_json_file(cycle_dir, "plan.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
+        let (_, routing_report) = parse_plan_routing_tables_report(&value);
+        report.merge(routing_report);
 
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("plan.jsonc", &value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("plan.jsonc", &value, ctx.stage_started_at)?;
+            report.capture(ensure_cycle_id_matches("plan.jsonc", &value, &ctx.cycle_id));
+            report.capture(ensure_artifact_freshness(
+                "plan.jsonc",
+                &value,
+                ctx.stage_started_at,
+            ));
         }
-        validate_handoff_info("plan.jsonc", &value)?;
+        report.capture(validate_handoff_info("plan.jsonc", &value));
 
         let selected_direction = value
             .get("selected_direction_type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| "plan.jsonc 缺少 selected_direction_type".to_string())?;
-        if !VALID_DIRECTION_TYPES.contains(&selected_direction.as_str()) {
-            return Err(format!(
+            .filter(|v| !v.is_empty());
+        match selected_direction.as_deref() {
+            Some(selected_direction) if VALID_DIRECTION_TYPES.contains(&selected_direction) => {}
+            Some(selected_direction) => report.push(format!(
                 "selected_direction_type 非法: {}",
                 selected_direction
-            ));
+            )),
+            None => report.push("plan.jsonc 缺少 selected_direction_type"),
         }
 
-        let direction_value = read_json_file(cycle_dir, "direction.jsonc")?;
+        let direction_value = read_json_file(cycle_dir, "direction.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let direction_selected = direction_value
             .get("selected_direction_type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| "direction.jsonc 缺少 selected_direction_type".to_string())?;
-        if direction_selected != selected_direction {
-            return Err(format!(
-                "selected_direction_type 与 direction.selected_direction_type 不一致: {} != {}",
-                selected_direction, direction_selected
-            ));
+            .filter(|v| !v.is_empty());
+        match (selected_direction.as_deref(), direction_selected.as_deref()) {
+            (_, None) => report.push("direction.jsonc 缺少 selected_direction_type"),
+            (Some(selected_direction), Some(direction_selected))
+                if direction_selected != selected_direction =>
+            {
+                report.push(format!(
+                    "selected_direction_type 与 direction.selected_direction_type 不一致: {} != {}",
+                    selected_direction, direction_selected
+                ));
+            }
+            _ => {}
         }
 
-        let plan_criteria: HashSet<String> = value
+        let plan_mapping = value
             .pointer("/verification_plan/acceptance_mapping")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
-            })?
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                id_from_value(item, &["criteria_id"])
-                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
-            })
-            .collect::<Result<HashSet<String>, String>>()?;
-        if plan_criteria.is_empty() {
-            return Err("verification_plan.acceptance_mapping 不能为空".to_string());
+            .and_then(|v| v.as_array());
+        let plan_criteria = plan_mapping.map(|items| {
+            let mut criteria = HashSet::new();
+            for (idx, item) in items.iter().enumerate() {
+                match id_from_value(item, &["criteria_id"]) {
+                    Some(criteria_id) => {
+                        criteria.insert(criteria_id);
+                    }
+                    None => report.push(format!("acceptance_mapping[{}] 缺少 criteria_id", idx)),
+                }
+            }
+            if criteria.is_empty() {
+                report.push("verification_plan.acceptance_mapping 不能为空");
+            }
+            criteria
+        });
+        if plan_mapping.is_none() {
+            report.push("plan.jsonc 缺少 verification_plan.acceptance_mapping");
         }
 
         let direction_criteria = direction_value
             .get("acceptance_criteria")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "direction.jsonc 缺少 acceptance_criteria".to_string())?;
-        let direction_criteria_ids: HashSet<String> = direction_criteria
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                let criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
-                    format!(
+            .and_then(|v| v.as_array());
+        let direction_criteria_ids = direction_criteria.map(|items| {
+            let mut criteria = HashSet::new();
+            for (idx, item) in items.iter().enumerate() {
+                match id_from_value(item, &["criteria_id"]) {
+                    Some(criteria_id) => {
+                        criteria.insert(criteria_id);
+                    }
+                    None => report.push(format!(
                         "direction.acceptance_criteria[{}] 缺少 criteria_id",
                         idx
-                    )
-                })?;
+                    )),
+                }
                 let description = item
                     .get("description")
                     .and_then(|v| v.as_str())
                     .map(|v| v.trim())
                     .unwrap_or_default();
                 if description.is_empty() {
-                    return Err(format!(
+                    report.push(format!(
                         "direction.acceptance_criteria[{}].description 不能为空",
                         idx
                     ));
                 }
-                Ok(criteria_id)
-            })
-            .collect::<Result<HashSet<String>, String>>()?;
-        if direction_criteria_ids.is_empty() {
-            return Err("direction.acceptance_criteria 不能为空".to_string());
+            }
+            if criteria.is_empty() {
+                report.push("direction.acceptance_criteria 不能为空");
+            }
+            criteria
+        });
+        if direction_criteria.is_none() {
+            report.push("direction.jsonc 缺少 acceptance_criteria");
         }
-        if plan_criteria != direction_criteria_ids {
-            return Err(format!(
-                "plan.acceptance_mapping 与 direction.acceptance_criteria 不一致: plan={:?}, direction={:?}",
-                plan_criteria, direction_criteria_ids
-            ));
+        if let (Some(plan_criteria), Some(direction_criteria_ids)) =
+            (plan_criteria, direction_criteria_ids)
+        {
+            if plan_criteria != direction_criteria_ids {
+                report.push(format!(
+                    "plan.acceptance_mapping 与 direction.acceptance_criteria 不一致: plan={:?}, direction={:?}",
+                    plan_criteria, direction_criteria_ids
+                ));
+            }
         }
 
-        Ok(())
+        report.into_error("artifact_contract_violation")
     }
 
     fn implement_result_file_for_lane(lane: ImplementLane) -> &'static str {
@@ -1265,10 +1915,7 @@ impl EvolutionManager {
             .map_err(|e| format!("解析 {} 失败: {}", MANAGED_BACKLOG_FILE, e))
     }
 
-    fn write_managed_backlog(
-        cycle_dir: &Path,
-        payload: &ManagedBacklogFile,
-    ) -> Result<(), String> {
+    fn write_managed_backlog(cycle_dir: &Path, payload: &ManagedBacklogFile) -> Result<(), String> {
         let value = serde_json::to_value(payload)
             .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_BACKLOG_FILE, e))?;
         write_json(&managed_backlog_path(cycle_dir), &value)
@@ -1518,7 +2165,7 @@ impl EvolutionManager {
     fn sync_managed_backlog_for_implement_stage(
         cycle_dir: &Path,
         stage: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), ArtifactValidationError> {
         let Some(file_name) = Self::implement_result_file_for_stage(stage) else {
             return Ok(());
         };
@@ -1527,42 +2174,75 @@ impl EvolutionManager {
         };
         let lane_name = lane.as_str();
 
-        let mut managed_backlog = Self::read_managed_backlog(cycle_dir)?;
-        let mut lane_result = read_json_file(cycle_dir, file_name)?;
+        let mut managed_backlog = Self::read_managed_backlog(cycle_dir)
+            .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
+        let mut lane_result = read_json_file(cycle_dir, file_name)
+            .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
         let updates = lane_result
             .pointer("/backlog_resolution_updates")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("{}.backlog_resolution_updates 缺失", file_name))?;
+            .ok_or_else(|| {
+                ArtifactValidationError::new(
+                    "managed_backlog_sync_failed",
+                    format!("{}.backlog_resolution_updates 缺失", file_name),
+                )
+            })?;
+
+        #[derive(Clone)]
+        struct PendingBacklogUpdate {
+            index: usize,
+            status: String,
+            evidence: serde_json::Value,
+            notes: String,
+        }
+
+        let mut report = ValidationReport::default();
+        let mut pending_updates: Vec<PendingBacklogUpdate> = Vec::new();
 
         for (idx, item) in updates.iter().enumerate() {
-            let parsed =
-                serde_json::from_value::<BacklogResolutionUpdate>(item.clone()).map_err(|e| {
-                    format!(
+            let parsed = match serde_json::from_value::<BacklogResolutionUpdate>(item.clone()) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    report.push(format!(
                         "{}.backlog_resolution_updates[{}] 非法: {}",
                         file_name, idx, e
-                    )
-                })?;
+                    ));
+                    continue;
+                }
+            };
+
+            let mut item_has_error = false;
             if parsed.source_criteria_id.trim().is_empty()
                 || parsed.source_check_id.trim().is_empty()
                 || parsed.work_item_id.trim().is_empty()
             {
-                return Err(format!(
+                report.push(format!(
                     "{}.backlog_resolution_updates[{}] selector 字段不能为空",
                     file_name, idx
                 ));
+                item_has_error = true;
             }
             if parsed.implementation_agent.trim() != lane_name {
-                return Err(format!(
+                report.push(format!(
                     "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
                     file_name, idx, lane_name
                 ));
+                item_has_error = true;
             }
-            let Some(normalized_status) = normalize_backlog_status(&parsed.status) else {
-                return Err(format!(
-                    "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
-                    file_name, idx
-                ));
+            let normalized_status = match normalize_backlog_status(&parsed.status) {
+                Some(status) => status.to_string(),
+                None => {
+                    report.push(format!(
+                        "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
+                        file_name, idx
+                    ));
+                    item_has_error = true;
+                    String::new()
+                }
             };
+            if item_has_error {
+                continue;
+            }
 
             let (matched_indexes, matched_by) =
                 Self::match_managed_backlog_indexes(&managed_backlog.items, &parsed);
@@ -1591,13 +2271,14 @@ impl EvolutionManager {
                     parsed.work_item_id,
                     parsed.implementation_agent
                 );
-                return Err(format!(
+                report.push(format!(
                     "evo_backlog_mapping_missing: selector=({}, {}, {}, {}), candidates=0",
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
                     parsed.implementation_agent
                 ));
+                continue;
             }
             if matched_indexes.len() > 1 {
                 warn!(
@@ -1610,7 +2291,7 @@ impl EvolutionManager {
                     parsed.implementation_agent,
                     matched_indexes.len()
                 );
-                return Err(format!(
+                report.push(format!(
                     "evo_backlog_mapping_ambiguous: selector=({}, {}, {}, {}), candidates={}",
                     parsed.source_criteria_id,
                     parsed.source_check_id,
@@ -1618,15 +2299,34 @@ impl EvolutionManager {
                     parsed.implementation_agent,
                     matched_indexes.len()
                 ));
+                continue;
             }
+
+            pending_updates.push(PendingBacklogUpdate {
+                index: matched_indexes[0],
+                status: normalized_status,
+                evidence: parsed.evidence,
+                notes: parsed.notes,
+            });
+        }
+
+        report.into_error("managed_backlog_sync_failed")?;
+
+        let now = Utc::now().to_rfc3339();
+        for pending in pending_updates {
             let backlog_item = managed_backlog
                 .items
-                .get_mut(matched_indexes[0])
-                .ok_or_else(|| format!("managed.backlog.jsonc selector 索引越界（stage={}）", stage))?;
-            backlog_item.status = normalized_status.to_string();
-            backlog_item.evidence = parsed.evidence;
-            backlog_item.notes = parsed.notes;
-            backlog_item.updated_at = Utc::now().to_rfc3339();
+                .get_mut(pending.index)
+                .ok_or_else(|| {
+                    ArtifactValidationError::new(
+                        "managed_backlog_sync_failed",
+                        format!("managed.backlog.jsonc selector 索引越界（stage={}）", stage),
+                    )
+                })?;
+            backlog_item.status = pending.status;
+            backlog_item.evidence = pending.evidence;
+            backlog_item.notes = pending.notes;
+            backlog_item.updated_at = now.clone();
         }
 
         managed_backlog.summary = coverage_summary(&managed_backlog.items);
@@ -1673,9 +2373,12 @@ impl EvolutionManager {
             })
             .collect::<Vec<serde_json::Value>>();
 
-        let lane_obj = lane_result
-            .as_object_mut()
-            .ok_or_else(|| format!("{} 顶层必须是对象", file_name))?;
+        let lane_obj = lane_result.as_object_mut().ok_or_else(|| {
+            ArtifactValidationError::new(
+                "managed_backlog_sync_failed",
+                format!("{} 顶层必须是对象", file_name),
+            )
+        })?;
         lane_obj.insert(
             "failure_backlog".to_string(),
             serde_json::Value::Array(lane_backlog_json),
@@ -1697,8 +2400,10 @@ impl EvolutionManager {
             "updated_at".to_string(),
             serde_json::Value::String(Utc::now().to_rfc3339()),
         );
-        write_json(&cycle_dir.join(file_name), &lane_result)?;
-        Self::write_managed_backlog(cycle_dir, &managed_backlog)?;
+        write_json(&cycle_dir.join(file_name), &lane_result)
+            .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
+        Self::write_managed_backlog(cycle_dir, &managed_backlog)
+            .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
         Ok(())
     }
 
@@ -1840,37 +2545,51 @@ impl EvolutionManager {
         verify_iteration: u32,
         backlog_contract_version: u32,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let file_name = Self::implement_result_file_for_stage(stage)
-            .ok_or_else(|| format!("未知 implement stage: {}", stage))?;
-        let value = read_json_file(cycle_dir, file_name)?;
+    ) -> Result<(), ArtifactValidationError> {
+        let file_name = Self::implement_result_file_for_stage(stage).ok_or_else(|| {
+            ArtifactValidationError::new(
+                "artifact_contract_violation",
+                format!("未知 implement stage: {}", stage),
+            )
+        })?;
+        let value = read_json_file(cycle_dir, file_name)
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches(file_name, &value, &ctx.cycle_id)?;
-            ensure_artifact_freshness(file_name, &value, ctx.stage_started_at)?;
+            report.capture(ensure_cycle_id_matches(file_name, &value, &ctx.cycle_id));
+            report.capture(ensure_artifact_freshness(
+                file_name,
+                &value,
+                ctx.stage_started_at,
+            ));
         }
 
         let file_verify_iteration = value
             .get("verify_iteration")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("{} 缺少 verify_iteration", file_name))?
-            as u32;
-        if file_verify_iteration != verify_iteration {
-            return Err(format!(
-                "{}.verify_iteration 不匹配: {} != {}",
-                file_name, file_verify_iteration, verify_iteration
-            ));
+            .map(|v| v as u32);
+        match file_verify_iteration {
+            Some(file_verify_iteration) if file_verify_iteration != verify_iteration => {
+                report.push(format!(
+                    "{}.verify_iteration 不匹配: {} != {}",
+                    file_name, file_verify_iteration, verify_iteration
+                ));
+            }
+            Some(_) => {}
+            None => report.push(format!("{} 缺少 verify_iteration", file_name)),
         }
 
         let status = value
             .get("status")
             .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| format!("{} 缺少 status", file_name))?;
-        if !matches!(status.as_str(), "done" | "failed" | "blocked" | "skipped") {
-            return Err(format!(
+            .map(|v| v.trim().to_ascii_lowercase());
+        match status.as_deref() {
+            Some("done" | "failed" | "blocked" | "skipped") => {}
+            Some(status) => report.push(format!(
                 "{}.status 非法: {}（必须是 done|failed|blocked|skipped）",
                 file_name, status
-            ));
+            )),
+            None => report.push(format!("{} 缺少 status", file_name)),
         }
 
         for key in [
@@ -1880,61 +2599,67 @@ impl EvolutionManager {
             "quick_checks",
         ] {
             if value.get(key).and_then(|v| v.as_array()).is_none() {
-                return Err(format!("{} 缺少 {} 数组", file_name, key));
+                report.push(format!("{} 缺少 {} 数组", file_name, key));
             }
         }
         if value.get("summary").and_then(|v| v.as_str()).is_none() {
-            return Err(format!("{} 缺少 summary 字段", file_name));
+            report.push(format!("{} 缺少 summary 字段", file_name));
         }
-        validate_handoff_info(file_name, &value)?;
+        report.capture(validate_handoff_info(file_name, &value));
 
         if verify_iteration > 0 && backlog_contract_version >= 2 {
             let updates = value
                 .pointer("/backlog_resolution_updates")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| format!("{} 缺少 backlog_resolution_updates", file_name))?;
-            for (idx, item) in updates.iter().enumerate() {
-                let parsed = serde_json::from_value::<BacklogResolutionUpdate>(item.clone())
-                    .map_err(|e| {
-                        format!(
-                            "{}.backlog_resolution_updates[{}] 非法: {}",
-                            file_name, idx, e
-                        )
-                    })?;
-                if parsed.source_criteria_id.trim().is_empty()
-                    || parsed.source_check_id.trim().is_empty()
-                    || parsed.work_item_id.trim().is_empty()
-                {
-                    return Err(format!(
-                        "{}.backlog_resolution_updates[{}] selector 字段不能为空",
-                        file_name, idx
-                    ));
+                .and_then(|v| v.as_array());
+            match updates {
+                Some(updates) => {
+                    for (idx, item) in updates.iter().enumerate() {
+                        match serde_json::from_value::<BacklogResolutionUpdate>(item.clone()) {
+                            Ok(parsed) => {
+                                if parsed.source_criteria_id.trim().is_empty()
+                                    || parsed.source_check_id.trim().is_empty()
+                                    || parsed.work_item_id.trim().is_empty()
+                                {
+                                    report.push(format!(
+                                        "{}.backlog_resolution_updates[{}] selector 字段不能为空",
+                                        file_name, idx
+                                    ));
+                                }
+                                if parsed.implementation_agent.trim() != stage {
+                                    report.push(format!(
+                                        "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
+                                        file_name, idx, stage
+                                    ));
+                                }
+                                if normalize_backlog_status(&parsed.status).is_none() {
+                                    report.push(format!(
+                                        "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
+                                        file_name, idx
+                                    ));
+                                }
+                            }
+                            Err(e) => report.push(format!(
+                                "{}.backlog_resolution_updates[{}] 非法: {}",
+                                file_name, idx, e
+                            )),
+                        }
+                    }
                 }
-                if parsed.implementation_agent.trim() != stage {
-                    return Err(format!(
-                        "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
-                        file_name, idx, stage
-                    ));
-                }
-                if normalize_backlog_status(&parsed.status).is_none() {
-                    return Err(format!(
-                        "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
-                        file_name, idx
-                    ));
-                }
+                None => report.push(format!("{} 缺少 backlog_resolution_updates", file_name)),
             }
 
-            let backlog = Self::read_managed_backlog(cycle_dir)?;
+            let backlog = Self::read_managed_backlog(cycle_dir)
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             if let Some(ctx) = validation_ctx {
                 if backlog.cycle_id != ctx.cycle_id {
-                    return Err(format!(
+                    report.push(format!(
                         "{}.cycle_id 不匹配: {} != {}",
                         MANAGED_BACKLOG_FILE, backlog.cycle_id, ctx.cycle_id
                     ));
                 }
             }
             if backlog.verify_iteration != verify_iteration {
-                return Err(format!(
+                report.push(format!(
                     "{}.verify_iteration 不匹配: {} != {}",
                     MANAGED_BACKLOG_FILE, backlog.verify_iteration, verify_iteration
                 ));
@@ -1942,66 +2667,83 @@ impl EvolutionManager {
 
             for (idx, item) in backlog.items.iter().enumerate() {
                 if item.id.trim().is_empty() {
-                    return Err(format!(
-                        "managed.backlog.jsonc.items[{}].id 不能为空",
-                        idx
-                    ));
+                    report.push(format!("managed.backlog.jsonc.items[{}].id 不能为空", idx));
                 }
                 if !is_valid_implementation_agent(&item.implementation_agent) {
-                    return Err(format!(
+                    report.push(format!(
                         "managed.backlog.jsonc.items[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
                         idx
                     ));
                 }
                 if normalize_backlog_status(&item.status).is_none() {
-                    return Err(format!(
+                    report.push(format!(
                         "managed.backlog.jsonc.items[{}].status 必须是 done|blocked|not_done",
                         idx
                     ));
                 }
             }
-            return Ok(());
+            return report.into_error("artifact_contract_violation");
         }
 
         if verify_iteration > 0 && backlog_contract_version < 2 {
             let (backlog, coverage) =
-                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
+                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)
+                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             for (idx, item) in backlog.iter().enumerate() {
                 let Some(obj) = item.as_object() else {
-                    return Err(format!("failure_backlog[{}] 必须是对象", idx));
+                    report.push(format!("failure_backlog[{}] 必须是对象", idx));
+                    continue;
                 };
                 let agent = obj
                     .get("implementation_agent")
                     .and_then(|v| v.as_str())
-                    .map(|v| v.trim().to_ascii_lowercase())
-                    .ok_or_else(|| {
-                        format!("failure_backlog[{}].implementation_agent 缺失或非法", idx)
-                    })?;
+                    .map(|v| v.trim().to_ascii_lowercase());
+                let Some(agent) = agent else {
+                    report.push(format!(
+                        "failure_backlog[{}].implementation_agent 缺失或非法",
+                        idx
+                    ));
+                    continue;
+                };
                 if !is_valid_implementation_agent(agent.as_str()) {
-                    return Err(format!(
+                    report.push(format!(
                         "failure_backlog[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
                         idx
                     ));
                 }
             }
-            let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
+            let backlog_ids = match collect_unique_ids(&backlog, &["id"], "failure_backlog") {
+                Ok(ids) => Some(ids),
+                Err(err) => {
+                    report.push(err);
+                    None
+                }
+            };
             let coverage_ids =
-                collect_unique_ids(&coverage, &["id", "item_id"], "backlog_coverage")?;
-            if backlog_ids.len() != coverage_ids.len() {
-                return Err(format!(
-                    "failure_backlog 与 backlog_coverage 数量不一致: {} vs {}",
-                    backlog_ids.len(),
-                    coverage_ids.len()
-                ));
-            }
-            let backlog_set: HashSet<String> = backlog_ids.into_iter().collect();
-            let coverage_set: HashSet<String> = coverage_ids.into_iter().collect();
-            if backlog_set != coverage_set {
-                return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
+                match collect_unique_ids(&coverage, &["id", "item_id"], "backlog_coverage") {
+                    Ok(ids) => Some(ids),
+                    Err(err) => {
+                        report.push(err);
+                        None
+                    }
+                };
+            if let (Some(backlog_ids), Some(coverage_ids)) = (backlog_ids, coverage_ids) {
+                if backlog_ids.len() != coverage_ids.len() {
+                    report.push(format!(
+                        "failure_backlog 与 backlog_coverage 数量不一致: {} vs {}",
+                        backlog_ids.len(),
+                        coverage_ids.len()
+                    ));
+                }
+                let backlog_set: HashSet<String> = backlog_ids.into_iter().collect();
+                let coverage_set: HashSet<String> = coverage_ids.into_iter().collect();
+                if backlog_set != coverage_set {
+                    report.push("backlog_coverage 未完整覆盖 failure_backlog");
+                }
             }
         }
 
-        Ok(())
+        report.into_error("artifact_contract_violation")
     }
 
     fn validate_verify_artifact(
@@ -2009,33 +2751,53 @@ impl EvolutionManager {
         verify_iteration: u32,
         backlog_contract_version: u32,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let verify_value = read_json_file(cycle_dir, "verify.jsonc")?;
+    ) -> Result<(), ArtifactValidationError> {
+        let verify_value = read_json_file(cycle_dir, "verify.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("verify.jsonc", &verify_value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("verify.jsonc", &verify_value, ctx.stage_started_at)?;
+            report.capture(ensure_cycle_id_matches(
+                "verify.jsonc",
+                &verify_value,
+                &ctx.cycle_id,
+            ));
+            report.capture(ensure_artifact_freshness(
+                "verify.jsonc",
+                &verify_value,
+                ctx.stage_started_at,
+            ));
         }
-        validate_handoff_info("verify.jsonc", &verify_value)?;
+        report.capture(validate_handoff_info("verify.jsonc", &verify_value));
+
         let verify_file_iteration = verify_value
             .get("verify_iteration")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| "verify.jsonc 缺少 verify_iteration".to_string())?
-            as u32;
-        if verify_file_iteration != verify_iteration {
-            return Err(format!(
+            .map(|v| v as u32);
+        match verify_file_iteration {
+            Some(file_iteration) if file_iteration != verify_iteration => report.push(format!(
                 "verify.jsonc.verify_iteration 不匹配: {} != {}",
-                verify_file_iteration, verify_iteration
-            ));
+                file_iteration, verify_iteration
+            )),
+            Some(_) => {}
+            None => report.push("verify.jsonc 缺少 verify_iteration"),
         }
+
         let acceptance_items = verify_value
             .pointer("/acceptance_evaluation")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "verify.jsonc 缺少 acceptance_evaluation".to_string())?;
-        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.jsonc")?
+            .and_then(|v| v.as_array());
+        if acceptance_items.is_none() {
+            report.push("verify.jsonc 缺少 acceptance_evaluation");
+        }
+
+        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?
             .pointer("/verification_plan/acceptance_mapping")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
-                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
+                ArtifactValidationError::new(
+                    "artifact_contract_violation",
+                    "plan.jsonc 缺少 verification_plan.acceptance_mapping",
+                )
             })?
             .iter()
             .enumerate()
@@ -2043,29 +2805,35 @@ impl EvolutionManager {
                 id_from_value(item, &["criteria_id"])
                     .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
             })
-            .collect::<Result<HashSet<String>, String>>()?;
+            .collect::<Result<HashSet<String>, String>>()
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+
         let mut actual_criteria = HashSet::new();
         let mut has_failing_acceptance = false;
-        for (idx, item) in acceptance_items.iter().enumerate() {
-            let criteria_id = id_from_value(item, &["criteria_id"])
-                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))?;
-            let status = item
-                .get("status")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 status", idx))?;
-            if normalize_acceptance_evaluation_status(status).is_none() {
-                return Err(format!(
-                    "acceptance_evaluation[{}].status 非法: {}（{}），必须是 pass|fail|insufficient_evidence",
-                    idx, status, criteria_id
-                ));
+        if let Some(acceptance_items) = acceptance_items {
+            for (idx, item) in acceptance_items.iter().enumerate() {
+                let Some(criteria_id) = id_from_value(item, &["criteria_id"]) else {
+                    report.push(format!("acceptance_evaluation[{}] 缺少 criteria_id", idx));
+                    continue;
+                };
+                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
+                    report.push(format!("acceptance_evaluation[{}] 缺少 status", idx));
+                    continue;
+                };
+                if normalize_acceptance_evaluation_status(status).is_none() {
+                    report.push(format!(
+                        "acceptance_evaluation[{}].status 非法: {}（{}），必须是 pass|fail|insufficient_evidence",
+                        idx, status, criteria_id
+                    ));
+                }
+                if as_failing_status(status) {
+                    has_failing_acceptance = true;
+                }
+                actual_criteria.insert(criteria_id);
             }
-            if as_failing_status(status) {
-                has_failing_acceptance = true;
-            }
-            actual_criteria.insert(criteria_id);
         }
         if actual_criteria != expected_criteria {
-            return Err(format!(
+            report.push(format!(
                 "acceptance_evaluation 覆盖不完整: expected={:?}, actual={:?}",
                 expected_criteria, actual_criteria
             ));
@@ -2074,55 +2842,70 @@ impl EvolutionManager {
         let verification_overall_result = verify_value
             .pointer("/verification_overall/result")
             .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.jsonc 缺少 verification_overall.result".to_string())?;
-        if !matches!(verification_overall_result.as_str(), "pass" | "fail") {
-            return Err(format!(
+            .map(|v| v.trim().to_ascii_lowercase());
+        match verification_overall_result.as_deref() {
+            Some("pass" | "fail") => {}
+            Some(result) => report.push(format!(
                 "verify.jsonc.verification_overall.result 非法: {}",
-                verification_overall_result
-            ));
+                result
+            )),
+            None => report.push("verify.jsonc 缺少 verification_overall.result"),
         }
-        if has_failing_acceptance && verification_overall_result == "pass" {
-            return Err(
-                "acceptance_evaluation 存在未通过项时 verification_overall.result 不得为 pass"
-                    .to_string(),
+        if has_failing_acceptance && verification_overall_result.as_deref() == Some("pass") {
+            report.push(
+                "acceptance_evaluation 存在未通过项时 verification_overall.result 不得为 pass",
             );
         }
 
         let verify_iteration_limit = verify_value
             .get("verify_iteration_limit")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| "verify.jsonc 缺少 verify_iteration_limit".to_string())?
-            as u32;
-        if verify_iteration_limit == 0 {
-            return Err("verify.jsonc.verify_iteration_limit 必须大于 0".to_string());
+            .map(|v| v as u32);
+        match verify_iteration_limit {
+            Some(0) => report.push("verify.jsonc.verify_iteration_limit 必须大于 0"),
+            Some(_) => {}
+            None => report.push("verify.jsonc 缺少 verify_iteration_limit"),
         }
+
         let criteria_judgement = verify_value
             .pointer("/adjudication/criteria_judgement")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "verify.jsonc 缺少 adjudication.criteria_judgement".to_string())?;
+            .and_then(|v| v.as_array());
+        if criteria_judgement.is_none() {
+            report.push("verify.jsonc 缺少 adjudication.criteria_judgement");
+        }
         let mut judgement_criteria = HashSet::new();
-        for (idx, item) in criteria_judgement.iter().enumerate() {
-            let criteria_id = id_from_value(item, &["criteria_id"])
-                .ok_or_else(|| format!("adjudication.criteria_judgement[{}] 缺少 criteria_id", idx))?;
-            let result = item
-                .get("result")
-                .or_else(|| item.get("status"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().to_ascii_lowercase())
-                .ok_or_else(|| {
-                    format!("adjudication.criteria_judgement[{}] 缺少 result/status", idx)
-                })?;
-            if !matches!(result.as_str(), "pass" | "fail" | "insufficient_evidence") {
-                return Err(format!(
-                    "adjudication.criteria_judgement[{}].result/status 非法: {}",
-                    idx, result
-                ));
+        if let Some(criteria_judgement) = criteria_judgement {
+            for (idx, item) in criteria_judgement.iter().enumerate() {
+                let Some(criteria_id) = id_from_value(item, &["criteria_id"]) else {
+                    report.push(format!(
+                        "adjudication.criteria_judgement[{}] 缺少 criteria_id",
+                        idx
+                    ));
+                    continue;
+                };
+                let Some(result) = item
+                    .get("result")
+                    .or_else(|| item.get("status"))
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim().to_ascii_lowercase())
+                else {
+                    report.push(format!(
+                        "adjudication.criteria_judgement[{}] 缺少 result/status",
+                        idx
+                    ));
+                    continue;
+                };
+                if !matches!(result.as_str(), "pass" | "fail" | "insufficient_evidence") {
+                    report.push(format!(
+                        "adjudication.criteria_judgement[{}].result/status 非法: {}",
+                        idx, result
+                    ));
+                }
+                judgement_criteria.insert(criteria_id);
             }
-            judgement_criteria.insert(criteria_id);
         }
         if judgement_criteria != expected_criteria {
-            return Err(format!(
+            report.push(format!(
                 "adjudication.criteria_judgement 覆盖不完整: expected={:?}, actual={:?}",
                 expected_criteria, judgement_criteria
             ));
@@ -2131,291 +2914,365 @@ impl EvolutionManager {
         let adjudication_result = verify_value
             .pointer("/adjudication/overall_result/result")
             .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.jsonc 缺少 adjudication.overall_result.result".to_string())?;
-        let adjudication_passed = adjudication_result == "pass";
-        let adjudication_failed = adjudication_result == "fail";
-        if !adjudication_passed && !adjudication_failed {
-            return Err("verify.jsonc.adjudication.overall_result.result 必须是 pass 或 fail".to_string());
+            .map(|v| v.trim().to_ascii_lowercase());
+        let adjudication_passed = adjudication_result.as_deref() == Some("pass");
+        let adjudication_failed = adjudication_result.as_deref() == Some("fail");
+        match adjudication_result.as_deref() {
+            Some("pass" | "fail") => {}
+            Some(_) => {
+                report.push("verify.jsonc.adjudication.overall_result.result 必须是 pass 或 fail")
+            }
+            None => report.push("verify.jsonc 缺少 adjudication.overall_result.result"),
         }
+
         let next_action_type = verify_value
             .pointer("/adjudication/next_action/type")
             .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.jsonc 缺少 adjudication.next_action.type".to_string())?;
+            .map(|v| v.trim().to_ascii_lowercase());
         let next_action_target = verify_value.pointer("/adjudication/next_action/target");
-        if adjudication_passed {
+        if next_action_type.is_none() {
+            report.push("verify.jsonc 缺少 adjudication.next_action.type");
+        } else if adjudication_passed {
             let target = next_action_target
                 .and_then(|v| v.as_str())
                 .map(|v| v.trim().to_ascii_lowercase())
                 .unwrap_or_default();
-            if next_action_type != "goto_stage" || target != "auto_commit" {
-                return Err(
-                    "verify pass 时 adjudication.next_action 必须是 {type:goto_stage,target:auto_commit}"
-                        .to_string(),
+            if next_action_type.as_deref() != Some("goto_stage") || target != "auto_commit" {
+                report.push(
+                    "verify pass 时 adjudication.next_action 必须是 {type:goto_stage,target:auto_commit}",
                 );
             }
-        } else if verify_iteration < verify_iteration_limit {
+        } else if verify_iteration_limit.is_some_and(|limit| verify_iteration < limit) {
             let target = next_action_target
                 .and_then(|v| v.as_str())
                 .map(|v| v.trim().to_ascii_lowercase())
                 .unwrap_or_default();
-            if next_action_type != "goto_stage"
+            if next_action_type.as_deref() != Some("goto_stage")
                 || !matches!(target.as_str(), "implement_general" | "implement_advanced")
             {
-                return Err(
-                    "verify fail 且未达到 verify_iteration_limit 时 adjudication.next_action 必须跳转 implement_general 或 implement_advanced"
-                        .to_string(),
+                report.push(
+                    "verify fail 且未达到 verify_iteration_limit 时 adjudication.next_action 必须跳转 implement_general 或 implement_advanced",
                 );
             }
-        } else if next_action_type != "stop_cycle"
+        } else if next_action_type.as_deref() != Some("stop_cycle")
             || !next_action_target.is_some_and(|v| v.is_null())
         {
-            return Err(
-                "verify fail 且达到 verify_iteration_limit 时 adjudication.next_action 必须是 {type:stop_cycle,target:null}"
-                    .to_string(),
+            report.push(
+                "verify fail 且达到 verify_iteration_limit 时 adjudication.next_action 必须是 {type:stop_cycle,target:null}",
             );
         }
 
         let requirements = extract_verify_requirements(&verify_value).unwrap_or_default();
         if backlog_contract_version >= 2 && adjudication_failed && requirements.is_empty() {
-            return Err("verify.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string());
+            report.push("verify.jsonc 缺少 adjudication.full_next_iteration_requirements");
         }
+
         let should_validate_v2_selector =
             backlog_contract_version >= 2 && (verify_iteration > 0 || adjudication_failed);
         if should_validate_v2_selector {
-            let plan_value = read_json_file(cycle_dir, "plan.jsonc")?;
-            let tables = parse_plan_routing_tables(&plan_value)?;
-            let check_to_work_items = Self::parse_check_to_work_items(&plan_value)?;
-            for (idx, requirement) in requirements.iter().enumerate() {
-                let selector_label =
-                    format!("adjudication.full_next_iteration_requirements[{}]", idx);
-                let source_criteria_id = id_from_value(
-                    requirement,
-                    &["source_criteria_id", "criteria_id", "criterion_id"],
-                )
-                .ok_or_else(|| format!("{}.source_criteria_id 缺失", selector_label))?;
-                if is_unknown_selector_value(&source_criteria_id) {
-                    return Err(format!(
-                        "{}.source_criteria_id 不能为空且不能为 unknown",
-                        selector_label
-                    ));
+            let plan_value = read_json_file(cycle_dir, "plan.jsonc")
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let plan_tables = parse_plan_routing_tables(&plan_value);
+            let check_to_work_items = Self::parse_check_to_work_items(&plan_value);
+            match (plan_tables, check_to_work_items) {
+                (Ok(tables), Ok(check_to_work_items)) => {
+                    for (idx, requirement) in requirements.iter().enumerate() {
+                        let selector_label =
+                            format!("adjudication.full_next_iteration_requirements[{}]", idx);
+                        let source_criteria_id = id_from_value(
+                            requirement,
+                            &["source_criteria_id", "criteria_id", "criterion_id"],
+                        );
+                        let source_check_id = id_from_value(
+                            requirement,
+                            &["source_check_id", "check_id", "linked_check_id"],
+                        );
+                        let work_item_id = id_from_value(requirement, &["work_item_id"]);
+                        let raw_agent = requirement
+                            .get("implementation_agent")
+                            .and_then(|v| v.as_str());
+
+                        let Some(source_criteria_id) = source_criteria_id else {
+                            report.push(format!("{}.source_criteria_id 缺失", selector_label));
+                            continue;
+                        };
+                        if is_unknown_selector_value(&source_criteria_id) {
+                            report.push(format!(
+                                "{}.source_criteria_id 不能为空且不能为 unknown",
+                                selector_label
+                            ));
+                        }
+
+                        let Some(source_check_id) = source_check_id else {
+                            report.push(format!("{}.source_check_id 缺失", selector_label));
+                            continue;
+                        };
+                        if is_unknown_selector_value(&source_check_id) {
+                            report.push(format!(
+                                "{}.source_check_id 不能为空且不能为 unknown",
+                                selector_label
+                            ));
+                        }
+
+                        let Some(work_item_id) = work_item_id else {
+                            report.push(format!("{}.work_item_id 缺失", selector_label));
+                            continue;
+                        };
+                        if is_unknown_selector_value(&work_item_id) {
+                            report.push(format!(
+                                "{}.work_item_id 不能为空且不能为 unknown",
+                                selector_label
+                            ));
+                        }
+
+                        let Some(raw_agent) = raw_agent else {
+                            report.push(format!("{}.implementation_agent 缺失", selector_label));
+                            continue;
+                        };
+                        if is_unknown_selector_value(raw_agent) {
+                            report.push(format!(
+                                "{}.implementation_agent 不能为空且不能为 unknown",
+                                selector_label
+                            ));
+                            continue;
+                        }
+                        let Some(implementation_agent) = PlanImplementationAgent::parse(raw_agent)
+                        else {
+                            report.push(format!(
+                                "{}.implementation_agent 非法: {}",
+                                selector_label, raw_agent
+                            ));
+                            continue;
+                        };
+
+                        report.capture(validate_requirement_selector_against_plan(
+                            &selector_label,
+                            &source_criteria_id,
+                            &source_check_id,
+                            &work_item_id,
+                            implementation_agent,
+                            &tables,
+                            &check_to_work_items,
+                        ));
+                    }
                 }
-                let source_check_id = id_from_value(
-                    requirement,
-                    &["source_check_id", "check_id", "linked_check_id"],
-                )
-                .ok_or_else(|| format!("{}.source_check_id 缺失", selector_label))?;
-                if is_unknown_selector_value(&source_check_id) {
-                    return Err(format!(
-                        "{}.source_check_id 不能为空且不能为 unknown",
-                        selector_label
-                    ));
-                }
-                let work_item_id = id_from_value(requirement, &["work_item_id"])
-                    .ok_or_else(|| format!("{}.work_item_id 缺失", selector_label))?;
-                if is_unknown_selector_value(&work_item_id) {
-                    return Err(format!(
-                        "{}.work_item_id 不能为空且不能为 unknown",
-                        selector_label
-                    ));
-                }
-                let raw_agent = requirement
-                    .get("implementation_agent")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| format!("{}.implementation_agent 缺失", selector_label))?;
-                if is_unknown_selector_value(raw_agent) {
-                    return Err(format!(
-                        "{}.implementation_agent 不能为空且不能为 unknown",
-                        selector_label
-                    ));
-                }
-                let implementation_agent =
-                    PlanImplementationAgent::parse(raw_agent).ok_or_else(|| {
-                        format!(
-                            "{}.implementation_agent 非法: {}",
-                            selector_label, raw_agent
-                        )
-                    })?;
-                validate_requirement_selector_against_plan(
-                    &selector_label,
-                    &source_criteria_id,
-                    &source_check_id,
-                    &work_item_id,
-                    implementation_agent,
-                    &tables,
-                    &check_to_work_items,
-                )?;
+                (Err(err), _) | (_, Err(err)) => report.push(err),
             }
         }
 
         let mut expected = HashSet::new();
-        for (idx, item) in acceptance_items.iter().enumerate() {
-            let status = item
-                .get("status")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 status", idx))?;
-            if as_failing_status(status) {
-                let criteria_id = id_from_value(item, &["criteria_id"])
-                    .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))?;
-                expected.insert(criteria_id);
+        if let Some(acceptance_items) = acceptance_items {
+            for (idx, item) in acceptance_items.iter().enumerate() {
+                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
+                    report.push(format!("acceptance_evaluation[{}] 缺少 status", idx));
+                    continue;
+                };
+                if as_failing_status(status) {
+                    match id_from_value(item, &["criteria_id"]) {
+                        Some(criteria_id) => {
+                            expected.insert(criteria_id);
+                        }
+                        None => {
+                            report.push(format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))
+                        }
+                    }
+                }
             }
         }
 
         if verify_iteration > 0 {
             let (backlog, _) =
-                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
-            let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
+                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)
+                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             let backlog_set: HashSet<String> = backlog_ids.iter().cloned().collect();
 
             let carry_items = verify_value
                 .pointer("/carryover_verification/items")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    "verify.jsonc 缺少 carryover_verification.items（重实现轮必须提供）"
-                        .to_string()
-                })?;
+                .and_then(|v| v.as_array());
             let carry_summary = verify_value
                 .pointer("/carryover_verification/summary")
-                .and_then(|v| v.as_object())
-                .ok_or_else(|| {
-                    "verify.jsonc 缺少 carryover_verification.summary（重实现轮必须提供）"
-                        .to_string()
-                })?;
-            for key in ["total", "covered", "missing", "blocked"] {
-                if !carry_summary
-                    .get(key)
-                    .and_then(|v| v.as_u64())
-                    .map(|_| true)
-                    .unwrap_or(false)
-                {
-                    return Err(format!(
-                        "verify.jsonc.carryover_verification.summary.{} 必须是数字",
-                        key
-                    ));
+                .and_then(|v| v.as_object());
+
+            match carry_summary {
+                Some(carry_summary) => {
+                    for key in ["total", "covered", "missing", "blocked"] {
+                        if !carry_summary
+                            .get(key)
+                            .and_then(|v| v.as_u64())
+                            .map(|_| true)
+                            .unwrap_or(false)
+                        {
+                            report.push(format!(
+                                "verify.jsonc.carryover_verification.summary.{} 必须是数字",
+                                key
+                            ));
+                        }
+                    }
+                    let total = carry_summary
+                        .get("total")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or_default() as usize;
+                    if total != backlog_ids.len() {
+                        report.push(format!(
+                            "carryover_verification.summary.total 与 failure_backlog 数量不一致: {} vs {}",
+                            total,
+                            backlog_ids.len()
+                        ));
+                    }
+                    let carry_missing = carry_summary
+                        .get("missing")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or_default();
+                    if carry_missing > 0 && verification_overall_result.as_deref() == Some("pass") {
+                        report.push(
+                            "carryover_verification.summary.missing > 0 时 verification_overall.result 不得为 pass",
+                        );
+                    }
                 }
-            }
-            let total = carry_summary
-                .get("total")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_default() as usize;
-            if total != backlog_ids.len() {
-                return Err(format!(
-                    "carryover_verification.summary.total 与 failure_backlog 数量不一致: {} vs {}",
-                    total,
-                    backlog_ids.len()
-                ));
-            }
-            let carry_ids = collect_unique_ids(
-                carry_items,
-                &["id", "item_id"],
-                "carryover_verification.items",
-            )?;
-            let carry_set: HashSet<String> = carry_ids.into_iter().collect();
-            let missing_ids: Vec<String> = backlog_set
-                .difference(&carry_set)
-                .cloned()
-                .collect::<Vec<String>>();
-            if !missing_ids.is_empty() {
-                return Err(format!(
-                    "carryover_verification.items 缺少 backlog 项: {:?}",
-                    missing_ids
-                ));
-            }
-            let carry_missing = carry_summary
-                .get("missing")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_default();
-            if carry_missing > 0 && verification_overall_result == "pass" {
-                return Err(
-                    "carryover_verification.summary.missing > 0 时 verification_overall.result 不得为 pass"
-                        .to_string(),
-                );
+                None => report
+                    .push("verify.jsonc 缺少 carryover_verification.summary（重实现轮必须提供）"),
             }
 
-            for (idx, item) in carry_items.iter().enumerate() {
-                let status = item
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("missing");
-                if is_carryover_failure_status(status) {
-                    let item_id = id_from_value(item, &["id", "item_id"])
-                        .ok_or_else(|| format!("carryover_verification.items[{}] 缺少 id", idx))?;
-                    expected.insert(item_id);
+            match carry_items {
+                Some(carry_items) => {
+                    let carry_ids = match collect_unique_ids(
+                        carry_items,
+                        &["id", "item_id"],
+                        "carryover_verification.items",
+                    ) {
+                        Ok(ids) => Some(ids),
+                        Err(err) => {
+                            report.push(err);
+                            None
+                        }
+                    };
+                    if let Some(carry_ids) = carry_ids {
+                        let carry_set: HashSet<String> = carry_ids.into_iter().collect();
+                        let missing_ids: Vec<String> = backlog_set
+                            .difference(&carry_set)
+                            .cloned()
+                            .collect::<Vec<String>>();
+                        if !missing_ids.is_empty() {
+                            report.push(format!(
+                                "carryover_verification.items 缺少 backlog 项: {:?}",
+                                missing_ids
+                            ));
+                        }
+                    }
+
+                    for (idx, item) in carry_items.iter().enumerate() {
+                        let status = item
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("missing");
+                        if is_carryover_failure_status(status) {
+                            match id_from_value(item, &["id", "item_id"]) {
+                                Some(item_id) => {
+                                    expected.insert(item_id);
+                                }
+                                None => report
+                                    .push(format!("carryover_verification.items[{}] 缺少 id", idx)),
+                            }
+                        }
+                    }
                 }
+                None => report
+                    .push("verify.jsonc 缺少 carryover_verification.items（重实现轮必须提供）"),
             }
         }
 
         if !requirements.is_empty() {
-            let requirement_set = collect_requirement_match_keys(
+            match collect_requirement_match_keys(
                 &requirements,
                 "adjudication.full_next_iteration_requirements",
-            )?;
-            let missing_expected: Vec<String> = expected
-                .difference(&requirement_set)
-                .cloned()
-                .collect::<Vec<String>>();
-            if !missing_expected.is_empty() {
-                return Err(format!(
-                    "adjudication.full_next_iteration_requirements 未覆盖 verify 未通过项: {:?}",
-                    missing_expected
-                ));
+            ) {
+                Ok(requirement_set) => {
+                    let missing_expected: Vec<String> = expected
+                        .difference(&requirement_set)
+                        .cloned()
+                        .collect::<Vec<String>>();
+                    if !missing_expected.is_empty() {
+                        report.push(format!(
+                            "adjudication.full_next_iteration_requirements 未覆盖 verify 未通过项: {:?}",
+                            missing_expected
+                        ));
+                    }
+                }
+                Err(err) => report.push(err),
             }
         }
-        Ok(())
+
+        report.into_error("artifact_contract_violation")
     }
     fn validate_direction_artifact(
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let stage_value = read_json_file(cycle_dir, "direction.jsonc")?;
+    ) -> Result<(), ArtifactValidationError> {
+        let stage_value = read_json_file(cycle_dir, "direction.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("direction.jsonc", &stage_value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("direction.jsonc", &stage_value, ctx.stage_started_at)?;
+            report.capture(ensure_cycle_id_matches(
+                "direction.jsonc",
+                &stage_value,
+                &ctx.cycle_id,
+            ));
+            report.capture(ensure_artifact_freshness(
+                "direction.jsonc",
+                &stage_value,
+                ctx.stage_started_at,
+            ));
         }
-        let cycle_title = extract_cycle_title_from_direction_stage(&stage_value)
-            .ok_or_else(|| "direction.jsonc 缺少 cycle_title".to_string())?;
-        if cycle_title.trim().is_empty() {
-            return Err("direction.jsonc.cycle_title 不能为空".to_string());
+        match extract_cycle_title_from_direction_stage(&stage_value) {
+            Some(cycle_title) if cycle_title.trim().is_empty() => {
+                report.push("direction.jsonc.cycle_title 不能为空")
+            }
+            Some(_) => {}
+            None => report.push("direction.jsonc 缺少 cycle_title"),
         }
         let capability = stage_value
             .pointer("/decision/context/capability_assessment")
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| {
-                "direction.jsonc 缺少 decision.context.capability_assessment".to_string()
-            })?;
-        for key in [
-            "ui_capability",
-            "test_capability",
-            "build_capability",
-            "runtime_capability",
-            "rationale",
-        ] {
-            let value = capability.get(key).ok_or_else(|| {
-                format!(
-                    "direction.jsonc.decision.context.capability_assessment.{} 缺少",
-                    key
-                )
-            })?;
-            let text = value.as_str().ok_or_else(|| {
-                if key == "rationale" {
-                    format!(
-                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串",
-                        key
-                    )
-                } else {
-                    format!(
-                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
-                        key
-                    )
+            .and_then(|v| v.as_object());
+        match capability {
+            Some(capability) => {
+                for key in [
+                    "ui_capability",
+                    "test_capability",
+                    "build_capability",
+                    "runtime_capability",
+                    "rationale",
+                ] {
+                    match capability.get(key) {
+                        Some(value) => match value.as_str() {
+                            Some(text) if !text.trim().is_empty() => {}
+                            Some(_) => report.push(format!(
+                                "direction.jsonc.decision.context.capability_assessment.{} 不能为空",
+                                key
+                            )),
+                            None => {
+                                if key == "rationale" {
+                                    report.push(format!(
+                                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串",
+                                        key
+                                    ));
+                                } else {
+                                    report.push(format!(
+                                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                                        key
+                                    ));
+                                }
+                            }
+                        },
+                        None => report.push(format!(
+                            "direction.jsonc.decision.context.capability_assessment.{} 缺少",
+                            key
+                        )),
+                    }
                 }
-            })?;
-            if text.trim().is_empty() {
-                return Err(format!(
-                    "direction.jsonc.decision.context.capability_assessment.{} 不能为空",
-                    key
-                ));
             }
+            None => report.push("direction.jsonc 缺少 decision.context.capability_assessment"),
         }
         let next_type = stage_value
             .pointer("/next_action/type")
@@ -2426,155 +3283,159 @@ impl EvolutionManager {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         if next_type != "goto_stage" || next_target != "plan" {
-            return Err(
-                "direction.jsonc.next_action 必须是 {type:goto_stage,target:plan}".to_string(),
-            );
+            report.push("direction.jsonc.next_action 必须是 {type:goto_stage,target:plan}");
         }
-        validate_handoff_info("direction.jsonc", &stage_value)?;
+        report.capture(validate_handoff_info("direction.jsonc", &stage_value));
 
         for key in ["project_type", "ui_capability", "updated_at"] {
-            let value = stage_value
-                .get(key)
-                .ok_or_else(|| format!("direction.jsonc.{} 缺少", key))?;
-            let text = value.as_str().ok_or_else(|| {
-                if key == "ui_capability" {
-                    format!(
-                        "direction.jsonc.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
-                        key
-                    )
-                } else {
-                    format!("direction.jsonc.{} 必须是非空字符串", key)
-                }
-            })?;
-            if text.trim().is_empty() {
-                return Err(format!("direction.jsonc.{} 不能为空", key));
+            match stage_value.get(key) {
+                Some(value) => match value.as_str() {
+                    Some(text) if !text.trim().is_empty() => {}
+                    Some(_) => report.push(format!("direction.jsonc.{} 不能为空", key)),
+                    None => {
+                        if key == "ui_capability" {
+                            report.push(format!(
+                                "direction.jsonc.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                                key
+                            ));
+                        } else {
+                            report.push(format!("direction.jsonc.{} 必须是非空字符串", key));
+                        }
+                    }
+                },
+                None => report.push(format!("direction.jsonc.{} 缺少", key)),
             }
         }
-        let domains = stage_value
-            .get("domains")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "direction.jsonc 缺少 domains".to_string())?;
-        if domains.is_empty() {
-            return Err("direction.jsonc.domains 不能为空".to_string());
-        }
-        for (idx, domain) in domains.iter().enumerate() {
-            let obj = domain.as_object().ok_or_else(|| {
-                format!("direction.jsonc.domains[{}] 必须是对象", idx)
-            })?;
-            for key in ["domain", "status"] {
-                if obj
-                    .get(key)
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.trim().is_empty())
-                    .unwrap_or(true)
-                {
-                    return Err(format!(
-                        "direction.jsonc.domains[{}].{} 不能为空",
-                        idx, key
-                    ));
+        let domains = stage_value.get("domains").and_then(|v| v.as_array());
+        match domains {
+            Some(domains) => {
+                if domains.is_empty() {
+                    report.push("direction.jsonc.domains 不能为空");
+                }
+                for (idx, domain) in domains.iter().enumerate() {
+                    let Some(obj) = domain.as_object() else {
+                        report.push(format!("direction.jsonc.domains[{}] 必须是对象", idx));
+                        continue;
+                    };
+                    for key in ["domain", "status"] {
+                        if obj
+                            .get(key)
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.trim().is_empty())
+                            .unwrap_or(true)
+                        {
+                            report
+                                .push(format!("direction.jsonc.domains[{}].{} 不能为空", idx, key));
+                        }
+                    }
+                    if obj
+                        .get("evidence_paths")
+                        .and_then(|v| v.as_array())
+                        .is_none()
+                    {
+                        report.push(format!(
+                            "direction.jsonc.domains[{}].evidence_paths 缺少数组",
+                            idx
+                        ));
+                    }
+                    if obj.get("findings").and_then(|v| v.as_array()).is_none() {
+                        report.push(format!(
+                            "direction.jsonc.domains[{}].findings 缺少数组",
+                            idx
+                        ));
+                    }
+                    match obj.get("opportunities").and_then(|v| v.as_array()) {
+                        Some(opportunities) => {
+                            for (op_idx, op) in opportunities.iter().enumerate() {
+                                let mapped_direction = op
+                                    .get("mapped_direction_type")
+                                    .and_then(|v| v.as_str())
+                                    .map(|v| v.trim().to_ascii_lowercase());
+                                match mapped_direction {
+                                    Some(mapped_direction)
+                                        if VALID_DIRECTION_TYPES
+                                            .contains(&mapped_direction.as_str()) => {}
+                                    Some(mapped_direction) => report.push(format!(
+                                        "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
+                                        idx, op_idx, mapped_direction
+                                    )),
+                                    None => report.push(format!(
+                                        "direction.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
+                                        idx, op_idx
+                                    )),
+                                }
+                            }
+                        }
+                        None => report.push(format!(
+                            "direction.jsonc.domains[{}].opportunities 缺少数组",
+                            idx
+                        )),
+                    }
                 }
             }
-            if obj
-                .get("evidence_paths")
-                .and_then(|v| v.as_array())
-                .is_none()
-            {
-                return Err(format!(
-                    "direction.jsonc.domains[{}].evidence_paths 缺少数组",
-                    idx
-                ));
-            }
-            if obj.get("findings").and_then(|v| v.as_array()).is_none() {
-                return Err(format!(
-                    "direction.jsonc.domains[{}].findings 缺少数组",
-                    idx
-                ));
-            }
-            let opportunities = obj
-                .get("opportunities")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    format!(
-                        "direction.jsonc.domains[{}].opportunities 缺少数组",
-                        idx
-                    )
-                })?;
-            for (op_idx, op) in opportunities.iter().enumerate() {
-                let mapped_direction = op
-                    .get("mapped_direction_type")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.trim().to_ascii_lowercase())
-                    .ok_or_else(|| {
-                        format!(
-                            "direction.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
-                            idx, op_idx
-                        )
-                    })?;
-                if !VALID_DIRECTION_TYPES.contains(&mapped_direction.as_str()) {
-                    return Err(format!(
-                        "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
-                        idx, op_idx, mapped_direction
-                    ));
-                }
-            }
+            None => report.push("direction.jsonc 缺少 domains"),
         }
 
         let selected_type = stage_value
             .get("selected_direction_type")
             .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "direction.jsonc.selected_direction_type 缺失".to_string())?;
-        if !VALID_DIRECTION_TYPES.contains(&selected_type.as_str()) {
-            return Err(format!(
+            .map(|v| v.trim().to_ascii_lowercase());
+        match selected_type {
+            Some(selected_type) if VALID_DIRECTION_TYPES.contains(&selected_type.as_str()) => {}
+            Some(selected_type) => report.push(format!(
                 "direction.jsonc.selected_direction_type 非法: {}",
                 selected_type
-            ));
+            )),
+            None => report.push("direction.jsonc.selected_direction_type 缺失"),
         }
         let candidate_scores = stage_value
             .get("candidate_scores")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "direction.jsonc.candidate_scores 缺失".to_string())?;
-        if candidate_scores.len() < 3 || candidate_scores.len() > 5 {
-            return Err(format!(
-                "direction.jsonc.candidate_scores 数量必须在 3..=5，当前 {}",
-                candidate_scores.len()
-            ));
-        }
-        let mut previous_score: Option<f64> = None;
-        for (idx, score_item) in candidate_scores.iter().enumerate() {
-            let direction_type = score_item
-                .get("direction_type")
-                .or_else(|| score_item.get("type"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().to_ascii_lowercase())
-                .ok_or_else(|| {
-                    format!(
-                        "direction.jsonc.candidate_scores[{}] 缺少 direction_type",
-                        idx
-                    )
-                })?;
-            if !VALID_DIRECTION_TYPES.contains(&direction_type.as_str()) {
-                return Err(format!(
-                    "direction.jsonc.candidate_scores[{}].direction_type 非法: {}",
-                    idx, direction_type
-                ));
-            }
-            let score = score_item
-                .get("score")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| format!("candidate_scores[{}].score 缺失", idx))?;
-            if !(0.0..=1.0).contains(&score) {
-                return Err(format!(
-                    "candidate_scores[{}].score 必须在 0..=1，当前 {}",
-                    idx, score
-                ));
-            }
-            if let Some(prev) = previous_score {
-                if score > prev {
-                    return Err("direction.candidate_scores 必须按 score 降序排列".to_string());
+            .and_then(|v| v.as_array());
+        match candidate_scores {
+            Some(candidate_scores) => {
+                if candidate_scores.len() < 3 || candidate_scores.len() > 5 {
+                    report.push(format!(
+                        "direction.jsonc.candidate_scores 数量必须在 3..=5，当前 {}",
+                        candidate_scores.len()
+                    ));
+                }
+                let mut previous_score: Option<f64> = None;
+                for (idx, score_item) in candidate_scores.iter().enumerate() {
+                    let direction_type = score_item
+                        .get("direction_type")
+                        .or_else(|| score_item.get("type"))
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.trim().to_ascii_lowercase());
+                    match direction_type {
+                        Some(direction_type)
+                            if VALID_DIRECTION_TYPES.contains(&direction_type.as_str()) => {}
+                        Some(direction_type) => report.push(format!(
+                            "direction.jsonc.candidate_scores[{}].direction_type 非法: {}",
+                            idx, direction_type
+                        )),
+                        None => report.push(format!(
+                            "direction.jsonc.candidate_scores[{}] 缺少 direction_type",
+                            idx
+                        )),
+                    }
+                    match score_item.get("score").and_then(|v| v.as_f64()) {
+                        Some(score) if (0.0..=1.0).contains(&score) => {
+                            if let Some(prev) = previous_score {
+                                if score > prev {
+                                    report.push("direction.candidate_scores 必须按 score 降序排列");
+                                }
+                            }
+                            previous_score = Some(score);
+                        }
+                        Some(score) => report.push(format!(
+                            "candidate_scores[{}].score 必须在 0..=1，当前 {}",
+                            idx, score
+                        )),
+                        None => report.push(format!("candidate_scores[{}].score 缺失", idx)),
+                    }
                 }
             }
-            previous_score = Some(score);
+            None => report.push("direction.jsonc.candidate_scores 缺失"),
         }
         let final_reason = stage_value
             .get("final_reason")
@@ -2582,49 +3443,59 @@ impl EvolutionManager {
             .map(|v| v.trim())
             .unwrap_or_default();
         if final_reason.is_empty() {
-            return Err("direction.jsonc.final_reason 不能为空".to_string());
+            report.push("direction.jsonc.final_reason 不能为空");
         }
         let criteria = stage_value
             .get("acceptance_criteria")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "direction.jsonc.acceptance_criteria 缺失".to_string())?;
-        if criteria.is_empty() {
-            return Err("direction.jsonc.acceptance_criteria 不能为空".to_string());
-        }
-        for (idx, item) in criteria.iter().enumerate() {
-            let _criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
-                format!(
-                    "direction.jsonc.acceptance_criteria[{}] 缺少 criteria_id",
-                    idx
-                )
-            })?;
-            let description = item
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim())
-                .unwrap_or_default();
-            if description.is_empty() {
-                return Err(format!(
-                    "direction.jsonc.acceptance_criteria[{}].description 不能为空",
-                    idx
-                ));
+            .and_then(|v| v.as_array());
+        match criteria {
+            Some(criteria) => {
+                if criteria.is_empty() {
+                    report.push("direction.jsonc.acceptance_criteria 不能为空");
+                }
+                for (idx, item) in criteria.iter().enumerate() {
+                    if id_from_value(item, &["criteria_id"]).is_none() {
+                        report.push(format!(
+                            "direction.jsonc.acceptance_criteria[{}] 缺少 criteria_id",
+                            idx
+                        ));
+                    }
+                    let description = item
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.trim())
+                        .unwrap_or_default();
+                    if description.is_empty() {
+                        report.push(format!(
+                            "direction.jsonc.acceptance_criteria[{}].description 不能为空",
+                            idx
+                        ));
+                    }
+                }
             }
+            None => report.push("direction.jsonc.acceptance_criteria 缺失"),
         }
-        Ok(())
+        report.into_error("artifact_contract_violation")
     }
 
     fn validate_auto_commit_artifact(
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let stage_auto_commit = read_json_file(cycle_dir, "auto_commit.jsonc")?;
+    ) -> Result<(), ArtifactValidationError> {
+        let stage_auto_commit = read_json_file(cycle_dir, "auto_commit.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("auto_commit.jsonc", &stage_auto_commit, &ctx.cycle_id)?;
-            ensure_artifact_freshness(
+            report.capture(ensure_cycle_id_matches(
+                "auto_commit.jsonc",
+                &stage_auto_commit,
+                &ctx.cycle_id,
+            ));
+            report.capture(ensure_artifact_freshness(
                 "auto_commit.jsonc",
                 &stage_auto_commit,
                 ctx.stage_started_at,
-            )?;
+            ));
         }
         let next_type = stage_auto_commit
             .pointer("/next_action/type")
@@ -2635,16 +3506,17 @@ impl EvolutionManager {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         if next_type != "goto_stage" || next_target != "direction" {
-            return Err(
-                "auto_commit.jsonc.next_action 必须是 {type:goto_stage,target:direction}"
-                    .to_string(),
-            );
+            report.push("auto_commit.jsonc.next_action 必须是 {type:goto_stage,target:direction}");
         }
-        validate_handoff_info("auto_commit.jsonc", &stage_auto_commit)?;
+        report.capture(validate_handoff_info(
+            "auto_commit.jsonc",
+            &stage_auto_commit,
+        ));
 
         if let Some(ctx) = validation_ctx {
             let workspace_root = Path::new(ctx.workspace_root.as_str());
-            let repo_dirty = git_repo_has_changes(workspace_root)?;
+            let repo_dirty = git_repo_has_changes(workspace_root)
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             if repo_dirty {
                 let reason = stage_auto_commit
                     .pointer("/decision/reason")
@@ -2654,14 +3526,12 @@ impl EvolutionManager {
                 let no_changes_declared =
                     reason.contains("无可提交变更") || reason.contains("no changes to commit");
                 if !no_changes_declared {
-                    return Err(
-                        "auto_commit 阶段结束后工作区仍有未提交变更，且未声明“无可提交变更”"
-                            .to_string(),
-                    );
+                    report
+                        .push("auto_commit 阶段结束后工作区仍有未提交变更，且未声明“无可提交变更”");
                 }
             }
         }
-        Ok(())
+        report.into_error("artifact_contract_violation")
     }
 
     fn validate_stage_artifacts_with_context(
@@ -2670,7 +3540,7 @@ impl EvolutionManager {
         verify_iteration: u32,
         backlog_contract_version: u32,
         validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ArtifactValidationError> {
         match stage {
             "direction" => Self::validate_direction_artifact(cycle_dir, validation_ctx),
             "plan" => Self::validate_plan_artifact(cycle_dir, validation_ctx),
@@ -2708,6 +3578,7 @@ impl EvolutionManager {
             backlog_contract_version,
             None,
         )
+        .map_err(|err| err.message)
     }
 
     fn extract_acceptance_mapping_criteria(
@@ -2716,9 +3587,7 @@ impl EvolutionManager {
         let mapping = value
             .pointer("/verification_plan/acceptance_mapping")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
-            })?;
+            .ok_or_else(|| "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string())?;
 
         let mut out = Vec::new();
         for item in mapping {
@@ -3103,53 +3972,47 @@ impl EvolutionManager {
     ) -> Result<(), String> {
         let cycle_id = read_json_file(cycle_dir, "cycle.jsonc")
             .ok()
-            .and_then(|v| v.get("cycle_id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("cycle_id")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_default();
 
         match stage {
             "direction" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("direction.jsonc"),
-                    &format!(
-                        "{{\n  // Direction 阶段模板：保留结构，仅填写可变字段\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"direction\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"cycle_title\": \"\",\n  \"decision\": {{\n    \"result\": \"n/a\",\n    \"reason\": \"\",\n    \"context\": {{\n      \"capability_assessment\": {{\n        \"ui_capability\": \"none\",\n        \"test_capability\": \"none\",\n        \"build_capability\": \"none\",\n        \"runtime_capability\": \"none\",\n        \"rationale\": \"\"\n      }}\n    }}\n  }},\n  \"project_type\": \"\",\n  \"ui_capability\": \"none\",\n  \"domains\": [],\n  \"selected_direction_type\": \"\",\n  \"candidate_scores\": [],\n  \"final_reason\": \"\",\n  \"acceptance_criteria\": [],\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"plan\"}},\n  \"updated_at\": \"\"\n}}\n",
-                        cycle_id
-                    ),
+                    &direction_stage_template(&cycle_id),
                 )?;
             }
             "plan" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("plan.jsonc"),
-                    &format!(
-                        "{{\n  // Plan 阶段模板：拆解 work_items 与验证计划\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"plan\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"summary\": \"\",\n  \"selected_direction_type\": \"\",\n  \"work_items\": [],\n  \"verification_plan\": {{\"checks\": [], \"acceptance_mapping\": []}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n  \"updated_at\": \"\"\n}}\n",
-                        cycle_id
-                    ),
+                    &plan_stage_template(&cycle_id),
                 )?;
             }
             "implement_general" | "implement_visual" | "implement_advanced" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join(format!("{}.jsonc", stage)),
-                    &format!(
-                        "{{\n  // Implement 阶段模板：合并阶段状态、执行结果与 backlog 回填\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"{}\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"summary\": \"\",\n  \"work_item_results\": [],\n  \"changed_files\": [],\n  \"commands_executed\": [],\n  \"quick_checks\": [],\n  \"verify_iteration\": {},\n  \"backlog_contract_version\": {},\n  \"backlog_resolution_updates\": [],\n  \"failure_backlog\": [],\n  \"backlog_coverage\": [],\n  \"backlog_coverage_summary\": {{\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"verify\"}},\n  \"updated_at\": \"\"\n}}\n",
-                        stage, cycle_id, verify_iteration, backlog_contract_version
+                    &implement_stage_template(
+                        stage,
+                        &cycle_id,
+                        verify_iteration,
+                        backlog_contract_version,
                     ),
                 )?;
             }
             "verify" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("verify.jsonc"),
-                    &format!(
-                        "{{\n  // Verify 阶段模板：验证与裁决统一写入本文件\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"verify\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"verify_iteration\": {},\n  \"verify_iteration_limit\": {},\n  \"summary\": \"\",\n  \"check_results\": [],\n  \"acceptance_evaluation\": [],\n  \"verification_overall\": {{\"result\": \"fail\", \"reason\": \"\"}},\n  \"carryover_verification\": {{\"items\": [], \"summary\": {{\"total\": 0, \"covered\": 0, \"missing\": 0, \"blocked\": 0}}}},\n  \"adjudication\": {{\n    \"criteria_judgement\": [],\n    \"overall_result\": {{\"result\": \"fail\", \"reason\": \"\"}},\n    \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n    \"full_next_iteration_requirements\": []\n  }},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"auto_commit\"}},\n  \"updated_at\": \"\"\n}}\n",
-                        cycle_id, verify_iteration, verify_iteration_limit
-                    ),
+                    &verify_stage_template(&cycle_id, verify_iteration, verify_iteration_limit),
                 )?;
             }
             "auto_commit" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("auto_commit.jsonc"),
-                    &format!(
-                        "{{\n  // Auto commit 阶段模板\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"auto_commit\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"direction\"}},\n  \"updated_at\": \"\"\n}}\n",
-                        cycle_id
-                    ),
+                    &auto_commit_stage_template(&cycle_id),
                 )?;
             }
             _ => {}
@@ -3158,7 +4021,7 @@ impl EvolutionManager {
         if verify_iteration > 0 && backlog_contract_version >= 2 {
             Self::ensure_jsonc_template(
                 &cycle_dir.join(MANAGED_BACKLOG_FILE),
-                "{\n  // 托管 backlog 模板：系统维护 selector 与统计，代理只回填允许字段\n  \"$schema_version\": \"2.0\",\n  \"cycle_id\": \"\",\n  \"verify_iteration\": 0,\n  \"items\": [],\n  \"summary\": {\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0},\n  \"updated_at\": \"\"\n}\n",
+                &managed_backlog_template(&cycle_id, verify_iteration),
             )?;
         }
 
@@ -3558,9 +4421,7 @@ impl EvolutionManager {
             "plan" => "plan.jsonc / direction.jsonc".to_string(),
             "implement_general" => "implement_general.jsonc / managed.backlog.jsonc".to_string(),
             "implement_visual" => "implement_visual.jsonc / managed.backlog.jsonc".to_string(),
-            "implement_advanced" => {
-                "implement_advanced.jsonc / managed.backlog.jsonc".to_string()
-            }
+            "implement_advanced" => "implement_advanced.jsonc / managed.backlog.jsonc".to_string(),
             "verify" => "verify.jsonc / plan.jsonc / managed.backlog.jsonc".to_string(),
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
@@ -3700,38 +4561,55 @@ impl EvolutionManager {
             .to_string()
     }
 
-    fn build_validation_reminder_spec(stage: &str, validation_err: &str) -> ValidationReminderSpec {
-        let (error_code, parsed_error_message) =
-            Self::parse_validation_error_code_and_message(validation_err);
-        let root_cause = if parsed_error_message.trim().is_empty() {
-            format!("未提供详细错误信息（{}）", error_code)
-        } else {
-            parsed_error_message
-        };
-        let expected_format = Self::build_validation_fix_hint(stage, root_cause.as_str());
+    fn build_validation_reminder_spec(
+        stage: &str,
+        validation_err: &ArtifactValidationError,
+    ) -> ValidationReminderSpec {
+        let mut fix_hints = Vec::new();
+        for issue in validation_err.issues() {
+            let hint = Self::build_validation_fix_hint(stage, issue);
+            if !fix_hints.iter().any(|existing| existing == &hint) {
+                fix_hints.push(hint);
+            }
+        }
         let target_files = Self::validation_target_files_for_stage(stage);
         let immediate_fix_actions = vec![
             format!("打开并修改目标产物：{}", target_files),
-            "按“期望格式”修正根因字段，确保字段名/类型/必填项正确。".to_string(),
+            "按“问题清单”逐项修正字段名/类型/必填项，务必一次性改完再重试。".to_string(),
             "重新输出本阶段产物并自检；不要只解释，不要停留在分析。".to_string(),
         ];
 
         ValidationReminderSpec {
-            error_code,
-            root_cause,
-            expected_format,
+            error_code: validation_err.code.to_string(),
+            summary: validation_err.message.clone(),
+            issues: validation_err.issues().to_vec(),
+            fix_hints,
             immediate_fix_actions,
-            raw_error: validation_err.trim().to_string(),
+            raw_error: validation_err.to_stage_error(),
         }
     }
 
-    fn build_validation_reminder_message(stage: &str, validation_err: &str) -> String {
+    fn build_validation_reminder_message(
+        stage: &str,
+        validation_err: &ArtifactValidationError,
+    ) -> String {
         let spec = Self::build_validation_reminder_spec(stage, validation_err);
-        let lines = vec![
+        let mut lines = vec![
             format!("【VALIDATION_BLOCKER｜阶段:{}】", stage),
             format!("错误码：{}", spec.error_code),
-            format!("根因：{}", spec.root_cause),
-            format!("期望格式：{}", spec.expected_format),
+            format!("摘要：{}", spec.summary),
+            "问题清单：".to_string(),
+        ];
+        for (idx, issue) in spec.issues.iter().enumerate() {
+            lines.push(format!("{}. {}", idx + 1, issue));
+        }
+        if !spec.fix_hints.is_empty() {
+            lines.push("修复提示：".to_string());
+            for (idx, hint) in spec.fix_hints.iter().enumerate() {
+                lines.push(format!("{}. {}", idx + 1, hint));
+            }
+        }
+        lines.extend(vec![
             "立即修复动作：".to_string(),
             format!(
                 "1. {}",
@@ -3755,10 +4633,11 @@ impl EvolutionManager {
                     .unwrap_or_default()
             ),
             format!("原始报错：{}", spec.raw_error),
-        ];
+        ]);
         format!("<system-reminder>{}</system-reminder>", lines.join("\n"))
     }
 
+    #[cfg(test)]
     fn parse_validation_error_code_and_message(validation_err: &str) -> (String, String) {
         let trimmed = validation_err.trim();
         let payload = trimmed
@@ -3795,11 +4674,12 @@ impl EvolutionManager {
         stage: &str,
         attempt: u32,
         session_id: &str,
-        validation_err: &str,
+        validation_err: &ArtifactValidationError,
     ) -> Result<(), String> {
         let cycle_file = cycle_dir.join("cycle.jsonc");
         let mut value = if cycle_file.exists() {
-            read_json(&cycle_file).map_err(|e| format!("读取 {} 失败: {}", cycle_file.display(), e))?
+            read_json(&cycle_file)
+                .map_err(|e| format!("读取 {} 失败: {}", cycle_file.display(), e))?
         } else {
             serde_json::json!({})
         };
@@ -3815,20 +4695,24 @@ impl EvolutionManager {
         let stage_entry = runtime_obj
             .entry(stage.to_string())
             .or_insert_with(|| serde_json::json!({}));
-        let stage_obj = stage_entry
-            .as_object_mut()
-            .ok_or_else(|| format!("{}.stage_runtime.{} 必须是对象", cycle_file.display(), stage))?;
+        let stage_obj = stage_entry.as_object_mut().ok_or_else(|| {
+            format!(
+                "{}.stage_runtime.{} 必须是对象",
+                cycle_file.display(),
+                stage
+            )
+        })?;
         let attempts = stage_obj
             .entry("validation_attempts".to_string())
             .or_insert_with(|| serde_json::json!([]));
         let attempts_array = attempts
             .as_array_mut()
             .ok_or_else(|| format!("{}.validation_attempts 必须是数组", cycle_file.display()))?;
-        let (error_code, message) = Self::parse_validation_error_code_and_message(validation_err);
         attempts_array.push(serde_json::json!({
             "attempt": attempt,
-            "error_code": error_code,
-            "message": message,
+            "error_code": validation_err.code,
+            "message": validation_err.message.clone(),
+            "issues": validation_err.issues().to_vec(),
             "ts": Utc::now().to_rfc3339(),
             "session_id": session_id,
         }));
@@ -4207,15 +5091,17 @@ impl EvolutionManager {
             if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
                 if let Ok(json) = read_json_file(&cycle_dir, "verify.jsonc") {
                     if let Some(parsed) = parse_adjudication_result_from_json(&json) {
-                    verify_pass = parsed;
+                        verify_pass = parsed;
+                    } else {
+                        return Err(
+                            "verify structured result missing: require verify.jsonc with pass/fail"
+                                .to_string(),
+                        );
+                    }
                 } else {
                     return Err(
-                            "verify structured result missing: require verify.jsonc with pass/fail"
-                            .to_string(),
+                        "verify structured result missing: require verify.jsonc".to_string()
                     );
-                }
-                } else {
-                    return Err("verify structured result missing: require verify.jsonc".to_string());
                 }
             }
         } else {
@@ -4233,7 +5119,7 @@ impl EvolutionManager {
         key: &str,
         stage: &str,
         cycle_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), ArtifactValidationError> {
         let validation_ctx = {
             let state = self.state.lock().await;
             state
@@ -4251,9 +5137,11 @@ impl EvolutionManager {
                 })
         };
         if let Some(mut ctx) = validation_ctx {
-            let cycle_dir = cycle_dir_path(&ctx.workspace_root, cycle_id)?;
+            let cycle_dir = cycle_dir_path(&ctx.workspace_root, cycle_id)
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             let contract_version = if ctx.backlog_contract_version == 0 {
-                backlog_contract_version_from_cycle(&cycle_dir)?
+                backlog_contract_version_from_cycle(&cycle_dir)
+                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?
             } else {
                 ctx.backlog_contract_version
             };
@@ -4262,9 +5150,7 @@ impl EvolutionManager {
                 && contract_version >= 2
                 && Self::lane_for_stage(stage).is_some()
             {
-                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage).map_err(|e| {
-                    ArtifactValidationError::new("managed_backlog_sync_failed", e).to_stage_error()
-                })?;
+                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)?;
             }
             Self::validate_stage_artifacts_with_context(
                 stage,
@@ -4272,23 +5158,15 @@ impl EvolutionManager {
                 ctx.verify_iteration,
                 contract_version,
                 Some(&ctx),
-            )
-            .map_err(|e| {
-                ArtifactValidationError::new("artifact_contract_violation", e).to_stage_error()
-            })?;
+            )?;
             if stage == "direction" {
                 self.sync_direction_state_from_artifact(key, cycle_id)
                     .await
-                    .map_err(|e| {
-                        ArtifactValidationError::new("direction_state_sync_failed", e)
-                            .to_stage_error()
-                    })?;
+                    .map_err(|e| ArtifactValidationError::new("direction_state_sync_failed", e))?;
             }
             self.sync_handoff_from_stage_artifact(key, cycle_id, stage)
                 .await
-                .map_err(|e| {
-                    ArtifactValidationError::new("handoff_sync_failed", e).to_stage_error()
-                })?;
+                .map_err(|e| ArtifactValidationError::new("handoff_sync_failed", e))?;
         }
         Ok(())
     }
@@ -4354,7 +5232,7 @@ impl EvolutionManager {
         session_id: &str,
         directory: &str,
         agent: &Arc<dyn AiAgent>,
-        validation_err: &str,
+        validation_err: &ArtifactValidationError,
         model: Option<AiModelSelection>,
         mode: Option<String>,
         config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
@@ -4563,6 +5441,7 @@ impl EvolutionManager {
             match self.validate_stage_outputs(key, stage, cycle_id).await {
                 Ok(()) => break,
                 Err(validation_err) => {
+                    let validation_err_text = validation_err.to_stage_error();
                     let validation_attempt_no = reminder_attempts + 1;
                     if let Err(log_err) = Self::append_stage_validation_attempt(
                         &cycle_dir,
@@ -4577,7 +5456,7 @@ impl EvolutionManager {
                         );
                     }
 
-                    if !Self::should_retry_validation_with_reminder(stage, &validation_err) {
+                    if !Self::should_retry_validation_with_reminder(stage, &validation_err_text) {
                         let tool_call_count = self.stage_tool_call_count(key, stage).await;
                         self.finalize_session_execution(
                             key,
@@ -4595,7 +5474,7 @@ impl EvolutionManager {
                             &run_ctx.session_id,
                         )
                         .await;
-                        return Err(validation_err);
+                        return Err(validation_err_text);
                     }
 
                     if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
@@ -4606,11 +5485,11 @@ impl EvolutionManager {
                             workspace,
                             Some(run_ctx.ai_tool.as_str()),
                             Some(&run_ctx.session_id),
-                            &validation_err,
+                            &validation_err_text,
                             ctx,
                         )
                         .await;
-                        return Err(validation_err);
+                        return Err(validation_err_text);
                     }
 
                     reminder_attempts += 1;
@@ -4640,7 +5519,7 @@ impl EvolutionManager {
 
                         let combined_err = format!(
                             "{}; validation reminder failed: {}",
-                            validation_err, reminder_err
+                            validation_err_text, reminder_err
                         );
                         warn!(
                             "validation reminder failed: key={}, stage={}, attempt={}/{}, error={}",
@@ -5571,13 +6450,12 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{
-        stage::next_stage,
-        STAGES,
-    };
+    use super::super::{stage::next_stage, STAGES};
     use super::{
-        parse_adjudication_result_from_json, should_force_advanced_reimplementation,
-        should_start_next_round, EvolutionManager, ImplementLane, StageValidationContext,
+        auto_commit_stage_template, direction_stage_template, implement_stage_template,
+        managed_backlog_template, parse_adjudication_result_from_json, plan_stage_template,
+        should_force_advanced_reimplementation, should_start_next_round, verify_stage_template,
+        ArtifactValidationError, EvolutionManager, ImplementLane, StageValidationContext,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -5719,15 +6597,12 @@ mod tests {
                     .unwrap_or_else(|| format!("backlog-{}", obj.len()));
                 let coverage_item = coverage_by_id.get(&item_id);
                 obj.insert("id".to_string(), serde_json::json!(item_id));
-                obj.entry("status".to_string())
-                    .or_insert_with(|| {
-                        serde_json::json!(
-                            coverage_item
-                                .and_then(|value| value.get("status"))
-                                .and_then(|value| value.as_str())
-                                .unwrap_or("not_done")
-                        )
-                    });
+                obj.entry("status".to_string()).or_insert_with(|| {
+                    serde_json::json!(coverage_item
+                        .and_then(|value| value.get("status"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("not_done"))
+                });
                 obj.entry("evidence".to_string())
                     .or_insert_with(|| serde_json::json!({}));
                 obj.entry("notes".to_string())
@@ -5853,14 +6728,34 @@ mod tests {
     fn expected_validation_reminder(
         stage: &str,
         error_code: &str,
-        root_cause: &str,
-        expected_format: &str,
+        summary: &str,
+        issues: &[&str],
+        fix_hints: &[&str],
         target_files: &str,
         raw_error: &str,
     ) -> String {
+        let issue_lines = issues
+            .iter()
+            .enumerate()
+            .map(|(idx, issue)| format!("{}. {}", idx + 1, issue))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fix_hint_lines = if fix_hints.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n修复提示：\n{}",
+                fix_hints
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, hint)| format!("{}. {}", idx + 1, hint))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
         format!(
-            "<system-reminder>【VALIDATION_BLOCKER｜阶段:{}】\n错误码：{}\n根因：{}\n期望格式：{}\n立即修复动作：\n1. 打开并修改目标产物：{}\n2. 按“期望格式”修正根因字段，确保字段名/类型/必填项正确。\n3. 重新输出本阶段产物并自检；不要只解释，不要停留在分析。\n原始报错：{}</system-reminder>",
-            stage, error_code, root_cause, expected_format, target_files, raw_error
+            "<system-reminder>【VALIDATION_BLOCKER｜阶段:{}】\n错误码：{}\n摘要：{}\n问题清单：\n{}{}\n立即修复动作：\n1. 打开并修改目标产物：{}\n2. 按“问题清单”逐项修正字段名/类型/必填项，务必一次性改完再重试。\n3. 重新输出本阶段产物并自检；不要只解释，不要停留在分析。\n原始报错：{}</system-reminder>",
+            stage, error_code, summary, issue_lines, fix_hint_lines, target_files, raw_error
         )
     }
 
@@ -5982,32 +6877,40 @@ mod tests {
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_missing_field() {
-        let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: plan.jsonc 缺少 selected_direction_type";
-        let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "plan.jsonc 缺少 selected_direction_type",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("plan", &err);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
             "plan.jsonc 缺少 selected_direction_type",
-            "补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。",
+            &["plan.jsonc 缺少 selected_direction_type"],
+            &["补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。"],
             "plan.jsonc / direction.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_non_empty_constraint() {
-        let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: direction.jsonc.cycle_title 不能为空";
-        let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "direction.jsonc.cycle_title 不能为空",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
             "direction.jsonc.cycle_title 不能为空",
-            "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。",
+            &["direction.jsonc.cycle_title 不能为空"],
+            &["将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。"],
             "direction.jsonc / cycle.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
@@ -6015,47 +6918,60 @@ mod tests {
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_direction_ui_capability_constraint(
     ) {
-        let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: direction.jsonc.ui_capability 不能为空";
-        let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "direction.jsonc.ui_capability 不能为空",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
             "direction.jsonc.ui_capability 不能为空",
-            "ui_capability 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。",
+            &["direction.jsonc.ui_capability 不能为空"],
+            &["ui_capability 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。"],
             "direction.jsonc / cycle.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_number_type_constraint() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify.jsonc.carryover_verification.summary.total 必须是数字";
-        let msg = EvolutionManager::build_validation_reminder_message("verify", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "verify.jsonc.carryover_verification.summary.total 必须是数字",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("verify", &err);
         let expected = expected_validation_reminder(
             "verify",
             "artifact_contract_violation",
             "verify.jsonc.carryover_verification.summary.total 必须是数字",
-            "将该字段改为数字类型（JSON number），不要使用字符串或对象。",
+            &["verify.jsonc.carryover_verification.summary.total 必须是数字"],
+            &["将该字段改为数字类型（JSON number），不要使用字符串或对象。"],
             "verify.jsonc / plan.jsonc / managed.backlog.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_implement_quick_checks_array() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: implement_advanced.jsonc.quick_checks 必须是数组";
-        let msg =
-            EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "implement_advanced.jsonc.quick_checks 必须是数组",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", &err);
         let expected = expected_validation_reminder(
             "implement_advanced",
             "artifact_contract_violation",
             "implement_advanced.jsonc.quick_checks 必须是数组",
-            "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。",
+            &["implement_advanced.jsonc.quick_checks 必须是数组"],
+            &["quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"],
             "implement_advanced.jsonc / managed.backlog.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
@@ -6063,33 +6979,222 @@ mod tests {
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_implement_backlog_mapping_missing(
     ) {
-        let raw_error = "evo_stage_output_invalid:managed_backlog_sync_failed: evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0";
-        let msg =
-            EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", &err);
         let expected = expected_validation_reminder(
             "implement_advanced",
-            "managed_backlog_sync_failed",
+            "artifact_contract_violation",
             "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
-            "无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。",
+            &["evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0"],
+            &["无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。"],
             "implement_advanced.jsonc / managed.backlog.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
     }
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature";
-        let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("plan", &err);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
             "selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature",
-            "修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。",
+            &["selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature"],
+            &["修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。"],
             "plan.jsonc / direction.jsonc",
-            raw_error,
+            &raw_error,
         );
         assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_include_all_issues_and_deduped_fix_hints() {
+        let err = ArtifactValidationError::with_issues(
+            "artifact_contract_violation",
+            "共 3 项问题；首项：direction.jsonc.domains[0] 必须是对象",
+            vec![
+                "direction.jsonc.domains[0] 必须是对象".to_string(),
+                "direction.jsonc.domains[1].domain 不能为空".to_string(),
+                "direction.jsonc.acceptance_criteria 不能为空".to_string(),
+            ],
+        );
+        let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
+        assert!(msg.contains("摘要：共 3 项问题；首项：direction.jsonc.domains[0] 必须是对象"));
+        assert!(msg.contains("1. direction.jsonc.domains[0] 必须是对象"));
+        assert!(msg.contains("2. direction.jsonc.domains[1].domain 不能为空"));
+        assert!(msg.contains("3. direction.jsonc.acceptance_criteria 不能为空"));
+        assert_eq!(
+            msg.matches("将该字段改为对象类型（{}），并补齐对象内必填子字段。")
+                .count(),
+            1
+        );
+        assert_eq!(msg.matches("将必填字段填为非空值").count(), 1);
+    }
+
+    #[test]
+    fn stage_templates_should_include_field_comments_and_example_objects() {
+        let direction = direction_stage_template("c-42");
+        assert!(direction.contains("// 本轮 UI 能力结论：none | partial | full"));
+        assert!(direction.contains("//   \"domain\": \"desktop_player\""));
+        assert!(direction.contains("//       \"mapped_direction_type\": \"feature\""));
+
+        let plan = plan_stage_template("c-42");
+        assert!(plan.contains("// 工作项列表，不能为空"));
+        assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
+        assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
+
+        let implement = implement_stage_template("implement_general", "c-42", 1, 2);
+        assert!(implement.contains("// backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。"));
+        assert!(implement.contains("//   \"implementation_agent\": \"implement_general\""));
+
+        let verify = verify_stage_template("c-42", 1, 3);
+        assert!(verify
+            .contains("// 验收标准评估，必须完整覆盖 plan.verification_plan.acceptance_mapping"));
+        assert!(verify.contains("//   \"criteria_id\": \"AC-001\""));
+        assert!(verify.contains("// 需要重实现时必须输出完整 selector 信息"));
+
+        let auto_commit = auto_commit_stage_template("c-42");
+        assert!(auto_commit
+            .contains("// 若无可提交变更，需明确写出“无可提交变更”或 no changes to commit"));
+
+        let managed_backlog = managed_backlog_template("c-42", 1);
+        assert!(managed_backlog.contains("// 托管整改项列表；系统生成，不要手工伪造主键"));
+        assert!(managed_backlog.contains("//   \"requirement_ref\": \"REQ-001\""));
+    }
+
+    #[test]
+    fn validate_direction_artifact_should_aggregate_multiple_issues() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("direction.jsonc"),
+            serde_json::json!({
+                "$schema_version": "2.0",
+                "cycle_id": "c-1",
+                "status": "done",
+                "cycle_title": "",
+                "decision": {
+                    "context": {
+                        "capability_assessment": {
+                            "ui_capability": "full",
+                            "test_capability": "full",
+                            "build_capability": "full",
+                            "runtime_capability": "full",
+                            "rationale": ""
+                        }
+                    }
+                },
+                "project_type": "macos",
+                "ui_capability": "full",
+                "domains": [
+                    "core",
+                    {
+                        "domain": "",
+                        "status": "active",
+                        "evidence_paths": [],
+                        "findings": [],
+                        "opportunities": []
+                    }
+                ],
+                "selected_direction_type": "architecture",
+                "candidate_scores": [],
+                "final_reason": "",
+                "acceptance_criteria": [],
+                "handoff": empty_handoff_json(),
+                "next_action": {"type": "goto_stage", "target": "plan"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+
+        let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
+            .expect_err("invalid direction artifact should fail");
+        assert_eq!(err.issues().len(), 7);
+        assert_eq!(err.issues()[0], "direction.jsonc 缺少 cycle_title");
+        assert!(err.contains("direction.jsonc.domains[0] 必须是对象"));
+        assert!(err.contains("direction.jsonc.domains[1].domain 不能为空"));
+        assert!(err.contains("direction.jsonc.candidate_scores 数量必须在 3..=5"));
+        assert!(err.contains("direction.jsonc.final_reason 不能为空"));
+        assert!(err.contains("direction.jsonc.acceptance_criteria 不能为空"));
+    }
+
+    #[test]
+    fn sync_managed_backlog_should_aggregate_multiple_mapping_issues_without_partial_write() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "ac-1",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "not_done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("implement_general.jsonc"),
+            base_implement_result_with_updates(vec![
+                serde_json::json!({
+                    "source_criteria_id": "ac-x",
+                    "source_check_id": "v-x",
+                    "work_item_id": "w-x",
+                    "implementation_agent": "implement_general",
+                    "status": "done",
+                    "evidence": {"proof": "x"},
+                    "notes": "missing mapping"
+                }),
+                serde_json::json!({
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "status": "finished",
+                    "evidence": {"proof": "bad status"},
+                    "notes": "invalid status"
+                }),
+            ]),
+        );
+
+        let err = EvolutionManager::sync_managed_backlog_for_implement_stage(
+            dir.path(),
+            "implement_general",
+        )
+        .expect_err("managed backlog sync should aggregate mapping issues");
+        assert_eq!(err.issues().len(), 2);
+        assert!(err.contains("evo_backlog_mapping_missing"));
+        assert!(err.contains("status 必须是 done|blocked|not_done"));
+
+        let managed_backlog = super::read_json_file(dir.path(), "managed.backlog.jsonc")
+            .expect("managed backlog should be readable");
+        assert_eq!(
+            managed_backlog["items"][0]["status"],
+            serde_json::json!("not_done")
+        );
     }
 
     #[test]
@@ -7227,6 +8332,7 @@ mod tests {
     #[test]
     fn validate_plan_artifact_should_reject_missing_implementation_agent() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -7250,6 +8356,7 @@ mod tests {
     #[test]
     fn validate_plan_artifact_should_reject_invalid_agent() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -7274,6 +8381,7 @@ mod tests {
     #[test]
     fn validate_plan_artifact_should_reject_missing_linked_check_ids() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -7297,6 +8405,7 @@ mod tests {
     #[test]
     fn validate_plan_artifact_should_reject_unknown_linked_check_id() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -7514,7 +8623,8 @@ mod tests {
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
             }),
-        );        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General]);
     }
@@ -7559,7 +8669,8 @@ mod tests {
                 "acceptance_evaluation": [{"criteria_id": "ac-2", "status": "insufficient_evidence"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
             }),
-        );        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::Visual]);
     }
@@ -7604,7 +8715,8 @@ mod tests {
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
             }),
-        );        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Visual]);
     }
@@ -7649,7 +8761,8 @@ mod tests {
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
             }),
-        );        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Advanced]);
     }
@@ -7694,7 +8807,8 @@ mod tests {
                 "acceptance_evaluation": [{"criteria_id": "ac-404", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
             }),
-        );        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General]);
     }

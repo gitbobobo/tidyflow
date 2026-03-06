@@ -6,6 +6,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 只修改系统生成模板中的可变字段；禁止删除结构、禁止新增未声明字段、禁止修改只读系统字段。
+3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得把注释示例当成真实数据保留。
 
 阶段任务：
 1. 评估项目能力与证据，形成 `decision.context.capability_assessment`（`ui/test/build/runtime` 与 `rationale` 必须可解释、非空）。
@@ -22,6 +23,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 硬性约束：
 1. 全程自主执行，禁止提问。
+2. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得删除结构或臆造字段。
 
 阶段任务：
 1. 将方向决策拆解为可执行 `work_items`，并给出可落地验证路径。
@@ -42,6 +44,7 @@ pub const STAGE_IMPLEMENT_GENERAL_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 仅处理 `implementation_agent=implement_general` 的工作项。
+3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；不得删除结构、不得新增未声明字段。
 4. backlog 相关规则与回填契约全部以 JSONC 注释为准。
 
 阶段任务：
@@ -62,6 +65,7 @@ pub const STAGE_IMPLEMENT_VISUAL_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 仅处理 `implementation_agent=implement_visual` 的工作项。
+3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；不得删除结构、不得新增未声明字段。
 
 阶段任务：
 1. 完成本 lane 的视觉/交互改动，并回填证据与检查结果。
@@ -80,6 +84,7 @@ pub const STAGE_IMPLEMENT_ADVANCED_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 仅处理调度给 `implement_advanced` 的高优先级整改项。
+3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；不得删除结构、不得新增未声明字段。
 
 阶段任务：
 1. 聚焦上一轮 verify 裁决失败项的深度整改，优先处理阻断收敛的问题。
@@ -98,6 +103,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 禁止修改业务实现代码；只允许更新验证/裁决相关产物字段。
+3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得删结构或补臆造字段。
 4. 所有验证与裁决结果统一写入 `verify.jsonc`。
 
 阶段任务：
@@ -122,6 +128,7 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 允许执行本地 Git 命令；禁止任何网络请求。
+3. JSONC 模板中的字段级注释就是最终契约；只填写允许修改的字段。
 
 阶段任务：
 1. 先检查 `git status --porcelain` 再决策。
