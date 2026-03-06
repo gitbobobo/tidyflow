@@ -1139,7 +1139,8 @@ extension WSClient {
         audioParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
         agent: String? = nil,
-        configOverrides: [String: Any]? = nil
+        configOverrides: [String: Any]? = nil,
+        projectMentions: [String]? = nil
     ) {
         var msg: [String: Any] = [
             "type": "ai_chat_send",
@@ -1166,6 +1167,9 @@ extension WSClient {
         }
         if let configOverrides, !configOverrides.isEmpty {
             msg["config_overrides"] = configOverrides
+        }
+        if let projectMentions, !projectMentions.isEmpty {
+            msg["project_mentions"] = projectMentions
         }
         send(msg)
     }

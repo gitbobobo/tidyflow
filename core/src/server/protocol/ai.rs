@@ -542,6 +542,27 @@ pub struct CodeCompletionResponse {
     pub error: Option<String>,
 }
 
+// ============================================================================
+// 多项目上下文协议类型
+// ============================================================================
+
+/// 多项目上下文摘要（随 AI 消息附带的来源项目信息）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectContextSummary {
+    /// 被引用的项目名称
+    pub project_name: String,
+    /// 收集到的上下文摘要文本（git status + 最近提交）
+    pub context_text: String,
+}
+
+/// AI 消息中的项目提及元数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMentionMeta {
+    pub project_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

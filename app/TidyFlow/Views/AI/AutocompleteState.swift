@@ -18,6 +18,7 @@ private let perfAutocompleteIndexEnabled: Bool = {
 enum AutocompleteMode {
     case none
     case fileRef      // @ 触发的文件引用
+    case projectMention  // @@ 触发的项目引用
     case slashCommand // / 触发的斜杠命令
     case codeCompletion // AI 代码补全（输入停顿或快捷键触发）
 }
@@ -141,7 +142,8 @@ func updateAutocomplete(
     cursorLocation: Int,
     autocomplete: AutocompleteState,
     slashCommands: [AutocompleteItem],
-    fileItems: [String]
+    fileItems: [String],
+    projectItems: [String] = []
 ) {
     let nsText = text as NSString
     let safeCursor = min(max(cursorLocation, 0), nsText.length)
@@ -170,7 +172,27 @@ func updateAutocomplete(
         }
     }
 
-    // 2. @ 或 ＠ 触发 fileRef（基于光标所在 token，避免整段末尾误判）
+    // 2. @@ 或 ＠＠ 触发 projectMention（需在单 @ 检测之前处理）
+    if let doubleAtIndex = lastDoubleAtTriggerIndex(in: text, tokenStart: tokenStart, cursor: cursor) {
+        // doubleAtIndex 指向第一个 @，query 从第二个 @ 之后开始
+        let queryStart = text.index(doubleAtIndex, offsetBy: 2)
+        let query = String(text[queryStart..<cursor])
+        autocomplete.mode = .projectMention
+        autocomplete.query = query
+        autocomplete.replaceRange = NSRange(doubleAtIndex..<cursor, in: text)
+        let matched: [String]
+        if query.isEmpty {
+            matched = projectItems
+        } else {
+            let lower = query.lowercased()
+            matched = projectItems.filter { $0.lowercased().contains(lower) }
+        }
+        autocomplete.items = matched.prefix(autocompleteDisplayLimit).map { makeProjectItem($0) }
+        autocomplete.selectedIndex = 0
+        return
+    }
+
+    // 3. @ 或 ＠ 触发 fileRef（基于光标所在 token，避免整段末尾误判）
     if let triggerIndex = lastFileTriggerIndex(in: text, tokenStart: tokenStart, cursor: cursor) {
         let queryStart = text.index(after: triggerIndex)
         let query = String(text[queryStart..<cursor])
@@ -183,21 +205,43 @@ func updateAutocomplete(
         return
     }
 
-    // 3. 无匹配 -> 重置
+    // 4. 无匹配 -> 重置
     autocomplete.reset()
 }
 
-/// 从发送文本中提取 @文件引用 路径列表
+/// 从发送文本中提取 @文件引用 路径列表（跳过 @@ 项目引用）
 func extractFileRefs(from text: String) -> [String] {
-    // 匹配 @ / ＠ 后跟非空白字符序列
-    let pattern = "[@＠](\\S+)"
+    // 匹配单 @ / ＠（不允许前面紧跟另一个 @ / ＠），后跟非空白字符序列
+    // 使用负向后顾断言：(?<![@＠])[@＠]
+    let pattern = "(?<![\\u0040\\uFF20])[\\u0040\\uFF20](\\S+)"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
     let nsText = text as NSString
     let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
     return matches.compactMap { match -> String? in
         guard match.numberOfRanges >= 2 else { return nil }
-        return nsText.substring(with: match.range(at: 1))
+        let ref = nsText.substring(with: match.range(at: 1))
+        // 额外过滤：若 ref 以 @ 开头说明是 @@ 中第二个 @，跳过
+        if ref.hasPrefix("@") || ref.hasPrefix("＠") { return nil }
+        return ref
     }
+}
+
+/// 从发送文本中提取 @@项目引用 名称列表
+func extractProjectMentions(from text: String) -> [String] {
+    let pattern = "(?:@@|＠＠)([A-Za-z0-9_\\-\\.]+)"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+    let nsText = text as NSString
+    let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+    var seen = Set<String>()
+    var result: [String] = []
+    for match in matches {
+        guard match.numberOfRanges >= 2 else { continue }
+        let name = nsText.substring(with: match.range(at: 1))
+        if seen.insert(name).inserted {
+            result.append(name)
+        }
+    }
+    return result
 }
 
 // MARK: - 辅助
@@ -212,6 +256,17 @@ private func makeFileItem(_ path: String) -> AutocompleteItem {
         subtitle: dir.isEmpty ? path : dir,
         icon: icon,
         value: path
+    )
+}
+
+/// 构造项目引用补全条目
+private func makeProjectItem(_ projectName: String) -> AutocompleteItem {
+    AutocompleteItem(
+        id: "project:\(projectName)",
+        title: projectName,
+        subtitle: "项目",
+        icon: "folder",
+        value: projectName
     )
 }
 
@@ -360,12 +415,37 @@ private func lastFileTriggerIndex(
         idx = text.index(before: idx)
         let ch = text[idx]
         guard ch == "@" || ch == "＠" else { continue }
+        // 跳过双 @（项目引用），只处理单 @
+        if idx > tokenStart {
+            let prev = text.index(before: idx)
+            if text[prev] == "@" || text[prev] == "＠" { continue }
+        }
         if idx > tokenStart {
             let prev = text[text.index(before: idx)]
             // 邮箱/英文单词中间的 @ 不作为文件引用触发符（例如 foo@bar.com）
             if isLikelyWordCharacter(prev) { continue }
         }
         return idx
+    }
+    return nil
+}
+
+/// 在 token 范围内找到最近的双 @（`@@` 或 `＠＠`）触发位置，返回第一个 @ 的索引。
+private func lastDoubleAtTriggerIndex(
+    in text: String,
+    tokenStart: String.Index,
+    cursor: String.Index
+) -> String.Index? {
+    var idx = cursor
+    while idx > tokenStart {
+        idx = text.index(before: idx)
+        let ch = text[idx]
+        guard ch == "@" || ch == "＠" else { continue }
+        // 确认前一字符也是 @
+        guard idx > tokenStart else { continue }
+        let prevIdx = text.index(before: idx)
+        guard text[prevIdx] == "@" || text[prevIdx] == "＠" else { continue }
+        return prevIdx
     }
     return nil
 }

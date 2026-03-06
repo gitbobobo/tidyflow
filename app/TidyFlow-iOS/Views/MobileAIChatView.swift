@@ -299,6 +299,7 @@ struct MobileAIChatView: View {
                 onSearchFileReferences: { query in
                     scheduleReferenceSearch(query: query)
                 },
+                projectNames: appState.allProjectNames,
                 onInputContextChange: nil,
                 cursorRectInInput: .constant(.zero)
             )

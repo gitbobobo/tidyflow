@@ -808,17 +808,28 @@ struct AITabView: View {
             )
         }
         let fileItems = fileCache.fileIndexCache[appState.currentGlobalWorkspaceKey ?? ""]?.items ?? []
+        let projectItems = appState.projects.map { $0.name }
         updateAutocomplete(
             text: text,
             cursorLocation: inputCursorLocation,
             autocomplete: autocomplete,
             slashCommands: slashItems,
-            fileItems: fileItems
+            fileItems: fileItems,
+            projectItems: projectItems
         )
     }
 
     private func handleAutocompleteSelect(_ item: AutocompleteItem) {
         switch autocomplete.mode {
+        case .projectMention:
+            // 将 @@query 替换为 @@projectName（保留空格分隔）
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: "@@\(item.value) ")
+            } else {
+                inputText += "@@\(item.value) "
+            }
+            autocomplete.reset()
+
         case .fileRef:
             // 仅替换当前光标所在 token 的 @query，保留前后文本
             if let replaceRange = autocomplete.replaceRange {

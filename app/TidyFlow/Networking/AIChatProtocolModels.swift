@@ -2013,3 +2013,27 @@ struct AISessionFlatCache {
         )
     }
 }
+
+// MARK: - 多项目上下文协议模型
+
+struct AIProjectMentionMeta {
+    let projectName: String
+    let resolved: Bool
+
+    static func from(json: [String: Any]) -> AIProjectMentionMeta? {
+        guard let projectName = json["project_name"] as? String else { return nil }
+        let resolved = (json["resolved"] as? Bool) ?? false
+        return AIProjectMentionMeta(projectName: projectName, resolved: resolved)
+    }
+}
+
+struct AIProjectContextSummary {
+    let projectName: String
+    let contextText: String
+
+    static func from(json: [String: Any]) -> AIProjectContextSummary? {
+        guard let projectName = json["project_name"] as? String,
+              let contextText = json["context_text"] as? String else { return nil }
+        return AIProjectContextSummary(projectName: projectName, contextText: contextText)
+    }
+}

@@ -369,6 +369,7 @@ pub(crate) async fn handle_ai_chat_send(
             model,
             agent,
             config_overrides,
+            project_mentions: _,
         } => (
             project_name.clone(),
             workspace_name.clone(),
@@ -1150,6 +1151,7 @@ pub(crate) async fn handle_ai_chat_command(
             model,
             agent,
             config_overrides,
+            project_mentions: _,
         } => (
             project_name.clone(),
             workspace_name.clone(),

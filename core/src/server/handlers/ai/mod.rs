@@ -11,6 +11,7 @@ pub mod ai_state;
 #[cfg(test)]
 mod ai_test;
 pub mod file_ref;
+pub mod multi_project_context;
 mod session_index_store;
 
 mod route;

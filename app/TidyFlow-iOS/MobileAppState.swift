@@ -184,6 +184,9 @@ final class MobileAppState: ObservableObject {
 
     // 数据
     @Published var projects: [ProjectInfo] = []
+
+    /// 所有已知项目的名称列表（用于 @@ 项目引用补全）
+    var allProjectNames: [String] { projects.map { $0.name } }
     @Published var workspaces: [WorkspaceInfo] = []
     @Published var workspacesByProject: [String: [WorkspaceInfo]] = [:]
     @Published var activeTerminals: [TerminalSessionInfo] = []

@@ -484,6 +484,8 @@ pub enum ClientMessage {
         agent: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_mentions: Option<Vec<String>>,
     },
     #[serde(rename = "ai_chat_command")]
     AIChatCommand {
@@ -505,6 +507,8 @@ pub enum ClientMessage {
         agent: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_mentions: Option<Vec<String>>,
     },
     #[serde(rename = "ai_chat_abort")]
     AIChatAbort {
