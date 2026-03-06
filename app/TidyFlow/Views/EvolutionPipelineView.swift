@@ -350,12 +350,6 @@ struct EvolutionPipelineView: View {
                 }
 
                 Spacer()
-
-                // 脉冲动画指示器
-                Circle()
-                    .fill(Color.orange)
-                    .frame(width: 10, height: 10)
-                    .modifier(PipelinePulseModifier())
             }
 
             // 状态信息行
@@ -622,7 +616,7 @@ struct EvolutionPipelineView: View {
             ForEach(cycleHistories) { cycle in
                 cycleListRow(
                     round: cycle.round,
-                    color: .indigo,
+                    color: .gray,
                     title: cycle.displayTitle,
                     startTimeText: cycleStartTimeText(cycle.startDate),
                     stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
@@ -1246,9 +1240,7 @@ struct EvolutionPipelineView: View {
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
                         .onTapGesture {
-                            if normalizedStageKey(entry.stage) != "auto_commit" {
-                                openStageChat(stage: entry.stage)
-                            }
+                            openStageChat(stage: entry.stage)
                         }
                 }
             }
@@ -1265,7 +1257,7 @@ struct EvolutionPipelineView: View {
             HStack(spacing: 6) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12))
-                    .foregroundColor(.indigo)
+                    .foregroundColor(.secondary)
                 Text(cycle.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
@@ -1370,16 +1362,14 @@ struct EvolutionPipelineView: View {
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.7))
 
-                    if normalizedStageKey(entry.stage) != "auto_commit" {
-                        Button {
-                            openStageChat(stage: entry.stage)
-                        } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 8))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.borderless)
+                    Button {
+                        openStageChat(stage: entry.stage)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
                     }
+                    .buttonStyle(.borderless)
                 }
                 .padding(.vertical, 3)
                 .padding(.horizontal, 8)
@@ -1400,7 +1390,7 @@ struct EvolutionPipelineView: View {
             HStack(spacing: 6) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12))
-                    .foregroundColor(.indigo)
+                    .foregroundColor(.secondary)
                 Text(cycle.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
@@ -1868,7 +1858,6 @@ struct EvolutionPipelineView: View {
     }
 
     private func canOpenStageChat(stage: String, status: String) -> Bool {
-        if normalizedStageKey(stage) == "auto_commit" { return false }
         let normalized = normalizedStageStatus(status)
         return normalized == "running" || isCompletedStatus(normalized)
     }
