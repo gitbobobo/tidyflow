@@ -1526,7 +1526,10 @@ struct EvolutionPipelineView: View {
     private func findProfile(for stageKey: String) -> EvolutionStageProfileInfoV2? {
         if let workspace, !workspace.isEmpty {
             let profiles = appState.evolutionProfiles(project: project, workspace: workspace)
-            return profiles.first { normalizedStageKey($0.stage) == stageKey }
+            if let match = profiles.first(where: { normalizedStageKey($0.stage) == stageKey }) {
+                return match
+            }
+            // workspace 无对应阶段配置时，回退到全局默认配置
         }
         let defaults = appState.evolutionDefaultProfiles
         if let match = defaults.first(where: { normalizedStageKey($0.stage) == stageKey }) {
@@ -1575,24 +1578,6 @@ struct EvolutionPipelineView: View {
                     offset = 1
                 }
             }
-        }
-    }
-
-    // MARK: - 脉冲动画
-
-    struct PipelinePulseModifier: ViewModifier {
-        @State private var isAnimating = false
-
-        func body(content: Content) -> some View {
-            content
-                .scaleEffect(isAnimating ? 1.3 : 0.9)
-                .opacity(isAnimating ? 0.6 : 1.0)
-                .animation(
-                    .easeInOut(duration: 0.9)
-                        .repeatForever(autoreverses: true),
-                    value: isAnimating
-                )
-                .onAppear { isAnimating = true }
         }
     }
 
