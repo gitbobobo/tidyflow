@@ -385,6 +385,31 @@ extension AppState {
                shouldPreferEvolutionProfiles(candidate: fallback, over: profiles) {
                 return Self.normalizedEvolutionProfiles(fallback)
             }
+            // 用户全局默认配置（已定制）始终优先于服务端同步的工作区配置；
+            // 避免旧的服务端快照（如之前用 Opencode 启动时缓存的工具信息）
+            // 在用户已改为 Copilot 等新配置后仍被错误地用于图标和逻辑展示。
+            if !evolutionDefaultProfiles.isEmpty {
+                let userDefaults = evolutionDefaultProfiles.map { item -> EvolutionStageProfileInfoV2 in
+                    let model: EvolutionModelSelectionV2? = {
+                        guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
+                        return EvolutionModelSelectionV2(
+                            providerID: item.providerID,
+                            modelID: item.modelID
+                        )
+                    }()
+                    return EvolutionStageProfileInfoV2(
+                        stage: item.stage,
+                        aiTool: item.aiTool,
+                        mode: item.mode.isEmpty ? nil : item.mode,
+                        model: model,
+                        configOptions: item.configOptions
+                    )
+                }
+                let normalizedUserDefaults = Self.normalizedEvolutionProfiles(userDefaults)
+                if !isDefaultEvolutionProfiles(normalizedUserDefaults) {
+                    return normalizedUserDefaults
+                }
+            }
             return Self.normalizedEvolutionProfiles(profiles)
         }
         if let profiles = evolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace) {
