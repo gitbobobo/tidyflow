@@ -36,34 +36,6 @@ const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
 
-const VALID_DIRECTION_TYPES: &[&str] = &[
-    "feature",
-    "performance",
-    "bugfix",
-    "architecture",
-    "ui",
-    "ux",
-    "security",
-    "reliability",
-    "testing",
-    "tech-debt",
-    "refactor",
-    "devx",
-    "cicd",
-    "observability",
-    "docs",
-    "deps",
-    "compliance",
-    "a11y",
-    "i18n",
-    "compatibility",
-    "data",
-    "infra",
-    "scalability",
-    "analytics",
-    "onboarding",
-];
-
 async fn touch_session_index_updated_at_for_evolution(
     ctx: &HandlerContext,
     project: &str,
@@ -1287,17 +1259,17 @@ fn direction_stage_template(cycle_id: &str) -> String {
     //     {
     //       "title": "播放控制体验补齐",
     //       "summary": "描述机会与价值",
-    //       "mapped_direction_type": "feature"
+    //       "mapped_direction_type": "播放体验 升级"
     //     }
     //   ]
     // }
   ],
-  // 本轮最终选中的方向类型，必须命中系统允许枚举
+  // 本轮最终选中的方向标签，由代理自由命名，必须是非空字符串
   "selected_direction_type": "",
   // 候选方向评分，必须提供 3..5 个并按 score 降序排列
   "candidate_scores": [
     // {
-    //   "direction_type": "feature",
+    //   "direction_type": "播放体验 升级",
     //   "score": 0.85,
     //   "rationale": "排序理由"
     // }
@@ -1349,7 +1321,7 @@ fn plan_stage_template(cycle_id: &str) -> String {
   },
   // 本轮计划摘要，必须非空
   "summary": "",
-  // 必须与 direction.jsonc.selected_direction_type 一致
+  // 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名
   "selected_direction_type": "",
   // 工作项列表，不能为空
   "work_items": [
@@ -1725,29 +1697,44 @@ impl EvolutionManager {
         }
         report.capture(validate_handoff_info("plan.jsonc", &value));
 
-        let selected_direction = value
-            .get("selected_direction_type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .filter(|v| !v.is_empty());
-        match selected_direction.as_deref() {
-            Some(selected_direction) if VALID_DIRECTION_TYPES.contains(&selected_direction) => {}
-            Some(selected_direction) => report.push(format!(
-                "selected_direction_type 非法: {}",
-                selected_direction
-            )),
-            None => report.push("plan.jsonc 缺少 selected_direction_type"),
-        }
+        let selected_direction = match value.get("selected_direction_type") {
+            Some(raw_value) => match raw_value.as_str() {
+                Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+                Some(_) => {
+                    report.push("plan.jsonc.selected_direction_type 不能为空");
+                    None
+                }
+                None => {
+                    report.push("plan.jsonc.selected_direction_type 必须是非空字符串");
+                    None
+                }
+            },
+            None => {
+                report.push("plan.jsonc 缺少 selected_direction_type");
+                None
+            }
+        };
 
         let direction_value = read_json_file(cycle_dir, "direction.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
-        let direction_selected = direction_value
-            .get("selected_direction_type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .filter(|v| !v.is_empty());
+        let direction_selected = match direction_value.get("selected_direction_type") {
+            Some(raw_value) => match raw_value.as_str() {
+                Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+                Some(_) => {
+                    report.push("direction.jsonc.selected_direction_type 不能为空");
+                    None
+                }
+                None => {
+                    report.push("direction.jsonc.selected_direction_type 必须是非空字符串");
+                    None
+                }
+            },
+            None => {
+                report.push("direction.jsonc 缺少 selected_direction_type");
+                None
+            }
+        };
         match (selected_direction.as_deref(), direction_selected.as_deref()) {
-            (_, None) => report.push("direction.jsonc 缺少 selected_direction_type"),
             (Some(selected_direction), Some(direction_selected))
                 if direction_selected != selected_direction =>
             {
@@ -3350,18 +3337,18 @@ impl EvolutionManager {
                     match obj.get("opportunities").and_then(|v| v.as_array()) {
                         Some(opportunities) => {
                             for (op_idx, op) in opportunities.iter().enumerate() {
-                                let mapped_direction = op
-                                    .get("mapped_direction_type")
-                                    .and_then(|v| v.as_str())
-                                    .map(|v| v.trim().to_ascii_lowercase());
-                                match mapped_direction {
-                                    Some(mapped_direction)
-                                        if VALID_DIRECTION_TYPES
-                                            .contains(&mapped_direction.as_str()) => {}
-                                    Some(mapped_direction) => report.push(format!(
-                                        "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
-                                        idx, op_idx, mapped_direction
-                                    )),
+                                match op.get("mapped_direction_type") {
+                                    Some(raw_value) => match raw_value.as_str() {
+                                        Some(text) if !text.trim().is_empty() => {}
+                                        Some(_) => report.push(format!(
+                                            "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 不能为空",
+                                            idx, op_idx
+                                        )),
+                                        None => report.push(format!(
+                                            "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 必须是非空字符串",
+                                            idx, op_idx
+                                        )),
+                                    },
                                     None => report.push(format!(
                                         "direction.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
                                         idx, op_idx
@@ -3379,16 +3366,12 @@ impl EvolutionManager {
             None => report.push("direction.jsonc 缺少 domains"),
         }
 
-        let selected_type = stage_value
-            .get("selected_direction_type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase());
-        match selected_type {
-            Some(selected_type) if VALID_DIRECTION_TYPES.contains(&selected_type.as_str()) => {}
-            Some(selected_type) => report.push(format!(
-                "direction.jsonc.selected_direction_type 非法: {}",
-                selected_type
-            )),
+        match stage_value.get("selected_direction_type") {
+            Some(raw_value) => match raw_value.as_str() {
+                Some(text) if !text.trim().is_empty() => {}
+                Some(_) => report.push("direction.jsonc.selected_direction_type 不能为空"),
+                None => report.push("direction.jsonc.selected_direction_type 必须是非空字符串"),
+            },
             None => report.push("direction.jsonc.selected_direction_type 缺失"),
         }
         let candidate_scores = stage_value
@@ -3404,18 +3387,18 @@ impl EvolutionManager {
                 }
                 let mut previous_score: Option<f64> = None;
                 for (idx, score_item) in candidate_scores.iter().enumerate() {
-                    let direction_type = score_item
-                        .get("direction_type")
-                        .or_else(|| score_item.get("type"))
-                        .and_then(|v| v.as_str())
-                        .map(|v| v.trim().to_ascii_lowercase());
-                    match direction_type {
-                        Some(direction_type)
-                            if VALID_DIRECTION_TYPES.contains(&direction_type.as_str()) => {}
-                        Some(direction_type) => report.push(format!(
-                            "direction.jsonc.candidate_scores[{}].direction_type 非法: {}",
-                            idx, direction_type
-                        )),
+                    match score_item.get("direction_type").or_else(|| score_item.get("type")) {
+                        Some(raw_value) => match raw_value.as_str() {
+                            Some(text) if !text.trim().is_empty() => {}
+                            Some(_) => report.push(format!(
+                                "direction.jsonc.candidate_scores[{}].direction_type 不能为空",
+                                idx
+                            )),
+                            None => report.push(format!(
+                                "direction.jsonc.candidate_scores[{}].direction_type 必须是非空字符串",
+                                idx
+                            )),
+                        },
                         None => report.push(format!(
                             "direction.jsonc.candidate_scores[{}] 缺少 direction_type",
                             idx
@@ -6488,7 +6471,7 @@ mod tests {
         serde_json::json!({
             "$schema_version": "2.0",
             "cycle_id": "c-1",
-            "selected_direction_type": "architecture",
+            "selected_direction_type": "播放体验 升级",
             "goal": "demo",
             "scope": {"in": ["core"], "out": []},
             "work_items": work_items,
@@ -6680,14 +6663,14 @@ mod tests {
                     "evidence_paths": [],
                     "findings": [],
                     "opportunities": [{
-                        "mapped_direction_type": "architecture"
+                        "mapped_direction_type": "播放体验 升级"
                     }]
                 }],
-                "selected_direction_type": "architecture",
+                "selected_direction_type": "播放体验 升级",
                 "candidate_scores": [
-                    {"direction_type": "architecture", "score": 0.9},
-                    {"direction_type": "performance", "score": 0.7},
-                    {"direction_type": "docs", "score": 0.5}
+                    {"direction_type": "播放体验 升级", "score": 0.9},
+                    {"direction_type": "启动速度 优化", "score": 0.7},
+                    {"direction_type": "错误提示 清晰化", "score": 0.5}
                 ],
                 "final_reason": "reason",
                 "acceptance_criteria": [
@@ -7008,15 +6991,15 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature",
+            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("plan", &err);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
-            "selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature",
-            &["selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature"],
+            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级",
+            &["selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级"],
             &["修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。"],
             "plan.jsonc / direction.jsonc",
             &raw_error,
@@ -7053,10 +7036,12 @@ mod tests {
         let direction = direction_stage_template("c-42");
         assert!(direction.contains("// 本轮 UI 能力结论：none | partial | full"));
         assert!(direction.contains("//   \"domain\": \"desktop_player\""));
-        assert!(direction.contains("//       \"mapped_direction_type\": \"feature\""));
+        assert!(direction.contains("//       \"mapped_direction_type\": \"播放体验 升级\""));
+        assert!(direction.contains("// 本轮最终选中的方向标签，由代理自由命名，必须是非空字符串"));
 
         let plan = plan_stage_template("c-42");
         assert!(plan.contains("// 工作项列表，不能为空"));
+        assert!(plan.contains("// 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名"));
         assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
 
@@ -7131,6 +7116,135 @@ mod tests {
         assert!(err.contains("direction.jsonc.candidate_scores 数量必须在 3..=5"));
         assert!(err.contains("direction.jsonc.final_reason 不能为空"));
         assert!(err.contains("direction.jsonc.acceptance_criteria 不能为空"));
+    }
+
+    #[test]
+    fn validate_direction_artifact_should_accept_free_text_direction_labels() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+
+        EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
+            .expect("自由文本方向标签应通过校验");
+    }
+
+    #[test]
+    fn validate_direction_artifact_should_reject_blank_direction_labels() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+        write_json(
+            &dir.path().join("direction.jsonc"),
+            serde_json::json!({
+                "$schema_version": "2.0",
+                "cycle_id": "c-1",
+                "status": "done",
+                "cycle_title": "标题",
+                "decision": {
+                    "context": {
+                        "capability_assessment": {
+                            "ui_capability": "full",
+                            "test_capability": "full",
+                            "build_capability": "full",
+                            "runtime_capability": "full",
+                            "rationale": "ok"
+                        }
+                    }
+                },
+                "project_type": "macos",
+                "ui_capability": "full",
+                "domains": [{
+                    "domain": "core",
+                    "status": "active",
+                    "evidence_paths": [],
+                    "findings": [],
+                    "opportunities": [{
+                        "mapped_direction_type": "   "
+                    }]
+                }],
+                "selected_direction_type": "   ",
+                "candidate_scores": [
+                    {"direction_type": "   ", "score": 0.9},
+                    {"direction_type": "启动速度 优化", "score": 0.7},
+                    {"direction_type": "错误提示 清晰化", "score": 0.5}
+                ],
+                "final_reason": "reason",
+                "acceptance_criteria": [
+                    {"criteria_id": "ac-1", "description": "d1"},
+                    {"criteria_id": "ac-2", "description": "d2"}
+                ],
+                "handoff": empty_handoff_json(),
+                "next_action": {"type": "goto_stage", "target": "plan"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+
+        let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
+            .expect_err("空白方向标签应失败");
+        assert!(err.contains("direction.jsonc.selected_direction_type 不能为空"));
+        assert!(err.contains(
+            "direction.jsonc.domains[0].opportunities[0].mapped_direction_type 不能为空"
+        ));
+        assert!(err.contains("direction.jsonc.candidate_scores[0].direction_type 不能为空"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_accept_trimmed_free_text_direction_type_consistency() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+        let mut plan = base_plan_json(vec![serde_json::json!({
+            "id": "w-1",
+            "title": "x",
+            "type": "code",
+            "priority": "p0",
+            "depends_on": [],
+            "targets": ["core/src/lib.rs"],
+            "definition_of_done": ["done"],
+            "risk": "low",
+            "rollback": "git restore",
+            "implementation_agent": "implement_general",
+            "linked_check_ids": ["v-1", "v-2"]
+        })]);
+        plan.as_object_mut()
+            .expect("plan should be object")
+            .insert(
+                "selected_direction_type".to_string(),
+                serde_json::json!("  播放体验 升级  "),
+            );
+        write_json(&dir.path().join("plan.jsonc"), plan);
+
+        EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
+            .expect("忽略首尾空白后应保持一致");
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_mismatched_free_text_direction_type() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+        let mut plan = base_plan_json(vec![serde_json::json!({
+            "id": "w-1",
+            "title": "x",
+            "type": "code",
+            "priority": "p0",
+            "depends_on": [],
+            "targets": ["core/src/lib.rs"],
+            "definition_of_done": ["done"],
+            "risk": "low",
+            "rollback": "git restore",
+            "implementation_agent": "implement_general",
+            "linked_check_ids": ["v-1", "v-2"]
+        })]);
+        plan.as_object_mut()
+            .expect("plan should be object")
+            .insert(
+                "selected_direction_type".to_string(),
+                serde_json::json!("界面补强"),
+            );
+        write_json(&dir.path().join("plan.jsonc"), plan);
+
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
+            .expect_err("不同自由文本方向标签应失败");
+        assert!(err.contains(
+            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级"
+        ));
     }
 
     #[test]
