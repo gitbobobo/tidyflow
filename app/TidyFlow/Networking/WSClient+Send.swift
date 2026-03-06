@@ -788,13 +788,16 @@ extension WSClient {
     }
 
     // UX-2: Request create workspace（名称由 Core 用 petname 生成）
-    func requestCreateWorkspace(project: String, fromBranch: String? = nil) {
+    func requestCreateWorkspace(project: String, fromBranch: String? = nil, templateId: String? = nil) {
         var msg: [String: Any] = [
             "type": "create_workspace",
             "project": project
         ]
         if let branch = fromBranch {
             msg["from_branch"] = branch
+        }
+        if let tid = templateId {
+            msg["template_id"] = tid
         }
         send(msg)
     }
@@ -1014,6 +1017,45 @@ extension WSClient {
             payload["task_id"] = taskId
         }
         send(payload)
+    }
+
+    // MARK: - v1.40: 工作流模板管理
+
+    /// 获取所有工作流模板列表
+    func requestListTemplates() {
+        send(["type": "list_templates"])
+    }
+
+    /// 保存（新增或更新）工作流模板
+    func requestSaveTemplate(_ template: TemplateInfo) {
+        send([
+            "type": "save_template",
+            "template": template.toDict()
+        ])
+    }
+
+    /// 删除工作流模板
+    func requestDeleteTemplate(templateId: String) {
+        send([
+            "type": "delete_template",
+            "template_id": templateId
+        ])
+    }
+
+    /// 导出工作流模板（服务端返回完整模板数据）
+    func requestExportTemplate(templateId: String) {
+        send([
+            "type": "export_template",
+            "template_id": templateId
+        ])
+    }
+
+    /// 导入工作流模板
+    func requestImportTemplate(_ template: TemplateInfo) {
+        send([
+            "type": "import_template",
+            "template": template.toDict()
+        ])
     }
 
     // MARK: - v1.37: 取消 AI 任务

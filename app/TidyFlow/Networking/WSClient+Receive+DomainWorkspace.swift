@@ -122,6 +122,52 @@ extension WSClient {
                 onTasksSnapshot?(entries)
             }
             return true
+        // v1.40: 工作流模板管理
+        case "templates":
+            if let result = TemplatesListResult.from(json: json) {
+                if let handler = projectMessageHandler {
+                    handler.handleTemplatesList(result)
+                } else {
+                    onTemplatesList?(result)
+                }
+            }
+            return true
+        case "template_saved":
+            if let result = TemplateSavedResult.from(json: json) {
+                if let handler = projectMessageHandler {
+                    handler.handleTemplateSaved(result)
+                } else {
+                    onTemplateSaved?(result)
+                }
+            }
+            return true
+        case "template_deleted":
+            if let result = TemplateDeletedResult.from(json: json) {
+                if let handler = projectMessageHandler {
+                    handler.handleTemplateDeleted(result)
+                } else {
+                    onTemplateDeleted?(result)
+                }
+            }
+            return true
+        case "template_imported":
+            if let result = TemplateImportedResult.from(json: json) {
+                if let handler = projectMessageHandler {
+                    handler.handleTemplateImported(result)
+                } else {
+                    onTemplateImported?(result)
+                }
+            }
+            return true
+        case "template_exported":
+            if let result = TemplateExportedResult.from(json: json) {
+                if let handler = projectMessageHandler {
+                    handler.handleTemplateExported(result)
+                } else {
+                    onTemplateExported?(result)
+                }
+            }
+            return true
         default:
             return false
         }

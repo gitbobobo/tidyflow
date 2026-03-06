@@ -3,8 +3,10 @@ use tracing::{info, warn};
 
 use crate::application::project::{list_projects_message, list_workspaces_message};
 use crate::application::project_admin::{
-    create_workspace_message, import_project_message, project_commands_saved_ok,
-    remove_project_message, remove_workspace_message, save_project_commands_message,
+    create_workspace_message, delete_template_message, export_template_message,
+    import_template_message, import_project_message, list_templates_message,
+    project_commands_saved_ok, remove_project_message, remove_workspace_message,
+    save_project_commands_message, save_template_message,
 };
 use crate::application::project_workspace::cleanup_workspace_before_remove;
 use crate::server::context::HandlerContext;
@@ -35,9 +37,15 @@ pub async fn handle_admin_message(
         ClientMessage::CreateWorkspace {
             project,
             from_branch,
+            template_id,
         } => {
-            let msg =
-                create_workspace_message(&ctx.app_state, project, from_branch.as_deref()).await;
+            let msg = create_workspace_message(
+                &ctx.app_state,
+                project,
+                from_branch.as_deref(),
+                template_id.as_deref(),
+            )
+            .await;
             let success = matches!(msg, ServerMessage::WorkspaceCreated { .. });
             send_message(socket, &msg).await?;
             if success {
@@ -118,6 +126,43 @@ pub async fn handle_admin_message(
             send_message(socket, &msg).await?;
             if success {
                 broadcast_projects_snapshot(ctx).await;
+            }
+            Ok(true)
+        }
+        ClientMessage::ListTemplates => {
+            let msg = list_templates_message(&ctx.app_state).await;
+            send_message(socket, &msg).await?;
+            Ok(true)
+        }
+        ClientMessage::SaveTemplate { template } => {
+            let msg = save_template_message(&ctx.app_state, template).await;
+            let success = matches!(msg, ServerMessage::TemplateSaved { ok: true, .. });
+            send_message(socket, &msg).await?;
+            if success {
+                let _ = ctx.save_tx.send(()).await;
+            }
+            Ok(true)
+        }
+        ClientMessage::DeleteTemplate { template_id } => {
+            let msg = delete_template_message(&ctx.app_state, template_id).await;
+            let success = matches!(msg, ServerMessage::TemplateDeleted { ok: true, .. });
+            send_message(socket, &msg).await?;
+            if success {
+                let _ = ctx.save_tx.send(()).await;
+            }
+            Ok(true)
+        }
+        ClientMessage::ExportTemplate { template_id } => {
+            let msg = export_template_message(&ctx.app_state, template_id).await;
+            send_message(socket, &msg).await?;
+            Ok(true)
+        }
+        ClientMessage::ImportTemplate { template } => {
+            let msg = import_template_message(&ctx.app_state, template).await;
+            let success = matches!(msg, ServerMessage::TemplateImported { ok: true, .. });
+            send_message(socket, &msg).await?;
+            if success {
+                let _ = ctx.save_tx.send(()).await;
             }
             Ok(true)
         }

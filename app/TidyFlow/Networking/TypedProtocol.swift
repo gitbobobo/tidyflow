@@ -53,6 +53,12 @@ protocol ProjectMessageHandler: AnyObject {
     func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?)
     func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String)
     func handleProjectCommandOutput(_ taskId: String, _ line: String)
+    // v1.40: 工作流模板管理
+    func handleTemplatesList(_ result: TemplatesListResult)
+    func handleTemplateSaved(_ result: TemplateSavedResult)
+    func handleTemplateDeleted(_ result: TemplateDeletedResult)
+    func handleTemplateImported(_ result: TemplateImportedResult)
+    func handleTemplateExported(_ result: TemplateExportedResult)
 }
 
 extension ProjectMessageHandler {
@@ -67,6 +73,11 @@ extension ProjectMessageHandler {
     func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?) {}
     func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {}
     func handleProjectCommandOutput(_ taskId: String, _ line: String) {}
+    func handleTemplatesList(_ result: TemplatesListResult) {}
+    func handleTemplateSaved(_ result: TemplateSavedResult) {}
+    func handleTemplateDeleted(_ result: TemplateDeletedResult) {}
+    func handleTemplateImported(_ result: TemplateImportedResult) {}
+    func handleTemplateExported(_ result: TemplateExportedResult) {}
 }
 
 protocol FileMessageHandler: AnyObject {

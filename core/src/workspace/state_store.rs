@@ -16,7 +16,7 @@ use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
-    Workspace, WorkspaceStatus, WorkspaceTodoItem,
+    TemplateCommand, Workspace, WorkflowTemplate, WorkspaceStatus, WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -168,6 +168,31 @@ impl StateStore {
             context: row.try_get("context").unwrap_or_default(),
         })
         .collect();
+
+        // 加载用户自定义工作流模板
+        let template_rows = sqlx::query(
+            "SELECT id, name, description, tags, commands, env_vars, builtin FROM workflow_templates"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?;
+        for row in template_rows {
+            let id: String = row.try_get("id").unwrap_or_default();
+            let name: String = row.try_get("name").unwrap_or_default();
+            let description: String = row.try_get("description").unwrap_or_default();
+            let tags_json: String = row.try_get("tags").unwrap_or_else(|_| "[]".to_string());
+            let commands_json: String = row.try_get("commands").unwrap_or_else(|_| "[]".to_string());
+            let env_vars_json: String = row.try_get("env_vars").unwrap_or_else(|_| "[]".to_string());
+            let builtin: bool = row.try_get::<i64, _>("builtin").unwrap_or(0) != 0;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let commands: Vec<TemplateCommand> = serde_json::from_str(&commands_json).unwrap_or_default();
+            let env_vars: Vec<(String, String)> = serde_json::from_str(&env_vars_json).unwrap_or_default();
+            client_settings.templates.push(WorkflowTemplate {
+                id, name, description, tags, commands, env_vars, builtin,
+            });
+        }
+        // 注入内置模板（始终从代码生成，不存储在数据库中）
+        crate::application::project_admin::ensure_builtin_templates(&mut client_settings);
 
         let todo_rows = sqlx::query(
             r#"
@@ -532,6 +557,30 @@ impl StateStore {
             .map_err(|e| StateError::WriteError(e.to_string()))?;
         }
 
+        // 保存用户自定义工作流模板（内置模板不存储到数据库）
+        sqlx::query("DELETE FROM workflow_templates WHERE builtin = 0")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        for tpl in &state.client_settings.templates {
+            if tpl.builtin {
+                continue;
+            }
+            sqlx::query(
+                "INSERT OR REPLACE INTO workflow_templates (id, name, description, tags, commands, env_vars, builtin) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(&tpl.id)
+            .bind(&tpl.name)
+            .bind(&tpl.description)
+            .bind(serde_json::to_string(&tpl.tags).unwrap_or_else(|_| "[]".to_string()))
+            .bind(serde_json::to_string(&tpl.commands).unwrap_or_else(|_| "[]".to_string()))
+            .bind(serde_json::to_string(&tpl.env_vars).unwrap_or_else(|_| "[]".to_string()))
+            .bind(0i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
         for (workspace_key, todos) in &state.client_settings.workspace_todos {
             for todo in todos {
                 sqlx::query(
@@ -882,6 +931,18 @@ impl StateStore {
                 key_combination TEXT NOT NULL,
                 context TEXT NOT NULL,
                 PRIMARY KEY (command_id)
+            )
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_templates (
+                id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                commands TEXT NOT NULL DEFAULT '[]',
+                env_vars TEXT NOT NULL DEFAULT '[]',
+                builtin INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (id)
             )
             "#,
         ];

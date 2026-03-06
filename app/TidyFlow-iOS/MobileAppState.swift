@@ -195,6 +195,8 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
     @Published var keybindings: [KeybindingConfig] = KeybindingConfig.defaultKeybindings()
+    // v1.40: 工作流模板
+    @Published var templates: [TemplateInfo] = []
     // 资源管理器（按 project/workspace/path 分桶）
     @Published var explorerFileListCache: [String: FileListCache] = [:]
     @Published var explorerDirectoryExpandState: [String: Bool] = [:]
@@ -5026,6 +5028,36 @@ final class MobileAppState: ObservableObject {
                 self.setAISessions(sessions, for: tool)
             }
         }
+
+        // v1.40: 工作流模板回调
+        wsClient.onTemplatesList = { [weak self] result in
+            guard let self else { return }
+            self.templates = result.items
+        }
+        wsClient.onTemplateSaved = { [weak self] result in
+            guard let self, result.ok else { return }
+            if let idx = self.templates.firstIndex(where: { $0.id == result.template.id }) {
+                self.templates[idx] = result.template
+            } else {
+                self.templates.append(result.template)
+            }
+        }
+        wsClient.onTemplateDeleted = { [weak self] result in
+            guard let self, result.ok else { return }
+            self.templates.removeAll { $0.id == result.templateId }
+        }
+        wsClient.onTemplateImported = { [weak self] result in
+            guard let self, result.ok else { return }
+            if let idx = self.templates.firstIndex(where: { $0.id == result.template.id }) {
+                self.templates[idx] = result.template
+            } else {
+                self.templates.append(result.template)
+            }
+        }
+        wsClient.onTemplateExported = { [weak self] _ in
+            // iOS 端导出通过 share sheet 实现
+            _ = self
+        }
     }
 
     private func resolveDefaultAgentName() -> String {
@@ -5433,5 +5465,34 @@ final class MobileAppState: ObservableObject {
         default:
             return nil
         }
+    }
+}
+
+// MARK: - iOS 模板操作 API
+
+extension MobileAppState {
+    /// 加载模板列表
+    func loadTemplates() {
+        wsClient.requestListTemplates()
+    }
+
+    /// 保存模板
+    func saveTemplate(_ template: TemplateInfo) {
+        wsClient.requestSaveTemplate(template)
+    }
+
+    /// 删除模板
+    func deleteTemplate(templateId: String) {
+        wsClient.requestDeleteTemplate(templateId: templateId)
+    }
+
+    /// 导入模板
+    func importTemplate(_ template: TemplateInfo) {
+        wsClient.requestImportTemplate(template)
+    }
+
+    /// 创建工作空间（支持模板）
+    func createWorkspace(projectName: String, fromBranch: String? = nil, templateId: String? = nil) {
+        wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch, templateId: templateId)
     }
 }

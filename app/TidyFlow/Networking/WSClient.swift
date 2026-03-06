@@ -128,6 +128,12 @@ class WSClient: NSObject, ObservableObject {
     var onClipboardImageSet: ((Bool, String?) -> Void)?
     // v1.40: 任务历史快照（iOS 重连恢复）
     var onTasksSnapshot: (([TaskSnapshotEntry]) -> Void)?
+    // v1.40: 工作流模板回调
+    var onTemplatesList: ((TemplatesListResult) -> Void)?
+    var onTemplateSaved: ((TemplateSavedResult) -> Void)?
+    var onTemplateDeleted: ((TemplateDeletedResult) -> Void)?
+    var onTemplateImported: ((TemplateImportedResult) -> Void)?
+    var onTemplateExported: ((TemplateExportedResult) -> Void)?
     // AI Chat（结构化 message/part 流）
     var onAISessionStarted: ((AISessionStartedV2) -> Void)?
     var onAISessionList: ((AISessionListV2) -> Void)?

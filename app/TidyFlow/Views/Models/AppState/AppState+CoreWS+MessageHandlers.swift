@@ -73,6 +73,12 @@ final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {
     func handleProjectCommandOutput(_ taskId: String, _ line: String) {
         appState?.handleProjectCommandOutput(taskId: taskId, line: line)
     }
+    // v1.40: 工作流模板管理
+    func handleTemplatesList(_ result: TemplatesListResult) { appState?.handleTemplatesList(result) }
+    func handleTemplateSaved(_ result: TemplateSavedResult) { appState?.handleTemplateSaved(result) }
+    func handleTemplateDeleted(_ result: TemplateDeletedResult) { appState?.handleTemplateDeleted(result) }
+    func handleTemplateImported(_ result: TemplateImportedResult) { appState?.handleTemplateImported(result) }
+    func handleTemplateExported(_ result: TemplateExportedResult) { appState?.handleTemplateExported(result) }
 }
 
 final class AppStateFileMessageHandlerAdapter: FileMessageHandler {

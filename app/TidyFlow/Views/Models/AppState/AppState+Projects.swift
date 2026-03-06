@@ -152,10 +152,10 @@ extension AppState {
     }
 
     /// Create a new workspace in a project（名称由 Core 用 petname 生成）
-    func createWorkspace(projectName: String, fromBranch: String? = nil) {
+    func createWorkspace(projectName: String, fromBranch: String? = nil, templateId: String? = nil) {
         guard connectionState == .connected else { return }
 
-        wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch)
+        wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch, templateId: templateId)
     }
 
     /// Remove a workspace from a project
@@ -332,5 +332,82 @@ extension AppState {
                 app.gitCache.gitCheckBranchUpToDate(workspaceKey: ws)
             }
         ]
+    }
+
+    // MARK: - v1.40: 工作流模板管理
+
+    /// 处理模板列表响应
+    func handleTemplatesList(_ result: TemplatesListResult) {
+        templates = result.items
+    }
+
+    /// 处理模板保存响应
+    func handleTemplateSaved(_ result: TemplateSavedResult) {
+        guard result.ok else {
+            TFLog.app.warning("保存模板失败: \(result.message ?? "未知错误", privacy: .public)")
+            return
+        }
+        if let idx = templates.firstIndex(where: { $0.id == result.template.id }) {
+            templates[idx] = result.template
+        } else {
+            templates.append(result.template)
+        }
+    }
+
+    /// 处理模板删除响应
+    func handleTemplateDeleted(_ result: TemplateDeletedResult) {
+        guard result.ok else {
+            TFLog.app.warning("删除模板失败: \(result.message ?? "未知错误", privacy: .public)")
+            return
+        }
+        templates.removeAll { $0.id == result.templateId }
+    }
+
+    /// 处理模板导入响应
+    func handleTemplateImported(_ result: TemplateImportedResult) {
+        guard result.ok else {
+            TFLog.app.warning("导入模板失败: \(result.message ?? "未知错误", privacy: .public)")
+            return
+        }
+        if let idx = templates.firstIndex(where: { $0.id == result.template.id }) {
+            templates[idx] = result.template
+        } else {
+            templates.append(result.template)
+        }
+    }
+
+    /// 处理模板导出响应（客户端负责保存文件）
+    func handleTemplateExported(_ result: TemplateExportedResult) {
+        // 导出操作由调用方在 UI 层完成文件保存，此处无需额外处理
+    }
+
+    /// 请求加载模板列表
+    func loadTemplates() {
+        guard connectionState == .connected else { return }
+        wsClient.requestListTemplates()
+    }
+
+    /// 保存模板
+    func saveTemplate(_ template: TemplateInfo) {
+        guard connectionState == .connected else { return }
+        wsClient.requestSaveTemplate(template)
+    }
+
+    /// 删除模板
+    func deleteTemplate(templateId: String) {
+        guard connectionState == .connected else { return }
+        wsClient.requestDeleteTemplate(templateId: templateId)
+    }
+
+    /// 导入模板
+    func importTemplate(_ template: TemplateInfo) {
+        guard connectionState == .connected else { return }
+        wsClient.requestImportTemplate(template)
+    }
+
+    /// 导出模板（通过服务端获取完整数据后由 UI 保存文件）
+    func exportTemplate(templateId: String) {
+        guard connectionState == .connected else { return }
+        wsClient.requestExportTemplate(templateId: templateId)
     }
 }

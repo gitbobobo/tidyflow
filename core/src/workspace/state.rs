@@ -86,6 +86,38 @@ pub struct WorkspaceTodoItem {
     pub updated_at_ms: i64,
 }
 
+/// 工作流模板命令
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateCommand {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub command: String,
+    #[serde(default)]
+    pub blocking: bool,
+    #[serde(default)]
+    pub interactive: bool,
+}
+
+/// 工作流模板
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTemplate {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// 技术栈标签，如 "rust", "node", "go", "python"
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub commands: Vec<TemplateCommand>,
+    /// 环境变量 key=value
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
+    /// 是否为内置模板（内置模板不可删除）
+    #[serde(default)]
+    pub builtin: bool,
+}
+
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
@@ -112,6 +144,9 @@ pub struct ClientSettings {
     /// 快捷键绑定配置
     #[serde(default)]
     pub keybindings: Vec<KeybindingConfig>,
+    /// 工作流模板
+    #[serde(default)]
+    pub templates: Vec<WorkflowTemplate>,
 }
 
 fn default_evolution_ai_tool() -> String {

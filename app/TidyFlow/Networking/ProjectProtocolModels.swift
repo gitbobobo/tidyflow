@@ -257,3 +257,162 @@ struct FileIndexCache {
         Date().timeIntervalSince(updatedAt) > 600
     }
 }
+
+// MARK: - 工作流模板协议模型
+
+/// 工作流模板命令
+struct TemplateCommandInfo: Identifiable {
+    let id: String
+    let name: String
+    let icon: String
+    let command: String
+    let blocking: Bool
+    let interactive: Bool
+
+    static func from(json: [String: Any]) -> TemplateCommandInfo? {
+        guard let id = json["id"] as? String,
+              let name = json["name"] as? String,
+              let icon = json["icon"] as? String,
+              let command = json["command"] as? String else {
+            return nil
+        }
+        return TemplateCommandInfo(
+            id: id,
+            name: name,
+            icon: icon,
+            command: command,
+            blocking: json["blocking"] as? Bool ?? false,
+            interactive: json["interactive"] as? Bool ?? false
+        )
+    }
+
+    func toDict() -> [String: Any] {
+        return [
+            "id": id,
+            "name": name,
+            "icon": icon,
+            "command": command,
+            "blocking": blocking,
+            "interactive": interactive
+        ]
+    }
+}
+
+/// 工作流模板
+struct TemplateInfo: Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let tags: [String]
+    let commands: [TemplateCommandInfo]
+    /// 环境变量，格式为 [[key, value], ...]（对应 Rust Vec<(String,String)>）
+    let envVars: [[String]]
+    let builtin: Bool
+
+    static func from(json: [String: Any]) -> TemplateInfo? {
+        guard let id = json["id"] as? String,
+              let name = json["name"] as? String else {
+            return nil
+        }
+        let description = json["description"] as? String ?? ""
+        let tags = json["tags"] as? [String] ?? []
+        let commandsJson = json["commands"] as? [[String: Any]] ?? []
+        let commands = commandsJson.compactMap { TemplateCommandInfo.from(json: $0) }
+        let envVars = json["env_vars"] as? [[String]] ?? []
+        let builtin = json["builtin"] as? Bool ?? false
+        return TemplateInfo(
+            id: id,
+            name: name,
+            description: description,
+            tags: tags,
+            commands: commands,
+            envVars: envVars,
+            builtin: builtin
+        )
+    }
+
+    func toDict() -> [String: Any] {
+        return [
+            "id": id,
+            "name": name,
+            "description": description,
+            "tags": tags,
+            "commands": commands.map { $0.toDict() },
+            "env_vars": envVars,
+            "builtin": builtin
+        ]
+    }
+}
+
+/// 模板列表结果
+struct TemplatesListResult {
+    let items: [TemplateInfo]
+
+    static func from(json: [String: Any]) -> TemplatesListResult? {
+        guard let itemsArray = json["items"] as? [[String: Any]] else {
+            return nil
+        }
+        let items = itemsArray.compactMap { TemplateInfo.from(json: $0) }
+        return TemplatesListResult(items: items)
+    }
+}
+
+/// 模板保存结果
+struct TemplateSavedResult {
+    let template: TemplateInfo
+    let ok: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> TemplateSavedResult? {
+        guard let templateJson = json["template"] as? [String: Any],
+              let template = TemplateInfo.from(json: templateJson),
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        return TemplateSavedResult(template: template, ok: ok, message: json["message"] as? String)
+    }
+}
+
+/// 模板删除结果
+struct TemplateDeletedResult {
+    let templateId: String
+    let ok: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> TemplateDeletedResult? {
+        guard let templateId = json["template_id"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        return TemplateDeletedResult(templateId: templateId, ok: ok, message: json["message"] as? String)
+    }
+}
+
+/// 模板导入结果
+struct TemplateImportedResult {
+    let template: TemplateInfo
+    let ok: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> TemplateImportedResult? {
+        guard let templateJson = json["template"] as? [String: Any],
+              let template = TemplateInfo.from(json: templateJson),
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        return TemplateImportedResult(template: template, ok: ok, message: json["message"] as? String)
+    }
+}
+
+/// 模板导出结果
+struct TemplateExportedResult {
+    let template: TemplateInfo
+
+    static func from(json: [String: Any]) -> TemplateExportedResult? {
+        guard let templateJson = json["template"] as? [String: Any],
+              let template = TemplateInfo.from(json: templateJson) else {
+            return nil
+        }
+        return TemplateExportedResult(template: template)
+    }
+}

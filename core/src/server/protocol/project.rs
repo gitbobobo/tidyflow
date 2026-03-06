@@ -22,6 +22,8 @@ pub enum ProjectRequest {
         project: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         from_branch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        template_id: Option<String>,
     },
     RemoveProject {
         name: String,
@@ -45,6 +47,20 @@ pub enum ProjectRequest {
         command_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
+    },
+    // v1.40: 工作流模板管理
+    ListTemplates,
+    SaveTemplate {
+        template: super::TemplateInfo,
+    },
+    DeleteTemplate {
+        template_id: String,
+    },
+    ExportTemplate {
+        template_id: String,
+    },
+    ImportTemplate {
+        template: super::TemplateInfo,
     },
 }
 
@@ -120,5 +136,30 @@ pub enum ProjectResponse {
     ProjectCommandOutput {
         task_id: String,
         line: String,
+    },
+    // v1.40: 工作流模板管理
+    Templates {
+        items: Vec<super::TemplateInfo>,
+    },
+    TemplateSaved {
+        template: super::TemplateInfo,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    TemplateDeleted {
+        template_id: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    TemplateExported {
+        template: super::TemplateInfo,
+    },
+    TemplateImported {
+        template: super::TemplateInfo,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
 }

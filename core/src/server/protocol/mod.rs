@@ -284,6 +284,8 @@ pub enum ClientMessage {
         project: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         from_branch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        template_id: Option<String>,
     },
 
     // v1.17: Remove project
@@ -413,6 +415,21 @@ pub enum ClientMessage {
         command_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
+    },
+
+    // v1.40: 工作流模板管理
+    ListTemplates,
+    SaveTemplate {
+        template: TemplateInfo,
+    },
+    DeleteTemplate {
+        template_id: String,
+    },
+    ExportTemplate {
+        template_id: String,
+    },
+    ImportTemplate {
+        template: TemplateInfo,
     },
 
     // v1.30: 客户端日志上报
@@ -1223,6 +1240,32 @@ pub enum ServerMessage {
         line: String,
     },
 
+    // v1.40: 工作流模板管理
+    Templates {
+        items: Vec<TemplateInfo>,
+    },
+    TemplateSaved {
+        template: TemplateInfo,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    TemplateDeleted {
+        template_id: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    TemplateExported {
+        template: TemplateInfo,
+    },
+    TemplateImported {
+        template: TemplateInfo,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
     // v1.37: AI 任务已取消
     #[serde(rename = "ai_task_cancelled")]
     AITaskCancelled {
@@ -1790,6 +1833,35 @@ pub struct ProjectCommandInfo {
     pub blocking: bool,
     #[serde(default)]
     pub interactive: bool,
+}
+
+/// 工作流模板命令（协议传输用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateCommandInfo {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub command: String,
+    #[serde(default)]
+    pub blocking: bool,
+    #[serde(default)]
+    pub interactive: bool,
+}
+
+/// 工作流模板（协议传输用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub commands: Vec<TemplateCommandInfo>,
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 /// 任务快照条目（iOS 重连恢复用）

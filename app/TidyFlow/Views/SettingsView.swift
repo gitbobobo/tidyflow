@@ -35,6 +35,13 @@ struct SettingsContentView: View {
                     Label("快捷键", systemImage: "keyboard")
                 }
                 .environmentObject(appState)
+
+            TemplatesSection()
+                .tabItem {
+                    Label("模板", systemImage: "doc.text.below.ecg")
+                }
+                .tag("templates")
+                .environmentObject(appState)
         }
         .frame(width: 580, height: 580)
     }
@@ -476,5 +483,286 @@ struct KeybindingsSection: View {
             appState.saveKeybinding(binding)
         }
         importResult = (mapped: mapped.count, unmapped: unmapped.count)
+    }
+}
+
+// MARK: - 工作流模板管理
+
+struct TemplatesSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var showingAddSheet = false
+    @State private var editingTemplate: TemplateInfo?
+    @State private var showingImportPicker = false
+
+    var body: some View {
+        List {
+            // 内置模板
+            Section(header: Text("内置模板")) {
+                let builtins = appState.templates.filter { $0.builtin }
+                if builtins.isEmpty {
+                    Text("暂无内置模板").foregroundColor(.secondary)
+                } else {
+                    ForEach(builtins) { tpl in
+                        TemplateRow(template: tpl, onEdit: {
+                            editingTemplate = tpl
+                        }, onDelete: nil)
+                    }
+                }
+            }
+            // 自定义模板
+            Section(header: Text("自定义模板")) {
+                let customs = appState.templates.filter { !$0.builtin }
+                if customs.isEmpty {
+                    Text("点击 + 新建模板").foregroundColor(.secondary)
+                } else {
+                    ForEach(customs) { tpl in
+                        TemplateRow(template: tpl, onEdit: {
+                            editingTemplate = tpl
+                        }, onDelete: {
+                            appState.deleteTemplate(templateId: tpl.id)
+                        })
+                    }
+                }
+            }
+        }
+        .toolbar {
+            #if os(macOS)
+            ToolbarItem {
+                Button(action: { showingImportPicker = true }) {
+                    Label("导入", systemImage: "square.and.arrow.down")
+                }
+            }
+            ToolbarItem {
+                Button(action: { showingAddSheet = true }) {
+                    Label("新建模板", systemImage: "plus")
+                }
+            }
+            #endif
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            TemplateEditSheet(template: nil) { tpl in
+                appState.saveTemplate(tpl)
+            }
+        }
+        .sheet(item: $editingTemplate) { tpl in
+            TemplateEditSheet(template: tpl) { updated in
+                appState.saveTemplate(updated)
+            }
+        }
+        #if os(macOS)
+        .fileImporter(isPresented: $showingImportPicker, allowedContentTypes: [.json]) { result in
+            if case .success(let url) = result {
+                importTemplateFromFile(url: url)
+            }
+        }
+        #endif
+        .onAppear {
+            appState.loadTemplates()
+        }
+    }
+
+    #if os(macOS)
+    /// 从文件导入模板
+    private func importTemplateFromFile(url: URL) {
+        guard url.startAccessingSecurityScopedResource() else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tpl = TemplateInfo.from(json: json) else { return }
+        appState.importTemplate(tpl)
+    }
+    #endif
+}
+
+/// 模板列表行
+private struct TemplateRow: View {
+    let template: TemplateInfo
+    let onEdit: () -> Void
+    let onDelete: (() -> Void)?
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(template.name).fontWeight(.medium)
+                    if template.builtin {
+                        Text("内置").font(.caption2).padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.15)).foregroundColor(.blue).cornerRadius(4)
+                    }
+                    ForEach(template.tags, id: \.self) { tag in
+                        Text(tag).font(.caption2).padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.gray.opacity(0.15)).foregroundColor(.secondary).cornerRadius(4)
+                    }
+                }
+                if !template.description.isEmpty {
+                    Text(template.description).font(.caption).foregroundColor(.secondary)
+                }
+                Text("\(template.commands.count) 个命令").font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            // 导出按钮
+            #if os(macOS)
+            Button(action: { exportTemplateToFile(template) }) {
+                Image(systemName: "square.and.arrow.up").foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            #endif
+            Button(action: onEdit) {
+                Image(systemName: "pencil").foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            if let onDelete, !template.builtin {
+                Button(action: onDelete) {
+                    Image(systemName: "trash").foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    #if os(macOS)
+    private func exportTemplateToFile(_ tpl: TemplateInfo) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(tpl.name).json"
+        if panel.runModal() == .OK, let url = panel.url {
+            if let data = try? JSONSerialization.data(withJSONObject: tpl.toDict(), options: .prettyPrinted) {
+                try? data.write(to: url)
+            }
+        }
+    }
+    #endif
+}
+
+/// 模板编辑 Sheet
+struct TemplateEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let template: TemplateInfo?
+    let onSave: (TemplateInfo) -> Void
+
+    @State private var name: String = ""
+    @State private var description: String = ""
+    @State private var tagsText: String = ""
+    @State private var commands: [EditableTemplateCommand] = []
+    @State private var envVarsText: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("基本信息")) {
+                    TextField("模板名称", text: $name)
+                    TextField("描述（可选）", text: $description)
+                    TextField("标签（逗号分隔，如 node,javascript）", text: $tagsText)
+                }
+                Section(header: Text("命令列表")) {
+                    ForEach($commands) { $cmd in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                TextField("命令名称", text: $cmd.name).font(.subheadline)
+                                Spacer()
+                                Toggle("阻塞", isOn: $cmd.blocking).labelsHidden()
+                                    .help("阻塞模式：命令执行完成后才能执行下一个")
+                                Toggle("交互", isOn: $cmd.interactive).labelsHidden()
+                                    .help("交互模式：在新终端 Tab 中执行")
+                            }
+                            TextField("命令字符串（如 npm install）", text: $cmd.command).font(.caption).foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .onDelete { indices in
+                        commands.remove(atOffsets: indices)
+                    }
+                    Button("添加命令") {
+                        commands.append(EditableTemplateCommand())
+                    }
+                }
+                Section(header: Text("环境变量（每行 KEY=VALUE）")) {
+                    TextEditor(text: $envVarsText).frame(minHeight: 60).font(.caption)
+                }
+            }
+            .navigationTitle(template == nil ? "新建模板" : "编辑模板")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let tpl = buildTemplate()
+                        onSave(tpl)
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 480, minHeight: 500)
+        .onAppear {
+            if let tpl = template {
+                name = tpl.name
+                description = tpl.description
+                tagsText = tpl.tags.joined(separator: ", ")
+                commands = tpl.commands.map { EditableTemplateCommand(from: $0) }
+                envVarsText = tpl.envVars.map { "\($0[0])=\($0[1])" }.joined(separator: "\n")
+            }
+        }
+    }
+
+    private func buildTemplate() -> TemplateInfo {
+        let tags = tagsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let cmdInfos = commands.map { cmd in
+            TemplateCommandInfo(
+                id: cmd.id.isEmpty ? UUID().uuidString : cmd.id,
+                name: cmd.name,
+                icon: cmd.icon.isEmpty ? "terminal" : cmd.icon,
+                command: cmd.command,
+                blocking: cmd.blocking,
+                interactive: cmd.interactive
+            )
+        }
+        let envVars: [[String]] = envVarsText.components(separatedBy: "\n").compactMap { line in
+            let parts = line.components(separatedBy: "=")
+            guard parts.count >= 2, !parts[0].isEmpty else { return nil }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            let value = parts.dropFirst().joined(separator: "=").trimmingCharacters(in: .whitespaces)
+            return [key, value]
+        }
+        return TemplateInfo(
+            id: template?.id ?? UUID().uuidString,
+            name: name.trimmingCharacters(in: .whitespaces),
+            description: description,
+            tags: tags,
+            commands: cmdInfos,
+            envVars: envVars,
+            builtin: false
+        )
+    }
+}
+
+/// 编辑用临时命令模型
+private final class EditableTemplateCommand: ObservableObject, Identifiable {
+    let id: String
+    @Published var name: String
+    @Published var icon: String
+    @Published var command: String
+    @Published var blocking: Bool
+    @Published var interactive: Bool
+
+    init() {
+        id = UUID().uuidString
+        name = ""
+        icon = ""
+        command = ""
+        blocking = true
+        interactive = false
+    }
+
+    init(from info: TemplateCommandInfo) {
+        id = info.id
+        name = info.name
+        icon = info.icon
+        command = info.command
+        blocking = info.blocking
+        interactive = info.interactive
     }
 }
