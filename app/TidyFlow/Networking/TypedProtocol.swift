@@ -146,6 +146,9 @@ protocol AIMessageHandler: AnyObject {
     func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult)
     func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult)
     func handleAISessionSubscribeAck()
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult)
+    func handleAISessionSearchResult(_ ev: AISessionSearchResult)
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult)
 }
 
 extension AIMessageHandler {
@@ -167,6 +170,9 @@ extension AIMessageHandler {
     func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {}
     func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {}
     func handleAISessionSubscribeAck() {}
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) {}
+    func handleAISessionSearchResult(_ ev: AISessionSearchResult) {}
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult) {}
 }
 
 protocol EvolutionMessageHandler: AnyObject {

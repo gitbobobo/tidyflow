@@ -163,6 +163,33 @@ extension WSClient {
                 handler.handleAISessionSubscribeAck()
             }
             return true
+        case "ai_session_rename_result":
+            if let ev = AISessionRenameResult.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISessionRenameResult(ev)
+                } else {
+                    onAISessionRenameResult?(ev)
+                }
+            }
+            return true
+        case "ai_session_search_result":
+            if let ev = AISessionSearchResult.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISessionSearchResult(ev)
+                } else {
+                    onAISessionSearchResult?(ev)
+                }
+            }
+            return true
+        case "ai_code_review_result":
+            if let ev = AICodeReviewResult.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAICodeReviewResult(ev)
+                } else {
+                    onAICodeReviewResult?(ev)
+                }
+            }
+            return true
         default:
             return false
         }

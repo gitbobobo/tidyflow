@@ -1782,3 +1782,73 @@ extension AISessionMessagesV2 {
         }
     }
 }
+
+// MARK: - AI 会话重命名响应
+struct AISessionRenameResult {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: String
+    let sessionId: String
+    let title: String
+    let updatedAt: Int64
+
+    static func from(json: [String: Any]) -> AISessionRenameResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = json["ai_tool"] as? String,
+              let sessionId = json["session_id"] as? String,
+              let title = json["title"] as? String else { return nil }
+        let updatedAt = (json["updated_at"] as? Int64) ?? (json["updated_at"] as? Int).map { Int64($0) } ?? 0
+        return AISessionRenameResult(projectName: projectName, workspaceName: workspaceName,
+                                     aiTool: aiTool, sessionId: sessionId,
+                                     title: title, updatedAt: updatedAt)
+    }
+}
+
+// MARK: - AI 会话搜索响应
+struct AISessionSearchResult {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: String
+    let query: String
+    let sessions: [AISessionInfo]
+
+    static func from(json: [String: Any]) -> AISessionSearchResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = json["ai_tool"] as? String,
+              let query = json["query"] as? String,
+              let aiChatTool = AIChatTool(rawValue: aiTool) else { return nil }
+        let rawSessions = json["sessions"] as? [[String: Any]] ?? []
+        let sessions = rawSessions.compactMap { item -> AISessionInfo? in
+            guard let id = item["id"] as? String,
+                  let title = item["title"] as? String else { return nil }
+            let updatedAt = (item["updated_at"] as? Int64) ?? (item["updated_at"] as? Int).map { Int64($0) } ?? 0
+            return AISessionInfo(projectName: projectName, workspaceName: workspaceName,
+                                 aiTool: aiChatTool, id: id, title: title, updatedAt: updatedAt)
+        }
+        return AISessionSearchResult(projectName: projectName, workspaceName: workspaceName,
+                                     aiTool: aiTool, query: query, sessions: sessions)
+    }
+}
+
+// MARK: - AI 代码审查响应
+struct AICodeReviewResult {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: String
+    let sessionId: String
+    let reviewText: String?
+    let error: String?
+
+    static func from(json: [String: Any]) -> AICodeReviewResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = json["ai_tool"] as? String,
+              let sessionId = json["session_id"] as? String else { return nil }
+        return AICodeReviewResult(projectName: projectName, workspaceName: workspaceName,
+                                  aiTool: aiTool, sessionId: sessionId,
+                                  reviewText: json["review_text"] as? String,
+                                  error: json["error"] as? String)
+    }
+}

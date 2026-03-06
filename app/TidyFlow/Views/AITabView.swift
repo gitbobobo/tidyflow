@@ -152,6 +152,13 @@ struct AITabView: View {
         .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
             requestCurrentSessionStatus()
         }
+        .onChange(of: appState.sessionPanelAction) { _, action in
+            guard let action else { return }
+            if case .renameSession(let session, let newTitle) = action {
+                renameSession(session, newTitle: newTitle)
+                appState.sessionPanelAction = nil
+            }
+        }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
         }) { _ in
@@ -760,6 +767,19 @@ struct AITabView: View {
         if store.currentSessionId == session.id {
             store.clearAll()
         }
+    }
+
+    private func renameSession(_ session: AISessionInfo, newTitle: String) {
+        guard !newTitle.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let trimmedTitle = newTitle.trimmingCharacters(in: .whitespaces)
+        appState.wsClient.requestAISessionRename(
+            project: session.projectName,
+            workspace: session.workspaceName,
+            aiTool: session.aiTool.rawValue,
+            sessionId: session.id,
+            newTitle: trimmedTitle
+        )
+        appState.renameSession(session, newTitle: trimmedTitle)
     }
 
     private func createNewSession() {

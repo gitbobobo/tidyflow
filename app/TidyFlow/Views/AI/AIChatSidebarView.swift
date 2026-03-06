@@ -9,6 +9,8 @@ struct AIChatSidebarView: View {
     var onSelect: (AISessionInfo) -> Void
     var onDelete: (AISessionInfo) -> Void
 
+    @State private var searchText: String = ""
+
     var body: some View {
         VStack(spacing: 0) {
             // 顶部：工具筛选下拉
@@ -49,10 +51,39 @@ struct AIChatSidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
+            // 搜索框
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                TextField("搜索会话…", text: $searchText)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+
             Divider()
 
             // 会话列表
-            let sessions = appState.aiSessionsForTool(appState.sessionPanelFilterTool)
+            let allSessions = appState.aiSessionsForTool(appState.sessionPanelFilterTool)
+            let sessions: [AISessionInfo] = searchText.isEmpty
+                ? allSessions
+                : allSessions.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
             let isLoadingSessions = appState.aiSessionListLoadingTools.contains(appState.sessionPanelFilterTool)
             if isLoadingSessions && sessions.isEmpty {
                 VStack(spacing: 8) {
@@ -90,6 +121,11 @@ struct AIChatSidebarView: View {
                         onSelect(session)
                     }
                     .contextMenu {
+                        Button {
+                            appState.sessionPanelAction = .renameSession(session, session.title)
+                        } label: {
+                            Label("重命名", systemImage: "pencil")
+                        }
                         Button(role: .destructive) {
                             onDelete(session)
                         } label: {

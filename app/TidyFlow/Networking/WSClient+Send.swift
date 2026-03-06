@@ -1285,6 +1285,46 @@ extension WSClient {
         ])
     }
 
+    func requestAISessionRename(project: String, workspace: String, aiTool: String, sessionId: String, newTitle: String) {
+        send([
+            "type": "ai_session_rename",
+            "project_name": project,
+            "workspace_name": workspace,
+            "ai_tool": aiTool,
+            "session_id": sessionId,
+            "new_title": newTitle
+        ])
+    }
+
+    func requestAISessionSearch(project: String, workspace: String, aiTool: String, query: String, limit: Int? = nil) {
+        var msg: [String: Any] = [
+            "type": "ai_session_search",
+            "project_name": project,
+            "workspace_name": workspace,
+            "ai_tool": aiTool,
+            "query": query
+        ]
+        if let limit = limit {
+            msg["limit"] = limit
+        }
+        send(msg)
+    }
+
+    func requestAICodeReview(project: String, workspace: String, aiTool: String, diffText: String, filePaths: [String] = [], sessionId: String? = nil) {
+        var msg: [String: Any] = [
+            "type": "ai_code_review",
+            "project_name": project,
+            "workspace_name": workspace,
+            "ai_tool": aiTool,
+            "diff_text": diffText,
+            "file_paths": filePaths
+        ]
+        if let sessionId = sessionId {
+            msg["session_id"] = sessionId
+        }
+        send(msg)
+    }
+
     /// 获取 AI Provider/模型列表
     func requestAIProviderList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/providers"

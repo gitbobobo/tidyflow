@@ -365,6 +365,7 @@ class AppState: ObservableObject {
         case loadSession(AISessionInfo)
         case deleteSession(AISessionInfo)
         case createNewSession
+        case renameSession(AISessionInfo, String)
     }
     @Published var sessionPanelAction: SessionPanelAction?
 
@@ -789,6 +790,20 @@ class AppState: ObservableObject {
         let activityPrefix = "\(tool.rawValue)::"
         lastActiveBySessionKey = lastActiveBySessionKey.filter {
             !($0.key.hasPrefix(activityPrefix) && $0.key.hasSuffix(prefix))
+        }
+    }
+
+    func renameSession(_ session: AISessionInfo, newTitle: String) {
+        var sessions = aiSessionsByTool[session.aiTool] ?? []
+        if let idx = sessions.firstIndex(where: { $0.id == session.id }) {
+            let updated = AISessionInfo(projectName: session.projectName,
+                                        workspaceName: session.workspaceName,
+                                        aiTool: session.aiTool,
+                                        id: session.id,
+                                        title: newTitle,
+                                        updatedAt: session.updatedAt)
+            sessions[idx] = updated
+            setAISessions(sessions, for: session.aiTool)
         }
     }
 
