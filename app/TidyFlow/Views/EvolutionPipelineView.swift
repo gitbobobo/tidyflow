@@ -622,6 +622,7 @@ struct EvolutionPipelineView: View {
                     stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
                         PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
                     } : cycle.stageEntries,
+                    isHistory: true,
                     onDocumentTap: { openHandoffSheet(for: cycle.id) }
                 ) {
                     openHistoryCycleDetailSheet(cycle)
@@ -704,6 +705,7 @@ struct EvolutionPipelineView: View {
         badge: String? = nil,
         startTimeText: String,
         stageEntries: [PipelineCycleStageEntry]? = nil,
+        isHistory: Bool = false,
         onDocumentTap: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
@@ -774,11 +776,11 @@ struct EvolutionPipelineView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(color.opacity(0.08))
+                .fill(isHistory ? Color.gray.opacity(0.06) : color.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(color.opacity(0.22), lineWidth: 1)
+                .stroke(isHistory ? Color.secondary.opacity(0.12) : color.opacity(0.22), lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onTapGesture(perform: action)

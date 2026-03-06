@@ -433,16 +433,27 @@ extension AppState {
 
         let validStages = Set(defaultEvolutionProfiles().map { $0.stage })
         var byStage: [String: EvolutionStageProfileInfoV2] = [:]
+
+        // 第一遍：优先处理明确声明的阶段（非 legacy "implement"），确保显式配置不会被 legacy 映射覆盖
         for profile in profiles {
             let stage = profile.stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !stage.isEmpty else { continue }
-            let mappedStages: [String]
-            if stage == "implement" {
-                mappedStages = ["implement_general", "implement_visual"]
-            } else {
-                mappedStages = [stage]
-            }
-            for mappedStage in mappedStages where validStages.contains(mappedStage) {
+            guard !stage.isEmpty, stage != "implement" else { continue }
+            guard validStages.contains(stage) else { continue }
+            if byStage[stage] != nil { continue }
+            byStage[stage] = EvolutionStageProfileInfoV2(
+                stage: stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode,
+                model: profile.model,
+                configOptions: profile.configOptions
+            )
+        }
+
+        // 第二遍：legacy "implement" 阶段仅填充尚未被显式配置覆盖的 implement_general / implement_visual
+        for profile in profiles {
+            let stage = profile.stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard stage == "implement" else { continue }
+            for mappedStage in ["implement_general", "implement_visual"] where validStages.contains(mappedStage) {
                 if byStage[mappedStage] != nil { continue }
                 byStage[mappedStage] = EvolutionStageProfileInfoV2(
                     stage: mappedStage,

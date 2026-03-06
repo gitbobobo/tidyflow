@@ -2551,12 +2551,7 @@ struct EvolutionTabView: View {
 
                 Spacer(minLength: 0)
 
-                if isRunning {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 8, height: 8)
-                        .modifier(RunningPulseModifier())
-                }
+
 
                 if canOpenStageChat(stage: agent.stage, status: statusText) {
                     Button {
@@ -2601,7 +2596,7 @@ struct EvolutionTabView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(isRunning ? Color(NSColor.controlBackgroundColor) : Color.gray.opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2609,25 +2604,6 @@ struct EvolutionTabView: View {
         )
     }
 
-    // MARK: - Running Animation Modifier
-
-    struct RunningPulseModifier: ViewModifier {
-        @State private var isAnimating = false
-
-        func body(content: Content) -> some View {
-            content
-                .scaleEffect(isAnimating ? 1.2 : 1.0)
-                .opacity(isAnimating ? 0.7 : 1.0)
-                .animation(
-                    Animation.easeInOut(duration: 0.8)
-                        .repeatForever(autoreverses: true),
-                    value: isAnimating
-                )
-                .onAppear {
-                    isAnimating = true
-                }
-        }
-    }
 
     private func refreshData() {
         appState.requestEvolutionSnapshot()
@@ -2674,9 +2650,6 @@ struct EvolutionTabView: View {
     }
 
     private func canOpenStageChat(stage: String, status: String) -> Bool {
-        if normalizedStageKey(stage) == "auto_commit" {
-            return false
-        }
         let normalized = normalizedStageStatus(status)
         return normalized == "running" ||
             normalized == "done" ||
