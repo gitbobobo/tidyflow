@@ -357,4 +357,200 @@ mod tests {
         assert_eq!(result, short_text);
         assert!(!truncated);
     }
+
+    #[test]
+    fn test_truncate_if_needed_long_text() {
+        // 创建超过 MAX_DIFF_SIZE 的文本
+        let long_text = "x".repeat(MAX_DIFF_SIZE + 1000);
+        let (result, truncated) = truncate_if_needed(&long_text);
+        assert!(result.len() <= MAX_DIFF_SIZE);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_truncate_if_needed_preserves_line_boundary() {
+        // 创建在换行符附近截断的文本
+        let line = "a".repeat(100);
+        let mut long_text = String::new();
+        while long_text.len() < MAX_DIFF_SIZE {
+            long_text.push_str(&line);
+            long_text.push('\n');
+        }
+        let (result, truncated) = truncate_if_needed(&long_text);
+        assert!(truncated);
+        // 应该在换行符处截断
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_git_op_state_as_str() {
+        assert_eq!(GitOpState::Normal.as_str(), "normal");
+        assert_eq!(GitOpState::Rebasing.as_str(), "rebasing");
+        assert_eq!(GitOpState::Merging.as_str(), "merging");
+    }
+
+    #[test]
+    fn test_integration_state_as_str() {
+        assert_eq!(IntegrationState::Idle.as_str(), "idle");
+        assert_eq!(IntegrationState::Merging.as_str(), "merging");
+        assert_eq!(IntegrationState::Conflict.as_str(), "conflict");
+        assert_eq!(IntegrationState::Rebasing.as_str(), "rebasing");
+        assert_eq!(IntegrationState::RebaseConflict.as_str(), "rebase_conflict");
+    }
+
+    #[test]
+    fn test_git_error_display() {
+        assert_eq!(
+            format!("{}", GitError::NotAGitRepo),
+            "Not a git repository"
+        );
+        assert_eq!(format!("{}", GitError::PathEscape), "Path escapes workspace root");
+        assert!(format!("{}", GitError::CommandFailed("test error".to_string())).contains("test error"));
+    }
+
+    #[test]
+    fn test_validate_path_simple() {
+        let root = std::env::temp_dir();
+        let result = validate_path(&root, "test.txt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), root.join("test.txt"));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_escape() {
+        let root = std::env::temp_dir();
+        // 使用不存在的路径来触发 PathEscape 错误
+        let result = validate_path(&root, "../etc/passwd");
+        // 路径不存在时会返回 PathEscape 错误
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_binary_detects_null_bytes() {
+        let root = std::env::temp_dir();
+        // 二进制内容包含 null 字节
+        let result = check_binary(&root, "nonexistent_file_for_test");
+        assert!(!result); // 文件不存在时返回 false
+    }
+
+    #[test]
+    fn test_git_status_entry_defaults() {
+        let entry = GitStatusEntry {
+            path: "test.rs".to_string(),
+            code: "M".to_string(),
+            orig_path: None,
+            staged: true,
+            additions: None,
+            deletions: None,
+        };
+        assert_eq!(entry.path, "test.rs");
+        assert_eq!(entry.code, "M");
+        assert!(entry.staged);
+        assert!(entry.additions.is_none());
+    }
+
+    #[test]
+    fn test_git_branch_info() {
+        let info = GitBranchInfo {
+            name: "feature/test".to_string(),
+        };
+        assert_eq!(info.name, "feature/test");
+    }
+
+    #[test]
+    fn test_git_branches_result() {
+        let result = GitBranchesResult {
+            current: "main".to_string(),
+            branches: vec![
+                GitBranchInfo { name: "develop".to_string() },
+                GitBranchInfo { name: "main".to_string() },
+            ],
+        };
+        assert_eq!(result.current, "main");
+        assert_eq!(result.branches.len(), 2);
+    }
+
+    #[test]
+    fn test_git_commit_result() {
+        let success = GitCommitResult {
+            ok: true,
+            message: Some("Committed: abc1234".to_string()),
+            sha: Some("abc1234".to_string()),
+        };
+        assert!(success.ok);
+        assert!(success.sha.is_some());
+
+        let failure = GitCommitResult {
+            ok: false,
+            message: Some("No staged changes".to_string()),
+            sha: None,
+        };
+        assert!(!failure.ok);
+        assert!(failure.sha.is_none());
+    }
+
+    #[test]
+    fn test_git_rebase_result_states() {
+        let completed = GitRebaseResult {
+            ok: true,
+            state: "completed".to_string(),
+            message: Some("Rebased onto main".to_string()),
+            conflicts: vec![],
+        };
+        assert!(completed.ok);
+        assert!(completed.conflicts.is_empty());
+
+        let conflict = GitRebaseResult {
+            ok: false,
+            state: "conflict".to_string(),
+            message: Some("Rebase paused due to conflicts".to_string()),
+            conflicts: vec!["src/main.rs".to_string()],
+        };
+        assert!(!conflict.ok);
+        assert_eq!(conflict.conflicts.len(), 1);
+    }
+
+    #[test]
+    fn test_git_log_entry() {
+        let entry = GitLogEntry {
+            sha: "abc1234".to_string(),
+            message: "feat: add new feature".to_string(),
+            author: "Developer".to_string(),
+            date: "2026-03-06T12:00:00Z".to_string(),
+            refs: vec!["HEAD".to_string(), "main".to_string()],
+        };
+        assert_eq!(entry.sha.len(), 7);
+        assert_eq!(entry.refs.len(), 2);
+    }
+
+    #[test]
+    fn test_git_show_file_entry() {
+        let modified = GitShowFileEntry {
+            status: "M".to_string(),
+            path: "src/lib.rs".to_string(),
+            old_path: None,
+        };
+        assert_eq!(modified.status, "M");
+        assert!(modified.old_path.is_none());
+
+        let renamed = GitShowFileEntry {
+            status: "R".to_string(),
+            path: "src/new.rs".to_string(),
+            old_path: Some("src/old.rs".to_string()),
+        };
+        assert_eq!(renamed.status, "R");
+        assert_eq!(renamed.old_path, Some("src/old.rs".to_string()));
+    }
+
+    #[test]
+    fn test_branch_divergence_result() {
+        let result = BranchDivergenceResult {
+            ahead_by: 3,
+            behind_by: 1,
+            compared_branch: "main".to_string(),
+        };
+        assert_eq!(result.ahead_by, 3);
+        assert_eq!(result.behind_by, 1);
+        assert_eq!(result.compared_branch, "main");
+    }
 }

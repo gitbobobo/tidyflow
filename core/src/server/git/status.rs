@@ -565,4 +565,168 @@ mod tests {
             Some(("??".to_string(), false))
         );
     }
+
+    #[test]
+    fn test_parse_porcelain_status_line_deleted_staged() {
+        assert_eq!(
+            parse_porcelain_status_line("D  src/old.rs"),
+            Some(("D".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_deleted_unstaged() {
+        assert_eq!(
+            parse_porcelain_status_line(" D src/old.rs"),
+            Some(("D".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_added_staged() {
+        assert_eq!(
+            parse_porcelain_status_line("A  src/new.rs"),
+            Some(("A".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_modified_both() {
+        // 暂存和工作区都有修改
+        assert_eq!(
+            parse_porcelain_status_line("MM src/main.rs"),
+            Some(("M".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_renamed() {
+        assert_eq!(
+            parse_porcelain_status_line("R  old -> new"),
+            Some(("R".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_empty() {
+        assert_eq!(parse_porcelain_status_line(""), None);
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_too_short() {
+        assert_eq!(parse_porcelain_status_line("M"), None);
+        assert_eq!(parse_porcelain_status_line("M "), None);
+    }
+
+    #[test]
+    fn test_sort_status_items_by_path() {
+        let mut items = vec![
+            GitStatusEntry {
+                path: "z.txt".to_string(),
+                code: "M".to_string(),
+                orig_path: None,
+                staged: false,
+                additions: None,
+                deletions: None,
+            },
+            GitStatusEntry {
+                path: "a.txt".to_string(),
+                code: "M".to_string(),
+                orig_path: None,
+                staged: false,
+                additions: None,
+                deletions: None,
+            },
+            GitStatusEntry {
+                path: "m.txt".to_string(),
+                code: "M".to_string(),
+                orig_path: None,
+                staged: false,
+                additions: None,
+                deletions: None,
+            },
+        ];
+        sort_status_items(&mut items);
+        assert_eq!(items[0].path, "a.txt");
+        assert_eq!(items[1].path, "m.txt");
+        assert_eq!(items[2].path, "z.txt");
+    }
+
+    #[test]
+    fn test_sort_status_items_by_staged_priority() {
+        let mut items = vec![
+            GitStatusEntry {
+                path: "test.rs".to_string(),
+                code: "M".to_string(),
+                orig_path: None,
+                staged: true,
+                additions: None,
+                deletions: None,
+            },
+            GitStatusEntry {
+                path: "test.rs".to_string(),
+                code: "M".to_string(),
+                orig_path: None,
+                staged: false,
+                additions: None,
+                deletions: None,
+            },
+        ];
+        sort_status_items(&mut items);
+        // false < true，所以 staged=false 排在前面
+        assert!(!items[0].staged);
+        assert!(items[1].staged);
+    }
+
+    #[test]
+    fn test_git_status_result_structure() {
+        let result = GitStatusResult {
+            repo_root: "/test".to_string(),
+            items: vec![],
+            has_staged_changes: false,
+            staged_count: 0,
+            current_branch: Some("main".to_string()),
+            default_branch: Some("main".to_string()),
+            ahead_by: Some(2),
+            behind_by: Some(1),
+            compared_branch: Some("origin/main".to_string()),
+        };
+        assert!(result.items.is_empty());
+        assert!(!result.has_staged_changes);
+        assert_eq!(result.current_branch, Some("main".to_string()));
+        assert_eq!(result.ahead_by, Some(2));
+        assert_eq!(result.behind_by, Some(1));
+    }
+
+    #[test]
+    fn test_git_log_entry_structure() {
+        let entry = GitLogEntry {
+            sha: "abc1234".to_string(),
+            message: "feat: add feature".to_string(),
+            author: "Developer".to_string(),
+            date: "2026-03-06T12:00:00Z".to_string(),
+            refs: vec!["HEAD".to_string(), "main".to_string()],
+        };
+        assert_eq!(entry.sha.len(), 7);
+        assert_eq!(entry.refs.len(), 2);
+    }
+
+    #[test]
+    fn test_git_show_file_entry_status() {
+        let added = GitShowFileEntry {
+            status: "A".to_string(),
+            path: "new.txt".to_string(),
+            old_path: None,
+        };
+        assert_eq!(added.status, "A");
+        assert!(added.old_path.is_none());
+
+        let renamed = GitShowFileEntry {
+            status: "R".to_string(),
+            path: "new.txt".to_string(),
+            old_path: Some("old.txt".to_string()),
+        };
+        assert_eq!(renamed.status, "R");
+        assert_eq!(renamed.old_path, Some("old.txt".to_string()));
+    }
 }
