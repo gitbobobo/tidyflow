@@ -5,7 +5,9 @@ use chrono::Utc;
 
 use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
 use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage};
-use super::utils::{cycle_dir_path, evolution_workspace_dir, read_json, write_json};
+use super::utils::{
+    cycle_dir_path, evolution_workspace_dir, read_json, sanitize_validation_attempts, write_json,
+};
 use super::{EvolutionManager, StageSession, STAGES};
 
 fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
@@ -434,11 +436,11 @@ impl EvolutionManager {
                     .find(|item| item.stage == stage)
                     .and_then(|item| item.duration_ms)
             });
-            let validation_attempts = preserved_stage_runtime
-                .get(stage)
-                .and_then(|value| value.get("validation_attempts"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([]));
+            let validation_attempts = sanitize_validation_attempts(
+                preserved_stage_runtime
+                    .get(stage)
+                    .and_then(|value| value.get("validation_attempts")),
+            );
             stage_runtime.insert(
                 stage.to_string(),
                 serde_json::json!({

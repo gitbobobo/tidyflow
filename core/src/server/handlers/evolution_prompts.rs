@@ -9,7 +9,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得把注释示例当成真实数据保留。
 
 阶段任务：
-1. 评估项目能力与证据，形成 `decision.context.capability_assessment`（`ui/test/build/runtime` 与 `rationale` 必须可解释、非空）。
+1. 评估项目能力。
 2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪。
 3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），写入 `direction.jsonc.acceptance_criteria`，供后续 `plan/verify` 使用。
 4. 维护阶段流转：本阶段结束后应进入 `plan`。

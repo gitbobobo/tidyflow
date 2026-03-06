@@ -22,7 +22,10 @@ use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
 use super::profile::profile_for_stage;
-use super::utils::{cycle_dir_path, read_json, write_json, write_jsonc_text};
+use super::utils::{
+    cycle_dir_path, read_json, sanitize_validation_attempt, sanitize_validation_attempts,
+    write_json, write_jsonc_text,
+};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
 const VALIDATION_REMINDER_MAX_RETRIES: u32 = 3;
@@ -4708,14 +4711,18 @@ impl EvolutionManager {
         let attempts_array = attempts
             .as_array_mut()
             .ok_or_else(|| format!("{}.validation_attempts 必须是数组", cycle_file.display()))?;
-        attempts_array.push(serde_json::json!({
+        let existing_attempts = sanitize_validation_attempts(Some(&serde_json::Value::Array(
+            std::mem::take(attempts_array),
+        )));
+        *attempts_array = existing_attempts.as_array().cloned().unwrap_or_default();
+        attempts_array.push(sanitize_validation_attempt(serde_json::json!({
             "attempt": attempt,
             "error_code": validation_err.code,
             "message": validation_err.message.clone(),
             "issues": validation_err.issues().to_vec(),
             "ts": Utc::now().to_rfc3339(),
             "session_id": session_id,
-        }));
+        })));
         write_json(&cycle_file, &value)
     }
 

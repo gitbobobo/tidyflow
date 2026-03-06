@@ -1,5 +1,11 @@
 use std::path::{Path, PathBuf};
 
+const MAX_VALIDATION_ATTEMPTS_PER_STAGE: usize = 8;
+const MAX_VALIDATION_ISSUES_PER_ATTEMPT: usize = 16;
+const MAX_VALIDATION_MESSAGE_CHARS: usize = 1_200;
+const MAX_VALIDATION_ISSUE_CHARS: usize = 800;
+const MAX_VALIDATION_SESSION_ID_CHARS: usize = 200;
+
 fn normalized_jsonc_path(path: &Path) -> PathBuf {
     if path
         .extension()
@@ -23,37 +29,33 @@ fn strip_jsonc_comments(input: &str) -> String {
         InBlockComment,
     }
 
-    let bytes = input.as_bytes();
-    let mut i = 0usize;
+    let mut chars = input.char_indices().peekable();
     let mut out = String::with_capacity(input.len());
     let mut state = State::Normal;
     let mut escaped = false;
 
-    while i < bytes.len() {
-        let ch = bytes[i] as char;
+    while let Some((_, ch)) = chars.next() {
         match state {
             State::Normal => {
                 if ch == '"' {
                     state = State::InString;
                     out.push(ch);
-                    i += 1;
                     continue;
                 }
-                if ch == '/' && i + 1 < bytes.len() {
-                    let next = bytes[i + 1] as char;
-                    if next == '/' {
+                if ch == '/' {
+                    let next = chars.peek().map(|(_, next)| *next);
+                    if next == Some('/') {
                         state = State::InLineComment;
-                        i += 2;
+                        chars.next();
                         continue;
                     }
-                    if next == '*' {
+                    if next == Some('*') {
                         state = State::InBlockComment;
-                        i += 2;
+                        chars.next();
                         continue;
                     }
                 }
                 out.push(ch);
-                i += 1;
             }
             State::InString => {
                 out.push(ch);
@@ -64,32 +66,119 @@ fn strip_jsonc_comments(input: &str) -> String {
                 } else if ch == '"' {
                     state = State::Normal;
                 }
-                i += 1;
             }
             State::InLineComment => {
                 if ch == '\n' {
                     out.push('\n');
                     state = State::Normal;
                 }
-                i += 1;
             }
             State::InBlockComment => {
                 if ch == '\n' {
                     out.push('\n');
-                    i += 1;
                     continue;
                 }
-                if ch == '*' && i + 1 < bytes.len() && (bytes[i + 1] as char) == '/' {
+                if ch == '*' && chars.peek().map(|(_, next)| *next) == Some('/') {
                     state = State::Normal;
-                    i += 2;
+                    chars.next();
                     continue;
                 }
-                i += 1;
             }
         }
     }
 
     out
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+
+    let keep = max_chars.saturating_sub(9).max(1);
+    let mut out = String::with_capacity(max_chars + 16);
+    for ch in input.chars().take(keep) {
+        out.push(ch);
+    }
+    out.push_str("...[已截断]");
+    out
+}
+
+fn sanitize_validation_attempt_object(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mut sanitized = serde_json::Map::new();
+
+    for key in ["attempt", "error_code", "ts"] {
+        if let Some(value) = obj.get(key) {
+            sanitized.insert(key.to_string(), value.clone());
+        }
+    }
+
+    if let Some(message) = obj.get("message").and_then(|value| value.as_str()) {
+        sanitized.insert(
+            "message".to_string(),
+            serde_json::Value::String(truncate_chars(message.trim(), MAX_VALIDATION_MESSAGE_CHARS)),
+        );
+    }
+
+    if let Some(session_id) = obj.get("session_id").and_then(|value| value.as_str()) {
+        sanitized.insert(
+            "session_id".to_string(),
+            serde_json::Value::String(truncate_chars(
+                session_id.trim(),
+                MAX_VALIDATION_SESSION_ID_CHARS,
+            )),
+        );
+    }
+
+    let issues = obj
+        .get("issues")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|issue| issue.as_str())
+                .take(MAX_VALIDATION_ISSUES_PER_ATTEMPT)
+                .map(|issue| {
+                    serde_json::Value::String(truncate_chars(
+                        issue.trim(),
+                        MAX_VALIDATION_ISSUE_CHARS,
+                    ))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    sanitized.insert("issues".to_string(), serde_json::Value::Array(issues));
+
+    serde_json::Value::Object(sanitized)
+}
+
+pub(super) fn sanitize_validation_attempt(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(obj) => sanitize_validation_attempt_object(&obj),
+        _ => serde_json::json!({}),
+    }
+}
+
+pub(super) fn sanitize_validation_attempts(value: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(items) = value.and_then(|value| value.as_array()) else {
+        return serde_json::json!([]);
+    };
+
+    let start = items
+        .len()
+        .saturating_sub(MAX_VALIDATION_ATTEMPTS_PER_STAGE);
+    serde_json::Value::Array(
+        items[start..]
+            .iter()
+            .cloned()
+            .map(sanitize_validation_attempt)
+            .collect(),
+    )
 }
 
 pub(super) fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
@@ -144,7 +233,7 @@ pub(super) fn workspace_key(project: &str, workspace: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_json, workspace_key};
+    use super::{read_json, sanitize_validation_attempts, workspace_key};
     use std::fs;
     use tempfile::tempdir;
 
@@ -187,6 +276,28 @@ mod tests {
     }
 
     #[test]
+    fn read_json_should_preserve_utf8_strings() {
+        let dir = tempdir().expect("tempdir should be created");
+        let file = dir.path().join("unicode.jsonc");
+        fs::write(
+            &file,
+            r#"
+            {
+              // 中文注释
+              "title": "当前项目质量基线",
+              "items": ["跨平台", "错误码", "验收标准"]
+            }
+            "#,
+        )
+        .expect("unicode jsonc file should be written");
+
+        let value = read_json(&file).expect("unicode jsonc should parse");
+        assert_eq!(value["title"], serde_json::json!("当前项目质量基线"));
+        assert_eq!(value["items"][0], serde_json::json!("跨平台"));
+        assert_eq!(value["items"][1], serde_json::json!("错误码"));
+    }
+
+    #[test]
     fn read_json_should_reject_json5_trailing_comma() {
         let dir = tempdir().expect("tempdir should be created");
         let file = dir.path().join("invalid.jsonc");
@@ -206,5 +317,37 @@ mod tests {
             "error should come from strict JSON parser, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn sanitize_validation_attempts_should_limit_size() {
+        let issue = "错".repeat(2_000);
+        let attempts = serde_json::json!((0..12)
+            .map(|idx| serde_json::json!({
+                "attempt": idx + 1,
+                "error_code": "artifact_contract_violation",
+                "message": format!("第{}次失败：{}", idx + 1, issue),
+                "issues": vec![issue.clone(); 24],
+                "session_id": "sess".repeat(80),
+                "ts": "2026-03-06T12:00:00Z",
+            }))
+            .collect::<Vec<_>>());
+
+        let sanitized = sanitize_validation_attempts(Some(&attempts));
+        let items = sanitized
+            .as_array()
+            .expect("sanitized attempts should be array");
+        assert_eq!(items.len(), 8);
+        assert_eq!(items[0]["attempt"], serde_json::json!(5));
+        assert_eq!(
+            items[7]["issues"]
+                .as_array()
+                .expect("issues should remain array")
+                .len(),
+            16
+        );
+        assert!(items[0]["message"].as_str().unwrap().chars().count() <= 1_200);
+        assert!(items[0]["issues"][0].as_str().unwrap().chars().count() <= 800);
+        assert!(items[0]["session_id"].as_str().unwrap().chars().count() <= 200);
     }
 }
