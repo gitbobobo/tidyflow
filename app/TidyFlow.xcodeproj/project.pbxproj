@@ -173,6 +173,7 @@
 			TST10007 /* EvolutionAgentProfileNormalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10017 /* EvolutionAgentProfileNormalizationTests.swift */; };
 			TST10008 /* EvolutionStageChatAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10018 /* EvolutionStageChatAvailabilityTests.swift */; };
 			TST10009 /* AIChatMessageSpacingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10019 /* AIChatMessageSpacingTests.swift */; };
+			TST1000A /* TerminalSearchCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1001A /* TerminalSearchCoordinatorTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -222,6 +223,7 @@
 			TST10017 /* EvolutionAgentProfileNormalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionAgentProfileNormalizationTests.swift; sourceTree = "<group>"; };
 			TST10018 /* EvolutionStageChatAvailabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionStageChatAvailabilityTests.swift; sourceTree = "<group>"; };
 			TST10019 /* AIChatMessageSpacingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageSpacingTests.swift; sourceTree = "<group>"; };
+			TST1001A /* TerminalSearchCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSearchCoordinatorTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -520,6 +522,7 @@
 					TST10017 /* EvolutionAgentProfileNormalizationTests.swift */,
 					TST10018 /* EvolutionStageChatAvailabilityTests.swift */,
 					TST10019 /* AIChatMessageSpacingTests.swift */,
+					TST1001A /* TerminalSearchCoordinatorTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -939,6 +942,7 @@
 				TST10003 /* AIPlanCardViewModelTests.swift in Sources */,
 				TST10002 /* AIChatProtocolModelsTests.swift in Sources */,
 				TST10001 /* ChatScrollPolicyTests.swift in Sources */,
+				TST1000A /* TerminalSearchCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

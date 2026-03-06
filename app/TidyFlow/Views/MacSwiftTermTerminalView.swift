@@ -270,13 +270,14 @@ struct TerminalSearchBarView: View {
 
             Divider().frame(height: 14)
 
-            // 关闭搜索框
+            // 关闭搜索框（也响应 Esc 快捷键）
             Button(action: { searchState.close() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .medium))
             }
             .buttonStyle(.plain)
-            .help("关闭")
+            .keyboardShortcut(.escape, modifiers: [])
+            .help("关闭（Esc）")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

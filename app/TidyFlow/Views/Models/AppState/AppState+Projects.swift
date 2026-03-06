@@ -285,7 +285,12 @@ extension AppState {
                 app.requestSaveAsForActiveEditor()
             },
             Command(id: "workspace.find", title: "Find / Replace", subtitle: "Find and replace in current file", scope: .workspace, keyHint: "Cmd+F") { app in
-                app.editorStore.showFindReplacePanel = true
+                if let activeTab = app.getActiveTab(), activeTab.kind == .terminal {
+                    app.editorStore.showFindReplacePanel = false
+                    NotificationCenter.default.post(name: .terminalSearchRequested, object: activeTab.id)
+                } else {
+                    app.editorStore.showFindReplacePanel = true
+                }
             },
             // UX-3a: Git rebase commands
             Command(id: "git.fetch", title: "Git: Fetch", subtitle: "Fetch from remote", scope: .workspace, keyHint: nil) { app in

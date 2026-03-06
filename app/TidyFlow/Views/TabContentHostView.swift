@@ -92,16 +92,47 @@ struct NoActiveTabView: View {
 struct TerminalContentView: View {
     let tab: TabModel
     @EnvironmentObject var appState: AppState
+    @StateObject private var searchState = TerminalSearchState()
 
     var body: some View {
         VStack(spacing: 0) {
-            MacSwiftTermTerminalView(appState: appState, tabId: tab.id)
-                .background(Color.black)
+            ZStack(alignment: .top) {
+                MacSwiftTermTerminalView(appState: appState, tabId: tab.id, searchState: searchState)
+                    .background(Color.black)
+                if searchState.isVisible {
+                    TerminalSearchBarView(searchState: searchState)
+                        .padding(.top, 8)
+                        .padding(.horizontal, 8)
+                        .zIndex(1)
+                }
+            }
+            .background(terminalSearchShortcuts)
             TerminalStatusBar()
                 .environmentObject(appState)
         }
         .onAppear {
             appState.ensureTerminalForTab(tab)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .terminalSearchRequested)) { note in
+            guard let requestedTabId = note.object as? UUID, requestedTabId == tab.id else { return }
+            searchState.show()
+        }
+    }
+
+    @ViewBuilder
+    private var terminalSearchShortcuts: some View {
+        Button("Terminal Search") {
+            searchState.show()
+        }
+        .keyboardShortcut("f", modifiers: .command)
+        .hidden()
+
+        if searchState.isVisible {
+            Button("Close Terminal Search") {
+                searchState.close()
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+            .hidden()
         }
     }
 }
