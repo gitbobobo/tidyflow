@@ -20,6 +20,7 @@ fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
     session_ids
 }
 
+#[allow(dead_code)]
 fn merge_stage_payload(
     existing: Option<serde_json::Value>,
     cycle_id: &str,

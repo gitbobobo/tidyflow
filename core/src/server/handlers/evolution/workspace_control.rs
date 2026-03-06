@@ -35,6 +35,7 @@ fn non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[allow(dead_code)]
 fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
     non_empty_string(stage_json.get("cycle_title"))
         .or_else(|| non_empty_string(stage_json.pointer("/decision/context/selected_title")))
@@ -45,6 +46,7 @@ fn extract_cycle_title_from_cycle_file(cycle_json: &serde_json::Value) -> Option
         .or_else(|| non_empty_string(cycle_json.get("cycle_title")))
 }
 
+#[allow(dead_code)]
 fn resolve_cycle_history_title(
     direction_stage_title: Option<String>,
     cycle_file_title: Option<String>,
@@ -217,6 +219,7 @@ fn build_cycle_history_item(
     })
 }
 
+#[allow(dead_code)]
 fn parse_stage_session_executions(
     stage_name: &str,
     stage_json: &serde_json::Value,

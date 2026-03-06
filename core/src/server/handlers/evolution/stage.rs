@@ -98,6 +98,7 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
@@ -124,6 +125,7 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),

@@ -1,0 +1,50 @@
+# SwiftLint 配置
+# 排除第三方依赖和构建产物；仅检查项目自有代码
+
+excluded:
+  - build
+  - build-ios
+  - dist
+  - web-vendor
+  - target
+  - .build
+
+# 禁用在当前代码库中普遍存在、需要大规模重构才能修复的规则
+# 后续迭代可逐步收紧
+disabled_rules:
+  - identifier_name              # 短变量名在测试/数学代码中合理
+  - trailing_whitespace          # 由格式化工具统一处理
+  - trailing_comma               # Swift 集合字面量尾逗号风格不一
+  - multiple_closures_with_trailing_closure  # SwiftUI 常见多尾随闭包模式
+  - implicit_optional_initialization  # = nil 显式初始化风格
+  - large_tuple                  # 元组大小限制
+  - redundant_string_enum_value  # 字符串枚举冗余值
+  - for_where                    # prefer_for_where
+  - control_statement
+  - vertical_whitespace
+  - trailing_newline
+  - optional_data_string_conversion
+  - redundant_discardable_let
+  - unused_enumerated
+  - unused_closure_parameter
+  - non_optional_string_data_conversion
+  - file_length                  # 大文件：由代码组织迭代处理
+  - type_body_length             # 大类型：由代码组织迭代处理
+  - function_body_length         # 大函数：由代码组织迭代处理
+  - cyclomatic_complexity        # 高复杂度：由代码组织迭代处理
+  - function_parameter_count     # 参数数量：由代码组织迭代处理
+
+# 放宽阈值以匹配当前代码规模
+line_length:
+  warning: 400
+  error: 500
+  ignores_comments: true
+  ignores_urls: true
+
+nesting:
+  type_level:
+    warning: 3
+    error: 4
+  function_level:
+    warning: 5
+    error: 6

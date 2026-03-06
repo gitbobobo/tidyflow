@@ -4,6 +4,8 @@
 //!
 //! 服务器进程由测试框架自动启停，无需手动干预。
 
+#![allow(dead_code, clippy::useless_format)]
+
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};

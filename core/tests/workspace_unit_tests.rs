@@ -426,7 +426,7 @@ mod state_tests {
 
 mod serialization_tests {
     use tidyflow_core::workspace::state::{
-        AppState, ClientSettings, Project, Workspace, WorkspaceStatus,
+        AppState, Project, Workspace, WorkspaceStatus,
     };
 
     #[test]

@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[allow(unused_comparisons)]
 fn test_ephemeral_port_allocation() {
     let port = OpenCodeManager::allocate_ephemeral_port();
     assert!(port >= 49152, "Port should be in ephemeral range");
@@ -42,6 +43,7 @@ fn test_working_dir_is_stored() {
 }
 
 #[test]
+#[allow(unused_comparisons)]
 fn test_port_in_ephemeral_range() {
     // IANA 建议的动态端口范围是 49152-65535
     for _ in 0..10 {

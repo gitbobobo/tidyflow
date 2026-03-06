@@ -3,6 +3,8 @@
 //! 验证所有核心消息流的 domain/action 映射正确性。
 //! 这些测试确保协议在不同组件（Core/App/Web）之间保持一致。
 
+#![allow(dead_code, clippy::manual_contains)]
+
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
