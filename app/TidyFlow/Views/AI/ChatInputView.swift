@@ -47,6 +47,8 @@ struct ChatInputView: View {
     var onRequestFileReferences: (() -> Void)?
     /// iOS 输入辅助：引用搜索词变化时触发实时查询
     var onSearchFileReferences: ((String) -> Void)?
+    /// iOS/macOS: 可引用的项目名称列表（用于 @@ 触发的项目补全）
+    var projectNames: [String] = []
     /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
     var onInputContextChange: ((Int, Bool) -> Void)?
     /// 光标位置（外部读取用于定位弹出层）
