@@ -581,15 +581,20 @@ private struct MessageBubble: View, Equatable {
         }
     }
 
-    /// 连续工具卡之间使用 8pt 间距，其他类型 part 保持 10pt 阅读节奏。
+    /// 相邻 part 之间的动态间距规则：
+    /// - 连续工具卡之间使用 8pt 紧凑间距，避免过度分散
+    /// - 推理块（reasoning）紧接工具卡使用 8pt，保持语义连续感
+    /// - 其余组合保持 10pt 阅读节奏
     private func spacingBeforePart(at index: Int, in parts: [AIChatPart]) -> CGFloat {
         guard index > 0 else { return 0 }
         let previousPart = parts[index - 1]
         let currentPart = parts[index]
-        if previousPart.kind == .tool, currentPart.kind == .tool {
+        switch (previousPart.kind, currentPart.kind) {
+        case (.tool, .tool), (.tool, .reasoning), (.reasoning, .tool):
             return 8
+        default:
+            return 10
         }
-        return 10
     }
 
     var body: some View {
