@@ -259,6 +259,7 @@ mod tests {
             stage_session_history: HashMap::new(),
             stage_tool_call_counts: HashMap::new(),
             stage_seen_tool_calls: HashMap::new(),
+            stage_retry_counts: HashMap::new(),
             session_executions: Vec::new(),
             stage_started_ats: HashMap::new(),
             stage_duration_ms: HashMap::new(),

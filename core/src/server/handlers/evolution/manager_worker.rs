@@ -1,7 +1,11 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{error, info, warn};
 
+use super::consts::{
+    MAX_SESSION_RETRY_ATTEMPTS, MAX_STAGE_RUNTIME_SECS, SESSION_RETRY_BACKOFF_BASE_SECS,
+    SESSION_RETRY_BACKOFF_MAX_SECS,
+};
 use super::EvolutionManager;
 use crate::ai::AiMessage;
 use crate::server::context::HandlerContext;
@@ -10,7 +14,6 @@ use crate::server::handlers::ai::{ensure_agent, resolve_directory};
 const RATE_LIMIT_WAIT_SLICE_MS: i64 = 3_000;
 const RATE_LIMIT_WAIT_MIN_MS: i64 = 200;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: i64 = 60;
-const SESSION_RECOVERY_FALLBACK_WAIT_SECS: i64 = 15;
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed_exhausted" | "failed_system")
@@ -46,6 +49,9 @@ fn is_retryable_session_error_text(text: &str) -> bool {
     if lower.contains("context window")
         || lower.contains("evo_stage_output_invalid")
         || lower.contains("evo_llm_output_unparseable")
+        // WI-005: 边界场景（空项目/目录缺失）属于非瞬态，不参与自动重试
+        || lower.contains("evo_boundary_empty_project")
+        || lower.contains("evo_boundary_workspace_missing")
     {
         return false;
     }
@@ -61,11 +67,17 @@ fn is_retryable_session_error_text(text: &str) -> bool {
         || lower.contains("network error")
         || lower.contains("service unavailable")
         || lower.contains("pre-flight check")
+        || lower.contains("connection refused")
+        || lower.contains("agent not available")
+        // WI-005: 缺失 cycle 目录属于瞬态（可能是时序问题），允许重试
+        || lower.contains("evo_boundary_cycle_dir_missing")
         || text.contains("连接超时")
         || text.contains("连接重置")
         || text.contains("连接中断")
         || text.contains("网络错误")
         || text.contains("服务不可用")
+        || text.contains("AI服务不可用")
+        || text.contains("无法连接")
 }
 
 fn looks_like_datetime_head(bytes: &[u8], start: usize) -> bool {
@@ -406,7 +418,40 @@ impl EvolutionManager {
             return false;
         }
 
-        let resume_at = Utc::now() + chrono::Duration::seconds(SESSION_RECOVERY_FALLBACK_WAIT_SECS);
+        // 计算当前重试次数，判断是否已达上限
+        let retry_attempt = {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(key) else {
+                return true;
+            };
+            let count = entry
+                .stage_retry_counts
+                .entry(stage.to_string())
+                .or_insert(0);
+            *count += 1;
+            *count
+        };
+
+        if retry_attempt > MAX_SESSION_RETRY_ATTEMPTS {
+            // 重试次数耗尽，转入 failed_exhausted 并停止重试
+            warn!(
+                "evolution stage retry exhausted: key={}, stage={}, attempts={}, error={}",
+                key, stage, retry_attempt, err
+            );
+            let exhausted_err = format!(
+                "evo_retry_exhausted: stage={}, attempts={}, last_error={}",
+                stage, retry_attempt, err
+            );
+            self.mark_failed_with_code(key, "evo_retry_exhausted", &exhausted_err, ctx)
+                .await;
+            return true;
+        }
+
+        // 指数退避：base^(attempt-1)，上限 SESSION_RETRY_BACKOFF_MAX_SECS
+        let backoff_secs = SESSION_RETRY_BACKOFF_BASE_SECS
+            .saturating_pow(retry_attempt - 1)
+            .min(SESSION_RETRY_BACKOFF_MAX_SECS);
+        let resume_at = Utc::now() + chrono::Duration::seconds(backoff_secs as i64);
         let resume_at_rfc3339 = resume_at.to_rfc3339();
 
         {
@@ -431,8 +476,8 @@ impl EvolutionManager {
         self.broadcast_scheduler(ctx).await;
 
         warn!(
-            "evolution stage session error scheduled for retry: key={}, stage={}, resume_at={}, error={}",
-            key, stage, resume_at_rfc3339, err
+            "evolution stage session error scheduled for retry: key={}, stage={}, attempt={}/{}, backoff_secs={}, resume_at={}, error={}",
+            key, stage, retry_attempt, MAX_SESSION_RETRY_ATTEMPTS, backoff_secs, resume_at_rfc3339, err
         );
         true
     }
@@ -576,9 +621,26 @@ impl EvolutionManager {
                 "evolution worker run_stage begin: key={}, project={}, workspace={}, cycle_id={}, stage={}, round={}",
                 key, project, workspace, cycle_id, stage, round
             );
-            let stage_result = self
-                .run_stage(&key, &project, &workspace, &cycle_id, &stage, round, &ctx)
-                .await;
+            // WI-001: 用 MAX_STAGE_RUNTIME_SECS 限制整个阶段的最大执行时间
+            let stage_result = match timeout(
+                Duration::from_secs(MAX_STAGE_RUNTIME_SECS),
+                self.run_stage(&key, &project, &workspace, &cycle_id, &stage, round, &ctx),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_elapsed) => {
+                    let timeout_err = format!(
+                        "evo_stage_timeout: stage={} exceeded MAX_STAGE_RUNTIME_SECS={}",
+                        stage, MAX_STAGE_RUNTIME_SECS
+                    );
+                    error!(
+                        "evolution stage timeout: key={}, stage={}, cycle_id={}, limit_secs={}",
+                        key, stage, cycle_id, MAX_STAGE_RUNTIME_SECS
+                    );
+                    Err(timeout_err)
+                }
+            };
 
             drop(permit);
 
@@ -822,5 +884,80 @@ mod tests {
             .single()
             .expect("valid timestamp");
         assert_eq!(parsed, expected);
+    }
+
+    // WI-001: 阶段超时守卫回归测试
+    #[test]
+    fn stage_runtime_timeout_error_should_be_classified_correctly() {
+        // evo_stage_timeout 是超时错误：非 rate_limit，非 retryable（不触发指数退避，由外层处理）
+        let timeout_err = "evo_stage_timeout: stage=direction exceeded MAX_STAGE_RUNTIME_SECS=3600";
+        assert!(!is_rate_limit_error_text(timeout_err));
+        assert!(!is_retryable_session_error_text(timeout_err));
+        // evo_stage_timeout 应当被系统标记为 failed_system，而不是无限等待
+        assert!(!is_terminal_status("running"));
+        assert!(is_terminal_status("failed_system"));
+    }
+
+    #[test]
+    fn stage_runtime_timeout_should_not_retry_permanently() {
+        // 超时不属于可重试的瞬态错误，确保不会绕过熔断进入无限重试
+        let timeout_err = "evo_stage_timeout: stage=plan exceeded MAX_STAGE_RUNTIME_SECS=3600";
+        assert!(!is_retryable_session_error_text(timeout_err));
+        assert!(!is_rate_limit_error_text(timeout_err));
+    }
+
+    // WI-002: 指数退避重试策略回归测试
+    #[test]
+    fn evolution_retry_backoff_base_exponent_should_grow() {
+        use super::super::consts::{
+            MAX_SESSION_RETRY_ATTEMPTS, SESSION_RETRY_BACKOFF_BASE_SECS,
+            SESSION_RETRY_BACKOFF_MAX_SECS,
+        };
+        // 验证退避序列：base^(attempt-1)
+        let attempt1 = SESSION_RETRY_BACKOFF_BASE_SECS
+            .saturating_pow(0)
+            .min(SESSION_RETRY_BACKOFF_MAX_SECS);
+        let attempt2 = SESSION_RETRY_BACKOFF_BASE_SECS
+            .saturating_pow(1)
+            .min(SESSION_RETRY_BACKOFF_MAX_SECS);
+        let attempt3 = SESSION_RETRY_BACKOFF_BASE_SECS
+            .saturating_pow(2)
+            .min(SESSION_RETRY_BACKOFF_MAX_SECS);
+        assert_eq!(attempt1, 1, "第1次重试应为 base^0=1 秒");
+        assert_eq!(attempt2, SESSION_RETRY_BACKOFF_BASE_SECS, "第2次重试应为 base^1");
+        assert!(attempt3 > attempt2, "退避时间应单调递增");
+        assert!(attempt3 <= SESSION_RETRY_BACKOFF_MAX_SECS, "退避时间不超过上限");
+        assert!(
+            MAX_SESSION_RETRY_ATTEMPTS >= 3,
+            "最大重试次数不得少于 3 次"
+        );
+    }
+
+    #[test]
+    fn evolution_retry_backoff_cap_should_not_exceed_max() {
+        use super::super::consts::{SESSION_RETRY_BACKOFF_BASE_SECS, SESSION_RETRY_BACKOFF_MAX_SECS};
+        // 高次幂应被 max 截断
+        let large_attempt = SESSION_RETRY_BACKOFF_BASE_SECS
+            .saturating_pow(100)
+            .min(SESSION_RETRY_BACKOFF_MAX_SECS);
+        assert_eq!(
+            large_attempt, SESSION_RETRY_BACKOFF_MAX_SECS,
+            "高次幂应被上限截断"
+        );
+    }
+
+    #[test]
+    fn evolution_retry_backoff_exhaustion_should_not_retry_boundary_errors() {
+        // 边界场景：空项目/目录缺失不应触发退避重试
+        assert!(!is_retryable_session_error_text(
+            "evo_boundary_empty_project: workspace_root 为空"
+        ));
+        assert!(!is_retryable_session_error_text(
+            "evo_boundary_workspace_missing: workspace_root 不存在: /nonexistent"
+        ));
+        // cycle 目录缺失属于可重试瞬态
+        assert!(is_retryable_session_error_text(
+            "evo_boundary_cycle_dir_missing: cycle 目录不存在: /tmp/evo/cycle-1"
+        ));
     }
 }

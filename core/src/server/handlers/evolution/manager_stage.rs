@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
@@ -20,7 +20,7 @@ use crate::server::handlers::ai::{
 };
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
-use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
+use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION};
 use super::profile::profile_for_stage;
 use super::utils::{
     cycle_dir_path, read_json, sanitize_validation_attempt, sanitize_validation_attempts,
@@ -801,6 +801,87 @@ fn ensure_cycle_id_matches(
         return Err(format!(
             "{}.cycle_id 不匹配: {} != {}",
             label, cycle_id, expected_cycle_id
+        ));
+    }
+    Ok(())
+}
+
+/// WI-004: Evolution 结构化错误日志落盘
+/// 输出字段：cycle_id、stage、error_code、error_message
+/// 日志经 tracing Layer 最终写入 ~/.tidyflow/logs/YYYY-MM-DD.log
+fn log_evolution_error(cycle_id: &str, stage: &str, error_code: &str, message: &str) {
+    error!(
+        cycle_id = cycle_id,
+        stage = stage,
+        error_code = error_code,
+        "evolution error: {}",
+        message
+    );
+}
+
+/// WI-005: 校验工作区 workspace_root 及 cycle 目录存在且可访问
+fn check_workspace_boundary(workspace_root: &str, cycle_id: &str) -> Result<(), String> {
+    let root = workspace_root.trim();
+    if root.is_empty() {
+        return Err(
+            "evo_boundary_empty_project: workspace_root 为空，请先配置有效的项目目录".to_string(),
+        );
+    }
+    let root_path = std::path::Path::new(root);
+    if !root_path.exists() {
+        return Err(format!(
+            "evo_boundary_workspace_missing: workspace_root 不存在: {}",
+            root
+        ));
+    }
+    let cycle_dir = root_path
+        .join(".tidyflow")
+        .join("evolution")
+        .join(cycle_id);
+    if !cycle_dir.exists() {
+        return Err(format!(
+            "evo_boundary_cycle_dir_missing: cycle 目录不存在: {}",
+            cycle_dir.display()
+        ));
+    }
+    Ok(())
+}
+fn ensure_schema_version(
+    label: &str,
+    value: &serde_json::Value,
+    expected: &str,
+) -> Result<(), String> {
+    let version = value
+        .get("$schema_version")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{} 缺少 $schema_version 字段", label))?;
+    if version != expected {
+        return Err(format!(
+            "{} $schema_version 版本不符: 期望 {}, 实际 {}",
+            label, expected, version
+        ));
+    }
+    Ok(())
+}
+
+/// WI-003: 校验阶段产物的 `stage` 字段必须等于期望值
+fn ensure_stage_field_matches(
+    label: &str,
+    value: &serde_json::Value,
+    expected_stage: &str,
+) -> Result<(), String> {
+    let stage = value
+        .get("stage")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{} 缺少 stage 字段", label))?;
+    if stage != expected_stage {
+        return Err(format!(
+            "{} stage 字段不符: 期望 {}, 实际 {}",
+            label, expected_stage, stage
         ));
     }
     Ok(())
@@ -1684,6 +1765,13 @@ impl EvolutionManager {
         let value = read_json_file(cycle_dir, "plan.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
+        // WI-003: 校验 $schema_version 与 stage 字段
+        report.capture(ensure_schema_version(
+            "plan.jsonc",
+            &value,
+            STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+        ));
+        report.capture(ensure_stage_field_matches("plan.jsonc", &value, "plan"));
         let (_, routing_report) = parse_plan_routing_tables_report(&value);
         report.merge(routing_report);
 
@@ -2545,6 +2633,13 @@ impl EvolutionManager {
         let value = read_json_file(cycle_dir, file_name)
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
+        // WI-003: 校验 $schema_version 与 stage 字段
+        report.capture(ensure_schema_version(
+            file_name,
+            &value,
+            STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+        ));
+        report.capture(ensure_stage_field_matches(file_name, &value, stage));
         if let Some(ctx) = validation_ctx {
             report.capture(ensure_cycle_id_matches(file_name, &value, &ctx.cycle_id));
             report.capture(ensure_artifact_freshness(
@@ -2745,6 +2840,13 @@ impl EvolutionManager {
         let verify_value = read_json_file(cycle_dir, "verify.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
+        // WI-003: 校验 $schema_version 与 stage 字段
+        report.capture(ensure_schema_version(
+            "verify.jsonc",
+            &verify_value,
+            STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+        ));
+        report.capture(ensure_stage_field_matches("verify.jsonc", &verify_value, "verify"));
         if let Some(ctx) = validation_ctx {
             report.capture(ensure_cycle_id_matches(
                 "verify.jsonc",
@@ -3203,6 +3305,17 @@ impl EvolutionManager {
         let stage_value = read_json_file(cycle_dir, "direction.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
+        // WI-003: 校验 $schema_version 与 stage 字段
+        report.capture(ensure_schema_version(
+            "direction.jsonc",
+            &stage_value,
+            STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+        ));
+        report.capture(ensure_stage_field_matches(
+            "direction.jsonc",
+            &stage_value,
+            "direction",
+        ));
         if let Some(ctx) = validation_ctx {
             report.capture(ensure_cycle_id_matches(
                 "direction.jsonc",
@@ -5260,6 +5373,16 @@ impl EvolutionManager {
         error_message: &str,
         ctx: &HandlerContext,
     ) {
+        // WI-004: 结构化错误日志落盘
+        let cycle_id = {
+            let state = self.state.lock().await;
+            state
+                .workspaces
+                .get(key)
+                .map(|e| e.cycle_id.clone())
+                .unwrap_or_default()
+        };
+        log_evolution_error(&cycle_id, stage, "evo_stage_failed", error_message);
         self.set_stage_status(key, stage, "failed").await;
         if let Some(session_id) = session_id {
             let tool_call_count = self.stage_tool_call_count(key, stage).await;
@@ -5320,6 +5443,12 @@ impl EvolutionManager {
             verify_iteration,
             backlog_contract_version
         );
+
+        // WI-005: 边界场景预检，空项目 / 缺失目录及早返回结构化错误
+        if let Err(boundary_err) = check_workspace_boundary(&workspace_root, cycle_id) {
+            log_evolution_error(cycle_id, stage, "evo_boundary_check_failed", &boundary_err);
+            return Err(boundary_err);
+        }
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let implement_lanes = if Self::lane_for_stage(stage).is_some() {
@@ -5824,6 +5953,13 @@ impl EvolutionManager {
         verify_pass: bool,
         ctx: &HandlerContext,
     ) -> bool {
+        // 阶段成功后重置该阶段的重试计数，防止旧计数影响下一轮
+        {
+            let mut state = self.state.lock().await;
+            if let Some(entry) = state.workspaces.get_mut(key) {
+                entry.stage_retry_counts.remove(stage);
+            }
+        }
         let (cycle_for_validation, before_snapshot) = {
             let state = self.state.lock().await;
             if let Some(entry) = state.workspaces.get(key) {
@@ -6415,6 +6551,8 @@ impl EvolutionManager {
         };
 
         if let Some((project, workspace, cycle_id)) = maybe {
+            // WI-004: 结构化错误日志落盘，包含 cycle_id、error_code、message
+            log_evolution_error(&cycle_id, "system", code, &normalized_err);
             self.persist_cycle_file(key).await.ok();
             self.broadcast(
                 ctx,
@@ -6442,10 +6580,12 @@ impl EvolutionManager {
 mod tests {
     use super::super::{stage::next_stage, STAGES};
     use super::{
-        auto_commit_stage_template, direction_stage_template, implement_stage_template,
-        managed_backlog_template, parse_adjudication_result_from_json, plan_stage_template,
-        should_force_advanced_reimplementation, should_start_next_round, verify_stage_template,
-        ArtifactValidationError, EvolutionManager, ImplementLane, StageValidationContext,
+        auto_commit_stage_template, check_workspace_boundary, direction_stage_template,
+        ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
+        log_evolution_error, managed_backlog_template, parse_adjudication_result_from_json,
+        plan_stage_template, should_force_advanced_reimplementation, should_start_next_round,
+        verify_stage_template, ArtifactValidationError, EvolutionManager, ImplementLane,
+        StageValidationContext,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -9616,5 +9756,170 @@ mod tests {
         let err = EvolutionManager::generate_managed_backlog_from_verify(dir.path(), 1)
             .expect_err("无法映射 selector 时应失败");
         assert!(err.contains("source_criteria_id"));
+    }
+
+    // WI-003: 阶段产物契约校验测试
+    #[test]
+    fn stage_artifact_contract_validation_schema_version_should_reject_wrong_version() {
+        use super::super::consts::STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION;
+        let value = serde_json::json!({ "$schema_version": "1.0" });
+        let result =
+            ensure_schema_version("test.jsonc", &value, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION);
+        assert!(result.is_err(), "版本不符应返回错误");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("$schema_version"),
+            "错误应包含字段名: {}",
+            err
+        );
+        assert!(
+            err.contains(STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION),
+            "错误应包含期望版本: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn stage_artifact_contract_validation_schema_version_should_accept_correct_version() {
+        use super::super::consts::STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION;
+        let value = serde_json::json!({ "$schema_version": "2.0" });
+        let result =
+            ensure_schema_version("test.jsonc", &value, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION);
+        assert!(result.is_ok(), "版本正确应通过: {:?}", result);
+    }
+
+    #[test]
+    fn stage_artifact_contract_validation_schema_version_should_reject_missing_field() {
+        use super::super::consts::STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION;
+        let value = serde_json::json!({ "stage": "plan" });
+        let result =
+            ensure_schema_version("plan.jsonc", &value, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION);
+        assert!(result.is_err(), "缺少 $schema_version 应返回错误");
+        let err = result.unwrap_err();
+        assert!(err.contains("缺少"), "错误应说明字段缺失: {}", err);
+    }
+
+    #[test]
+    fn stage_artifact_contract_validation_stage_field_should_detect_mismatch() {
+        let value = serde_json::json!({ "stage": "plan" });
+        let result = ensure_stage_field_matches("implement_general.jsonc", &value, "implement_general");
+        assert!(result.is_err(), "stage 不符应返回错误");
+        let err = result.unwrap_err();
+        assert!(err.contains("stage"), "错误应包含 stage 字段名: {}", err);
+    }
+
+    #[test]
+    fn stage_artifact_contract_validation_stage_field_should_accept_match() {
+        let value = serde_json::json!({ "stage": "direction" });
+        let result = ensure_stage_field_matches("direction.jsonc", &value, "direction");
+        assert!(result.is_ok(), "stage 匹配应通过: {:?}", result);
+    }
+
+    #[test]
+    fn stage_artifact_contract_validation_direction_should_reject_wrong_schema() {
+        let dir = tempdir().expect("tempdir should be created");
+        let file = dir.path().join("direction.jsonc");
+        std::fs::write(
+            &file,
+            r#"{
+  "$schema_version": "1.0",
+  "stage": "direction",
+  "cycle_id": "test-cycle",
+  "status": "completed",
+  "cycle_title": "测试",
+  "decision": { "result": "n/a", "reason": "ok", "context": { "capability_assessment": { "ui_capability": "full", "test_capability": "full", "build_capability": "full", "runtime_capability": "full", "rationale": "ok" } } },
+  "project_type": "test",
+  "ui_capability": "full",
+  "domains": [{ "domain": "test", "status": "active", "evidence_paths": [], "findings": [] }],
+  "selected_direction_type": "test_dir",
+  "candidate_scores": [{ "direction_type": "test_dir", "score": 0.9, "rationale": "ok" }],
+  "final_reason": "ok",
+  "acceptance_criteria": [{ "criteria_id": "AC-001", "description": "test" }],
+  "handoff": { "completed": ["done"], "risks": [], "next": [] },
+  "next_action": { "type": "goto_stage", "target": "plan" },
+  "updated_at": "2026-01-01T00:00:00Z"
+}"#,
+        )
+        .unwrap();
+        let result = EvolutionManager::validate_direction_artifact(dir.path(), None);
+        assert!(result.is_err(), "旧版 schema_version 应被拒绝");
+        let err_msg = result.unwrap_err().to_stage_error();
+        assert!(err_msg.contains("$schema_version"), "错误应提及 schema_version: {}", err_msg);
+    }
+
+    // WI-004: 结构化错误日志测试
+    #[test]
+    fn evolution_structured_error_logging_should_not_panic_with_empty_fields() {
+        // 验证结构化日志 helper 以空字段调用不会 panic
+        log_evolution_error("", "", "", "");
+        log_evolution_error("cycle-001", "direction", "evo_test_error", "测试错误消息");
+    }
+
+    #[test]
+    fn evolution_structured_error_logging_should_accept_unicode_message() {
+        // 验证 Unicode 错误消息可正常记录
+        log_evolution_error(
+            "2026-03-06T16-59-43-008Z",
+            "implement_general",
+            "evo_stage_failed",
+            "空项目/配置缺失/网络中断均可结构化输出：校验失败 $schema_version 不匹配",
+        );
+    }
+
+    // WI-005: 边界场景恢复测试
+    #[test]
+    fn evolution_boundary_recovery_empty_workspace_should_return_structured_error() {
+        let result = check_workspace_boundary("", "cycle-001");
+        assert!(result.is_err(), "空 workspace_root 应返回错误");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("evo_boundary_empty_project"),
+            "错误码应包含 evo_boundary_empty_project: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn evolution_boundary_recovery_missing_workspace_root_should_return_structured_error() {
+        let result =
+            check_workspace_boundary("/nonexistent/path/that/does/not/exist", "cycle-001");
+        assert!(result.is_err(), "不存在的 workspace_root 应返回错误");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("evo_boundary_workspace_missing"),
+            "错误码应包含 evo_boundary_workspace_missing: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn evolution_boundary_recovery_missing_cycle_dir_should_return_structured_error() {
+        let dir = tempdir().expect("tempdir should be created");
+        let result = check_workspace_boundary(dir.path().to_str().unwrap(), "nonexistent-cycle");
+        assert!(result.is_err(), "cycle 目录不存在应返回错误");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("evo_boundary_cycle_dir_missing"),
+            "错误码应包含 evo_boundary_cycle_dir_missing: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn evolution_boundary_recovery_valid_workspace_should_pass() {
+        let dir = tempdir().expect("tempdir should be created");
+        let cycle_id = "2026-03-06T16-59-43-008Z";
+        let cycle_dir = dir
+            .path()
+            .join(".tidyflow")
+            .join("evolution")
+            .join(cycle_id);
+        std::fs::create_dir_all(&cycle_dir).unwrap();
+        let result = check_workspace_boundary(dir.path().to_str().unwrap(), cycle_id);
+        assert!(
+            result.is_ok(),
+            "有效工作区应通过边界检查: {:?}",
+            result
+        );
     }
 }

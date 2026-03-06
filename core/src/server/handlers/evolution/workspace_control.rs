@@ -431,6 +431,7 @@ impl EvolutionManager {
                     stage_session_history: HashMap::new(),
                     stage_tool_call_counts,
                     stage_seen_tool_calls,
+                    stage_retry_counts: HashMap::new(),
                     session_executions: Vec::new(),
                     stage_started_ats: HashMap::new(),
                     stage_duration_ms: HashMap::new(),

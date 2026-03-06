@@ -44,6 +44,8 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_session_history: HashMap<String, Vec<StageSession>>,
     pub(super) stage_tool_call_counts: HashMap<String, u32>,
     pub(super) stage_seen_tool_calls: HashMap<String, HashSet<String>>,
+    /// 各阶段可重试错误的重试次数（用于指数退避计算）
+    pub(super) stage_retry_counts: HashMap<String, u32>,
     /// 会话级执行轨迹（同阶段可多次会话）
     pub(super) session_executions: Vec<EvolutionSessionExecutionEntry>,
     /// 各代理开始运行的 RFC3339 时间戳
