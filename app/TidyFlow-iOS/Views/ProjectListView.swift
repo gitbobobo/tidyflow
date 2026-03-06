@@ -351,12 +351,7 @@ struct MobileSettingsView: View {
     }
 
     private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        appState.aiSessionConfigOptions(for: tool).first(where: {
-            let category = ($0.category ?? $0.optionID)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            return category == "thought_level"
-        })?.optionID
+        appState.thoughtLevelOptionID(for: tool)
     }
 
     private func selectedThoughtLevel(for draft: MobileEvolutionDefaultDraft) -> String? {

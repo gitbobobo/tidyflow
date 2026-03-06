@@ -2967,26 +2967,41 @@ final class MobileAppState: ObservableObject {
     }
 
     func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
-        guard let option = aiSessionConfigOptionsByTool[tool]?.first(where: {
+        if let option = aiSessionConfigOptionsByTool[tool]?.first(where: {
             normalizedConfigCategory($0.category, optionID: $0.optionID) == "thought_level"
-        }) else {
-            return []
-        }
-        var seen: Set<String> = []
-        var values: [String] = []
-        for choice in option.options {
-            if let value = configValueAsString(choice.value), seen.insert(value).inserted {
-                values.append(value)
-            }
-        }
-        for group in option.optionGroups {
-            for choice in group.options {
+        }) {
+            var seen: Set<String> = []
+            var values: [String] = []
+            for choice in option.options {
                 if let value = configValueAsString(choice.value), seen.insert(value).inserted {
                     values.append(value)
                 }
             }
+            for group in option.optionGroups {
+                for choice in group.options {
+                    if let value = configValueAsString(choice.value), seen.insert(value).inserted {
+                        values.append(value)
+                    }
+                }
+            }
+            if !values.isEmpty { return values }
         }
-        return values
+        // Codex 静态兜底：无动态配置时提供 reasoning_effort 三档选项
+        if tool == .codex {
+            return ["low", "medium", "high"]
+        }
+        return []
+    }
+
+    /// 返回当前工具的 thought_level 配置项 option_id；Codex 使用静态兜底。
+    func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
+        if let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptionsByTool[tool] ?? []) {
+            return optionID
+        }
+        if tool == .codex {
+            return "thought_level"
+        }
+        return nil
     }
 
     func thoughtLevelOptions() -> [String] {
