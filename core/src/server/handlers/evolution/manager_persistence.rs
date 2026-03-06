@@ -4,9 +4,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
-use super::stage::{
-    agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage,
-};
+use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{cycle_dir_path, evolution_workspace_dir, read_json, write_json};
 use super::{EvolutionManager, StageSession, STAGES};
 
@@ -391,7 +389,9 @@ impl EvolutionManager {
             stage_files.insert(
                 stage.to_string(),
                 serde_json::Value::String(
-                    stage_artifact_file(stage).unwrap_or("unknown.jsonc").to_string(),
+                    stage_artifact_file(stage)
+                        .unwrap_or("unknown.jsonc")
+                        .to_string(),
                 ),
             );
         }
@@ -426,18 +426,14 @@ impl EvolutionManager {
                 .rev()
                 .find(|item| item.stage == stage && item.completed_at.is_some())
                 .and_then(|item| item.completed_at.clone());
-            let duration_ms = entry
-                .stage_duration_ms
-                .get(stage)
-                .copied()
-                .or_else(|| {
-                    entry
-                        .session_executions
-                        .iter()
-                        .rev()
-                        .find(|item| item.stage == stage)
-                        .and_then(|item| item.duration_ms)
-                });
+            let duration_ms = entry.stage_duration_ms.get(stage).copied().or_else(|| {
+                entry
+                    .session_executions
+                    .iter()
+                    .rev()
+                    .find(|item| item.stage == stage)
+                    .and_then(|item| item.duration_ms)
+            });
             let validation_attempts = preserved_stage_runtime
                 .get(stage)
                 .and_then(|value| value.get("validation_attempts"))
@@ -541,7 +537,10 @@ impl EvolutionManager {
             stage_obj.insert("status".to_string(), serde_json::json!(status));
             match error_message {
                 Some(message) => {
-                    stage_obj.insert("error".to_string(), serde_json::json!({ "message": message }));
+                    stage_obj.insert(
+                        "error".to_string(),
+                        serde_json::json!({ "message": message }),
+                    );
                 }
                 None => {
                     stage_obj.remove("error");
@@ -597,7 +596,8 @@ impl EvolutionManager {
         let context_map = context
             .as_object()
             .ok_or_else(|| "prompt context should be JSON object".to_string())?;
-        let required_keys = required_context_keys(stage, verify_iteration, backlog_contract_version);
+        let required_keys =
+            required_context_keys(stage, verify_iteration, backlog_contract_version);
         let (markdown_context, injected_keys) =
             build_markdown_context_block(context_map, &required_keys, already_injected_keys);
 

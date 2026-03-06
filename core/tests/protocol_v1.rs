@@ -40,7 +40,7 @@ impl ServerGuard {
     fn start_on_port(port: u16) -> Result<Self, String> {
         // 获取 manifest 目录（core/）
         let manifest_dir = std::path::PathBuf::from(
-            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string())
+            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string()),
         );
 
         // 优先使用已编译的 release 二进制
@@ -244,7 +244,9 @@ fn encode_client_message(domain: &str, action: &str, payload: Value) -> Vec<u8> 
     rmp_serde::to_vec_named(&envelope).expect("encode should succeed")
 }
 
-async fn connect_to_server(port: u16) -> Result<
+async fn connect_to_server(
+    port: u16,
+) -> Result<
     (
         futures_util::stream::SplitSink<
             tokio_tungstenite::WebSocketStream<
@@ -321,9 +323,7 @@ async fn test_ping_pong() {
     let msg = encode_client_message("system", "ping", json!({}));
     write.send(Message::Binary(msg)).await.unwrap();
 
-    let env = wait_for_action(&mut read, "pong")
-        .await
-        .expect("No pong");
+    let env = wait_for_action(&mut read, "pong").await.expect("No pong");
     assert_eq!(env.domain, "system");
     assert_eq!(env.kind, "result");
     println!("  ✓ Pong received");
@@ -425,7 +425,10 @@ async fn test_spawn_terminal_invalid_path() {
 
     assert_eq!(env.kind, "error");
     // 错误码可能是 message_error 或 invalid_path，取决于服务器实现
-    println!("  ✓ Error: code={}, message={}", env.payload["code"], env.payload["message"]);
+    println!(
+        "  ✓ Error: code={}, message={}",
+        env.payload["code"], env.payload["message"]
+    );
 }
 
 /// Test 7: Terminal I/O

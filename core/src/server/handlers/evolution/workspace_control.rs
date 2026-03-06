@@ -88,8 +88,10 @@ fn parse_cycle_session_executions(
         .filter_map(|item| item.as_object())
         .filter_map(|item| {
             let session_id = non_empty_string(item.get("session_id"))?;
-            let stage = non_empty_string(item.get("stage")).unwrap_or_else(|| "unknown".to_string());
-            let status = non_empty_string(item.get("status")).unwrap_or_else(|| "unknown".to_string());
+            let stage =
+                non_empty_string(item.get("stage")).unwrap_or_else(|| "unknown".to_string());
+            let status =
+                non_empty_string(item.get("status")).unwrap_or_else(|| "unknown".to_string());
             if !is_terminal_execution_status(&status) {
                 return None;
             }
@@ -123,7 +125,9 @@ fn is_terminal_stage_status(status: &str) -> bool {
 fn parse_cycle_stage_history_entries(
     cycle_json: &serde_json::Value,
 ) -> Vec<EvolutionCycleStageHistoryEntry> {
-    let Some(stage_runtime) = cycle_json.get("stage_runtime").and_then(|value| value.as_object())
+    let Some(stage_runtime) = cycle_json
+        .get("stage_runtime")
+        .and_then(|value| value.as_object())
     else {
         return Vec::new();
     };
@@ -133,7 +137,8 @@ fn parse_cycle_stage_history_entries(
         let Some(runtime) = stage_runtime.get(stage).and_then(|value| value.as_object()) else {
             continue;
         };
-        let status = non_empty_string(runtime.get("status")).unwrap_or_else(|| "unknown".to_string());
+        let status =
+            non_empty_string(runtime.get("status")).unwrap_or_else(|| "unknown".to_string());
         if !is_terminal_stage_status(&status) {
             continue;
         }
@@ -175,7 +180,10 @@ fn build_cycle_history_item(
     cycle_id: String,
     cycle_json: &serde_json::Value,
 ) -> Option<EvolutionCycleHistoryItem> {
-    let status = cycle_json["status"].as_str().unwrap_or("unknown").to_string();
+    let status = cycle_json["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
     let global_loop_round = cycle_json["global_loop_round"].as_u64().unwrap_or(0) as u32;
     let created_at = cycle_json["created_at"].as_str().unwrap_or("").to_string();
     let updated_at = cycle_json["updated_at"].as_str().unwrap_or("").to_string();
@@ -770,8 +778,8 @@ impl EvolutionManager {
 mod tests {
     use super::{
         build_cycle_history_item, extract_cycle_title_from_cycle_file,
-        extract_cycle_title_from_direction_stage, initial_global_loop_round,
-        parse_cycle_handoff, parse_cycle_session_executions, parse_cycle_stage_history_entries,
+        extract_cycle_title_from_direction_stage, initial_global_loop_round, parse_cycle_handoff,
+        parse_cycle_session_executions, parse_cycle_stage_history_entries,
         parse_stage_session_executions, resolve_cycle_history_title,
     };
 
@@ -1034,6 +1042,9 @@ mod tests {
         );
         assert_eq!(item.executions.len(), 1);
         assert_eq!(item.stages.len(), 1);
-        assert_eq!(item.handoff.as_ref().map(|value| value.next.clone()), Some(vec!["下一步 C".to_string()]));
+        assert_eq!(
+            item.handoff.as_ref().map(|value| value.next.clone()),
+            Some(vec!["下一步 C".to_string()])
+        );
     }
 }

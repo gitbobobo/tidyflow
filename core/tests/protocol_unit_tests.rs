@@ -65,7 +65,7 @@ mod envelope_tests {
 
 mod action_table_tests {
     use tidyflow_core::server::protocol::action_table::{
-        matches_action_domain, EXACT_RULES, PREFIX_RULES, CONTAINS_RULES,
+        matches_action_domain, CONTAINS_RULES, EXACT_RULES, PREFIX_RULES,
     };
 
     #[test]

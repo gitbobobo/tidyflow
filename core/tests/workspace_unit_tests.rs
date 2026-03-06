@@ -116,7 +116,10 @@ NODE_ENV = "development"
         std::fs::write(&file_path, "test").unwrap();
 
         assert!(check_condition("file_exists:test.txt", temp_dir.path()));
-        assert!(!check_condition("file_exists:nonexistent.txt", temp_dir.path()));
+        assert!(!check_condition(
+            "file_exists:nonexistent.txt",
+            temp_dir.path()
+        ));
     }
 
     #[test]
@@ -153,8 +156,7 @@ mod state_tests {
     use std::path::PathBuf;
     use tidyflow_core::workspace::state::{
         AppState, ClientSettings, CustomCommand, EvolutionStageProfile, PersistedTokenEntry,
-        Project, ProjectCommand, SetupResultSummary, Workspace, WorkspaceStatus,
-        WorkspaceTodoItem,
+        Project, ProjectCommand, SetupResultSummary, Workspace, WorkspaceStatus, WorkspaceTodoItem,
     };
 
     fn create_test_project(name: &str) -> Project {

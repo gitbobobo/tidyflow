@@ -72,7 +72,10 @@ impl ServerGuard {
             }
         }
         child.stdout = Some(reader.into_inner());
-        Ok(Self { child: Some(child), port })
+        Ok(Self {
+            child: Some(child),
+            port,
+        })
     }
 
     fn port(&self) -> u16 {
@@ -209,7 +212,11 @@ async fn test_system_domain_matrix() {
 
     // ping -> pong
     write
-        .send(Message::Binary(encode_client_message("system", "ping", json!({}))))
+        .send(Message::Binary(encode_client_message(
+            "system",
+            "ping",
+            json!({}),
+        )))
         .await
         .unwrap();
     let pong = wait_for_action(&mut read, "pong").await.expect("无 pong");

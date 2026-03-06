@@ -105,8 +105,8 @@ pub(super) fn write_jsonc_text(path: &Path, content: &str) -> Result<(), String>
 
 pub(super) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let path = normalized_jsonc_path(path);
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
     let stripped = strip_jsonc_comments(&content);
     serde_json::from_str::<serde_json::Value>(&stripped)
         .map_err(|e| format!("解析 {} 失败: {}", path.display(), e))
