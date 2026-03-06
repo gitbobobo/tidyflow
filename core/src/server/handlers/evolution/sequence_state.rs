@@ -1,13 +1,23 @@
 use crate::server::protocol::EvolutionSessionExecutionEntry;
 
 use super::stage::agent_name;
-use super::{EvolutionManager, StageSession};
+use super::{EvolutionManager, StageSession, WorkspaceRunState};
 
 fn is_terminal_session_status(status: &str) -> bool {
     matches!(
         status,
         "done" | "failed" | "blocked" | "skipped" | "stopped" | "interrupted" | "completed"
     )
+}
+
+fn is_in_rate_limit_cooldown(entry: &WorkspaceRunState) -> bool {
+    let Some(resume_at) = entry.rate_limit_resume_at.as_deref() else {
+        return false;
+    };
+    let Ok(resume_at) = chrono::DateTime::parse_from_rfc3339(resume_at) else {
+        return true;
+    };
+    resume_at.with_timezone(&chrono::Utc) > chrono::Utc::now()
 }
 
 impl EvolutionManager {
@@ -204,6 +214,7 @@ impl EvolutionManager {
             other_key != key
                 && !other.stop_requested
                 && (other.status == "queued" || other.status == "running")
+                && !is_in_rate_limit_cooldown(other)
                 && other.priority > current_priority
         })
     }
@@ -216,50 +227,53 @@ mod tests {
     use super::super::types::WorkspaceRunState;
     use super::EvolutionManager;
 
+    fn workspace_state(priority: i32, status: &str) -> WorkspaceRunState {
+        WorkspaceRunState {
+            project: "p".to_string(),
+            workspace: "w".to_string(),
+            workspace_root: "/tmp".to_string(),
+            priority,
+            status: status.to_string(),
+            cycle_id: "cycle-1".to_string(),
+            cycle_title: None,
+            cycle_handoff: crate::server::protocol::EvolutionHandoffInfo::default(),
+            selected_direction_type: None,
+            direction_candidate_scores: Vec::new(),
+            direction_final_reason: None,
+            current_stage: "verify".to_string(),
+            global_loop_round: 1,
+            loop_round_limit: 1,
+            verify_iteration: 0,
+            verify_iteration_limit: 1,
+            backlog_contract_version: 2,
+            created_at: "2026-03-01T00:00:00Z".to_string(),
+            stop_requested: false,
+            llm_defined_acceptance_criteria: Vec::new(),
+            terminal_reason_code: None,
+            terminal_error_message: None,
+            rate_limit_resume_at: None,
+            rate_limit_error_message: None,
+            stage_profiles: Vec::new(),
+            stage_statuses: HashMap::new(),
+            stage_sessions: HashMap::new(),
+            stage_session_history: HashMap::new(),
+            stage_tool_call_counts: HashMap::new(),
+            stage_seen_tool_calls: HashMap::new(),
+            session_executions: Vec::new(),
+            stage_started_ats: HashMap::new(),
+            stage_duration_ms: HashMap::new(),
+        }
+    }
+
     #[tokio::test]
     async fn session_execution_should_track_multiple_sessions_per_stage() {
         let manager = EvolutionManager::new();
         let key = "p:w".to_string();
         {
             let mut state = manager.state.lock().await;
-            state.workspaces.insert(
-                key.clone(),
-                WorkspaceRunState {
-                    project: "p".to_string(),
-                    workspace: "w".to_string(),
-                    workspace_root: "/tmp".to_string(),
-                    priority: 0,
-                    status: "running".to_string(),
-                    cycle_id: "cycle-1".to_string(),
-                    cycle_title: None,
-                    cycle_handoff: crate::server::protocol::EvolutionHandoffInfo::default(),
-                    selected_direction_type: None,
-                    direction_candidate_scores: Vec::new(),
-                    direction_final_reason: None,
-                    current_stage: "verify".to_string(),
-                    global_loop_round: 1,
-                    loop_round_limit: 1,
-                    verify_iteration: 0,
-                    verify_iteration_limit: 1,
-                    backlog_contract_version: 2,
-                    created_at: "2026-03-01T00:00:00Z".to_string(),
-                    stop_requested: false,
-                    llm_defined_acceptance_criteria: Vec::new(),
-                    terminal_reason_code: None,
-                    terminal_error_message: None,
-                    rate_limit_resume_at: None,
-                    rate_limit_error_message: None,
-                    stage_profiles: Vec::new(),
-                    stage_statuses: HashMap::new(),
-                    stage_sessions: HashMap::new(),
-                    stage_session_history: HashMap::new(),
-                    stage_tool_call_counts: HashMap::new(),
-                    stage_seen_tool_calls: HashMap::new(),
-                    session_executions: Vec::new(),
-                    stage_started_ats: HashMap::new(),
-                    stage_duration_ms: HashMap::new(),
-                },
-            );
+            state
+                .workspaces
+                .insert(key.clone(), workspace_state(0, "running"));
         }
 
         manager
@@ -287,5 +301,65 @@ mod tests {
         assert_eq!(entry.session_executions[1].tool_call_count, 4);
         assert!(entry.session_executions[0].completed_at.is_some());
         assert!(entry.session_executions[1].completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn can_run_with_priority_should_ignore_higher_priority_workspace_in_rate_limit_cooldown()
+    {
+        let manager = EvolutionManager::new();
+        let future_resume_at = (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
+        {
+            let mut state = manager.state.lock().await;
+            state
+                .workspaces
+                .insert("low".to_string(), workspace_state(1, "queued"));
+            let mut high = workspace_state(5, "queued");
+            high.rate_limit_resume_at = Some(future_resume_at);
+            state.workspaces.insert("high".to_string(), high);
+        }
+
+        assert!(
+            manager.can_run_with_priority("low").await,
+            "未来 resume_at 的高优先级工作区不应阻塞低优先级工作区"
+        );
+    }
+
+    #[tokio::test]
+    async fn can_run_with_priority_should_still_block_when_higher_priority_workspace_is_runnable() {
+        let manager = EvolutionManager::new();
+        {
+            let mut state = manager.state.lock().await;
+            state
+                .workspaces
+                .insert("low".to_string(), workspace_state(1, "queued"));
+            let mut high = workspace_state(5, "queued");
+            high.rate_limit_resume_at =
+                Some((chrono::Utc::now() - chrono::Duration::minutes(1)).to_rfc3339());
+            state.workspaces.insert("high".to_string(), high);
+        }
+
+        assert!(
+            !manager.can_run_with_priority("low").await,
+            "已过期的 resume_at 不应取消优先级阻塞"
+        );
+    }
+
+    #[tokio::test]
+    async fn can_run_with_priority_should_ignore_invalid_resume_at_instead_of_starving_queue() {
+        let manager = EvolutionManager::new();
+        {
+            let mut state = manager.state.lock().await;
+            state
+                .workspaces
+                .insert("low".to_string(), workspace_state(1, "queued"));
+            let mut high = workspace_state(5, "queued");
+            high.rate_limit_resume_at = Some("invalid-rfc3339".to_string());
+            state.workspaces.insert("high".to_string(), high);
+        }
+
+        assert!(
+            manager.can_run_with_priority("low").await,
+            "非法 resume_at 不应阻塞可立即执行的低优先级工作区"
+        );
     }
 }
