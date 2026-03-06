@@ -441,3 +441,75 @@ fn map_item_to_part_keeps_raw_for_unknown_tool() {
         .unwrap_or_default()
         .contains("\"mcpToolCall\""));
 }
+
+#[test]
+fn map_item_to_part_all_tool_types_produce_stable_kind_tool() {
+    // 所有工具调用型 item 必须映射为 part_type == "tool"，确保前端平铺缓存不依赖特例分支
+    let tool_items = vec![
+        serde_json::json!({
+            "id": "item-tool-cmd",
+            "type": "commandExecution",
+            "status": "completed",
+            "command": "/bin/zsh -lc 'echo hi'",
+            "commandActions": [{ "type": "unknown", "command": "echo hi" }]
+        }),
+        serde_json::json!({
+            "id": "item-tool-file",
+            "type": "fileChange",
+            "status": "completed",
+            "changes": [{ "path": "main.rs", "kind": "update", "diff": "@@ -1 +1 @@\n-a\n+b\n" }]
+        }),
+        serde_json::json!({
+            "id": "item-tool-mcp",
+            "type": "mcpToolCall",
+            "status": "completed",
+            "tool": "fetch_url"
+        }),
+    ];
+    for item in &tool_items {
+        let part = CodexAppServerAgent::map_item_to_part(item, "completed")
+            .expect("map should succeed");
+        assert_eq!(
+            part.part_type, "tool",
+            "item type {:?} should map to part_type 'tool'",
+            item["type"]
+        );
+        assert!(
+            part.tool_state.is_some(),
+            "item type {:?} should have tool_state",
+            item["type"]
+        );
+    }
+}
+
+#[test]
+fn map_item_to_part_plan_and_agent_message_produce_text_kind() {
+    // plan 和 agentMessage 映射为 part_type == "text"，不混入 tool 序列
+    let text_items = vec![
+        serde_json::json!({
+            "id": "item-plan",
+            "type": "plan",
+            "text": "步骤 1\n步骤 2"
+        }),
+        serde_json::json!({
+            "id": "item-agent",
+            "type": "agentMessage",
+            "text": "正在分析...",
+            "phase": "commentary"
+        }),
+    ];
+    for item in &text_items {
+        let part = CodexAppServerAgent::map_item_to_part(item, "completed")
+            .expect("map should succeed");
+        assert_eq!(
+            part.part_type, "text",
+            "item type {:?} should map to part_type 'text'",
+            item["type"]
+        );
+        assert!(
+            part.tool_state.is_none(),
+            "text-kind part should not have tool_state for item type {:?}",
+            item["type"]
+        );
+    }
+}

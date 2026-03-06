@@ -34,13 +34,15 @@ impl ServerGuard {
         let manifest_dir =
             std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".into()));
 
-        let release_bin = manifest_dir.join("target/release/tidyflow-core");
         let debug_bin = manifest_dir.join("target/debug/tidyflow-core");
+        let release_bin = manifest_dir.join("target/release/tidyflow-core");
 
-        let bin_path = if release_bin.exists() {
-            release_bin
-        } else if debug_bin.exists() {
+        // 集成测试应优先使用 cargo test 刚构建出的 debug 二进制，
+        // 避免误连到过期的 release 构建而得到假阴性结果。
+        let bin_path = if debug_bin.exists() {
             debug_bin
+        } else if release_bin.exists() {
+            release_bin
         } else {
             return Err("未找到 tidyflow-core 二进制文件".into());
         };
@@ -353,11 +355,11 @@ async fn test_settings_domain_matrix() {
     let (mut write, mut read) = connect(port).await.expect("连接失败");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // client_settings_get -> client_settings_result
+    // get_client_settings -> client_settings_result
     write
         .send(Message::Binary(encode_client_message(
             "settings",
-            "client_settings_get",
+            "get_client_settings",
             json!({}),
         )))
         .await
