@@ -15,8 +15,8 @@ use sqlx::{Pool, Row, Sqlite};
 use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
-    PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError, Workspace,
-    WorkspaceStatus, WorkspaceTodoItem,
+    KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
+    Workspace, WorkspaceStatus, WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -148,6 +148,24 @@ impl StateStore {
                 (Some(k), Some(v)) => Some((k, v)),
                 _ => None,
             }
+        })
+        .collect();
+
+        client_settings.keybindings = sqlx::query(
+            r#"
+            SELECT command_id, key_combination, context
+            FROM keybindings
+            ORDER BY command_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?
+        .into_iter()
+        .map(|row| KeybindingConfig {
+            command_id: row.try_get("command_id").unwrap_or_default(),
+            key_combination: row.try_get("key_combination").unwrap_or_default(),
+            context: row.try_get("context").unwrap_or_default(),
         })
         .collect();
 
@@ -438,6 +456,7 @@ impl StateStore {
             "workspace_todos",
             "evolution_stage_profiles",
             "paired_tokens",
+            "keybindings",
         ] {
             let sql = format!("DELETE FROM {}", table);
             sqlx::query(&sql)
@@ -493,6 +512,21 @@ impl StateStore {
             )
             .bind(key)
             .bind(value)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
+        for kb in &state.client_settings.keybindings {
+            sqlx::query(
+                r#"
+                INSERT INTO keybindings (command_id, key_combination, context)
+                VALUES (?1, ?2, ?3)
+                "#,
+            )
+            .bind(&kb.command_id)
+            .bind(&kb.key_combination)
+            .bind(&kb.context)
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -840,6 +874,14 @@ impl StateStore {
                 device_name TEXT NOT NULL,
                 issued_at_unix INTEGER NOT NULL,
                 expires_at_unix INTEGER NOT NULL
+            )
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS keybindings (
+                command_id TEXT NOT NULL,
+                key_combination TEXT NOT NULL,
+                context TEXT NOT NULL,
+                PRIMARY KEY (command_id)
             )
             "#,
         ];

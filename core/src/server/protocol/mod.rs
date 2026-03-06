@@ -330,6 +330,9 @@ pub enum ClientMessage {
         /// 工作空间待办（key: "project:workspace"）；为 None 时保持服务端现值不变。
         #[serde(default)]
         workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
+        /// 快捷键绑定配置；为 None 时保持服务端现值不变。
+        #[serde(default)]
+        keybindings: Option<Vec<KeybindingConfigInfo>>,
     },
 
     // v1.22: File watcher
@@ -1090,6 +1093,8 @@ pub enum ServerMessage {
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         workspace_todos: std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keybindings: Vec<KeybindingConfigInfo>,
     },
     ClientSettingsSaved {
         ok: bool,
@@ -1749,6 +1754,15 @@ pub struct CustomCommandInfo {
     pub name: String,
     pub icon: String,
     pub command: String,
+}
+
+/// 快捷键绑定配置（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeybindingConfigInfo {
+    pub command_id: String,
+    pub key_combination: String,
+    pub context: String,
 }
 
 /// 工作空间待办项（用于协议传输）

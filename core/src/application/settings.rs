@@ -1,9 +1,9 @@
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{
-    ai::ModelSelection, CustomCommandInfo, EvolutionStageProfileInfo, ServerMessage,
-    WorkspaceTodoInfo,
+    ai::ModelSelection, CustomCommandInfo, EvolutionStageProfileInfo, KeybindingConfigInfo,
+    ServerMessage, WorkspaceTodoInfo,
 };
-use crate::workspace::state::{EvolutionStageProfile, WorkspaceTodoItem};
+use crate::workspace::state::{EvolutionStageProfile, KeybindingConfig, WorkspaceTodoItem};
 
 /// 保存客户端设置参数（应用层输入模型）
 pub struct SaveClientSettingsParams {
@@ -14,6 +14,8 @@ pub struct SaveClientSettingsParams {
     pub remote_access_enabled: Option<bool>,
     /// None: 保持现值；Some: 覆盖整个 workspace_todos。
     pub workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
+    /// None: 保持现值；Some: 覆盖全部快捷键绑定。
+    pub keybindings: Option<Vec<KeybindingConfigInfo>>,
 }
 
 /// 读取客户端设置并转换为协议响应消息。
@@ -42,6 +44,16 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         .iter()
         .map(|(key, items)| (key.clone(), to_protocol_todos(items)))
         .collect();
+    let keybindings = state
+        .client_settings
+        .keybindings
+        .iter()
+        .map(|kb| KeybindingConfigInfo {
+            command_id: kb.command_id.clone(),
+            key_combination: kb.key_combination.clone(),
+            context: kb.context.clone(),
+        })
+        .collect();
 
     ServerMessage::ClientSettingsResult {
         custom_commands: commands,
@@ -51,6 +63,7 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         remote_access_enabled: state.client_settings.remote_access_enabled,
         evolution_agent_profiles,
         workspace_todos,
+        keybindings,
     }
 }
 
@@ -80,6 +93,16 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
         state.client_settings.workspace_todos = workspace_todos
             .into_iter()
             .map(|(workspace_key, items)| (workspace_key, from_protocol_todos(items)))
+            .collect();
+    }
+    if let Some(kbs) = params.keybindings {
+        state.client_settings.keybindings = kbs
+            .into_iter()
+            .map(|kb| KeybindingConfig {
+                command_id: kb.command_id,
+                key_combination: kb.key_combination,
+                context: kb.context,
+            })
             .collect();
     }
 }
@@ -147,6 +170,7 @@ mod tests {
             fixed_port: None,
             remote_access_enabled: None,
             workspace_todos: None,
+            keybindings: None,
         }
     }
 

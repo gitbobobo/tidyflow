@@ -19,6 +19,8 @@ pub enum SettingsRequest {
         remote_access_enabled: Option<bool>,
         #[serde(default)]
         workspace_todos: Option<std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>>,
+        #[serde(default)]
+        keybindings: Option<Vec<super::KeybindingConfigInfo>>,
     },
 }
 
@@ -38,6 +40,8 @@ pub enum SettingsResponse {
             std::collections::HashMap<String, Vec<super::EvolutionStageProfileInfo>>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         workspace_todos: std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keybindings: Vec<super::KeybindingConfigInfo>,
     },
     ClientSettingsSaved {
         ok: bool,

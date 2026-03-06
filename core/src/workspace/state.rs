@@ -64,6 +64,14 @@ pub struct EvolutionStageProfile {
     pub config_options: HashMap<String, serde_json::Value>,
 }
 
+/// 快捷键绑定配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeybindingConfig {
+    pub command_id: String,
+    pub key_combination: String,
+    pub context: String,
+}
+
 /// 工作空间待办项
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceTodoItem {
@@ -101,6 +109,9 @@ pub struct ClientSettings {
     /// 工作空间待办（key: "project:workspace"）
     #[serde(default)]
     pub workspace_todos: HashMap<String, Vec<WorkspaceTodoItem>>,
+    /// 快捷键绑定配置
+    #[serde(default)]
+    pub keybindings: Vec<KeybindingConfig>,
 }
 
 fn default_evolution_ai_tool() -> String {

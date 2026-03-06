@@ -21,6 +21,7 @@ pub async fn handle_mutate_message(
             fixed_port,
             remote_access_enabled,
             workspace_todos,
+            keybindings,
         } => {
             info!("SaveClientSettings request");
             save_client_settings(
@@ -32,6 +33,7 @@ pub async fn handle_mutate_message(
                     fixed_port: *fixed_port,
                     remote_access_enabled: *remote_access_enabled,
                     workspace_todos: workspace_todos.clone(),
+                    keybindings: keybindings.clone(),
                 },
             )
             .await;
