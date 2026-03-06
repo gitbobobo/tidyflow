@@ -195,15 +195,19 @@ struct AISessionStatusInfoV2 {
     let status: String
     let errorMessage: String?
     let contextRemainingPercent: Double?
+    /// 当前正在执行的工具名称（可选，由后端推送）
+    let toolName: String?
 
     static func from(json: [String: Any]) -> AISessionStatusInfoV2? {
         guard let status = json["status"] as? String else { return nil }
         let errorMessage = json["error_message"] as? String
         let contextRemainingPercent = parseDouble(json["context_remaining_percent"])
+        let toolName = json["tool_name"] as? String
         return AISessionStatusInfoV2(
             status: status,
             errorMessage: errorMessage,
-            contextRemainingPercent: contextRemainingPercent
+            contextRemainingPercent: contextRemainingPercent,
+            toolName: toolName
         )
     }
 }

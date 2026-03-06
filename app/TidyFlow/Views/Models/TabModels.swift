@@ -1,5 +1,28 @@
 import Foundation
 
+/// 终端标签中 AI 代理的执行状态（六态）
+/// 用于在标签栏为每个终端 tab 独立展示 AI 任务进度
+enum TerminalAIStatus: Equatable {
+    /// 空闲：无 AI 任务运行
+    case idle
+    /// 执行中：AI 正在运行，toolName 为 AI 工具显示名（如 "Codex"、"Copilot"）
+    case running(toolName: String?)
+    /// 等待输入：AI 需要用户确认或提供输入
+    case awaitingInput
+    /// 成功完成
+    case success
+    /// 失败，message 为可选错误摘要
+    case failure(message: String?)
+    /// 已取消
+    case cancelled
+
+    /// 是否需要在标签栏显示状态指示器（空闲时隐藏）
+    var isVisible: Bool {
+        if case .idle = self { return false }
+        return true
+    }
+}
+
 enum ConnectionState {
     case connected
     case disconnected

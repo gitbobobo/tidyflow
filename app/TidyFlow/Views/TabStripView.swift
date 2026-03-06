@@ -1,5 +1,50 @@
 import SwiftUI
 
+// MARK: - TerminalAIStatus 显示属性
+
+extension TerminalAIStatus {
+    /// SF Symbol 图标名称
+    var iconName: String {
+        switch self {
+        case .idle: return "circle.fill"
+        case .running: return "bolt.circle.fill"
+        case .awaitingInput: return "questionmark.circle.fill"
+        case .success: return "checkmark.circle.fill"
+        case .failure: return "xmark.circle.fill"
+        case .cancelled: return "minus.circle.fill"
+        }
+    }
+
+    /// 状态颜色
+    var color: Color {
+        switch self {
+        case .idle: return .secondary.opacity(0.4)
+        case .running: return .blue
+        case .awaitingInput: return .orange
+        case .success: return .green
+        case .failure: return .red
+        case .cancelled: return .secondary
+        }
+    }
+
+    /// 悬浮提示文案（包含 AI 工具名或错误信息）
+    var hint: String {
+        switch self {
+        case .idle: return ""
+        case .running(let toolName):
+            return toolName.map { "AI 执行中 · \($0)" } ?? "AI 执行中"
+        case .awaitingInput:
+            return "等待用户输入"
+        case .success:
+            return "AI 已完成"
+        case .failure(let message):
+            return message.map { "AI 失败：\($0)" } ?? "AI 失败"
+        case .cancelled:
+            return "AI 已取消"
+        }
+    }
+}
+
 struct TabStripView: View {
     @EnvironmentObject var appState: AppState
 
@@ -39,6 +84,9 @@ struct TabStripView: View {
             HStack(spacing: 6) {
                 ForEach(tabs) { tab in
                     let isActive = appState.activeTabIdByWorkspace[globalKey] == tab.id
+                    let tabAIStatus = tab.kind == .terminal
+                        ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle)
+                        : .idle
                     Button {
                         appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -53,9 +101,18 @@ struct TabStripView: View {
                                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                                     .fill(isActive ? Color(NSColor.controlBackgroundColor) : Color.clear)
                             )
+                            .overlay(alignment: .bottomTrailing) {
+                                // 终端 tab 的 AI 状态小圆点（非空闲时显示）
+                                if tabAIStatus.isVisible {
+                                    Circle()
+                                        .fill(tabAIStatus.color)
+                                        .frame(width: 6, height: 6)
+                                        .offset(x: 2, y: 2)
+                                }
+                            }
                     }
                     .buttonStyle(.borderless)
-                    .help(tab.title)
+                    .help(tabAIStatus.isVisible ? "\(tab.title)  \(tabAIStatus.hint)" : tab.title)
                 }
             }
             .padding(.leading, 6)
@@ -201,6 +258,9 @@ struct TabItemView: View {
     }
 
     var body: some View {
+        let aiStatus: TerminalAIStatus = tab.kind == .terminal
+            ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle)
+            : .idle
         HStack(spacing: 6) {
             // 文件图标位置：dirty 时显示橙色圆点，否则显示类型图标（终端快捷命令 tab 使用 commandIcon）
             if tab.isDirty {
@@ -223,6 +283,15 @@ struct TabItemView: View {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
+            }
+
+            // 终端 AI 状态指示器（非空闲时显示，替换关闭按钮占位）
+            if tab.kind == .terminal && aiStatus.isVisible {
+                Image(systemName: aiStatus.iconName)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(aiStatus.color)
+                    .frame(width: 14, height: 14)
+                    .help(aiStatus.hint)
             }
 
             if isActive || isHovered {

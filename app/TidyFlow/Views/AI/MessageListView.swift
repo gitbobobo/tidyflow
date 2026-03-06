@@ -230,7 +230,7 @@ struct MessageListView: View {
 
     @ViewBuilder
     private func messageStack() -> some View {
-        LazyVStack(spacing: 16) {
+        LazyVStack(spacing: 0) {
             if canLoadOlderMessages || isLoadingOlderMessages {
                 HStack {
                     Spacer(minLength: 0)
@@ -269,6 +269,7 @@ struct MessageListView: View {
                 )
                 .equatable()
                 .id(message.id)
+                .padding(.top, messageSpacing(at: index, in: displayMessages))
                 .onAppear {
                     visibleMessageIDs.insert(message.id)
                 }
@@ -291,6 +292,40 @@ struct MessageListView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 统一的工具卡片消息间距常量（8pt），macOS 与 iOS 共用
+    private static let toolCardSpacing: CGFloat = 8
+
+    /// 消息间动态间距规则：
+    /// - 连续工具类消息（assistant 且全为工具/推理 part）之间使用 8pt 紧凑间距，
+    ///   与同一消息内部 part 间距保持一致，避免视觉不规则。
+    /// - 其余组合保持 16pt 阅读节奏。
+    private func messageSpacing(at index: Int, in messages: [AIChatMessage]) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let prev = messages[index - 1]
+        let current = messages[index]
+        if isToolOnlyAssistantMessage(prev) && isToolOnlyAssistantMessage(current) {
+            return Self.toolCardSpacing
+        }
+        return 16
+    }
+
+    /// 是否为工具类 assistant 消息（所有有实际内容的 part 均为 tool 或 reasoning）
+    private func isToolOnlyAssistantMessage(_ message: AIChatMessage) -> Bool {
+        guard message.role == .assistant, !message.parts.isEmpty else { return false }
+        // 过滤出有实际内容的 part（空 text part 不计入判断）
+        let significantParts = message.parts.filter { part in
+            switch part.kind {
+            case .tool, .reasoning, .file, .plan, .compaction:
+                return true
+            case .text:
+                let trimmed = (part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return !trimmed.isEmpty
+            }
+        }
+        guard !significantParts.isEmpty else { return false }
+        return significantParts.allSatisfy { $0.kind == .tool || $0.kind == .reasoning }
     }
 
     /// 使用双阈值策略更新滚动状态：

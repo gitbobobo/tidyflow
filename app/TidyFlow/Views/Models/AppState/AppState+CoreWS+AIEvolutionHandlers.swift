@@ -398,6 +398,52 @@ extension AppState {
                 status: ev.status.status
             )
         }
+        // 将 AI 会话状态同步到所属工作空间的所有终端 tab
+        syncAIStatusToTerminalTabs(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            toolName: ev.status.toolName
+        )
+    }
+
+    /// 将 AI 会话状态映射为 TerminalAIStatus 并更新该工作空间下所有终端 tab。
+    /// 每个工作空间的 AI 会话与终端 tab 建立稳定映射，实现逐 tab 状态可视化。
+    private func syncAIStatusToTerminalTabs(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        status: String,
+        errorMessage: String?,
+        toolName: String?
+    ) {
+        let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+        let tabs = workspaceTabs[globalKey] ?? []
+        guard !tabs.isEmpty else { return }
+
+        // 将后端状态字符串映射为六态枚举；toolName 优先使用后端工具名，否则回退到 AI 工具显示名
+        let displayName = toolName ?? aiTool.displayName
+        let terminalStatus: TerminalAIStatus
+        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "running":
+            terminalStatus = .running(toolName: displayName)
+        case "awaiting_input":
+            terminalStatus = .awaitingInput
+        case "success":
+            terminalStatus = .success
+        case "failure", "error":
+            terminalStatus = .failure(message: errorMessage)
+        case "cancelled":
+            terminalStatus = .cancelled
+        default:
+            terminalStatus = .idle
+        }
+
+        for tab in tabs where tab.kind == .terminal {
+            terminalStore.updateTerminalAIStatus(tabId: tab.id, status: terminalStatus)
+        }
     }
 
     private func fallbackSessionStatusForChatDone(stopReason: String?) -> String {
