@@ -4831,7 +4831,10 @@ final class MobileAppState: ObservableObject {
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            // WI-002：与 macOS 一致，先无条件清 abort-pending，再用订阅集合守卫，
+            // 避免旧会话 done 事件在切换后仍写入当前 UI。
+            self.aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
             self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
             self.applyAISessionSelectionHint(
                 ev.selectionHint,
@@ -4846,7 +4849,9 @@ final class MobileAppState: ObservableObject {
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            // WI-002：与 macOS 一致，先无条件清 abort-pending，再用订阅集合守卫。
+            self.aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
             self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
         }
 
@@ -5016,8 +5021,9 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool,
-                  self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.aiChatTool == ev.aiTool else { return }
+            // WI-002：与 macOS 一致，使用 subscribedSessionIds 守卫，阻断旧会话问题事件。
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
             self.aiChatStore.upsertQuestionRequest(ev.request)
         }
 
@@ -5025,8 +5031,9 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool,
-                  self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.aiChatTool == ev.aiTool else { return }
+            // WI-002：与 macOS 一致，使用 subscribedSessionIds 守卫。
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
             self.completeAIQuestionRequestLocally(requestId: ev.requestId)
         }
 
