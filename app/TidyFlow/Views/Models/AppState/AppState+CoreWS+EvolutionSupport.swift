@@ -252,6 +252,7 @@ extension AppState {
             let oldStore = aiStore(for: request.aiTool)
             oldStore.removeSubscription(request.sessionId)
         }
+        pendingEvolutionReplayHistoryLoadRequest = nil
         evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
         evolutionReplayLoading = true
         evolutionReplayError = nil
@@ -272,6 +273,7 @@ extension AppState {
             let oldStore = aiStore(for: request.aiTool)
             oldStore.removeSubscription(request.sessionId)
         }
+        pendingEvolutionReplayHistoryLoadRequest = nil
         evolutionReplayRequest = nil
         evolutionReplayLoading = false
         evolutionReplayError = nil
@@ -669,6 +671,9 @@ extension AppState {
               normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(ev.workspaceName),
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
+        if !ev.messages.isEmpty {
+            pendingEvolutionReplayHistoryLoadRequest = nil
+        }
         evolutionReplayStore.setCurrentSessionId(ev.sessionId)
         evolutionReplayStore.replaceMessages(ev.toChatMessages())
         evolutionReplayLoading = false

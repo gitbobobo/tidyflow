@@ -159,8 +159,12 @@ extension WSClient {
             }
             return true
         case "ai_session_subscribe_ack":
-            if let handler = aiMessageHandler {
-                handler.handleAISessionSubscribeAck()
+            if let ev = AISessionSubscribeAck.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISessionSubscribeAck(ev)
+                } else {
+                    onAISessionSubscribeAck?(ev)
+                }
             }
             return true
         case "ai_session_rename_result":

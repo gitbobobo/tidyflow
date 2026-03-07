@@ -84,6 +84,17 @@ struct AISessionMessagesV2 {
     }
 }
 
+struct AISessionSubscribeAck {
+    let sessionId: String
+    let sessionKey: String
+
+    static func from(json: [String: Any]) -> AISessionSubscribeAck? {
+        guard let sessionId = json["session_id"] as? String,
+              let sessionKey = json["session_key"] as? String else { return nil }
+        return AISessionSubscribeAck(sessionId: sessionId, sessionKey: sessionKey)
+    }
+}
+
 enum AIProtocolSessionCacheOp {
     case messageUpdated(messageId: String, role: String)
     case partUpdated(messageId: String, part: AIProtocolPartInfo)

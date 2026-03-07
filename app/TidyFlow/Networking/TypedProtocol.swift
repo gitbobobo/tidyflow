@@ -156,7 +156,7 @@ protocol AIMessageHandler: AnyObject {
     func handleAISlashCommands(_ ev: AISlashCommandsResult)
     func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult)
     func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult)
-    func handleAISessionSubscribeAck()
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck)
     func handleAISessionRenameResult(_ ev: AISessionRenameResult)
     func handleAISessionSearchResult(_ ev: AISessionSearchResult)
     func handleAICodeReviewResult(_ ev: AICodeReviewResult)
@@ -182,7 +182,7 @@ extension AIMessageHandler {
     func handleAISlashCommands(_ ev: AISlashCommandsResult) {}
     func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {}
     func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {}
-    func handleAISessionSubscribeAck() {}
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {}
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) {}
     func handleAISessionSearchResult(_ ev: AISessionSearchResult) {}
     func handleAICodeReviewResult(_ ev: AICodeReviewResult) {}

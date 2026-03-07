@@ -899,6 +899,13 @@ extension AppState {
         evolutionReplayLoading = false
         evolutionReplayStore.clearAll()
         evolutionReplayStore.setCurrentSessionId(ev.sessionID)
+        pendingEvolutionReplayHistoryLoadRequest = AIPendingHistoryLoadRequest(
+            projectName: ev.project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: ev.sessionID,
+            limit: 50
+        )
 
         let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let session = AISessionInfo(
@@ -1062,10 +1069,28 @@ extension AppState {
         )
     }
 
-    func handleAISessionSubscribeAck() {
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {
+        if let replayRequest = pendingEvolutionReplayHistoryLoadRequest,
+           replayRequest.sessionId == ev.sessionId {
+            defer { pendingEvolutionReplayHistoryLoadRequest = nil }
+            if evolutionReplayStore.messages.isEmpty {
+                TFLog.app.info(
+                    "AI replay subscribe ack: reload history, tool=\(replayRequest.aiTool.rawValue, privacy: .public), session_id=\(replayRequest.sessionId, privacy: .public)"
+                )
+                wsClient.requestAISessionMessages(
+                    projectName: replayRequest.projectName,
+                    workspaceName: replayRequest.workspaceName,
+                    aiTool: replayRequest.aiTool,
+                    sessionId: replayRequest.sessionId,
+                    limit: replayRequest.limit
+                )
+            }
+        }
+
         // 遍历所有工具，消费有待处理的订阅上下文
         for tool in AIChatTool.allCases {
             guard let ctx = pendingSubscribeContextByTool[tool] else { continue }
+            guard ctx.session.id == ev.sessionId else { continue }
             pendingSubscribeContextByTool[tool] = nil
 
             let session = ctx.session

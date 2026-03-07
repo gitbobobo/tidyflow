@@ -58,6 +58,14 @@ struct EvolutionPendingActionState: Equatable {
     }
 }
 
+struct AIPendingHistoryLoadRequest: Equatable {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+    let limit: Int
+}
+
 struct EvolutionControlCapability: Equatable {
     let canStart: Bool
     let canStop: Bool
@@ -508,6 +516,8 @@ class AppState: ObservableObject {
         cycleId: String,
         stage: String
     )?
+    /// Evolution 回放会话等待 subscribe ack 后的历史拉取兜底。
+    var pendingEvolutionReplayHistoryLoadRequest: AIPendingHistoryLoadRequest?
     /// 子代理会话查看请求（主会话中 task 工具跳转的子会话）。
     var subAgentViewerRequest: (
         project: String,

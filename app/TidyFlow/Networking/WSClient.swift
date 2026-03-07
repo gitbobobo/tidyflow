@@ -151,6 +151,7 @@ class WSClient: NSObject, ObservableObject {
     var onAISlashCommands: ((AISlashCommandsResult) -> Void)?
     var onAISlashCommandsUpdate: ((AISlashCommandsUpdateResult) -> Void)?
     var onAISessionConfigOptions: ((AISessionConfigOptionsResult) -> Void)?
+    var onAISessionSubscribeAck: ((AISessionSubscribeAck) -> Void)?
     var onAISessionRenameResult: ((AISessionRenameResult) -> Void)?
     var onAISessionSearchResult: ((AISessionSearchResult) -> Void)?
     var onAICodeReviewResult: ((AICodeReviewResult) -> Void)?
