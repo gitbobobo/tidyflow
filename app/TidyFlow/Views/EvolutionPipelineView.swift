@@ -237,27 +237,65 @@ struct EvolutionPipelineView: View {
     private var controlSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                // 循环轮次下拉（运行中也可调整）
-                Picker("", selection: $loopRoundLimit) {
-                    ForEach(loopRoundOptions, id: \.self) { count in
-                        Text("\(count) " + "evolution.page.pipeline.rounds".localized)
-                            .tag(count)
+                // WI-004：循环轮次选择（Picker + 运行中支持 +1/-1 增减按钮）
+                HStack(spacing: 2) {
+                    Picker("", selection: $loopRoundLimit) {
+                        ForEach(loopRoundOptions, id: \.self) { count in
+                            Text("\(count) " + "evolution.page.pipeline.rounds".localized)
+                                .tag(count)
+                        }
                     }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 100)
-                .controlSize(.small)
-                .disabled(!controlCapability.canStart && !controlCapability.canStop)
-                .onChange(of: loopRoundLimit) { _, newLimit in
-                    // 运行中时实时同步轮次调整到服务端
-                    guard controlCapability.canStop,
-                          let workspace else { return }
-                    appState.adjustEvolutionLoopRound(
-                        project: project,
-                        workspace: workspace,
-                        loopRoundLimit: newLimit
-                    )
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 100)
+                    .controlSize(.small)
+                    .disabled(!controlCapability.canStart && !controlCapability.canStop)
+                    .onChange(of: loopRoundLimit) { _, newLimit in
+                        // 运行中时实时同步轮次调整到服务端
+                        guard controlCapability.canStop,
+                              let workspace else { return }
+                        appState.adjustEvolutionLoopRound(
+                            project: project,
+                            workspace: workspace,
+                            loopRoundLimit: newLimit
+                        )
+                    }
+
+                    // 运行中时显示 -1/+1 快捷按钮，支持动态调整循环轮次
+                    if controlCapability.canStop, let workspace {
+                        Button {
+                            let newLimit = max(1, loopRoundLimit - 1)
+                            loopRoundLimit = newLimit
+                            appState.adjustEvolutionLoopRound(
+                                project: project,
+                                workspace: workspace,
+                                loopRoundLimit: newLimit
+                            )
+                        } label: {
+                            Image(systemName: "minus")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.mini)
+                        .help("evolution.page.action.decreaseRound".localized)
+                        .disabled(loopRoundLimit <= 1)
+
+                        Button {
+                            let newLimit = loopRoundLimit + 1
+                            loopRoundLimit = newLimit
+                            appState.adjustEvolutionLoopRound(
+                                project: project,
+                                workspace: workspace,
+                                loopRoundLimit: newLimit
+                            )
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.mini)
+                        .help("evolution.page.action.increaseRound".localized)
+                    }
                 }
 
                 Spacer(minLength: 4)

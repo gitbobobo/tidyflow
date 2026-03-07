@@ -1434,11 +1434,40 @@ struct MobileEvolutionView: View {
                 }
 
                 LabeledContent("evolution.page.workspace.loopRoundInput".localized) {
-                    TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 80)
-                        .disabled(!controlState.canStart)
+                    HStack(spacing: 6) {
+                        TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                            .disabled(!controlState.canStart)
+                        // WI-004：运行中支持 +1/-1 快捷调整循环轮次
+                        if controlState.canStop {
+                            HStack(spacing: 4) {
+                                Button {
+                                    let current = Int(loopRoundLimitText) ?? 1
+                                    let newVal = max(1, current - 1)
+                                    loopRoundLimitText = "\(newVal)"
+                                    appState.adjustEvolutionLoopRound(project: project, workspace: workspace, loopRoundLimit: newVal)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled((Int(loopRoundLimitText) ?? 1) <= 1)
+
+                                Button {
+                                    let current = Int(loopRoundLimitText) ?? 1
+                                    let newVal = current + 1
+                                    loopRoundLimitText = "\(newVal)"
+                                    appState.adjustEvolutionLoopRound(project: project, workspace: workspace, loopRoundLimit: newVal)
+                                } label: {
+                                    Image(systemName: "plus.circle")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
                 }
 
                 Text("evolution.page.workspace.verifyLoopFixed".localized)

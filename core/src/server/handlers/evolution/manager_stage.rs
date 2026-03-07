@@ -3974,7 +3974,17 @@ impl EvolutionManager {
         let tables = parse_plan_routing_tables(&plan)?;
 
         if verify_iteration == 0 {
-            return Ok(ordered_lanes_from_agent_presence(&tables.lane_presence));
+            // WI-006：首轮（verify_iteration=0）不允许 plan 产物通过 implement_advanced
+            // 任务把高级代理拉入主链路；Advanced lane 仅由系统调度（verify 失败后）触发。
+            let first_round_lanes = ordered_lanes_from_agent_presence(&tables.lane_presence)
+                .into_iter()
+                .filter(|lane| *lane != ImplementLane::Advanced)
+                .collect::<Vec<_>>();
+            return Ok(if first_round_lanes.is_empty() {
+                vec![ImplementLane::General]
+            } else {
+                first_round_lanes
+            });
         }
 
         let failed_agents = match Self::map_failed_agents_from_results(cycle_dir, &tables) {
@@ -3988,7 +3998,17 @@ impl EvolutionManager {
             }
         };
         if let Some(agents) = failed_agents {
-            return Ok(ordered_lanes_from_agent_presence(&agents));
+            // WI-006：verify_iteration=1 时，仅允许 general/visual lane，
+            // 不允许失败项映射结果中的 advanced（系统统一在 verify_iteration>=2 时调度）。
+            let filtered: Vec<ImplementLane> = ordered_lanes_from_agent_presence(&agents)
+                .into_iter()
+                .filter(|lane| *lane != ImplementLane::Advanced)
+                .collect();
+            return Ok(if filtered.is_empty() {
+                vec![ImplementLane::General]
+            } else {
+                filtered
+            });
         }
 
         // verify_iteration=1 且失败项无法完成映射：按约定回退为仅 general。
@@ -6134,6 +6154,9 @@ impl EvolutionManager {
                             entry
                                 .stage_tool_call_counts
                                 .insert(stage_name.to_string(), 0);
+                            // WI-001：重置代理耗时归因，确保重实现轮只统计当前会话耗时，不累计前次
+                            entry.stage_started_ats.remove(stage_name);
+                            entry.stage_duration_ms.remove(stage_name);
                         }
                         if entry.backlog_contract_version >= 2 {
                             match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
@@ -8838,6 +8861,8 @@ mod tests {
 
     #[test]
     fn resolve_implement_lanes_should_keep_general_and_advanced_on_first_iteration() {
+        // WI-006：首轮（verify_iteration=0）即使 plan 包含 implement_advanced 工作项，
+        // Advanced lane 也应被系统过滤掉，防止代理自决触发高级代理。
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8872,7 +8897,8 @@ mod tests {
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
             .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Advanced]);
+        // 首轮 Advanced lane 被系统过滤，仅保留 General
+        assert_eq!(lanes, vec![ImplementLane::General]);
     }
 
     #[test]
@@ -9015,6 +9041,8 @@ mod tests {
 
     #[test]
     fn resolve_implement_lanes_should_map_general_then_advanced_on_reimplementation() {
+        // WI-006：verify_iteration=1 时即使失败项映射到 Advanced，
+        // 系统仍只允许 General（Advanced 仅在 verify_iteration>=2 时由系统调度触发）。
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -9056,7 +9084,8 @@ mod tests {
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Advanced]);
+        // verify_iteration=1：失败项虽然映射到 General+Advanced，但 Advanced 被系统过滤
+        assert_eq!(lanes, vec![ImplementLane::General]);
     }
 
     #[test]

@@ -157,11 +157,10 @@ extension AppState {
     }
 
     func handleAISessionMessages(_ ev: AISessionMessagesV2) {
-        #if os(iOS)
+        // WI-002：无论平台，优先将回放消息路由到 evolutionReplayStore，阻断旧会话内容回灌
         if consumeEvolutionReplayMessagesIfNeeded(ev) {
             return
         }
-        #endif
         if consumeSubAgentViewerMessagesIfNeeded(ev) {
             return
         }
@@ -242,9 +241,8 @@ extension AppState {
     }
 
     func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
-        #if os(iOS)
+        // WI-002：无论平台，优先路由回放流式更新，阻断旧会话事件写入已清空视图
         _ = consumeEvolutionReplayMessagesUpdateIfNeeded(ev)
-        #endif
         _ = consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -468,9 +466,8 @@ extension AppState {
     }
 
     func handleAIChatDone(_ ev: AIChatDoneV2) {
-        #if os(iOS)
+        // WI-002：无论平台，优先将 done 事件路由到 evolutionReplayStore
         consumeEvolutionReplayDoneIfNeeded(ev)
-        #endif
         consumeSubAgentViewerDoneIfNeeded(ev)
 
         // 兜底收敛：部分后端路径可能未及时推送 ai_session_status_update，
@@ -525,9 +522,8 @@ extension AppState {
     }
 
     func handleAIChatError(_ ev: AIChatErrorV2) {
-        #if os(iOS)
+        // WI-002：无论平台，优先将 error 事件路由到 evolutionReplayStore
         consumeEvolutionReplayErrorIfNeeded(ev)
-        #endif
         consumeSubAgentViewerErrorIfNeeded(ev)
 
         // 兜底收敛：确保 error 事件会把会话状态从 running 拉回终态。

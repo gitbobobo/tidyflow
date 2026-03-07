@@ -394,6 +394,8 @@
 "evolution.page.action.startManual" = "Start";
 "evolution.page.action.stop" = "Stop";
 "evolution.page.action.resume" = "Resume";
+"evolution.page.action.decreaseRound" = "Decrease Loop Round (-1)";
+"evolution.page.action.increaseRound" = "Increase Loop Round (+1)";
 "evolution.page.action.previewHandoff" = "Handoff";
 "evolution.page.action.previewReport" = "Report";
 "evolution.page.handoff.title" = "Handoff Document";

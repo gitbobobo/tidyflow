@@ -1355,6 +1355,16 @@ final class MobileAppState: ObservableObject {
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
+    /// WI-004：运行中动态调整循环轮次，至少支持 +1/-1
+    func adjustEvolutionLoopRound(project: String, workspace: String, loopRoundLimit: Int) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoAdjustLoopRound(
+            project: project,
+            workspace: normalizedWorkspace,
+            loopRoundLimit: loopRoundLimit
+        )
+    }
+
     func resolveEvolutionBlockers(
         project: String,
         workspace: String,
@@ -1605,6 +1615,15 @@ final class MobileAppState: ObservableObject {
 
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        // WI-002：在打开新回放前先取消旧回放会话的订阅，阻断旧会话内容回灌
+        if let request = evolutionReplayRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         evolutionReplayTitle = "\(normalizedWorkspace) · \(stage) · \(cycleId)"
         evolutionReplayRequest = nil
         evolutionReplayMessages = []
@@ -1619,6 +1638,15 @@ final class MobileAppState: ObservableObject {
     }
 
     func clearEvolutionReplay() {
+        // WI-002：取消订阅旧回放会话，防止旧事件残留
+        if let request = evolutionReplayRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         evolutionReplayRequest = nil
         evolutionReplayTitle = ""
         evolutionReplayMessages = []
@@ -4373,7 +4401,21 @@ final class MobileAppState: ObservableObject {
             sessions.insert(session, at: 0)
             self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
 
-            self.loadAISession(session)
+            // WI-003：回放时订阅会话并显式请求最新 50 条历史消息，对齐 macOS 端语义
+            self.aiChatStore.addSubscription(ev.sessionID)
+            self.wsClient.requestAISessionSubscribe(
+                project: ev.project,
+                workspace: normalizedWorkspace,
+                aiTool: aiTool.rawValue,
+                sessionId: ev.sessionID
+            )
+            self.wsClient.requestAISessionMessages(
+                projectName: ev.project,
+                workspaceName: normalizedWorkspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                limit: 50
+            )
             self.requestAISessionStatus(
                 projectName: ev.project,
                 workspaceName: normalizedWorkspace,

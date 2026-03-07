@@ -268,6 +268,9 @@ extension AppState {
                 aiTool: request.aiTool.rawValue,
                 sessionId: request.sessionId
             )
+            // WI-002：同步移除主 store 订阅，防止旧会话流式事件在 clearEvolutionReplay 后仍回灌
+            let oldStore = aiStore(for: request.aiTool)
+            oldStore.removeSubscription(request.sessionId)
         }
         evolutionReplayRequest = nil
         evolutionReplayLoading = false

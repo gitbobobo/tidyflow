@@ -396,6 +396,8 @@
 "evolution.page.action.startManual" = "手动启动";
 "evolution.page.action.stop" = "停止";
 "evolution.page.action.resume" = "恢复";
+"evolution.page.action.decreaseRound" = "减少循环轮次 (-1)";
+"evolution.page.action.increaseRound" = "增加循环轮次 (+1)";
 "evolution.page.action.previewHandoff" = "Handoff";
 "evolution.page.action.previewReport" = "报告";
 "evolution.page.handoff.title" = "Handoff 文档";
