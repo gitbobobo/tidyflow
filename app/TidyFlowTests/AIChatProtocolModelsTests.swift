@@ -834,7 +834,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
     }
 
     func testTerminalCardTitleShowsCommandSummary() {
-        // 终端工具卡片标题应在 input.command 存在时显示命令摘要
+        // 终端工具卡片标题行应显示工具名，命令摘要单独通过 headerCommandSummary 字段携带
         let terminalWithCommand = ToolCardView(
             name: "terminal",
             state: [
@@ -846,7 +846,10 @@ final class AIChatProtocolModelsTests: XCTestCase {
             partMetadata: nil
         )
         let presentation = terminalWithCommand.debugPresentationForTests()
-        XCTAssertEqual(presentation.displayTitle, "terminal(ls -la)", "命令摘要应出现在卡片标题中")
+        // 标题只保留工具名，不再将命令嵌入括号格式
+        XCTAssertEqual(presentation.displayTitle, "terminal", "标题应只包含工具名，命令摘要不嵌入标题字符串")
+        // 命令摘要通过独立字段承载，确保 UI 可分层渲染
+        XCTAssertEqual(presentation.headerCommandSummary, "ls -la", "命令摘要应通过 headerCommandSummary 字段携带")
     }
 
     func testTerminalCardBodyExcludesInputSectionWhenCommandInTitle() {
@@ -904,7 +907,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
     }
 
     func testTerminalCardCommandSummaryTruncatesLongCommand() {
-        // 超长命令应被截断，不应导致标题溢出
+        // 超长命令应被截断后放入 headerCommandSummary，不应导致标题溢出
         let longCmd = String(repeating: "a", count: 80)
         let terminalLongCmd = ToolCardView(
             name: "terminal",
@@ -915,10 +918,14 @@ final class AIChatProtocolModelsTests: XCTestCase {
             callID: "c-tc-5",
             partMetadata: nil
         )
-        let title = terminalLongCmd.debugPresentationForTests().displayTitle
-        XCTAssertTrue(title.hasPrefix("terminal("), "长命令标题仍应以 terminal( 开头")
-        XCTAssertTrue(title.hasSuffix("…)"), "超长命令应以省略号结尾")
-        XCTAssertLessThanOrEqual(title.count, 75, "标题长度不应过长")
+        let presentation = terminalLongCmd.debugPresentationForTests()
+        // 标题仍只显示工具名
+        XCTAssertEqual(presentation.displayTitle, "terminal", "长命令场景下标题仍只包含工具名")
+        // headerCommandSummary 携带截断后的命令
+        let commandSummary = presentation.headerCommandSummary
+        XCTAssertNotNil(commandSummary, "长命令应有 headerCommandSummary")
+        XCTAssertTrue(commandSummary?.hasSuffix("…") == true, "超长命令摘要应以省略号结尾")
+        XCTAssertLessThanOrEqual(commandSummary?.count ?? 0, 60, "命令摘要长度不应过长")
     }
 
     func testAISessionMessagesToChatMessagesMapsToolCallExtendedFields() {

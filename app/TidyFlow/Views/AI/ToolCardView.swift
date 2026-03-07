@@ -313,13 +313,18 @@ struct ToolCardView: View {
         var sections = buildSections(toolID: resolvedToolID, invocation: invocation)
         sections = clampSectionsIfNeeded(sections)
         let displayTitle = toolCardTitle(toolID: resolvedToolID, invocation: invocation)
+        // 终端工具：命令摘要进入独立 headerCommandSummary 字段，与 displayTitle 分离，便于 UI 分层渲染和测试断言
+        let headerCommandSummary: String? = resolvedToolID == "terminal"
+            ? terminalCommandSummary(invocation)
+            : nil
 
         let presentation = AIToolPresentation(
             toolID: resolvedToolID,
             displayTitle: displayTitle,
             statusText: invocation.status.text,
             summary: toolSummary(toolID: resolvedToolID, invocation: invocation),
-            sections: sections
+            sections: sections,
+            headerCommandSummary: headerCommandSummary
         )
         return CachedRenderModel(
             invocation: invocation,
@@ -531,37 +536,48 @@ struct ToolCardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: toolIconName(toolID: presentation.toolID))
-                .foregroundColor(.primary)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: toolIconName(toolID: presentation.toolID))
+                    .foregroundColor(.primary)
 
-            Text(presentation.displayTitle)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(.primary)
-                .lineLimit(1)
+                Text(presentation.displayTitle)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            if let duration = formattedDuration {
-                Text(duration)
+                if let duration = formattedDuration {
+                    Text(duration)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                if let stats = headerDiffStats {
+                    Text("+\(stats.added)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.green)
+                    Text("-\(stats.removed)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.red)
+                } else {
+                    statusIcon
+                }
+                if hasExpandableContent {
+                    Image(systemName: isCardExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .animation(.easeInOut(duration: 0.2), value: isCardExpanded)
+                }
+            }
+            // 终端工具：命令摘要展示在标题行下方，代码风格以便快速识别
+            if let command = presentation.headerCommandSummary {
+                Text(command)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
-            }
-            if let stats = headerDiffStats {
-                Text("+\(stats.added)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.green)
-                Text("-\(stats.removed)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.red)
-            } else {
-                statusIcon
-            }
-            if hasExpandableContent {
-                Image(systemName: isCardExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .animation(.easeInOut(duration: 0.2), value: isCardExpanded)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, 20)
             }
         }
     }
@@ -1149,8 +1165,9 @@ struct ToolCardView: View {
         if toolID == "todowrite" || toolID == "todoread" {
             return todoSummary(invocation) ?? "任务列表"
         }
-        if toolID == "terminal", let command = terminalCommandSummary(invocation), !command.isEmpty {
-            return "terminal(\(command))"
+        if toolID == "terminal", terminalCommandSummary(invocation) != nil {
+            // 命令摘要由头部 UI 单独渲染（terminalHeaderCommand），标题只保留工具名标签，避免拼接字符串冗余
+            return toolDisplayName(toolID)
         }
         if let title = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title

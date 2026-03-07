@@ -613,6 +613,24 @@ struct AIToolPresentation {
     let statusText: String
     let summary: String?
     let sections: [AIToolSection]
+    /// 仅终端工具有值：头部独立展示的命令摘要（已截断），用于标题行下方的代码风格行。
+    let headerCommandSummary: String?
+
+    init(
+        toolID: String,
+        displayTitle: String,
+        statusText: String,
+        summary: String?,
+        sections: [AIToolSection],
+        headerCommandSummary: String? = nil
+    ) {
+        self.toolID = toolID
+        self.displayTitle = displayTitle
+        self.statusText = statusText
+        self.summary = summary
+        self.sections = sections
+        self.headerCommandSummary = headerCommandSummary
+    }
 }
 
 /// 一条消息对应一个 OpenCode message（message_id），内部包含多个 part
