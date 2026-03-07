@@ -183,6 +183,8 @@
 			TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10026 /* EvolutionReplaySessionIsolationTests.swift */; };
 			TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10027 /* EvolutionHistoryAgentHandoffTests.swift */; };
 			TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */; };
+			TST10031 /* CodexChatConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10029 /* CodexChatConfigurationTests.swift */; };
+			TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002A /* CodexSlashCommandIntegrationTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -242,6 +244,8 @@
 			TST10026 /* EvolutionReplaySessionIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionReplaySessionIsolationTests.swift; sourceTree = "<group>"; };
 			TST10027 /* EvolutionHistoryAgentHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionHistoryAgentHandoffTests.swift; sourceTree = "<group>"; };
 			TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionLoopRoundAdjustmentTests.swift; sourceTree = "<group>"; };
+			TST10029 /* CodexChatConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexChatConfigurationTests.swift; sourceTree = "<group>"; };
+			TST1002A /* CodexSlashCommandIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSlashCommandIntegrationTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -550,6 +554,8 @@
 				TST10026 /* EvolutionReplaySessionIsolationTests.swift */,
 				TST10027 /* EvolutionHistoryAgentHandoffTests.swift */,
 				TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */,
+					TST10029 /* CodexChatConfigurationTests.swift */,
+					TST1002A /* CodexSlashCommandIntegrationTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -979,6 +985,8 @@
 				TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */,
 				TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */,
 				TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */,
+				TST10031 /* CodexChatConfigurationTests.swift in Sources */,
+				TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
