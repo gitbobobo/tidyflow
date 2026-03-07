@@ -180,16 +180,14 @@ struct NativeGitPanelView: View {
 
     /// 当前工作区是否存在已跟踪文件的更改
     private var hasTrackedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.staged != true && $0.status != "??" }
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasTrackedChanges
     }
 
     /// 当前工作区是否存在未跟踪文件
     private var hasUntrackedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.staged != true && $0.status == "??" }
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasUntrackedChanges
     }
 
     /// 当前工作区是否存在暂存的更改（用于决定是否显示「暂存的更改」顶层区）
@@ -262,27 +260,7 @@ struct GitPanelHeader: View {
         guard let ws = appState.selectedWorkspaceKey else {
             return "git.branchDivergence.unavailable".localized
         }
-        guard let cache = gitCache.getGitStatusCache(workspaceKey: ws) else {
-            return "git.branchDivergence.unavailable".localized
-        }
-
-        if let base = cache.defaultBranch,
-           let ahead = cache.aheadBy,
-           let behind = cache.behindBy {
-            let branchPair = String(format: "git.branchDivergence.currentVs".localized, base)
-            if ahead == 0 && behind == 0 {
-                return "\(branchPair) | \("git.branchDivergence.upToDate".localized)"
-            }
-            let aheadText = String(format: "git.branchDivergence.aheadCount".localized, ahead)
-            let behindText = String(format: "git.branchDivergence.behindCount".localized, behind)
-            return "\(branchPair) | \(aheadText) | \(behindText)"
-        }
-
-        if cache.isLoading {
-            return "common.loading".localized
-        }
-
-        return "git.branchDivergence.unavailable".localized
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).branchDivergenceText
     }
 }
 

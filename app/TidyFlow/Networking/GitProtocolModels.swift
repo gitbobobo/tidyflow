@@ -540,6 +540,104 @@ struct GitStatusCache: Equatable {
         // Git status cache expires after 60 seconds
         Date().timeIntervalSince(updatedAt) > 60
     }
+
+    /// 产出统一的 Git 面板语义快照，供 macOS/iOS 视图层无差别消费
+    var semanticSnapshot: GitPanelSemanticSnapshot {
+        GitPanelSemanticSnapshot(
+            stagedItems: stagedItems,
+            trackedUnstagedItems: unstagedItems.filter { $0.status != "??" },
+            untrackedItems: unstagedItems.filter { $0.status == "??" },
+            isGitRepo: isGitRepo,
+            isLoading: isLoading,
+            currentBranch: currentBranch,
+            defaultBranch: defaultBranch,
+            aheadBy: aheadBy,
+            behindBy: behindBy
+        )
+    }
+}
+
+// MARK: - Git 面板语义快照（macOS/iOS 共享）
+
+/// 从 GitStatusCache 或 MobileWorkspaceGitDetailState 提炼出的统一展示语义。
+/// 作为 macOS 与 iOS Git 面板的单一展示入口，消除两端重复的 status 字符串判断逻辑。
+struct GitPanelSemanticSnapshot: Equatable {
+    /// 已暂存的文件列表
+    let stagedItems: [GitStatusItem]
+    /// 未暂存的已跟踪文件（status != "??"）
+    let trackedUnstagedItems: [GitStatusItem]
+    /// 未跟踪文件（status == "??"）
+    let untrackedItems: [GitStatusItem]
+    let isGitRepo: Bool
+    let isLoading: Bool
+    let currentBranch: String?
+    let defaultBranch: String?
+    let aheadBy: Int?
+    let behindBy: Int?
+
+    // MARK: - 派生属性
+
+    var hasStagedChanges: Bool { !stagedItems.isEmpty }
+    var hasTrackedChanges: Bool { !trackedUnstagedItems.isEmpty }
+    var hasUntrackedChanges: Bool { !untrackedItems.isEmpty }
+
+    /// 所有未暂存文件（已跟踪 + 未跟踪），保留与 macOS/iOS 现有 API 兼容
+    var unstagedItems: [GitStatusItem] { trackedUnstagedItems + untrackedItems }
+
+    /// 无 staged、无已跟踪更改、无未跟踪文件
+    var isEmpty: Bool {
+        stagedItems.isEmpty && trackedUnstagedItems.isEmpty && untrackedItems.isEmpty
+    }
+
+    // MARK: - 分支 divergence 文案（macOS/iOS 共享格式）
+
+    /// 产出分支差异展示文案，由 macOS 与 iOS 共享相同的格式化规则
+    var branchDivergenceText: String {
+        GitPanelSemanticSnapshot.formatBranchDivergence(
+            defaultBranch: defaultBranch,
+            aheadBy: aheadBy,
+            behindBy: behindBy,
+            isLoading: isLoading
+        )
+    }
+
+    /// 静态格式化方法，便于在单测中独立验证，不依赖实例状态
+    static func formatBranchDivergence(
+        defaultBranch: String?,
+        aheadBy: Int?,
+        behindBy: Int?,
+        isLoading: Bool
+    ) -> String {
+        if let base = defaultBranch,
+           let ahead = aheadBy,
+           let behind = behindBy {
+            let branchPair = String(format: "git.branchDivergence.currentVs".localized, base)
+            if ahead == 0 && behind == 0 {
+                return "\(branchPair) | \("git.branchDivergence.upToDate".localized)"
+            }
+            let aheadText = String(format: "git.branchDivergence.aheadCount".localized, ahead)
+            let behindText = String(format: "git.branchDivergence.behindCount".localized, behind)
+            return "\(branchPair) | \(aheadText) | \(behindText)"
+        }
+        if isLoading {
+            return "common.loading".localized
+        }
+        return "git.branchDivergence.unavailable".localized
+    }
+
+    static func empty() -> GitPanelSemanticSnapshot {
+        GitPanelSemanticSnapshot(
+            stagedItems: [],
+            trackedUnstagedItems: [],
+            untrackedItems: [],
+            isGitRepo: false,
+            isLoading: false,
+            currentBranch: nil,
+            defaultBranch: nil,
+            aheadBy: nil,
+            behindBy: nil
+        )
+    }
 }
 
 // MARK: - Git Log (Commit History) Protocol Models

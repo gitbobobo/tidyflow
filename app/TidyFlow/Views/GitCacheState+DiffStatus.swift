@@ -147,6 +147,11 @@ extension GitCacheState {
         return cache.isExpired && !cache.isLoading
     }
 
+    /// 返回当前工作区的语义快照；缓存不存在时返回空快照而不是 nil，避免视图层需要 nil 判断
+    func getGitSemanticSnapshot(workspaceKey: String) -> GitPanelSemanticSnapshot {
+        getGitStatusCache(workspaceKey: workspaceKey)?.semanticSnapshot ?? .empty()
+    }
+
     // MARK: - Git Log (Commit History) API
 
     func handleGitLogResult(_ result: GitLogResult) {

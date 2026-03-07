@@ -148,15 +148,13 @@ struct GitChangesSection: View {
     }
 
     private var hasTrackedChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.unstagedItems.contains { $0.status != "??" }
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasTrackedChanges
     }
 
     private var hasUntrackedChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.unstagedItems.contains { $0.status == "??" }
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasUntrackedChanges
     }
 
     private var isStageAllInFlight: Bool {

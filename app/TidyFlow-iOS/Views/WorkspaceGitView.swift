@@ -16,28 +16,37 @@ struct WorkspaceGitView: View {
         appState.gitDetailStateForWorkspace(project: project, workspace: workspace)
     }
 
+    private var snapshot: GitPanelSemanticSnapshot {
+        gitState.semanticSnapshot
+    }
+
     var body: some View {
         List {
             // MARK: - 当前分支
             branchSection
 
-            if !gitState.isGitRepo {
+            if !snapshot.isGitRepo {
                 Section {
                     Text("当前目录不是 Git 仓库")
                         .foregroundColor(.secondary)
                 }
             } else {
                 // MARK: - 暂存区
-                if !gitState.stagedItems.isEmpty {
+                if snapshot.hasStagedChanges {
                     stagedSection
                 }
 
-                // MARK: - 工作区更改
-                if !gitState.unstagedItems.isEmpty {
-                    unstagedSection
+                // MARK: - 工作区更改（已跟踪）
+                if snapshot.hasTrackedChanges {
+                    trackedUnstagedSection
                 }
 
-                if gitState.stagedItems.isEmpty && gitState.unstagedItems.isEmpty {
+                // MARK: - 未跟踪文件
+                if snapshot.hasUntrackedChanges {
+                    untrackedSection
+                }
+
+                if snapshot.isEmpty {
                     Section {
                         Label("工作区干净，无需提交", systemImage: "checkmark.circle")
                             .foregroundColor(.secondary)
@@ -45,7 +54,7 @@ struct WorkspaceGitView: View {
                 }
 
                 // MARK: - 提交输入
-                if !gitState.stagedItems.isEmpty {
+                if snapshot.hasStagedChanges {
                     commitSection
                 }
             }
@@ -109,19 +118,15 @@ struct WorkspaceGitView: View {
                 HStack {
                     Image(systemName: "arrow.triangle.branch")
                         .foregroundColor(.accentColor)
-                    Text(gitState.currentBranch ?? "未知分支")
-                        .foregroundColor(.primary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(snapshot.currentBranch ?? "未知分支")
+                            .foregroundColor(.primary)
+                        Text(snapshot.branchDivergenceText)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                     Spacer()
-                    if let ahead = gitState.aheadBy, ahead > 0 {
-                        Label("\(ahead)", systemImage: "arrow.up")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    if let behind = gitState.behindBy, behind > 0 {
-                        Label("\(behind)", systemImage: "arrow.down")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -134,7 +139,7 @@ struct WorkspaceGitView: View {
 
     private var stagedSection: some View {
         Section {
-            ForEach(gitState.stagedItems) { item in
+            ForEach(snapshot.stagedItems) { item in
                 GitFileRow(item: item, isStaged: true)
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
@@ -147,7 +152,7 @@ struct WorkspaceGitView: View {
             }
         } header: {
             HStack {
-                Text("已暂存更改 (\(gitState.stagedItems.count))")
+                Text("已暂存更改 (\(snapshot.stagedItems.count))")
                 Spacer()
                 Button {
                     appState.gitUnstage(project: project, workspace: workspace, path: nil, scope: "all")
@@ -161,11 +166,11 @@ struct WorkspaceGitView: View {
         }
     }
 
-    // MARK: - 工作区更改
+    // MARK: - 已跟踪的未暂存更改
 
-    private var unstagedSection: some View {
+    private var trackedUnstagedSection: some View {
         Section {
-            ForEach(gitState.unstagedItems) { item in
+            ForEach(snapshot.trackedUnstagedItems) { item in
                 GitFileRow(item: item, isStaged: false)
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
@@ -180,13 +185,13 @@ struct WorkspaceGitView: View {
                             discardTargetPath = item.path
                             showDiscardConfirm = true
                         } label: {
-                            Label("丢弃", systemImage: "trash")
+                            Label("丢弃更改", systemImage: "arrow.uturn.backward")
                         }
                     }
             }
         } header: {
             HStack {
-                Text("未暂存更改 (\(gitState.unstagedItems.count))")
+                Text("未暂存更改 (\(snapshot.trackedUnstagedItems.count))")
                 Spacer()
                 Button {
                     appState.gitStage(project: project, workspace: workspace, path: nil, scope: "all")
@@ -200,12 +205,40 @@ struct WorkspaceGitView: View {
                 Button {
                     showDiscardAllConfirm = true
                 } label: {
-                    Image(systemName: "trash")
+                    Image(systemName: "arrow.uturn.backward")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
             }
+        }
+    }
+
+    // MARK: - 未跟踪文件
+
+    private var untrackedSection: some View {
+        Section {
+            ForEach(snapshot.untrackedItems) { item in
+                GitFileRow(item: item, isStaged: false)
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        Button {
+                            appState.gitStage(project: project, workspace: workspace, path: item.path, scope: "file")
+                        } label: {
+                            Label("暂存", systemImage: "plus.circle")
+                        }
+                        .tint(.green)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            discardTargetPath = item.path
+                            showDiscardConfirm = true
+                        } label: {
+                            Label("删除文件", systemImage: "trash")
+                        }
+                    }
+            }
+        } header: {
+            Text("未跟踪文件 (\(snapshot.untrackedItems.count))")
         }
     }
 
@@ -228,7 +261,7 @@ struct WorkspaceGitView: View {
                     } else {
                         Image(systemName: "checkmark.circle")
                     }
-                    Text("提交到 \(gitState.currentBranch ?? "当前分支")")
+                    Text("提交到 \(snapshot.currentBranch ?? "当前分支")")
                 }
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || gitState.isCommitting)

@@ -105,6 +105,21 @@ struct MobileWorkspaceGitDetailState {
             commitResult: nil
         )
     }
+
+    /// 产出与 macOS 共享相同分类规则的 Git 面板语义快照
+    var semanticSnapshot: GitPanelSemanticSnapshot {
+        GitPanelSemanticSnapshot(
+            stagedItems: stagedItems,
+            trackedUnstagedItems: unstagedItems.filter { $0.status != "??" },
+            untrackedItems: unstagedItems.filter { $0.status == "??" },
+            isGitRepo: isGitRepo,
+            isLoading: false,
+            currentBranch: currentBranch,
+            defaultBranch: defaultBranch,
+            aheadBy: aheadBy,
+            behindBy: behindBy
+        )
+    }
 }
 
 private struct MobileTerminalPresentation {

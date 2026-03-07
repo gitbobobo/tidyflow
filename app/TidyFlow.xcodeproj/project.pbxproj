@@ -189,6 +189,7 @@
 			TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002B /* AISessionSubscribeAckDispatchTests.swift */; };
 			TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */; };
 			TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002D /* WorkspaceVisualSemanticsTests.swift */; };
+		TST10036 /* GitPanelSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002E /* GitPanelSemanticLayerTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -253,6 +254,7 @@
 			TST1002B /* AISessionSubscribeAckDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionSubscribeAckDispatchTests.swift; sourceTree = "<group>"; };
 			TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEvidenceTabPresentationTests.swift; sourceTree = "<group>"; };
 			TST1002D /* WorkspaceVisualSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceVisualSemanticsTests.swift; sourceTree = "<group>"; };
+		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -567,6 +569,7 @@
 					TST1002B /* AISessionSubscribeAckDispatchTests.swift */,
 					TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */,
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
+					TST1002E /* GitPanelSemanticLayerTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -1003,6 +1006,7 @@
 				TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */,
 				TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */,
 				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
+				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
