@@ -2213,7 +2213,19 @@ struct EvolutionTabView: View {
                             TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 60)
-                                .disabled(!controlCapability.canStart)
+                                .disabled(!controlCapability.canStart && !controlCapability.canStop)
+                                .onChange(of: loopRoundLimitText) { _, newValue in
+                                    // 运行中时实时同步轮次调整到服务端
+                                    guard controlCapability.canStop,
+                                          let newLimit = Int(newValue), newLimit >= 1,
+                                          let workspace = Optional(workspace), !workspace.isEmpty
+                                    else { return }
+                                    appState.adjustEvolutionLoopRound(
+                                        project: project,
+                                        workspace: workspace,
+                                        loopRoundLimit: newLimit
+                                    )
+                                }
                             Text("evolution.page.workspace.verifyLoopFixed".localized)
                                 .font(.caption)
                                 .foregroundColor(.secondary)

@@ -16,6 +16,8 @@ struct EvolutionPipelineView: View {
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isHandoffSheetPresented: Bool = false
     @State private var selectedHandoffCycleID: String?
+    /// 手动选定的代理级交接文档阶段名；nil 表示查看循环级汇总
+    @State private var selectedHandoffStageName: String? = nil
     @State private var selectedCycleDetail: PipelineCycleDetailPayload?
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
 
@@ -235,7 +237,7 @@ struct EvolutionPipelineView: View {
     private var controlSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                // 循环轮次下拉
+                // 循环轮次下拉（运行中也可调整）
                 Picker("", selection: $loopRoundLimit) {
                     ForEach(loopRoundOptions, id: \.self) { count in
                         Text("\(count) " + "evolution.page.pipeline.rounds".localized)
@@ -246,7 +248,17 @@ struct EvolutionPipelineView: View {
                 .pickerStyle(.menu)
                 .frame(maxWidth: 100)
                 .controlSize(.small)
-                .disabled(!controlCapability.canStart)
+                .disabled(!controlCapability.canStart && !controlCapability.canStop)
+                .onChange(of: loopRoundLimit) { _, newLimit in
+                    // 运行中时实时同步轮次调整到服务端
+                    guard controlCapability.canStop,
+                          let workspace else { return }
+                    appState.adjustEvolutionLoopRound(
+                        project: project,
+                        workspace: workspace,
+                        loopRoundLimit: newLimit
+                    )
+                }
 
                 Spacer(minLength: 4)
 
@@ -880,6 +892,7 @@ struct EvolutionPipelineView: View {
     private func openHandoffSheet(for cycleID: String) {
         guard let workspace else { return }
         selectedHandoffCycleID = cycleID
+        selectedHandoffStageName = nil
         appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
         isHandoffSheetPresented = true
     }
@@ -1661,17 +1674,32 @@ struct EvolutionPipelineView: View {
         return formatter
     }()
 
-    /// 计算所有已完成代理的总耗时（核心累加）
+    /// 计算当前轮次中各代理最近一次会话的累计耗时。
+    /// 同一 (stage, agent) 组合在重试后会产生多条执行记录，仅取最新一条，
+    /// 避免把重试前的旧耗时也叠加进来。
     private var totalDurationText: String? {
-        let executionDurations = (currentItem?.executions ?? [])
+        let completedExecutions = (currentItem?.executions ?? [])
             .filter { isExecutionCompletedStatus($0.status) }
-            .compactMap(\.durationMs)
-        let totalMs = executionDurations.isEmpty
-            ? (currentItem?.agents ?? []).compactMap(\.durationMs)
-                .reduce(0, +)
-            : executionDurations.reduce(0, +)
-        guard totalMs > 0 else { return nil }
-        return Self.formatDurationMs(totalMs)
+        // 按 (stage, agent) 分组，每组只保留 startedAt 最新的条目
+        var latestByKey: [String: EvolutionSessionExecutionEntryV2] = [:]
+        for entry in completedExecutions {
+            let key = "\(entry.stage)|\(entry.agent)"
+            if let existing = latestByKey[key] {
+                if entry.startedAt > existing.startedAt {
+                    latestByKey[key] = entry
+                }
+            } else {
+                latestByKey[key] = entry
+            }
+        }
+        let totalMs = latestByKey.values.compactMap(\.durationMs).reduce(0, +)
+        if totalMs > 0 {
+            return Self.formatDurationMs(totalMs)
+        }
+        // fallback：执行记录不足时使用 agents 快照中的耗时
+        let agentTotalMs = (currentItem?.agents ?? []).compactMap(\.durationMs).reduce(0, +)
+        guard agentTotalMs > 0 else { return nil }
+        return Self.formatDurationMs(agentTotalMs)
     }
 
     // MARK: - 数据逻辑
@@ -1909,63 +1937,137 @@ struct EvolutionPipelineView: View {
         }
     }
 
+    /// 当前选中循环中有完整交接文档的阶段列表，用于代理级筛选
+    private var handoffStageEntries: [EvolutionCycleStageHistoryEntryV2] {
+        guard let cycleID = selectedHandoffCycleID, let workspace else { return [] }
+        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        return appState.evolutionCycleHistories[key]?
+            .first(where: { $0.cycleID == cycleID })?
+            .stages.filter { $0.handoff != nil } ?? []
+    }
+
+    /// 根据当前选中的阶段（或 nil 表示循环级汇总）返回要展示的 handoff
+    private var resolvedHandoff: EvolutionHandoffInfoV2? {
+        if let stageName = selectedHandoffStageName {
+            return handoffStageEntries.first(where: { $0.stage == stageName })?.handoff
+        }
+        return appState.evolutionHandoff
+    }
+
     private var handoffSheet: some View {
         NavigationStack {
-            Group {
-                if appState.evolutionHandoffLoading {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("evolution.page.handoff.loading".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = appState.evolutionHandoffError {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text(error)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let handoff = appState.evolutionHandoff {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.completed",
-                                icon: "checkmark.circle.fill",
-                                color: .green,
-                                items: handoff.completed
-                            )
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.risks",
-                                icon: "exclamationmark.triangle.fill",
-                                color: .orange,
-                                items: handoff.risks
-                            )
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.next",
-                                icon: "arrow.right.circle.fill",
-                                color: .blue,
-                                items: handoff.next
-                            )
+            VStack(spacing: 0) {
+                // 代理选择器：当有多个阶段级交接文档时显示
+                let stageEntries = handoffStageEntries
+                if stageEntries.count > 0 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            // 循环汇总选项
+                            Button {
+                                selectedHandoffStageName = nil
+                            } label: {
+                                Text("evolution.page.handoff.cycleSummary".localized)
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(selectedHandoffStageName == nil
+                                                ? Color.accentColor.opacity(0.18)
+                                                : Color.secondary.opacity(0.1))
+                                    )
+                                    .foregroundColor(selectedHandoffStageName == nil ? .accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+
+                            ForEach(stageEntries, id: \.stage) { entry in
+                                Button {
+                                    selectedHandoffStageName = entry.stage
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Circle()
+                                            .fill(stageColor(entry.stage))
+                                            .frame(width: 6, height: 6)
+                                        Text(entry.agent.isEmpty ? entry.stage : entry.agent)
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(selectedHandoffStageName == entry.stage
+                                                ? stageColor(entry.stage).opacity(0.18)
+                                                : Color.secondary.opacity(0.1))
+                                    )
+                                    .foregroundColor(selectedHandoffStageName == entry.stage
+                                        ? stageColor(entry.stage)
+                                        : .secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
                     }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text("evolution.page.handoff.empty".localized)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
+                    Divider()
+                }
+
+                Group {
+                    if appState.evolutionHandoffLoading {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("evolution.page.handoff.loading".localized)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let error = appState.evolutionHandoffError, selectedHandoffStageName == nil {
+                        VStack(spacing: 12) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 32))
+                                .foregroundColor(.secondary)
+                            Text(error)
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let handoff = resolvedHandoff {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                handoffSection(
+                                    titleKey: "evolution.page.handoff.completed",
+                                    icon: "checkmark.circle.fill",
+                                    color: .green,
+                                    items: handoff.completed
+                                )
+                                handoffSection(
+                                    titleKey: "evolution.page.handoff.risks",
+                                    icon: "exclamationmark.triangle.fill",
+                                    color: .orange,
+                                    items: handoff.risks
+                                )
+                                handoffSection(
+                                    titleKey: "evolution.page.handoff.next",
+                                    icon: "arrow.right.circle.fill",
+                                    color: .blue,
+                                    items: handoff.next
+                                )
+                            }
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        VStack(spacing: 12) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 32))
+                                .foregroundColor(.secondary)
+                            Text("evolution.page.handoff.empty".localized)
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("evolution.page.handoff.title".localized)
@@ -1981,6 +2083,7 @@ struct EvolutionPipelineView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("common.close".localized) {
                         selectedHandoffCycleID = nil
+                        selectedHandoffStageName = nil
                         isHandoffSheetPresented = false
                     }
                 }

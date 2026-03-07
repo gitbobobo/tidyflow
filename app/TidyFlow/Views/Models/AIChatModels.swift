@@ -810,6 +810,8 @@ final class AIChatStore: ObservableObject {
     func clearAll() {
         flushPendingStreamEvents()
         currentSessionId = nil
+        // 清除所有会话订阅，防止旧会话流式事件在 clearAll 后仍被接受
+        subscribedSessionIds = []
         messages = []
         historyHasMore = false
         historyNextBeforeMessageId = nil
