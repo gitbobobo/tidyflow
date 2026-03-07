@@ -218,6 +218,15 @@ extension AppState {
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
+    func adjustEvolutionLoopRound(project: String, workspace: String, loopRoundLimit: Int) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoAdjustLoopRound(
+            project: project,
+            workspace: normalizedWorkspace,
+            loopRoundLimit: loopRoundLimit
+        )
+    }
+
     func resolveEvolutionBlockers(
         project: String,
         workspace: String,
@@ -239,6 +248,9 @@ extension AppState {
                 aiTool: request.aiTool.rawValue,
                 sessionId: request.sessionId
             )
+            // 在服务端响应到来之前主动移除旧会话订阅，阻断旧流式事件写入主 Store
+            let oldStore = aiStore(for: request.aiTool)
+            oldStore.removeSubscription(request.sessionId)
         }
         evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
         evolutionReplayLoading = true

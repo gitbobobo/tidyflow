@@ -1539,6 +1539,15 @@ extension WSClient {
         ])
     }
 
+    func requestEvoAdjustLoopRound(project: String, workspace: String, loopRoundLimit: Int) {
+        send([
+            "type": "evo_adjust_loop_round",
+            "project": project,
+            "workspace": workspace,
+            "loop_round_limit": max(1, loopRoundLimit)
+        ])
+    }
+
     func requestEvoResolveBlockers(
         project: String,
         workspace: String,

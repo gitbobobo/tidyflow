@@ -88,7 +88,8 @@ struct EvolutionControlCapability: Equatable {
             )
         }
 
-        if let pendingAction {
+        // 待确认操作未过期时阻塞所有控制（超过 30 秒视为已超时，跌回正常状态求值）
+        if let pendingAction, Date().timeIntervalSince(pendingAction.requestedAt) <= 30 {
             let pendingReason = "操作进行中，请稍候"
             return EvolutionControlCapability(
                 canStart: false,
@@ -173,6 +174,10 @@ struct EvolutionControlCapability: Equatable {
         _ pendingAction: EvolutionPendingActionState,
         currentStatus: String?
     ) -> Bool {
+        // 超时的待确认操作无论状态如何都应清除
+        if Date().timeIntervalSince(pendingAction.requestedAt) > 30 {
+            return true
+        }
         let normalized = normalizedStatus(currentStatus)
         switch pendingAction.action {
         case .start:

@@ -1586,6 +1586,8 @@ struct EvolutionCycleStageHistoryEntryV2 {
     let aiTool: String
     let status: String
     let durationMs: UInt64?
+    /// 该阶段自身的交接文档，用于历史查看时的代理级筛选
+    let handoff: EvolutionHandoffInfoV2?
 
     static func from(json: [String: Any]) -> EvolutionCycleStageHistoryEntryV2? {
         guard let stage = parseOptionalString(json["stage"]) else { return nil }
@@ -1598,12 +1600,14 @@ struct EvolutionCycleStageHistoryEntryV2 {
             if let v = json["duration_ms"] as? Double { return UInt64(v) }
             return nil
         }()
+        let handoff = EvolutionHandoffInfoV2.from(json: json["handoff"] as? [String: Any] ?? [:])
         return EvolutionCycleStageHistoryEntryV2(
             stage: stage,
             agent: agent,
             aiTool: aiTool,
             status: status,
-            durationMs: durationMs
+            durationMs: durationMs,
+            handoff: handoff
         )
     }
 }
