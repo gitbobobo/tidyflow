@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::server::protocol::{
-    EvolutionHandoffInfo, EvolutionSchedulerInfo, EvolutionSessionExecutionEntry,
-    EvolutionStageProfileInfo, EvolutionWorkspaceItem,
+    EvolutionSchedulerInfo, EvolutionSessionExecutionEntry, EvolutionStageProfileInfo,
+    EvolutionWorkspaceItem,
 };
 
 pub(super) struct EvolutionState {
@@ -21,7 +21,6 @@ pub(super) struct WorkspaceRunState {
     pub(super) status: String,
     pub(super) cycle_id: String,
     pub(super) cycle_title: Option<String>,
-    pub(super) cycle_handoff: EvolutionHandoffInfo,
     pub(super) current_stage: String,
     pub(super) global_loop_round: u32,
     pub(super) loop_round_limit: u32,

@@ -216,7 +216,6 @@ mod tests {
             verify_iteration_limit: 2,
             agents: Vec::new(),
             executions: Vec::new(),
-            handoff: None,
             terminal_reason_code: terminal_reason_code.map(|v| v.to_string()),
             terminal_error_message: terminal_error_message.map(|v| v.to_string()),
             rate_limit_error_message: rate_limit_error_message.map(|v| v.to_string()),

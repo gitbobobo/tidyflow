@@ -66,6 +66,7 @@
   - `GET /api/v1/evolution/projects/:project/workspaces/:workspace/agent-profile`
   - `GET /api/v1/evolution/projects/:project/workspaces/:workspace/cycle-history`
   - `GET /api/v1/evolution/projects/:project/workspaces/:workspace/stage-chat`
+  - Evolution 快照与循环历史不再返回 `handoff` 字段；计划文档请直接读取循环目录下的 `plan.md`
 - Evidence：
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot`
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt`

@@ -237,7 +237,6 @@ mod tests {
             status: status.to_string(),
             cycle_id: "cycle-1".to_string(),
             cycle_title: None,
-            cycle_handoff: crate::server::protocol::EvolutionHandoffInfo::default(),
             current_stage: "verify".to_string(),
             global_loop_round: 1,
             loop_round_limit: 1,

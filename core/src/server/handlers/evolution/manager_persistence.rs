@@ -465,11 +465,6 @@ impl EvolutionManager {
             },
             "stage_runtime": stage_runtime,
             "executions": entry.session_executions.clone(),
-            "handoff": {
-                "completed": entry.cycle_handoff.completed.clone(),
-                "risks": entry.cycle_handoff.risks.clone(),
-                "next": entry.cycle_handoff.next.clone(),
-            },
             "terminal_reason_code": entry.terminal_reason_code.clone(),
             "terminal_error_message": entry.terminal_error_message.clone(),
             "rate_limit_recovery": {

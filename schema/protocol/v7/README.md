@@ -25,6 +25,11 @@
 6. `app/TidyFlow/Networking/WSClient+Send.swift` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 7. `app/TidyFlow/Web/main/protocol-rules.js` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 
+## Evolution 读取补充（v7）
+
+Evolution 快照与循环历史结果不再暴露 `handoff` 字段。
+客户端若需展示计划文档，应直接读取循环目录中的 `plan.md`。
+
 ## ACP `tool-calls` 对齐说明（v7）
 
 为对齐 ACP `tool-calls`，AI part 协议已扩展以下字段（均为可选）：

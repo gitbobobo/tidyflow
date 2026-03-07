@@ -7,8 +7,8 @@ use uuid::Uuid;
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::resolve_directory;
 use crate::server::protocol::{
-    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionHandoffInfo,
-    EvolutionSessionExecutionEntry, EvolutionWorkspaceItem, ServerMessage,
+    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionSessionExecutionEntry,
+    EvolutionWorkspaceItem, ServerMessage,
 };
 
 use super::stage::{agent_name, build_agents};
@@ -51,35 +51,6 @@ fn resolve_cycle_history_title(
     cycle_file_title: Option<String>,
 ) -> Option<String> {
     direction_stage_title.or(cycle_file_title)
-}
-
-fn parse_cycle_handoff(cycle_json: &serde_json::Value) -> Option<EvolutionHandoffInfo> {
-    parse_handoff_from_value(cycle_json.get("handoff")?)
-}
-
-fn parse_handoff_from_value(handoff_val: &serde_json::Value) -> Option<EvolutionHandoffInfo> {
-    let handoff = handoff_val.as_object()?;
-    let parse_section = |key: &str| -> Vec<String> {
-        handoff
-            .get(key)
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str())
-                    .map(|item| item.trim().to_string())
-                    .filter(|item| !item.is_empty())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default()
-    };
-
-    let parsed = EvolutionHandoffInfo {
-        completed: parse_section("completed"),
-        risks: parse_section("risks"),
-        next: parse_section("next"),
-    };
-    (!parsed.is_empty()).then_some(parsed)
 }
 
 fn parse_cycle_session_executions(
@@ -153,17 +124,12 @@ fn parse_cycle_stage_history_entries(
             .and_then(|value| value.as_object())
             .and_then(|timing| timing.get("duration_ms"))
             .and_then(|value| value.as_u64());
-        // 从阶段 runtime 中提取该阶段自身的交接文档，供历史查看时的代理级筛选使用
-        let handoff = runtime
-            .get("handoff")
-            .and_then(|value| parse_handoff_from_value(value));
         stages.push(EvolutionCycleStageHistoryEntry {
             stage: (*stage).to_string(),
             agent: agent_name(stage).to_string(),
             ai_tool,
             status,
             duration_ms,
-            handoff,
         });
     }
     stages
@@ -222,7 +188,6 @@ fn build_cycle_history_item(
         terminal_reason_code,
         terminal_error_message,
         executions,
-        handoff: parse_cycle_handoff(cycle_json),
         stages,
     })
 }
@@ -416,7 +381,6 @@ impl EvolutionManager {
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
                     cycle_title: None,
-                    cycle_handoff: EvolutionHandoffInfo::default(),
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
                     loop_round_limit: req.loop_round_limit.max(1),
@@ -696,7 +660,6 @@ impl EvolutionManager {
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents,
                 executions: w.session_executions.clone(),
-                handoff: (!w.cycle_handoff.is_empty()).then_some(w.cycle_handoff.clone()),
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
@@ -809,7 +772,7 @@ impl EvolutionManager {
 mod tests {
     use super::{
         build_cycle_history_item, extract_cycle_title_from_cycle_file,
-        extract_cycle_title_from_direction_stage, initial_global_loop_round, parse_cycle_handoff,
+        extract_cycle_title_from_direction_stage, initial_global_loop_round,
         parse_cycle_session_executions, parse_cycle_stage_history_entries,
         parse_stage_session_executions, resolve_cycle_history_title,
     };
@@ -1008,29 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_cycle_handoff_should_skip_empty_payload() {
-        let empty = serde_json::json!({
-            "handoff": {
-                "completed": [],
-                "risks": [],
-                "next": []
-            }
-        });
-        assert!(parse_cycle_handoff(&empty).is_none());
-
-        let filled = serde_json::json!({
-            "handoff": {
-                "completed": ["已完成"],
-                "risks": ["有风险"],
-                "next": ["继续验证"]
-            }
-        });
-        let handoff = parse_cycle_handoff(&filled).expect("handoff should exist");
-        assert_eq!(handoff.completed, vec!["已完成".to_string()]);
-    }
-
-    #[test]
-    fn build_cycle_history_item_should_restore_runtime_title_error_and_handoff() {
+    fn build_cycle_history_item_should_restore_runtime_title_and_error() {
         let cycle_json = serde_json::json!({
             "title": "结构化历史标题",
             "status": "failed_system",
@@ -1060,12 +1001,7 @@ mod tests {
                     "completed_at": "2026-03-01T00:00:04Z",
                     "duration_ms": 4000
                 }
-            ],
-            "handoff": {
-                "completed": ["实现 A"],
-                "risks": ["风险 B"],
-                "next": ["下一步 C"]
-            }
+            ]
         });
 
         let item =
@@ -1077,9 +1013,5 @@ mod tests {
         );
         assert_eq!(item.executions.len(), 1);
         assert_eq!(item.stages.len(), 1);
-        assert_eq!(
-            item.handoff.as_ref().map(|value| value.next.clone()),
-            Some(vec!["下一步 C".to_string()])
-        );
     }
 }

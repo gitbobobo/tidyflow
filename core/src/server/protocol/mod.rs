@@ -1993,23 +1993,6 @@ pub struct EvolutionSchedulerInfo {
     pub queued_count: u32,
 }
 
-/// Evolution 结构化交接信息
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EvolutionHandoffInfo {
-    #[serde(default)]
-    pub completed: Vec<String>,
-    #[serde(default)]
-    pub risks: Vec<String>,
-    #[serde(default)]
-    pub next: Vec<String>,
-}
-
-impl EvolutionHandoffInfo {
-    pub fn is_empty(&self) -> bool {
-        self.completed.is_empty() && self.risks.is_empty() && self.next.is_empty()
-    }
-}
-
 /// Evolution 工作空间快照项
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionWorkspaceItem {
@@ -2027,8 +2010,6 @@ pub struct EvolutionWorkspaceItem {
     pub agents: Vec<EvolutionAgentInfo>,
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub handoff: Option<EvolutionHandoffInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2085,8 +2066,6 @@ pub struct EvolutionCycleHistoryItem {
     pub terminal_error_message: Option<String>,
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub handoff: Option<EvolutionHandoffInfo>,
     pub stages: Vec<EvolutionCycleStageHistoryEntry>,
 }
 
@@ -2097,9 +2076,6 @@ pub struct EvolutionCycleStageHistoryEntry {
     pub ai_tool: String,
     pub status: String,
     pub duration_ms: Option<u64>,
-    /// 该阶段自身的交接文档（从阶段 artifact 解析），用于历史查看时的代理级筛选
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub handoff: Option<EvolutionHandoffInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -383,41 +383,6 @@ fn default_schema_version() -> String {
     "1.0".to_string()
 }
 
-fn parse_handoff_info(
-    value: &serde_json::Value,
-) -> Result<crate::server::protocol::EvolutionHandoffInfo, String> {
-    let Some(handoff) = value.get("handoff").and_then(|v| v.as_object()) else {
-        return Ok(crate::server::protocol::EvolutionHandoffInfo::default());
-    };
-    let parse_section = |key: &str| -> Result<Vec<String>, String> {
-        handoff
-            .get(key)
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("handoff.{} 缺少数组", key))?
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                item.as_str()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| format!("handoff.{}[{}] 必须是非空字符串", key, idx))
-            })
-            .collect::<Result<Vec<String>, String>>()
-    };
-
-    Ok(crate::server::protocol::EvolutionHandoffInfo {
-        completed: parse_section("completed")?,
-        risks: parse_section("risks")?,
-        next: parse_section("next")?,
-    })
-}
-
-fn validate_handoff_info(label: &str, value: &serde_json::Value) -> Result<(), String> {
-    parse_handoff_info(value)
-        .map(|_| ())
-        .map_err(|err| format!("{}.{}", label, err))
-}
-
 fn sanitize_ai_config_options(
     options: &HashMap<String, serde_json::Value>,
 ) -> Option<HashMap<String, serde_json::Value>> {
@@ -1389,12 +1354,6 @@ fn direction_stage_template(cycle_id: &str) -> String {
   "status": "running",
   // 本轮唯一方向句，必须是非空字符串；一句话即可说明本轮要进化什么
   "direction_statement": "",
-  // 阶段交接信息：三个字段都必须是数组
-  "handoff": {
-    "completed": [],
-    "risks": [],
-    "next": []
-  },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
@@ -1464,12 +1423,6 @@ fn plan_stage_template(cycle_id: &str) -> String {
       //   "check_ids": ["CHK-001"]
       // }
     ]
-  },
-  // 阶段交接信息：三个字段都必须是数组
-  "handoff": {
-    "completed": [],
-    "risks": [],
-    "next": []
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -1591,12 +1544,6 @@ fn implement_stage_template(
     "blocked": 0,
     "not_done": 0
   },
-  // 阶段交接信息：三个字段都必须是数组
-  "handoff": {
-    "completed": [],
-    "risks": [],
-    "next": []
-  },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
@@ -1701,12 +1648,6 @@ fn verify_stage_template(
       // }
     ]
   },
-  // 阶段交接信息：三个字段都必须是数组
-  "handoff": {
-    "completed": [],
-    "risks": [],
-    "next": []
-  },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
@@ -1738,12 +1679,6 @@ fn auto_commit_stage_template(cycle_id: &str) -> String {
     "result": "n/a",
     // 若无可提交变更，需明确写出“无可提交变更”或 no changes to commit
     "reason": ""
-  },
-  // 阶段交接信息：三个字段都必须是数组
-  "handoff": {
-    "completed": [],
-    "risks": [],
-    "next": []
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -1827,7 +1762,6 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        report.capture(validate_handoff_info("plan.jsonc", &value));
         report.capture(validate_plan_markdown_artifact(cycle_dir, &value));
 
         report.into_error("artifact_contract_violation")
@@ -2618,8 +2552,6 @@ impl EvolutionManager {
         if value.get("summary").and_then(|v| v.as_str()).is_none() {
             report.push(format!("{} 缺少 summary 字段", file_name));
         }
-        report.capture(validate_handoff_info(file_name, &value));
-
         if verify_iteration > 0 && backlog_contract_version >= 2 {
             let updates = value
                 .pointer("/backlog_resolution_updates")
@@ -2791,8 +2723,6 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        report.capture(validate_handoff_info("verify.jsonc", &verify_value));
-
         let verify_file_iteration = verify_value
             .get("verify_iteration")
             .and_then(|v| v.as_u64())
@@ -3222,8 +3152,6 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        report.capture(validate_handoff_info("direction.jsonc", &stage_value));
-
         match stage_value.get("direction_statement") {
             Some(value) => match value.as_str() {
                 Some(text) if !text.trim().is_empty() => {}
@@ -3265,11 +3193,6 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        report.capture(validate_handoff_info(
-            "auto_commit.jsonc",
-            &stage_auto_commit,
-        ));
-
         if let Some(ctx) = validation_ctx {
             let workspace_root = Path::new(ctx.workspace_root.as_str());
             let repo_dirty = git_repo_has_changes(workspace_root)
@@ -3471,37 +3394,6 @@ impl EvolutionManager {
             return Ok(());
         }
         entry.cycle_title = cycle_title;
-        Ok(())
-    }
-
-    async fn sync_handoff_from_stage_artifact(
-        &self,
-        key: &str,
-        cycle_id: &str,
-        stage: &str,
-    ) -> Result<(), String> {
-        let workspace_root = {
-            let state = self.state.lock().await;
-            let Some(entry) = state.workspaces.get(key) else {
-                return Err("workspace state missing".to_string());
-            };
-            entry.workspace_root.clone()
-        };
-        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let Some(file_name) = stage_artifact_file(stage) else {
-            return Ok(());
-        };
-        let value = read_json_file(&cycle_dir, file_name)?;
-        let handoff = parse_handoff_info(&value)?;
-
-        let mut state = self.state.lock().await;
-        let Some(entry) = state.workspaces.get_mut(key) else {
-            return Err("workspace state missing".to_string());
-        };
-        if entry.cycle_id != cycle_id {
-            return Ok(());
-        }
-        entry.cycle_handoff = handoff;
         Ok(())
     }
 
@@ -3845,11 +3737,6 @@ impl EvolutionManager {
             "changed_files": [],
             "commands_executed": [],
             "quick_checks": [],
-            "handoff": {
-                "completed": [],
-                "risks": [],
-                "next": []
-            },
             "updated_at": Utc::now().to_rfc3339(),
             "backlog_resolution_updates": [],
             "failure_backlog": [],
@@ -4982,9 +4869,6 @@ impl EvolutionManager {
                     .await
                     .map_err(|e| ArtifactValidationError::new("direction_state_sync_failed", e))?;
             }
-            self.sync_handoff_from_stage_artifact(key, cycle_id, stage)
-                .await
-                .map_err(|e| ArtifactValidationError::new("handoff_sync_failed", e))?;
         }
         Ok(())
     }
@@ -6048,7 +5932,6 @@ impl EvolutionManager {
             entry.verify_iteration = 0;
             entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
             entry.cycle_title = None;
-            entry.cycle_handoff = crate::server::protocol::EvolutionHandoffInfo::default();
             entry.created_at = Utc::now().to_rfc3339();
             entry.current_stage = "direction".to_string();
             entry.status = "queued".to_string();
@@ -6313,14 +6196,6 @@ mod tests {
         super::write_json(path, &value).expect("write json failed");
     }
 
-    fn empty_handoff_json() -> serde_json::Value {
-        serde_json::json!({
-            "completed": [],
-            "risks": [],
-            "next": []
-        })
-    }
-
     fn base_plan_json(work_items: Vec<serde_json::Value>) -> serde_json::Value {
         serde_json::json!({
             "$schema_version": "2.0",
@@ -6343,7 +6218,6 @@ mod tests {
                     {"criteria_id": "ac-2", "description": "验收标准 2", "check_ids": ["v-2"]}
                 ]
             },
-            "handoff": empty_handoff_json(),
             "updated_at": "2026-03-02T00:00:00Z"
         })
     }
@@ -6392,7 +6266,6 @@ mod tests {
                 "blocked": blocked,
                 "not_done": not_done
             },
-            "handoff": empty_handoff_json(),
             "updated_at": "2026-03-02T00:00:00Z"
         })
     }
@@ -6520,7 +6393,6 @@ mod tests {
                 "cycle_id": "c-1",
                 "status": "done",
                 "direction_statement": "优先提升自主进化计划链路的稳定性与可验证性。",
-                "handoff": empty_handoff_json(),
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -6944,7 +6816,6 @@ mod tests {
                 "cycle_id": "c-1",
                 "status": "done",
                 "direction_statement": "",
-                "handoff": empty_handoff_json(),
                 "updated_at": ""
             }),
         );
@@ -6977,7 +6848,6 @@ mod tests {
                 "cycle_id": "c-1",
                 "status": "done",
                 "direction_statement": "   ",
-                "handoff": empty_handoff_json(),
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -9504,7 +9374,6 @@ mod tests {
   "cycle_id": "test-cycle",
   "status": "completed",
   "direction_statement": "测试方向",
-  "handoff": { "completed": ["done"], "risks": [], "next": [] },
   "updated_at": "2026-01-01T00:00:00Z"
 }"#,
         )
@@ -9728,7 +9597,6 @@ mod tests {
                     "changed_files": [],
                     "commands_executed": [],
                     // quick_checks 故意缺失，期望 schema 校验报错
-                    "handoff": empty_handoff_json(),
                     "updated_at": "2026-03-02T00:00:00Z"
                 }),
             );
@@ -9754,7 +9622,6 @@ mod tests {
                     "cycle_id": "c-1",
                     "status": "done",
                     // direction_statement 故意缺失
-                    "handoff": empty_handoff_json(),
                     "updated_at": "2026-03-02T00:00:00Z"
                 }),
             );
