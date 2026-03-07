@@ -179,6 +179,10 @@
 			TST1000D /* AIChatVirtualizationIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1001D /* AIChatVirtualizationIntegrationTests.swift */; };
 			TST1000E /* MessageListVirtualizationFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1001E /* MessageListVirtualizationFixtures.swift */; };
 			TST1000F /* MessageListVirtualizationPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1001F /* MessageListVirtualizationPerformanceTests.swift */; };
+			TST10021 /* EvolutionExecutionTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10025 /* EvolutionExecutionTimingTests.swift */; };
+			TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10026 /* EvolutionReplaySessionIsolationTests.swift */; };
+			TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10027 /* EvolutionHistoryAgentHandoffTests.swift */; };
+			TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -234,6 +238,10 @@
 			TST1001D /* AIChatVirtualizationIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatVirtualizationIntegrationTests.swift; sourceTree = "<group>"; };
 			TST1001E /* MessageListVirtualizationFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListVirtualizationFixtures.swift; sourceTree = "<group>"; };
 			TST1001F /* MessageListVirtualizationPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListVirtualizationPerformanceTests.swift; sourceTree = "<group>"; };
+			TST10025 /* EvolutionExecutionTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionExecutionTimingTests.swift; sourceTree = "<group>"; };
+			TST10026 /* EvolutionReplaySessionIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionReplaySessionIsolationTests.swift; sourceTree = "<group>"; };
+			TST10027 /* EvolutionHistoryAgentHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionHistoryAgentHandoffTests.swift; sourceTree = "<group>"; };
+			TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionLoopRoundAdjustmentTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -536,8 +544,12 @@
 					TST1001B /* MessageListVirtualizationWindowTests.swift */,
 					TST1001C /* MessageListVirtualizationBehaviorTests.swift */,
 					TST1001D /* AIChatVirtualizationIntegrationTests.swift */,
-				TST1001E /* MessageListVirtualizationFixtures.swift */,
+					TST1001E /* MessageListVirtualizationFixtures.swift */,
 				TST1001F /* MessageListVirtualizationPerformanceTests.swift */,
+				TST10025 /* EvolutionExecutionTimingTests.swift */,
+				TST10026 /* EvolutionReplaySessionIsolationTests.swift */,
+				TST10027 /* EvolutionHistoryAgentHandoffTests.swift */,
+				TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -963,6 +975,10 @@
 				TST1000D /* AIChatVirtualizationIntegrationTests.swift in Sources */,
 				TST1000E /* MessageListVirtualizationFixtures.swift in Sources */,
 				TST1000F /* MessageListVirtualizationPerformanceTests.swift in Sources */,
+				TST10021 /* EvolutionExecutionTimingTests.swift in Sources */,
+				TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */,
+				TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */,
+				TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
