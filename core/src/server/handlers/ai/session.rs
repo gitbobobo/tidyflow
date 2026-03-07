@@ -1301,6 +1301,47 @@ mod tests {
         assert_eq!(page.next_before_message_id.as_deref(), Some("msg_010"));
     }
 
+    // ACP 历史分页边界（WI-002）
+
+    #[test]
+    fn paginate_empty_session_returns_empty_no_more() {
+        // ACP 新会话或历史为空时，should 返回 0 条消息，has_more=false
+        let messages: Vec<crate::server::protocol::ai::MessageInfo> = vec![];
+        let page = paginate_ai_session_messages(&messages, None, AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        assert!(page.messages.is_empty());
+        assert!(!page.has_more);
+        assert_eq!(page.next_before_message_id, None);
+    }
+
+    #[test]
+    fn paginate_exactly_default_page_size_returns_all_no_more() {
+        // 恰好 50 条历史消息时，should 返回全部，has_more=false，无翻页游标
+        let messages = build_messages(AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        let page =
+            paginate_ai_session_messages(&messages, None, AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        assert_eq!(page.messages.len(), AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        assert!(!page.has_more, "恰好 50 条时 has_more 应为 false");
+        assert_eq!(
+            page.next_before_message_id, None,
+            "恰好 50 条时不应有翻页游标"
+        );
+    }
+
+    #[test]
+    fn paginate_one_more_than_default_page_size_sets_has_more() {
+        // 51 条历史消息，默认页 50 条，should has_more=true 并给出翻页游标
+        let messages = build_messages(AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE + 1);
+        let page =
+            paginate_ai_session_messages(&messages, None, AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        assert_eq!(page.messages.len(), AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        assert!(page.has_more, "51 条时 has_more 应为 true");
+        assert_eq!(
+            page.next_before_message_id.as_deref(),
+            Some("msg_002"),
+            "翻页游标应指向当前页第一条消息"
+        );
+    }
+
     fn build_test_app_state() -> SharedAppState {
         let mut app = crate::workspace::state::AppState::default();
         app.add_project(Project {

@@ -1729,3 +1729,61 @@ fn compose_prompt_parts_should_fallback_gracefully_when_vendor_disallows_image()
     assert!(text.contains("服务商不支持图像"), "原始文本不应丢失");
     assert!(text.contains("图片附件："), "应在降级文本中说明图片附件");
 }
+
+// ACP 历史加载错误分类（WI-001）
+
+#[test]
+fn is_session_not_found_should_match_known_error_patterns() {
+    assert!(
+        AcpAgent::is_session_not_found("session not found"),
+        "小写 session not found 应匹配"
+    );
+    assert!(
+        AcpAgent::is_session_not_found("Session Not Found"),
+        "混合大小写 Session Not Found 应匹配"
+    );
+    assert!(
+        AcpAgent::is_session_not_found("error: session 'abc' not found in registry"),
+        "包含 session 和 not found 的长错误描述应匹配"
+    );
+    assert!(
+        !AcpAgent::is_session_not_found("session already loaded"),
+        "session already loaded 不应匹配 session_not_found"
+    );
+    assert!(
+        !AcpAgent::is_session_not_found("connection refused"),
+        "无关错误不应误匹配"
+    );
+    assert!(
+        !AcpAgent::is_session_not_found("not found"),
+        "缺少 session 关键词时不应匹配"
+    );
+}
+
+#[test]
+fn is_session_already_loaded_should_match_known_error_patterns() {
+    assert!(
+        AcpAgent::is_session_already_loaded("session already loaded"),
+        "小写完整短语应匹配"
+    );
+    assert!(
+        AcpAgent::is_session_already_loaded("Session Already Loaded"),
+        "混合大小写应匹配"
+    );
+    assert!(
+        AcpAgent::is_session_already_loaded("acp: session 'ses_1' is already loaded"),
+        "包含 session + already + loaded 的长描述应匹配"
+    );
+    assert!(
+        !AcpAgent::is_session_already_loaded("session not found"),
+        "session not found 不应匹配 session_already_loaded"
+    );
+    assert!(
+        !AcpAgent::is_session_already_loaded("already connected"),
+        "缺少 session 关键词时不应匹配"
+    );
+    assert!(
+        !AcpAgent::is_session_already_loaded("already loaded"),
+        "缺少 session 关键词时不应匹配（仅有 already + loaded）"
+    );
+}

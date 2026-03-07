@@ -1502,6 +1502,37 @@ impl AcpAgent {
                             }
                             return Ok((messages, cached));
                         }
+                        // 会话在 ACP 后端不存在时（如新 Core 进程首次加载历史），
+                        // 返回已收集的通知消息 + 缓存元数据，而非传播错误。
+                        // 上层 list_messages 会在 messages 为空时进一步尝试本地缓存回退。
+                        Err(ref err) if Self::is_session_not_found(err) => {
+                            Self::flush_plan_snapshot_for_history(
+                                &mut messages,
+                                &self.profile.message_id_prefix,
+                                &mut history_plan_message_index,
+                                &mut history_plan_current,
+                                &mut history_plan_history,
+                            );
+                            warn!(
+                                "{}: session/load session not found in collect_loaded_messages, \
+                                 returning notifications collected so far, session_id={}",
+                                self.profile.tool_id, session_id
+                            );
+                            let cached =
+                                if let Some(meta) =
+                                    self.metadata_for_session(directory, session_id).await
+                                {
+                                    meta
+                                } else {
+                                    self.metadata_by_directory
+                                        .lock()
+                                        .await
+                                        .get(&Self::normalize_directory(directory))
+                                        .cloned()
+                                        .unwrap_or_default()
+                                };
+                            return Ok((messages, cached));
+                        }
                         Err(err) => return Err(err),
                     }
                 }

@@ -1702,7 +1702,7 @@ final class MobileAppState: ObservableObject {
             workspaceName: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: trimmedSessionId,
-            limit: 400
+            limit: 50
         )
     }
 
@@ -2215,7 +2215,7 @@ final class MobileAppState: ObservableObject {
             workspaceName: session.workspaceName,
             aiTool: targetTool,
             sessionId: session.id,
-            limit: 200
+            limit: 50
         )
         wsClient.requestAISessionConfigOptions(
             projectName: session.projectName,
@@ -2586,7 +2586,7 @@ final class MobileAppState: ObservableObject {
             workspaceName: aiActiveWorkspace,
             aiTool: aiChatTool,
             sessionId: sessionId,
-            limit: 200
+            limit: 50
         )
         wsClient.requestAISessionConfigOptions(
             projectName: aiActiveProject,
@@ -2633,7 +2633,7 @@ final class MobileAppState: ObservableObject {
                 workspaceName: aiActiveWorkspace,
                 aiTool: tool,
                 sessionId: sessionId,
-                limit: 200
+                limit: 50
             )
             wsClient.requestAISessionConfigOptions(
                 projectName: aiActiveProject,
