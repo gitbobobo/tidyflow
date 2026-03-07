@@ -12,7 +12,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 1. 评估项目能力。
 2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪；`mapped_direction_type`、`direction_type`、`selected_direction_type` 可自由命名，但必须是非空字符串。
 3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），写入 `direction.jsonc.acceptance_criteria`，供后续 `plan/verify` 使用。
-4. 维护阶段流转：本阶段结束后应进入 `plan`。
 
 必须更新：
 - `direction.jsonc`
@@ -31,8 +30,6 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 3. `work_items` 必须可执行且可验证：`id` 唯一、`implementation_agent` 合法、`linked_check_ids` 非空且都能在 checks 中找到。
 4. `verification_plan.checks` 的检查项必须可运行且 `id` 唯一。
 5. `verification_plan.acceptance_mapping` 必须完整覆盖 `cycle.llm_defined_acceptance.criteria`，且每个映射至少关联一个实际 work item。
-6. 当 UI 能力不足时，不得错误分配到 `implement_visual`。
-7. 维护阶段流转：本阶段结束后应进入 `implement_general`。
 
 必须更新：
 - `plan.jsonc`
@@ -52,9 +49,6 @@ pub const STAGE_IMPLEMENT_GENERAL_PROMPT: &str = r####"
 2. `quick_checks` 必须输出为数组，即使没有检查项也要输出 `[]`。
 3. 当 `VERIFY_ITERATION>0` 时，必须优先阅读 `verify.jsonc` 中的 `adjudication.full_next_iteration_requirements`，该字段包含本轮需要修复的失败指引，涵盖 criteria、check 和 work_item 选择器；所有修复工作必须以此为基准展开，不得遗漏。
 4. 当 `VERIFY_ITERATION>0` 且 `BACKLOG_CONTRACT_VERSION>=2` 时，必须输出 `backlog_resolution_updates`；selector 需完整、可映射、且 `implementation_agent` 固定为 `implement_general`。
-5. 不得伪造/篡改系统维护主键；仅回填允许更新字段。
-6. 若本 lane 无任务，仍需按模板输出空数组并给出明确状态说明。
-7. 维护阶段流转：本阶段结束后进入 `implement_visual`（若系统判定该 lane 可跳过，以系统调度为准）。
 
 必须更新：
 - `implement_general.jsonc`
@@ -73,8 +67,6 @@ pub const STAGE_IMPLEMENT_VISUAL_PROMPT: &str = r####"
 2. `quick_checks` 必须是数组，即使无项也要输出 `[]`。
 3. 当 `VERIFY_ITERATION>0` 时，必须优先阅读 `verify.jsonc` 中的 `adjudication.full_next_iteration_requirements`，该字段包含本轮需要修复的失败指引，涵盖 criteria、check 和 work_item 选择器；所有修复工作必须以此为基准展开，不得遗漏。
 4. 当 `VERIFY_ITERATION>0` 且 `BACKLOG_CONTRACT_VERSION>=2` 时，必须输出 `backlog_resolution_updates`；`implementation_agent` 固定为 `implement_visual`，`status` 仅允许注释指定值。
-5. 不得跨 lane 回填或修改他人 lane 的整改项。
-6. 维护阶段流转：本阶段结束后进入 `verify`。
 
 必须更新：
 - `implement_visual.jsonc`
@@ -92,8 +84,6 @@ pub const STAGE_IMPLEMENT_ADVANCED_PROMPT: &str = r####"
 1. 本阶段由系统在 verify 判定失败后调度，专注于 `verify.jsonc` 中 `adjudication.full_next_iteration_requirements` 所描述的失败修复指引；必须首先阅读该字段，该字段包含 criteria、check 和 work_item 选择器，所有整改都必须以此为基准，不得遗漏或偏离。
 2. `quick_checks` 必须输出数组。
 3. 当 `BACKLOG_CONTRACT_VERSION>=2` 时，`backlog_resolution_updates` 必须保持 selector 稳定且可追踪；`implementation_agent` 必须固定为 `implement_advanced`。
-4. 严禁新造或修改系统主键，只更新允许字段与证据。
-5. 维护阶段流转：本阶段结束后进入 `verify`。
 
 必须更新：
 - `implement_advanced.jsonc`
@@ -112,13 +102,9 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 1. 执行并记录验证：`check_results`、`acceptance_evaluation`、`verification_overall`。
 2. `acceptance_evaluation` 必须完整覆盖 plan 中全部验收标准；状态值必须合法。
 3. 只要存在未通过或证据不足项，`verification_overall.result` 不能为 `pass`。
-4. 执行裁决：填写 `adjudication.criteria_judgement`、`adjudication.overall_result`、`adjudication.next_action`。
-5. 裁决流转规则必须满足：
-   - `pass` => `goto_stage:auto_commit`
-   - `fail` 且未达上限 => `goto_stage:implement_general` 或 `goto_stage:implement_advanced`
-   - `fail` 且达到上限 => `stop_cycle,target:null`
-6. 当需要重实现时，必须输出 `adjudication.full_next_iteration_requirements`；在 backlog v2 下 selector 字段必须完整、非空、非 unknown、可映射到 plan/work_item。
-7. 当 `VERIFY_ITERATION>0` 时，必须完成 `carryover_verification` 覆盖核对与汇总。
+4. 执行裁决：填写 `adjudication.criteria_judgement`、`adjudication.overall_result`。
+5. 当需要重实现时，必须输出 `adjudication.full_next_iteration_requirements`；在 backlog v2 下 selector 字段必须完整、非空、非 unknown、可映射到 plan/work_item。
+6. 当 `VERIFY_ITERATION>0` 时，必须完成 `carryover_verification` 覆盖核对与汇总。
 
 必须更新：
 - `verify.jsonc`
@@ -137,7 +123,6 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 2. 若有变更：按可审计粒度提交，提交信息清晰，且只提交应入库文件。
 3. 若发现应忽略文件：可更新 `.gitignore` 并纳入提交。
 4. 阶段结束时应尽量保证工作区干净；若存在未提交内容，必须在 `decision.reason` 明确“无可提交变更”或 `no changes to commit` 的原因说明。
-5. 维护阶段流转：`next_action` 回到 `direction`。
 
 必须更新：
 - `auto_commit.jsonc`

@@ -1367,11 +1367,6 @@ fn direction_stage_template(cycle_id: &str) -> String {
     "risks": [],
     "next": []
   },
-  // 阶段流转：direction 完成后必须进入 plan
-  "next_action": {
-    "type": "goto_stage",
-    "target": "plan"
-  },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
@@ -1442,11 +1437,6 @@ fn plan_stage_template(cycle_id: &str) -> String {
     "completed": [],
     "risks": [],
     "next": []
-  },
-  // 阶段流转：plan 完成后进入 implement_general
-  "next_action": {
-    "type": "goto_stage",
-    "target": "implement_general"
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -1530,11 +1520,6 @@ fn implement_stage_template(
     "completed": [],
     "risks": [],
     "next": []
-  },
-  // 默认流转到 verify；是否跳过由系统调度决定
-  "next_action": {
-    "type": "goto_stage",
-    "target": "verify"
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -1625,13 +1610,8 @@ fn verify_stage_template(
       "result": "fail",
       "reason": ""
     },
-    "next_action": {
-      // pass => goto_stage:auto_commit
-      // fail 且未达上限 => goto_stage:implement_general 或 implement_advanced
-      // fail 且达到上限 => stop_cycle,target:null
-      "type": "goto_stage",
-      "target": "implement_general"
-    },
+    // 阶段编排由系统负责：系统会依据 overall_result、verify_iteration、
+    // verify_iteration_limit 和 full_next_iteration_requirements 自动决定后续阶段
     // 需要重实现时必须输出完整 selector 信息
     "full_next_iteration_requirements": [
       // {
@@ -1649,11 +1629,6 @@ fn verify_stage_template(
     "completed": [],
     "risks": [],
     "next": []
-  },
-  // verify 默认流转到 auto_commit；最终是否合法以 adjudication 为准
-  "next_action": {
-    "type": "goto_stage",
-    "target": "auto_commit"
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -1692,11 +1667,6 @@ fn auto_commit_stage_template(cycle_id: &str) -> String {
     "completed": [],
     "risks": [],
     "next": []
-  },
-  // auto_commit 完成后回到下一轮 direction
-  "next_action": {
-    "type": "goto_stage",
-    "target": "direction"
   },
   // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
@@ -2950,11 +2920,11 @@ impl EvolutionManager {
             );
         }
 
-        let verify_iteration_limit = verify_value
+        let _verify_iteration_limit = verify_value
             .get("verify_iteration_limit")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
-        match verify_iteration_limit {
+        match _verify_iteration_limit {
             Some(0) => report.push("verify.jsonc.verify_iteration_limit 必须大于 0"),
             Some(_) => {}
             None => report.push("verify.jsonc 缺少 verify_iteration_limit"),
@@ -3008,7 +2978,6 @@ impl EvolutionManager {
             .pointer("/adjudication/overall_result/result")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase());
-        let adjudication_passed = adjudication_result.as_deref() == Some("pass");
         let adjudication_failed = adjudication_result.as_deref() == Some("fail");
         match adjudication_result.as_deref() {
             Some("pass" | "fail") => {}
@@ -3016,43 +2985,6 @@ impl EvolutionManager {
                 report.push("verify.jsonc.adjudication.overall_result.result 必须是 pass 或 fail")
             }
             None => report.push("verify.jsonc 缺少 adjudication.overall_result.result"),
-        }
-
-        let next_action_type = verify_value
-            .pointer("/adjudication/next_action/type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase());
-        let next_action_target = verify_value.pointer("/adjudication/next_action/target");
-        if next_action_type.is_none() {
-            report.push("verify.jsonc 缺少 adjudication.next_action.type");
-        } else if adjudication_passed {
-            let target = next_action_target
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if next_action_type.as_deref() != Some("goto_stage") || target != "auto_commit" {
-                report.push(
-                    "verify pass 时 adjudication.next_action 必须是 {type:goto_stage,target:auto_commit}",
-                );
-            }
-        } else if verify_iteration_limit.is_some_and(|limit| verify_iteration < limit) {
-            let target = next_action_target
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if next_action_type.as_deref() != Some("goto_stage")
-                || !matches!(target.as_str(), "implement_general" | "implement_advanced")
-            {
-                report.push(
-                    "verify fail 且未达到 verify_iteration_limit 时 adjudication.next_action 必须跳转 implement_general 或 implement_advanced",
-                );
-            }
-        } else if next_action_type.as_deref() != Some("stop_cycle")
-            || !next_action_target.is_some_and(|v| v.is_null())
-        {
-            report.push(
-                "verify fail 且达到 verify_iteration_limit 时 adjudication.next_action 必须是 {type:stop_cycle,target:null}",
-            );
         }
 
         let requirements = extract_verify_requirements(&verify_value).unwrap_or_default();
@@ -3378,17 +3310,6 @@ impl EvolutionManager {
             }
             None => report.push("direction.jsonc 缺少 decision.context.capability_assessment"),
         }
-        let next_type = stage_value
-            .pointer("/next_action/type")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let next_target = stage_value
-            .pointer("/next_action/target")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if next_type != "goto_stage" || next_target != "plan" {
-            report.push("direction.jsonc.next_action 必须是 {type:goto_stage,target:plan}");
-        }
         report.capture(validate_handoff_info("direction.jsonc", &stage_value));
 
         for key in ["project_type", "ui_capability", "updated_at"] {
@@ -3596,17 +3517,6 @@ impl EvolutionManager {
                 &stage_auto_commit,
                 ctx.stage_started_at,
             ));
-        }
-        let next_type = stage_auto_commit
-            .pointer("/next_action/type")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let next_target = stage_auto_commit
-            .pointer("/next_action/target")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if next_type != "goto_stage" || next_target != "direction" {
-            report.push("auto_commit.jsonc.next_action 必须是 {type:goto_stage,target:direction}");
         }
         report.capture(validate_handoff_info(
             "auto_commit.jsonc",
@@ -4177,10 +4087,6 @@ impl EvolutionManager {
                 "completed": [],
                 "risks": [],
                 "next": []
-            },
-            "next_action": {
-                "type": "goto_stage",
-                "target": "verify"
             },
             "updated_at": Utc::now().to_rfc3339(),
             "backlog_resolution_updates": [],
@@ -6865,7 +6771,6 @@ mod tests {
                     {"criteria_id": "ac-2", "description": "d2"}
                 ],
                 "handoff": empty_handoff_json(),
-                "next_action": {"type": "goto_stage", "target": "plan"},
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -7292,7 +7197,6 @@ mod tests {
                 "final_reason": "",
                 "acceptance_criteria": [],
                 "handoff": empty_handoff_json(),
-                "next_action": {"type": "goto_stage", "target": "plan"},
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -7362,7 +7266,6 @@ mod tests {
                     {"criteria_id": "ac-2", "description": "d2"}
                 ],
                 "handoff": empty_handoff_json(),
-                "next_action": {"type": "goto_stage", "target": "plan"},
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -7775,7 +7678,6 @@ mod tests {
                         {"criteria_id": "ac-1", "result": "pass"}
                     ],
                     "overall_result": {"result": "pass"},
-                    "next_action": {"type": "goto_stage", "target": "auto_commit"},
                     "full_next_iteration_requirements": []
                 },
                 "updated_at": "2026-03-02T00:00:00Z"
@@ -7882,7 +7784,6 @@ mod tests {
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
                 "decision": {"reason": "auto commit done"},
-                "next_action": {"type": "goto_stage", "target": "direction"},
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
@@ -8047,7 +7948,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": []
                 },
                 "updated_at": "2026-03-02T00:00:00Z"
@@ -8229,7 +8129,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {"id": "ac-1"}
                     ]
@@ -8314,7 +8213,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {"criteria_id": "ac-1"}
                     ]
@@ -8399,7 +8297,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {
                             "id": "ac-1",
@@ -8477,7 +8374,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {"criteria_id": "ac-1"}
                     ]
@@ -8550,7 +8446,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {
                             "source_criteria_id": "ac-1",
@@ -8632,7 +8527,6 @@ mod tests {
                         {"criteria_id": "ac-2", "result": "pass"}
                     ],
                     "overall_result": {"result": "fail"},
-                    "next_action": {"type": "goto_stage", "target": "implement_general"},
                     "full_next_iteration_requirements": [
                         {
                             "id": "f-1",
@@ -9898,7 +9792,6 @@ mod tests {
   "final_reason": "ok",
   "acceptance_criteria": [{ "criteria_id": "AC-001", "description": "test" }],
   "handoff": { "completed": ["done"], "risks": [], "next": [] },
-  "next_action": { "type": "goto_stage", "target": "plan" },
   "updated_at": "2026-01-01T00:00:00Z"
 }"#,
         )
@@ -10175,7 +10068,6 @@ mod tests {
                         {"criteria_id": "ac-1", "description": "d1"}
                     ],
                     "handoff": empty_handoff_json(),
-                    "next_action": {"type": "goto_stage", "target": "plan"},
                     "updated_at": "2026-03-02T00:00:00Z"
                 }),
             );

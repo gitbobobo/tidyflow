@@ -4,7 +4,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
-use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage};
+use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
     cycle_dir_path, evolution_workspace_dir, read_json, sanitize_validation_attempts, write_json,
 };
@@ -117,19 +117,8 @@ fn merge_stage_payload(
         }
     }
 
-    if !obj
-        .get("next_action")
-        .map(|v| v.is_object())
-        .unwrap_or(false)
-    {
-        obj.insert(
-            "next_action".to_string(),
-            serde_json::json!({
-                "type": "goto_stage",
-                "target": next_stage(stage).unwrap_or("none")
-            }),
-        );
-    }
+    // 阶段编排由系统负责，新产物不再保留历史 next_action 字段。
+    obj.remove("next_action");
 
     if !obj.get("timing").map(|v| v.is_object()).unwrap_or(false) {
         obj.insert("timing".to_string(), serde_json::json!({}));
@@ -646,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_stage_payload_should_preserve_agent_decision_and_next_action() {
+    fn merge_stage_payload_should_preserve_agent_decision_and_drop_legacy_next_action() {
         let existing = serde_json::json!({
             "$schema_version": "1.0",
             "cycle_id": "cycle-a",
@@ -685,8 +674,10 @@ mod tests {
         );
 
         assert_eq!(merged["decision"]["reason"], "agent decided by evidence");
-        assert_eq!(merged["next_action"]["type"], "stop_cycle");
-        assert_eq!(merged["next_action"]["target"], serde_json::Value::Null);
+        assert!(
+            merged.get("next_action").is_none(),
+            "legacy next_action should be removed from merged payload"
+        );
         assert_eq!(
             merged["system_metadata"]["chat_sessions"][0]["session_id"],
             "session-1"
