@@ -8484,9 +8484,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_implement_lanes_should_keep_general_and_advanced_on_first_iteration() {
-        // WI-006：首轮（verify_iteration=0）即使 plan 包含 implement_advanced 工作项，
-        // Advanced lane 也应被系统过滤掉，防止代理自决触发高级代理。
+    fn resolve_implement_lanes_should_reject_advanced_agent_in_plan_on_first_iteration() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8519,10 +8517,9 @@ mod tests {
                 }),
             ]),
         );
-        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
-            .expect("lane resolve should succeed");
-        // 首轮 Advanced lane 被系统过滤，仅保留 General
-        assert_eq!(lanes, vec![ImplementLane::General]);
+        let err = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
+            .expect_err("advanced plan agent should be rejected");
+        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
     }
 
     #[test]
@@ -8664,9 +8661,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_implement_lanes_should_map_general_then_advanced_on_reimplementation() {
-        // WI-006：verify_iteration=1 时即使失败项映射到 Advanced，
-        // 系统仍只允许 General（Advanced 仅在 verify_iteration>=2 时由系统调度触发）。
+    fn resolve_implement_lanes_should_reject_advanced_agent_in_plan_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8706,10 +8701,9 @@ mod tests {
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
             }),
         );
-        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
-            .expect("lane resolve should succeed");
-        // verify_iteration=1：失败项虽然映射到 General+Advanced，但 Advanced 被系统过滤
-        assert_eq!(lanes, vec![ImplementLane::General]);
+        let err = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect_err("advanced plan agent should be rejected");
+        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
     }
 
     #[test]
