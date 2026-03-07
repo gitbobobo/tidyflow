@@ -613,11 +613,11 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
+    use super::super::utils::inject_stage_artifact_updated_at;
     use super::{
         build_markdown_context_block, build_prompt_context, collect_session_ids,
         merge_stage_payload, required_context_keys, StageSession,
     };
-    use super::super::utils::inject_stage_artifact_updated_at;
     use std::collections::HashSet;
     use std::path::Path;
     use tempfile::tempdir;

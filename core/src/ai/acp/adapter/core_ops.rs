@@ -1248,6 +1248,21 @@ impl AcpAgent {
         stream_mapping::push_structured_parts_message(messages, message_id_prefix, role, parts)
     }
 
+    /// 历史消息工具 part 的 upsert：若已存在相同 id 则原地更新，避免同一工具调用产生重复卡片。
+    pub(super) fn upsert_tool_part_in_history_messages(
+        messages: &mut Vec<AiMessage>,
+        message_id_prefix: &str,
+        role: &str,
+        part: AiPart,
+    ) {
+        stream_mapping::upsert_tool_part_in_history_messages(
+            messages,
+            message_id_prefix,
+            role,
+            part,
+        )
+    }
+
     pub(super) fn map_update_to_output(session_update: &str) -> Option<(&'static str, bool)> {
         stream_mapping::map_update_to_output(session_update)
     }
@@ -1590,11 +1605,12 @@ impl AcpAgent {
                             tool_part_metadata: Some(parsed.tool_part_metadata.clone()),
                             ..Default::default()
                         };
-                        Self::push_structured_parts_message(
+                        // 使用 upsert 而非 append，避免同一工具调用的多次更新产生重复 part。
+                        Self::upsert_tool_part_in_history_messages(
                             &mut messages,
                             &self.profile.message_id_prefix,
                             Self::role_for_session_update(&session_update),
-                            vec![part],
+                            part,
                         );
                         continue;
                     }

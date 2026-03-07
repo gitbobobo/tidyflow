@@ -467,8 +467,8 @@ fn map_item_to_part_all_tool_types_produce_stable_kind_tool() {
         }),
     ];
     for item in &tool_items {
-        let part = CodexAppServerAgent::map_item_to_part(item, "completed")
-            .expect("map should succeed");
+        let part =
+            CodexAppServerAgent::map_item_to_part(item, "completed").expect("map should succeed");
         assert_eq!(
             part.part_type, "tool",
             "item type {:?} should map to part_type 'tool'",
@@ -499,8 +499,8 @@ fn map_item_to_part_plan_and_agent_message_produce_text_kind() {
         }),
     ];
     for item in &text_items {
-        let part = CodexAppServerAgent::map_item_to_part(item, "completed")
-            .expect("map should succeed");
+        let part =
+            CodexAppServerAgent::map_item_to_part(item, "completed").expect("map should succeed");
         assert_eq!(
             part.part_type, "text",
             "item type {:?} should map to part_type 'text'",

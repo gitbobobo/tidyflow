@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use crate::application::project::{list_projects_message, list_workspaces_message};
 use crate::application::project_admin::{
     create_workspace_message, delete_template_message, export_template_message,
-    import_template_message, import_project_message, list_templates_message,
+    import_project_message, import_template_message, list_templates_message,
     project_commands_saved_ok, remove_project_message, remove_workspace_message,
     save_project_commands_message, save_template_message,
 };

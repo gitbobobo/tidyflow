@@ -145,7 +145,8 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
-        ClientMessage::EvoAutoCommit { project, workspace } => {            // 后台执行，避免长耗时提交阻塞同连接上的后续查询请求。
+        ClientMessage::EvoAutoCommit { project, workspace } => {
+            // 后台执行，避免长耗时提交阻塞同连接上的后续查询请求。
             let project = project.clone();
             let workspace = workspace.clone();
             let project_for_task = project.clone();

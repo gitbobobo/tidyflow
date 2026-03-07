@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 #[test]
 #[allow(unused_comparisons)]
@@ -81,4 +82,31 @@ fn test_allocate_ephemeral_port_releases_immediately() {
     // 两次分配的端口都应该在有效范围内
     assert!(port1 >= 49152);
     assert!(port2 >= 49152);
+}
+
+#[tokio::test]
+async fn test_concurrent_ensure_server_running_is_serialized() {
+    if OpenCodeManager::resolve_opencode_path().is_none() {
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(OpenCodeManager::new(temp_dir.path().to_path_buf()));
+
+    let mut tasks = Vec::new();
+    for _ in 0..4 {
+        let manager = manager.clone();
+        tasks.push(tokio::spawn(async move {
+            manager.ensure_server_running().await
+        }));
+    }
+
+    for task in tasks {
+        let base_url = task.await.expect("join").expect("ensure server");
+        assert_eq!(base_url, manager.get_base_url());
+    }
+
+    assert!(manager.check_health().await.is_ok());
+    manager.stop_server().await.expect("stop server");
+    assert!(!manager.is_running().await);
 }

@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use crate::ai::{AiAgent, AiEventStream, AiImagePart};
 use crate::server::protocol::ai::{
-    CodeCompletionChunk, CodeCompletionLanguage, CodeCompletionRequest, CodeCompletionResponse,
+    CodeCompletionChunk, CodeCompletionRequest, CodeCompletionResponse,
 };
 
 // ============================================================================
@@ -89,11 +89,7 @@ impl CompletionAgent {
 
         while let Some(event) = stream.next().await {
             match event {
-                Ok(crate::ai::AiEvent::PartDelta {
-                    field,
-                    delta,
-                    ..
-                }) if field == "text" => {
+                Ok(crate::ai::AiEvent::PartDelta { field, delta, .. }) if field == "text" => {
                     accumulated.push_str(&delta);
                     let chunk = CodeCompletionChunk {
                         request_id: req.request_id.clone(),
@@ -110,10 +106,8 @@ impl CompletionAgent {
                     if part.part_type == "text" {
                         if let Some(text) = &part.text {
                             // full update — 仅当没有增量时追加
-                            let new_part = text
-                                .strip_prefix(&accumulated)
-                                .unwrap_or(text)
-                                .to_string();
+                            let new_part =
+                                text.strip_prefix(&accumulated).unwrap_or(text).to_string();
                             if !new_part.is_empty() {
                                 accumulated.push_str(&new_part);
                                 let chunk = CodeCompletionChunk {
@@ -252,6 +246,7 @@ fn truncate_suffix(s: &str, max_chars: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::protocol::ai::CodeCompletionLanguage;
 
     #[test]
     fn test_build_completion_prompt_no_suffix() {
@@ -293,7 +288,10 @@ mod tests {
 
     #[test]
     fn test_strip_completion_wrapper() {
-        assert_eq!(strip_completion_wrapper("```rust\nlet x = 1;\n```"), "let x = 1;");
+        assert_eq!(
+            strip_completion_wrapper("```rust\nlet x = 1;\n```"),
+            "let x = 1;"
+        );
         assert_eq!(strip_completion_wrapper("```\nfoo\n```"), "foo");
         assert_eq!(strip_completion_wrapper("plain code"), "plain code");
     }

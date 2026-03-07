@@ -45,3 +45,22 @@
 1. 新字段与兼容字段必须在同一个转换点双写，禁止多处拼装导致漂移。
 2. 历史加载（`session/load`）与流式（`session/update`）必须复用同一解析逻辑。
 3. macOS/iOS 端统一读取上述字段，优先使用新字段，旧字段回退。
+
+## 历史消息工具卡片合并语义（v7 补充）
+
+历史消息（`session/load`）可能包含同一 `tool_call_id` 的多次状态更新（如先 `running` 后 `completed`）。
+Core `upsert_tool_part_in_history_messages` 在加载历史时原地更新已存在的 `part_id`，而非追加，以避免重复工具卡片。
+
+客户端（Swift）在 `replaceMessagesFromSessionCache` 中对每条消息内的 `part_id` 执行去重：
+- 保留最后一次（最完整状态）
+- 仅在消息内部去重，跨消息的同名 `part_id` 相互独立
+
+## `tool_state.input` 格式兼容（v7 补充）
+
+部分 ACP 适配器（如 Kimi）将 `tool_state.input` 以 JSON 字符串形式传输，而非字典对象。
+客户端 `AIToolInvocationState.from` 解析顺序：
+1. 若 `input` 已是 `[String: Any]`，直接使用。
+2. 若 `input` 为 `String`，尝试 `JSONSerialization` 解析为字典。
+3. 均失败时回退为空字典 `{}`，不中断渲染流程。
+
+此行为在 `AIChatProtocolModelsTests.testAIToolInvocationStateFromParsesJSONStringInput` 中有回归覆盖。

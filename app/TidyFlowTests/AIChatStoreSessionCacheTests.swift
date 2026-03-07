@@ -247,6 +247,95 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertEqual(store.messages[0].parts.count, 2, "重复替换不应产生重复 part")
     }
 
+    // MARK: - part_id 去重（WI-003）
+
+    /// 当 Core 历史消息中同一 part_id 对应多次状态更新时（running → completed），
+    /// replaceMessagesFromSessionCache 应只保留最后一次（最完整状态），不渲染多个卡片。
+    func testReplaceMessagesFromSessionCacheDedupsByPartId() {
+        let store = AIChatStore()
+        // 模拟 Core 历史回放：同一 tool_call_id 先发 running，再发 completed
+        let messages = [
+            AIProtocolMessageInfo(
+                id: "m-assistant",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [
+                    makeToolPart(id: "tp-abc", status: "running"),
+                    makeToolPart(id: "tp-abc", status: "completed"),  // 同 part_id，应覆盖上一条
+                ]
+            ),
+        ]
+
+        store.replaceMessagesFromSessionCache(messages, isStreaming: false)
+
+        XCTAssertEqual(store.messages.count, 1)
+        let parts = store.messages[0].parts
+        XCTAssertEqual(parts.count, 1, "同一 part_id 应去重，只保留最后一次")
+        let toolState = parts[0].toolState
+        XCTAssertEqual(toolState?["status"] as? String, "completed", "保留的 part 应是最终完整状态")
+    }
+
+    /// 不同 part_id 的工具调用不应相互覆盖，都应完整保留。
+    func testReplaceMessagesFromSessionCacheKeepsDistinctPartIds() {
+        let store = AIChatStore()
+        let messages = [
+            AIProtocolMessageInfo(
+                id: "m1",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [
+                    makeToolPart(id: "tp-1", status: "completed"),
+                    makeToolPart(id: "tp-2", status: "completed"),
+                    makeToolPart(id: "tp-3", status: "error"),
+                ]
+            ),
+        ]
+
+        store.replaceMessagesFromSessionCache(messages, isStreaming: false)
+
+        XCTAssertEqual(store.messages[0].parts.count, 3, "不同 part_id 应全部保留")
+    }
+
+    /// 去重行为跨消息边界不干扰：同一 part_id 只在所属消息内去重，不影响其他消息。
+    func testReplaceMessagesFromSessionCacheDedupsWithinMessageBoundary() {
+        let store = AIChatStore()
+        let messages = [
+            AIProtocolMessageInfo(
+                id: "m-first",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [makeToolPart(id: "tp-shared", status: "completed")]
+            ),
+            AIProtocolMessageInfo(
+                id: "m-second",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [makeToolPart(id: "tp-shared", status: "error")]
+            ),
+        ]
+
+        store.replaceMessagesFromSessionCache(messages, isStreaming: false)
+
+        XCTAssertEqual(store.messages.count, 2)
+        XCTAssertEqual(store.messages[0].parts.count, 1)
+        XCTAssertEqual(store.messages[1].parts.count, 1)
+        // 两条消息中同名 part_id 各自独立，不互相覆盖
+        XCTAssertEqual(store.messages[0].parts[0].toolState?["status"] as? String, "completed")
+        XCTAssertEqual(store.messages[1].parts[0].toolState?["status"] as? String, "error")
+    }
+
     private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

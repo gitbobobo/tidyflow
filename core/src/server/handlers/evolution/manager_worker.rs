@@ -924,18 +924,23 @@ mod tests {
             .saturating_pow(2)
             .min(SESSION_RETRY_BACKOFF_MAX_SECS);
         assert_eq!(attempt1, 1, "第1次重试应为 base^0=1 秒");
-        assert_eq!(attempt2, SESSION_RETRY_BACKOFF_BASE_SECS, "第2次重试应为 base^1");
-        assert!(attempt3 > attempt2, "退避时间应单调递增");
-        assert!(attempt3 <= SESSION_RETRY_BACKOFF_MAX_SECS, "退避时间不超过上限");
-        assert!(
-            MAX_SESSION_RETRY_ATTEMPTS >= 3,
-            "最大重试次数不得少于 3 次"
+        assert_eq!(
+            attempt2, SESSION_RETRY_BACKOFF_BASE_SECS,
+            "第2次重试应为 base^1"
         );
+        assert!(attempt3 > attempt2, "退避时间应单调递增");
+        assert!(
+            attempt3 <= SESSION_RETRY_BACKOFF_MAX_SECS,
+            "退避时间不超过上限"
+        );
+        assert!(MAX_SESSION_RETRY_ATTEMPTS >= 3, "最大重试次数不得少于 3 次");
     }
 
     #[test]
     fn evolution_retry_backoff_cap_should_not_exceed_max() {
-        use super::super::consts::{SESSION_RETRY_BACKOFF_BASE_SECS, SESSION_RETRY_BACKOFF_MAX_SECS};
+        use super::super::consts::{
+            SESSION_RETRY_BACKOFF_BASE_SECS, SESSION_RETRY_BACKOFF_MAX_SECS,
+        };
         // 高次幂应被 max 截断
         let large_attempt = SESSION_RETRY_BACKOFF_BASE_SECS
             .saturating_pow(100)

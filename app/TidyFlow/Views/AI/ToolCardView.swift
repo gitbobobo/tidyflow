@@ -339,6 +339,10 @@ struct ToolCardView: View {
             if merged["input"] == nil {
                 if let inputDict = toolRawInput as? [String: Any] {
                     merged["input"] = inputDict
+                } else if let inputStr = toolRawInput as? String,
+                          let parsedDict = parseJSONString(inputStr) {
+                    // ACP 适配器（如 Kimi）可能将 raw_input 存为 JSON 字符串，尝试解析以便工具渲染器提取具名参数。
+                    merged["input"] = parsedDict
                 } else {
                     merged["input"] = ["raw_input": toolRawInput]
                 }
@@ -348,9 +352,13 @@ struct ToolCardView: View {
             if merged["raw"] == nil {
                 merged["raw"] = jsonText(toolRawOutput) ?? String(describing: toolRawOutput)
             }
-            if merged["output"] == nil,
-               let text = stringValue(toolRawOutput) {
-                merged["output"] = text
+            if merged["output"] == nil {
+                // 优先直接字符串提取，其次尝试从 ACP 数组格式（Kimi: [{content:{text:...}}]）中提取文本。
+                if let text = extractAcpContentText(from: toolRawOutput) {
+                    merged["output"] = text
+                } else if let text = stringValue(toolRawOutput) {
+                    merged["output"] = text
+                }
             }
         }
         if let toolKind, !toolKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1194,6 +1202,23 @@ struct ToolCardView: View {
             return nil
         }
         return json
+    }
+
+    /// 从 ACP 内容数组格式（Kimi: `[{"content":{"text":"...","type":"text"},"type":"content"}]`）
+    /// 中提取拼接文本，用于在 `tool_state["output"]` 未设置时提供兜底输出。
+    private func extractAcpContentText(from value: Any?) -> String? {
+        guard let items = value as? [[String: Any]], !items.isEmpty else { return nil }
+        var parts: [String] = []
+        for item in items {
+            guard (item["type"] as? String)?.lowercased() == "content" else { continue }
+            guard let content = item["content"] as? [String: Any],
+                  (content["type"] as? String)?.lowercased() == "text",
+                  let text = content["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            parts.append(text)
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined()
     }
 
     private var linkedSubSessionDescription: String? {

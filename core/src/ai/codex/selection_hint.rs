@@ -101,9 +101,7 @@ pub(super) fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSess
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
             })
-            .or_else(|| {
-                find_scalar_by_keys(value, &["reasoning_effort", "reasoningEffort"])
-            }),
+            .or_else(|| find_scalar_by_keys(value, &["reasoning_effort", "reasoningEffort"])),
     );
     let config_options: Option<HashMap<String, serde_json::Value>> =
         reasoning_effort.and_then(|effort| {
@@ -117,7 +115,11 @@ pub(super) fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSess
             }
         });
 
-    if agent.is_none() && model_provider_id.is_none() && model_id.is_none() && config_options.is_none() {
+    if agent.is_none()
+        && model_provider_id.is_none()
+        && model_id.is_none()
+        && config_options.is_none()
+    {
         None
     } else {
         Some(AiSessionSelectionHint {

@@ -218,6 +218,28 @@ pub(crate) fn push_structured_parts_message(
     });
 }
 
+/// 将工具 part 更新插入历史消息中：若已存在相同 `part.id`，则原地更新而不是追加，
+/// 避免同一工具调用的多次流式更新产生重复卡片。若不存在则退回到
+/// `push_structured_parts_message` 的追加逻辑。
+pub(crate) fn upsert_tool_part_in_history_messages(
+    messages: &mut Vec<AiMessage>,
+    message_id_prefix: &str,
+    role: &str,
+    part: AiPart,
+) {
+    // 从最近的消息开始向前搜索，找到已有相同 part_id 的 part，原地更新。
+    for message in messages.iter_mut().rev() {
+        if !message.role.eq_ignore_ascii_case(role) {
+            break;
+        }
+        if let Some(existing) = message.parts.iter_mut().find(|p| p.id == part.id) {
+            *existing = part;
+            return;
+        }
+    }
+    push_structured_parts_message(messages, message_id_prefix, role, vec![part]);
+}
+
 pub(crate) fn map_update_to_output(session_update: &str) -> Option<(&'static str, bool)> {
     let normalized = normalized_update_token(session_update);
     match normalized.as_str() {

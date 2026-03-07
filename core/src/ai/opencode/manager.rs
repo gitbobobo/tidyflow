@@ -15,6 +15,7 @@ pub struct OpenCodeManager {
     port: u16,
     base_url: String,
     process: Arc<Mutex<Option<tokio::process::Child>>>,
+    lifecycle: Arc<Mutex<()>>,
     working_dir: PathBuf,
 }
 
@@ -26,6 +27,7 @@ impl OpenCodeManager {
             port,
             base_url,
             process: Arc::new(Mutex::new(None)),
+            lifecycle: Arc::new(Mutex::new(())),
             working_dir,
         }
     }
@@ -47,6 +49,18 @@ impl OpenCodeManager {
     }
 
     pub async fn start_server(&self) -> Result<String, String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.start_server_locked().await
+    }
+
+    async fn start_server_locked(&self) -> Result<String, String> {
+        if self.is_running().await {
+            if self.check_health().await.is_ok() {
+                return Ok(self.base_url.clone());
+            }
+            self.stop_server_locked().await?;
+        }
+
         info!(
             "Starting OpenCode server on port {} (working_dir: {})",
             self.port,
@@ -122,7 +136,10 @@ impl OpenCodeManager {
             *process = Some(child);
         }
 
-        self.check_health().await?;
+        if let Err(err) = self.check_health().await {
+            let _ = self.stop_server_locked().await;
+            return Err(err);
+        }
 
         info!("OpenCode server started successfully at {}", self.base_url);
         Ok(self.base_url.clone())
@@ -180,9 +197,14 @@ impl OpenCodeManager {
 
     /// 确保 server 正在运行：先 health check，失败才 spawn。
     pub async fn ensure_server_running(&self) -> Result<String, String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.ensure_server_running_locked().await
+    }
+
+    async fn ensure_server_running_locked(&self) -> Result<String, String> {
         // 没有子进程在运行时直接启动，跳过无意义的 30 次 health check（否则首次启动要白等 ~33 秒）
         if !self.is_running().await {
-            return self.start_server().await;
+            return self.start_server_locked().await;
         }
 
         // 有子进程在运行，检查是否健康
@@ -191,11 +213,16 @@ impl OpenCodeManager {
         }
 
         // 不健康，先停再起
-        let _ = self.stop_server().await;
-        self.start_server().await
+        let _ = self.stop_server_locked().await;
+        self.start_server_locked().await
     }
 
     pub async fn stop_server(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.stop_server_locked().await
+    }
+
+    async fn stop_server_locked(&self) -> Result<(), String> {
         info!("Stopping OpenCode server on port {}", self.port);
 
         let mut process_lock = self.process.lock().await;

@@ -1546,7 +1546,10 @@ fn compose_prompt_parts_should_handle_jpeg_source_image() {
         image::Rgb([(x * 60) as u8, (y * 60) as u8, 128_u8])
     });
     image::DynamicImage::ImageRgb8(img)
-        .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+        .write_to(
+            &mut std::io::Cursor::new(&mut jpeg),
+            image::ImageFormat::Jpeg,
+        )
         .expect("encode jpeg");
 
     let parts = AcpAgent::compose_prompt_parts(
@@ -1635,7 +1638,10 @@ fn compose_prompt_parts_should_normalize_mixed_jpeg_png_batch() {
     image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2, 2, |_, _| {
         image::Rgb([100_u8, 150_u8, 200_u8])
     }))
-    .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+    .write_to(
+        &mut std::io::Cursor::new(&mut jpeg),
+        image::ImageFormat::Jpeg,
+    )
     .expect("encode jpeg");
 
     let mut png = Vec::new();
@@ -1683,7 +1689,10 @@ fn compose_prompt_parts_should_fallback_gracefully_when_vendor_disallows_image()
     image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2, 2, |_, _| {
         image::Rgb([80_u8, 80_u8, 80_u8])
     }))
-    .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+    .write_to(
+        &mut std::io::Cursor::new(&mut jpeg),
+        image::ImageFormat::Jpeg,
+    )
     .expect("encode jpeg");
 
     let parts = AcpAgent::compose_prompt_parts(

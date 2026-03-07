@@ -137,7 +137,11 @@ async fn resolve_server_port_and_bind(
 
     let port = cli_port
         .or_else(parse_env_port)
-        .or(if fixed_port > 0 { Some(fixed_port) } else { None })
+        .or(if fixed_port > 0 {
+            Some(fixed_port)
+        } else {
+            None
+        })
         .unwrap_or_else(default_port);
 
     let bind_addr = sanitize_bind_addr(cli_bind_addr)

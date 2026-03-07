@@ -20,7 +20,9 @@ use crate::server::handlers::ai::{
 };
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
-use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION};
+use super::consts::{
+    stage_artifact_file, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+};
 use super::profile::profile_for_stage;
 use super::utils::{
     cycle_dir_path, inject_stage_artifact_updated_at, read_json, sanitize_validation_attempt,
@@ -832,10 +834,7 @@ fn check_workspace_boundary(workspace_root: &str, cycle_id: &str) -> Result<(), 
             root
         ));
     }
-    let cycle_dir = root_path
-        .join(".tidyflow")
-        .join("evolution")
-        .join(cycle_id);
+    let cycle_dir = root_path.join(".tidyflow").join("evolution").join(cycle_id);
     if !cycle_dir.exists() {
         return Err(format!(
             "evo_boundary_cycle_dir_missing: cycle 目录不存在: {}",
@@ -2844,7 +2843,11 @@ impl EvolutionManager {
             &verify_value,
             STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
         ));
-        report.capture(ensure_stage_field_matches("verify.jsonc", &verify_value, "verify"));
+        report.capture(ensure_stage_field_matches(
+            "verify.jsonc",
+            &verify_value,
+            "verify",
+        ));
         if let Some(ctx) = validation_ctx {
             report.capture(ensure_cycle_id_matches(
                 "verify.jsonc",
@@ -9829,11 +9832,7 @@ mod tests {
             ensure_schema_version("test.jsonc", &value, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION);
         assert!(result.is_err(), "版本不符应返回错误");
         let err = result.unwrap_err();
-        assert!(
-            err.contains("$schema_version"),
-            "错误应包含字段名: {}",
-            err
-        );
+        assert!(err.contains("$schema_version"), "错误应包含字段名: {}", err);
         assert!(
             err.contains(STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION),
             "错误应包含期望版本: {}",
@@ -9864,7 +9863,8 @@ mod tests {
     #[test]
     fn stage_artifact_contract_validation_stage_field_should_detect_mismatch() {
         let value = serde_json::json!({ "stage": "plan" });
-        let result = ensure_stage_field_matches("implement_general.jsonc", &value, "implement_general");
+        let result =
+            ensure_stage_field_matches("implement_general.jsonc", &value, "implement_general");
         assert!(result.is_err(), "stage 不符应返回错误");
         let err = result.unwrap_err();
         assert!(err.contains("stage"), "错误应包含 stage 字段名: {}", err);
@@ -9906,7 +9906,11 @@ mod tests {
         let result = EvolutionManager::validate_direction_artifact(dir.path(), None);
         assert!(result.is_err(), "旧版 schema_version 应被拒绝");
         let err_msg = result.unwrap_err().to_stage_error();
-        assert!(err_msg.contains("$schema_version"), "错误应提及 schema_version: {}", err_msg);
+        assert!(
+            err_msg.contains("$schema_version"),
+            "错误应提及 schema_version: {}",
+            err_msg
+        );
     }
 
     // WI-004: 结构化错误日志测试
@@ -9943,8 +9947,7 @@ mod tests {
 
     #[test]
     fn evolution_boundary_recovery_missing_workspace_root_should_return_structured_error() {
-        let result =
-            check_workspace_boundary("/nonexistent/path/that/does/not/exist", "cycle-001");
+        let result = check_workspace_boundary("/nonexistent/path/that/does/not/exist", "cycle-001");
         assert!(result.is_err(), "不存在的 workspace_root 应返回错误");
         let err = result.unwrap_err();
         assert!(
@@ -9978,11 +9981,7 @@ mod tests {
             .join(cycle_id);
         std::fs::create_dir_all(&cycle_dir).unwrap();
         let result = check_workspace_boundary(dir.path().to_str().unwrap(), cycle_id);
-        assert!(
-            result.is_ok(),
-            "有效工作区应通过边界检查: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "有效工作区应通过边界检查: {:?}", result);
     }
 
     #[test]
@@ -10003,7 +10002,11 @@ mod tests {
         // 无阶段开始时间时跳过校验
         let value = serde_json::json!({"updated_at": "2020-01-01T00:00:00Z"});
         let result = super::ensure_artifact_freshness("test.jsonc", &value, None);
-        assert!(result.is_ok(), "started_at 为 None 时应跳过校验: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "started_at 为 None 时应跳过校验: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -10065,15 +10068,19 @@ mod tests {
             inject_stage_artifact_updated_at(&path)
                 .unwrap_or_else(|e| panic!("{} 注入失败: {}", file_name, e));
 
-            let content =
-                std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("读取 {} 失败", file_name));
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|_| panic!("读取 {} 失败", file_name));
             let value: serde_json::Value = serde_json::from_str(&content)
                 .unwrap_or_else(|_| panic!("解析 {} 失败", file_name));
             let updated_at = value["updated_at"].as_str().unwrap_or("");
 
             assert!(!updated_at.is_empty(), "updated_at 不能为空: {}", file_name);
-            let parsed = chrono::DateTime::parse_from_rfc3339(updated_at)
-                .unwrap_or_else(|_| panic!("{} 的 updated_at 必须是有效 RFC3339: {}", file_name, updated_at));
+            let parsed = chrono::DateTime::parse_from_rfc3339(updated_at).unwrap_or_else(|_| {
+                panic!(
+                    "{} 的 updated_at 必须是有效 RFC3339: {}",
+                    file_name, updated_at
+                )
+            });
             let old_ts = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap();
             assert!(
                 parsed > old_ts,
@@ -10090,20 +10097,13 @@ mod tests {
         {
             let dir = tempdir().expect("tempdir should be created");
             let path = dir.path().join("plan.jsonc");
-            std::fs::write(
-                &path,
-                r#"{"cycle_id": "c-1", "status": "done",}"#,
-            )
-            .expect("写入非法 JSON 文件");
+            std::fs::write(&path, r#"{"cycle_id": "c-1", "status": "done",}"#)
+                .expect("写入非法 JSON 文件");
 
             let result = super::super::utils::read_json(&path);
             assert!(result.is_err(), "trailing comma 的非法 JSON 应被拒绝");
             let err = result.unwrap_err();
-            assert!(
-                err.contains("解析"),
-                "错误应来自 JSON 解析阶段: {}",
-                err
-            );
+            assert!(err.contains("解析"), "错误应来自 JSON 解析阶段: {}", err);
         }
 
         // Part 2: implement_general.jsonc 缺少 quick_checks 数组字段应被 schema 校验拒绝
@@ -10127,13 +10127,9 @@ mod tests {
                 }),
             );
 
-            let err = EvolutionManager::validate_stage_artifacts(
-                "implement_general",
-                dir.path(),
-                0,
-                1,
-            )
-            .expect_err("缺少 quick_checks 应被 schema 校验拒绝");
+            let err =
+                EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 0, 1)
+                    .expect_err("缺少 quick_checks 应被 schema 校验拒绝");
             assert!(
                 err.contains("quick_checks"),
                 "错误信息应提及缺失字段 quick_checks: {}",

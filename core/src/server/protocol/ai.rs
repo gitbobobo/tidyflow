@@ -585,14 +585,38 @@ mod tests {
 
     #[test]
     fn test_code_completion_language_from_extension() {
-        assert_eq!(CodeCompletionLanguage::from_extension("swift"), CodeCompletionLanguage::Swift);
-        assert_eq!(CodeCompletionLanguage::from_extension("rs"), CodeCompletionLanguage::Rust);
-        assert_eq!(CodeCompletionLanguage::from_extension("js"), CodeCompletionLanguage::JavaScript);
-        assert_eq!(CodeCompletionLanguage::from_extension("ts"), CodeCompletionLanguage::TypeScript);
-        assert_eq!(CodeCompletionLanguage::from_extension("tsx"), CodeCompletionLanguage::TypeScript);
-        assert_eq!(CodeCompletionLanguage::from_extension("py"), CodeCompletionLanguage::Python);
-        assert_eq!(CodeCompletionLanguage::from_extension("go"), CodeCompletionLanguage::Go);
-        assert_eq!(CodeCompletionLanguage::from_extension("rb"), CodeCompletionLanguage::Other);
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("swift"),
+            CodeCompletionLanguage::Swift
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("rs"),
+            CodeCompletionLanguage::Rust
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("js"),
+            CodeCompletionLanguage::JavaScript
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("ts"),
+            CodeCompletionLanguage::TypeScript
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("tsx"),
+            CodeCompletionLanguage::TypeScript
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("py"),
+            CodeCompletionLanguage::Python
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("go"),
+            CodeCompletionLanguage::Go
+        );
+        assert_eq!(
+            CodeCompletionLanguage::from_extension("rb"),
+            CodeCompletionLanguage::Other
+        );
     }
 
     #[test]
@@ -754,7 +778,10 @@ mod tests {
         // user text part + tool part + assistant text part = 3 flat messages
         assert_eq!(cache.messages.len(), 3);
         assert_eq!(cache.messages[0].kind, FlattenedAiMessageKind::User);
-        assert_eq!(cache.messages[0].content.as_deref(), Some("what does this do?"));
+        assert_eq!(
+            cache.messages[0].content.as_deref(),
+            Some("what does this do?")
+        );
         assert_eq!(cache.messages[1].kind, FlattenedAiMessageKind::ToolCall);
         assert_eq!(cache.messages[1].tool_name.as_deref(), Some("bash"));
         assert_eq!(cache.messages[1].tool_call_id.as_deref(), Some("call-1"));
@@ -797,7 +824,10 @@ mod tests {
         assert_eq!(parsed.session_id, "s42");
         assert_eq!(parsed.revision, 1);
         assert_eq!(parsed.messages[0].kind, FlattenedAiMessageKind::System);
-        assert_eq!(parsed.messages[0].content.as_deref(), Some("you are a helpful assistant"));
+        assert_eq!(
+            parsed.messages[0].content.as_deref(),
+            Some("you are a helpful assistant")
+        );
     }
 
     #[test]

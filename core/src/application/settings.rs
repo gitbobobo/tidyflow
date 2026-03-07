@@ -63,7 +63,9 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
         fixed_port: state.client_settings.fixed_port,
         remote_access_enabled: state.client_settings.remote_access_enabled,
-        evolution_default_profiles: to_protocol_profiles(&state.client_settings.evolution_default_profiles),
+        evolution_default_profiles: to_protocol_profiles(
+            &state.client_settings.evolution_default_profiles,
+        ),
         evolution_agent_profiles,
         workspace_todos,
         keybindings,
@@ -151,10 +153,12 @@ fn from_protocol_profiles(input: Vec<EvolutionStageProfileInfo>) -> Vec<Evolutio
             stage: profile.stage,
             ai_tool: profile.ai_tool,
             mode: profile.mode,
-            model: profile.model.map(|model| crate::workspace::state::EvolutionModelSelection {
-                provider_id: model.provider_id,
-                model_id: model.model_id,
-            }),
+            model: profile
+                .model
+                .map(|model| crate::workspace::state::EvolutionModelSelection {
+                    provider_id: model.provider_id,
+                    model_id: model.model_id,
+                }),
             config_options: profile.config_options,
         })
         .collect()

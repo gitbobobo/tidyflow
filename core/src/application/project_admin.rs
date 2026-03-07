@@ -48,8 +48,8 @@ pub async fn create_workspace_message(
     let mut state = app_state.write().await;
 
     // 如果指定了模板，提取模板命令以备后用
-    let template_commands: Option<Vec<crate::workspace::state::ProjectCommand>> =
-        template_id.and_then(|tid| {
+    let template_commands: Option<Vec<crate::workspace::state::ProjectCommand>> = template_id
+        .and_then(|tid| {
             state
                 .client_settings
                 .templates
@@ -199,10 +199,38 @@ pub fn builtin_templates() -> Vec<crate::workspace::state::WorkflowTemplate> {
             description: "Node.js 项目常用命令".to_string(),
             tags: vec!["node".to_string(), "javascript".to_string()],
             commands: vec![
-                TemplateCommand { id: "node.install".to_string(), name: "Install".to_string(), icon: "arrow.down.circle".to_string(), command: "npm install".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "node.dev".to_string(), name: "Dev".to_string(), icon: "play.circle".to_string(), command: "npm run dev".to_string(), blocking: false, interactive: true },
-                TemplateCommand { id: "node.build".to_string(), name: "Build".to_string(), icon: "hammer".to_string(), command: "npm run build".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "node.test".to_string(), name: "Test".to_string(), icon: "checkmark.circle".to_string(), command: "npm test".to_string(), blocking: true, interactive: false },
+                TemplateCommand {
+                    id: "node.install".to_string(),
+                    name: "Install".to_string(),
+                    icon: "arrow.down.circle".to_string(),
+                    command: "npm install".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "node.dev".to_string(),
+                    name: "Dev".to_string(),
+                    icon: "play.circle".to_string(),
+                    command: "npm run dev".to_string(),
+                    blocking: false,
+                    interactive: true,
+                },
+                TemplateCommand {
+                    id: "node.build".to_string(),
+                    name: "Build".to_string(),
+                    icon: "hammer".to_string(),
+                    command: "npm run build".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "node.test".to_string(),
+                    name: "Test".to_string(),
+                    icon: "checkmark.circle".to_string(),
+                    command: "npm test".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
             ],
             env_vars: vec![],
             builtin: true,
@@ -213,10 +241,38 @@ pub fn builtin_templates() -> Vec<crate::workspace::state::WorkflowTemplate> {
             description: "Rust 项目常用命令".to_string(),
             tags: vec!["rust".to_string()],
             commands: vec![
-                TemplateCommand { id: "rust.build".to_string(), name: "Build".to_string(), icon: "hammer".to_string(), command: "cargo build".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "rust.test".to_string(), name: "Test".to_string(), icon: "checkmark.circle".to_string(), command: "cargo test".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "rust.run".to_string(), name: "Run".to_string(), icon: "play.circle".to_string(), command: "cargo run".to_string(), blocking: false, interactive: true },
-                TemplateCommand { id: "rust.clippy".to_string(), name: "Clippy".to_string(), icon: "doc.text.magnifyingglass".to_string(), command: "cargo clippy".to_string(), blocking: true, interactive: false },
+                TemplateCommand {
+                    id: "rust.build".to_string(),
+                    name: "Build".to_string(),
+                    icon: "hammer".to_string(),
+                    command: "cargo build".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "rust.test".to_string(),
+                    name: "Test".to_string(),
+                    icon: "checkmark.circle".to_string(),
+                    command: "cargo test".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "rust.run".to_string(),
+                    name: "Run".to_string(),
+                    icon: "play.circle".to_string(),
+                    command: "cargo run".to_string(),
+                    blocking: false,
+                    interactive: true,
+                },
+                TemplateCommand {
+                    id: "rust.clippy".to_string(),
+                    name: "Clippy".to_string(),
+                    icon: "doc.text.magnifyingglass".to_string(),
+                    command: "cargo clippy".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
             ],
             env_vars: vec![],
             builtin: true,
@@ -227,9 +283,30 @@ pub fn builtin_templates() -> Vec<crate::workspace::state::WorkflowTemplate> {
             description: "Go 项目常用命令".to_string(),
             tags: vec!["go".to_string()],
             commands: vec![
-                TemplateCommand { id: "go.build".to_string(), name: "Build".to_string(), icon: "hammer".to_string(), command: "go build ./...".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "go.test".to_string(), name: "Test".to_string(), icon: "checkmark.circle".to_string(), command: "go test ./...".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "go.run".to_string(), name: "Run".to_string(), icon: "play.circle".to_string(), command: "go run .".to_string(), blocking: false, interactive: true },
+                TemplateCommand {
+                    id: "go.build".to_string(),
+                    name: "Build".to_string(),
+                    icon: "hammer".to_string(),
+                    command: "go build ./...".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "go.test".to_string(),
+                    name: "Test".to_string(),
+                    icon: "checkmark.circle".to_string(),
+                    command: "go test ./...".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "go.run".to_string(),
+                    name: "Run".to_string(),
+                    icon: "play.circle".to_string(),
+                    command: "go run .".to_string(),
+                    blocking: false,
+                    interactive: true,
+                },
             ],
             env_vars: vec![],
             builtin: true,
@@ -240,9 +317,30 @@ pub fn builtin_templates() -> Vec<crate::workspace::state::WorkflowTemplate> {
             description: "Python 项目常用命令".to_string(),
             tags: vec!["python".to_string()],
             commands: vec![
-                TemplateCommand { id: "python.install".to_string(), name: "Install".to_string(), icon: "arrow.down.circle".to_string(), command: "pip install -r requirements.txt".to_string(), blocking: true, interactive: false },
-                TemplateCommand { id: "python.run".to_string(), name: "Run".to_string(), icon: "play.circle".to_string(), command: "python main.py".to_string(), blocking: false, interactive: true },
-                TemplateCommand { id: "python.test".to_string(), name: "Test".to_string(), icon: "checkmark.circle".to_string(), command: "pytest".to_string(), blocking: true, interactive: false },
+                TemplateCommand {
+                    id: "python.install".to_string(),
+                    name: "Install".to_string(),
+                    icon: "arrow.down.circle".to_string(),
+                    command: "pip install -r requirements.txt".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
+                TemplateCommand {
+                    id: "python.run".to_string(),
+                    name: "Run".to_string(),
+                    icon: "play.circle".to_string(),
+                    command: "python main.py".to_string(),
+                    blocking: false,
+                    interactive: true,
+                },
+                TemplateCommand {
+                    id: "python.test".to_string(),
+                    name: "Test".to_string(),
+                    icon: "checkmark.circle".to_string(),
+                    command: "pytest".to_string(),
+                    blocking: true,
+                    interactive: false,
+                },
             ],
             env_vars: vec![],
             builtin: true,
@@ -525,7 +623,10 @@ mod tests {
 
         // 保存模板
         let save_msg = save_template_message(&state, &info).await;
-        assert!(matches!(save_msg, ServerMessage::TemplateSaved { ok: true, .. }));
+        assert!(matches!(
+            save_msg,
+            ServerMessage::TemplateSaved { ok: true, .. }
+        ));
 
         // 列出模板
         let list_msg = list_templates_message(&state).await;
@@ -537,10 +638,16 @@ mod tests {
 
         // 删除模板
         let del_msg = delete_template_message(&state, "test-001").await;
-        assert!(matches!(del_msg, ServerMessage::TemplateDeleted { ok: true, .. }));
+        assert!(matches!(
+            del_msg,
+            ServerMessage::TemplateDeleted { ok: true, .. }
+        ));
 
         // 删除不存在的模板应返回 ok: false
         let del_fail = delete_template_message(&state, "test-001").await;
-        assert!(matches!(del_fail, ServerMessage::TemplateDeleted { ok: false, .. }));
+        assert!(matches!(
+            del_fail,
+            ServerMessage::TemplateDeleted { ok: false, .. }
+        ));
     }
 }

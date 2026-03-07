@@ -253,6 +253,7 @@
 - Core 解析策略：
   - `session/update`（流式）与 `session/load`（历史）共用同一组 normalized parser。
   - 支持 `tool_call` 首帧与 `tool_call_update` 增量，未知字段保留到 `tool_part_metadata`。
+  - 历史消息回放时，同一 `tool_call_id` 的多次更新（如 `running -> completed`）通过 `upsert_tool_part_in_history_messages` 原地更新，避免在历史消息列表中产生重复工具卡片。
   - 状态兼容归一化：
     - 交互态：`pending/running/awaiting_input/requires_input/in_progress`
     - 完成态：`completed/done/success`
@@ -262,6 +263,12 @@
 - 双轨兼容（锁定）：
   - 规范字段优先：`tool_kind/tool_title/tool_raw_input/tool_raw_output/tool_locations`
   - 兼容镜像：继续写入 `tool_state.input/raw/output` 与 `tool_state.metadata.locations`
+- `input` 字段格式兼容：
+  - 部分 ACP 适配器（如 Kimi）以 JSON 字符串形式传递 `tool_state.input` 而非字典。
+  - Swift 客户端 `AIToolInvocationState.from` 先尝试直接解析为 `[String: Any]`；若为字符串，再尝试 `JSONSerialization`；均失败时回退为空字典，不中断渲染。
+- 客户端 part_id 去重：
+  - `replaceMessagesFromSessionCache` 在每条消息内按 `part_id` 去重（保留最后一次，即最完整状态），防止 Core 历史回放中多次工具状态更新产生重复工具卡片。
+  - 去重仅在消息内部发生，跨消息的同名 `part_id` 相互独立。
 
 ### 字段映射（规范 -> Core -> App）
 

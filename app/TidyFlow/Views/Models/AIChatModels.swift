@@ -512,7 +512,18 @@ struct AIToolInvocationState {
         let statusRaw = (state["status"] as? String ?? "").lowercased()
         let statusToken = normalizeStatus(statusRaw)
         let status = AIToolStatus(rawValue: statusToken) ?? .unknown
-        let input = state["input"] as? [String: Any] ?? [:]
+        // ACP 适配器可能将 input 存为 JSON 字符串（如 Kimi 格式），尝试解析为字典。
+        let inputValue = state["input"]
+        let input: [String: Any]
+        if let inputDict = inputValue as? [String: Any] {
+            input = inputDict
+        } else if let inputStr = inputValue as? String,
+                  let data = inputStr.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            input = parsed
+        } else {
+            input = [:]
+        }
         let raw = state["raw"] as? String
         let title = state["title"] as? String
         let output = state["output"] as? String
@@ -884,8 +895,20 @@ final class AIChatStore: ObservableObject {
     ) {
         let mapped = protocolMessages.map { message in
             let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
-            let parts = message.parts.map { AIChatPartNormalization.makeChatPart(from: $0) }
-            return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
+            // Core 历史消息中，同一 tool_call_id 可能产生多次更新（运行中 → 完成），
+            // 去重保留最后一次（最完整的合并状态），避免同一工具渲染多个卡片。
+            var dedupedParts: [AIChatPart] = []
+            var seenPartIds: [String: Int] = [:]
+            for protoPart in message.parts {
+                let chatPart = AIChatPartNormalization.makeChatPart(from: protoPart)
+                if let existing = seenPartIds[chatPart.id] {
+                    dedupedParts[existing] = chatPart
+                } else {
+                    seenPartIds[chatPart.id] = dedupedParts.count
+                    dedupedParts.append(chatPart)
+                }
+            }
+            return AIChatMessage(messageId: message.id, role: role, parts: dedupedParts, isStreaming: false)
         }
         replaceMessages(mapped)
         if isStreaming,

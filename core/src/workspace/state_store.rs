@@ -16,7 +16,7 @@ use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
-    TemplateCommand, Workspace, WorkflowTemplate, WorkspaceStatus, WorkspaceTodoItem,
+    TemplateCommand, WorkflowTemplate, Workspace, WorkspaceStatus, WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -188,14 +188,24 @@ impl StateStore {
             let name: String = row.try_get("name").unwrap_or_default();
             let description: String = row.try_get("description").unwrap_or_default();
             let tags_json: String = row.try_get("tags").unwrap_or_else(|_| "[]".to_string());
-            let commands_json: String = row.try_get("commands").unwrap_or_else(|_| "[]".to_string());
-            let env_vars_json: String = row.try_get("env_vars").unwrap_or_else(|_| "[]".to_string());
+            let commands_json: String =
+                row.try_get("commands").unwrap_or_else(|_| "[]".to_string());
+            let env_vars_json: String =
+                row.try_get("env_vars").unwrap_or_else(|_| "[]".to_string());
             let builtin: bool = row.try_get::<i64, _>("builtin").unwrap_or(0) != 0;
             let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            let commands: Vec<TemplateCommand> = serde_json::from_str(&commands_json).unwrap_or_default();
-            let env_vars: Vec<(String, String)> = serde_json::from_str(&env_vars_json).unwrap_or_default();
+            let commands: Vec<TemplateCommand> =
+                serde_json::from_str(&commands_json).unwrap_or_default();
+            let env_vars: Vec<(String, String)> =
+                serde_json::from_str(&env_vars_json).unwrap_or_default();
             client_settings.templates.push(WorkflowTemplate {
-                id, name, description, tags, commands, env_vars, builtin,
+                id,
+                name,
+                description,
+                tags,
+                commands,
+                env_vars,
+                builtin,
             });
         }
         // 注入内置模板（始终从代码生成，不存储在数据库中）

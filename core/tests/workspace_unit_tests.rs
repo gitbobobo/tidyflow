@@ -425,9 +425,7 @@ mod state_tests {
 // ============================================================================
 
 mod serialization_tests {
-    use tidyflow_core::workspace::state::{
-        AppState, Project, Workspace, WorkspaceStatus,
-    };
+    use tidyflow_core::workspace::state::{AppState, Project, Workspace, WorkspaceStatus};
 
     #[test]
     fn test_app_state_json_roundtrip() {

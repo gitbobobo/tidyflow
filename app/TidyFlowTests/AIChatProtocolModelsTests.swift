@@ -649,6 +649,89 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(awaitingInput?.status, .running)
     }
 
+    // MARK: - ACP JSON 字符串 input 解析（WI-002）
+
+    /// Kimi 等 ACP 适配器以 JSON 字符串传递 input 时，AIToolInvocationState.from 应正确解析为字典。
+    func testAIToolInvocationStateFromParsesJSONStringInput() {
+        let jsonStringInput = #"{"command":"npm test","cwd":"/app"}"#
+        let state: [String: Any] = [
+            "status": "done",
+            "input": jsonStringInput
+        ]
+
+        let result = AIToolInvocationState.from(state: state)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.status, .completed)
+        XCTAssertEqual(result?.input["command"] as? String, "npm test")
+        XCTAssertEqual(result?.input["cwd"] as? String, "/app")
+    }
+
+    /// 当 input 已是字典时，不应额外解析，应直接使用。
+    func testAIToolInvocationStateFromPreservesDictInput() {
+        let state: [String: Any] = [
+            "status": "running",
+            "input": ["path": "src/main.rs", "line": 42] as [String: Any]
+        ]
+
+        let result = AIToolInvocationState.from(state: state)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.input["path"] as? String, "src/main.rs")
+        XCTAssertEqual(result?.input["line"] as? Int, 42)
+    }
+
+    /// 当 input 为非法 JSON 字符串时，应回退为空字典，不抛出异常。
+    func testAIToolInvocationStateFromFallsBackToEmptyDictForInvalidJSONStringInput() {
+        let state: [String: Any] = [
+            "status": "done",
+            "input": "not-a-json"
+        ]
+
+        let result = AIToolInvocationState.from(state: state)
+
+        XCTAssertNotNil(result)
+        XCTAssertTrue(result?.input.isEmpty ?? false, "非法 JSON 字符串 input 应回退为空字典")
+    }
+
+    /// input 缺失时应回退为空字典，其余字段正常解析。
+    func testAIToolInvocationStateFromHandlesMissingInput() {
+        let state: [String: Any] = [
+            "status": "error",
+            "output": "build failed"
+        ]
+
+        let result = AIToolInvocationState.from(state: state)
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.status, .error)
+        XCTAssertTrue(result?.input.isEmpty ?? false)
+        XCTAssertEqual(result?.output, "build failed")
+    }
+
+    /// 验证多项目/多工作区下，来自不同会话的工具调用 input 不会相互污染（各自独立解析）。
+    func testAIToolInvocationStateFromIsIsolatedAcrossProjects() {
+        let stateProject1: [String: Any] = [
+            "status": "done",
+            "input": #"{"project":"alpha","cmd":"build"}"#
+        ]
+        let stateProject2: [String: Any] = [
+            "status": "done",
+            "input": #"{"project":"beta","cmd":"test"}"#
+        ]
+
+        let result1 = AIToolInvocationState.from(state: stateProject1)
+        let result2 = AIToolInvocationState.from(state: stateProject2)
+
+        XCTAssertEqual(result1?.input["project"] as? String, "alpha")
+        XCTAssertEqual(result2?.input["project"] as? String, "beta")
+        XCTAssertNotEqual(
+            result1?.input["project"] as? String,
+            result2?.input["project"] as? String,
+            "不同项目的工具调用 input 应保持独立"
+        )
+    }
+
     func testAIQuestionLocalCompletionFallbackSkipsFailedAndSelectsInProgress() {
         var messages = [
             AIChatMessage(

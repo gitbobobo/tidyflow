@@ -887,7 +887,14 @@ pub(super) async fn handle_ai_session_rename(
         guard.session_index_store.clone()
     };
     let updated = store
-        .update_title(project_name, workspace_name, &ai_tool, session_id, new_title, now)
+        .update_title(
+            project_name,
+            workspace_name,
+            &ai_tool,
+            session_id,
+            new_title,
+            now,
+        )
         .await
         .unwrap_or(false);
 
@@ -1085,10 +1092,7 @@ pub(super) async fn handle_ai_code_completion(
     touch_directory_last_used(ai_state, &ai_tool, &directory).await;
 
     // 创建或复用一个独立的补全会话
-    let session = match agent
-        .create_session(&directory, "AI代码补全")
-        .await
-    {
+    let session = match agent.create_session(&directory, "AI代码补全").await {
         Ok(s) => s,
         Err(e) => {
             send_message(
