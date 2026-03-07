@@ -322,6 +322,8 @@ struct ClientSettings: Codable {
     var fixedPort: Int
     /// 是否开启远程访问（开启后 Core 会监听 0.0.0.0）
     var remoteAccessEnabled: Bool
+    /// Evolution 全局默认配置
+    var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2]
     /// Evolution 代理配置（key: "project/workspace"）
     var evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]]
     /// 工作空间待办（key: "project:workspace"）
@@ -335,6 +337,7 @@ struct ClientSettings: Codable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
+        case evolutionDefaultProfiles = "evolution_default_profiles"
         case evolutionAgentProfiles = "evolution_agent_profiles"
         case workspaceTodos = "workspace_todos"
         case keybindings
@@ -346,6 +349,7 @@ struct ClientSettings: Codable {
         mergeAIAgent: String? = nil,
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
+        evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = [],
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:],
         workspaceTodos: [String: [WorkspaceTodoItem]] = [:],
         keybindings: [KeybindingConfig] = []
@@ -355,6 +359,7 @@ struct ClientSettings: Codable {
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
         self.remoteAccessEnabled = remoteAccessEnabled
+        self.evolutionDefaultProfiles = evolutionDefaultProfiles
         self.evolutionAgentProfiles = evolutionAgentProfiles
         self.workspaceTodos = workspaceTodos
         self.keybindings = keybindings
@@ -367,6 +372,7 @@ struct ClientSettings: Codable {
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
+        evolutionDefaultProfiles = []
         evolutionAgentProfiles = [:]
         workspaceTodos = try container.decodeIfPresent([String: [WorkspaceTodoItem]].self, forKey: .workspaceTodos) ?? [:]
         keybindings = try container.decodeIfPresent([KeybindingConfig].self, forKey: .keybindings) ?? []

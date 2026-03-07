@@ -368,9 +368,6 @@ extension AppState {
 // MARK: - Evolution 全局默认配置持久化
 
 extension AppState {
-    private static let evolutionDefaultProfilesKeyV2 = "evolution_default_profiles_v2"
-    private static let evolutionDefaultProfilesKeyV1 = "evolution_default_profiles_v1"
-
     private static func evolutionStageOrder() -> [String] {
         [
             "direction",
@@ -421,77 +418,71 @@ extension AppState {
         }
     }
 
-    /// 从 UserDefaults 加载 Evolution 全局默认配置
-    func loadEvolutionDefaultProfiles() {
-        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV2),
-           let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            let loaded = jsonArray.compactMap { dict -> EvolutionEditableProfile? in
-                guard let id = dict["id"] as? String,
-                      let stage = dict["stage"] as? String,
-                      let aiToolRaw = dict["aiTool"] as? String,
-                      let aiTool = AIChatTool(rawValue: aiToolRaw) else { return nil }
-                let configOptions = dict["configOptions"] as? [String: Any] ?? [:]
-                return EvolutionEditableProfile(
-                    id: id,
-                    stage: stage,
-                    aiTool: aiTool,
-                    mode: dict["mode"] as? String ?? "",
-                    providerID: dict["providerID"] as? String ?? "",
-                    modelID: dict["modelID"] as? String ?? "",
-                    configOptions: configOptions
-                )
-            }
-            if !loaded.isEmpty {
-                evolutionDefaultProfiles = Self.normalizedEvolutionEditableProfiles(loaded)
-                return
-            }
+    static func editableEvolutionProfiles(
+        from profiles: [EvolutionStageProfileInfoV2]
+    ) -> [EvolutionEditableProfile] {
+        let editable = profiles.map { profile in
+            EvolutionEditableProfile(
+                id: profile.stage,
+                stage: profile.stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode ?? "",
+                providerID: profile.model?.providerID ?? "",
+                modelID: profile.model?.modelID ?? "",
+                configOptions: profile.configOptions
+            )
         }
-        // 兼容旧版本 v1：自动迁移并落盘到 v2
-        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV1),
-           let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            let loaded = jsonArray.compactMap { dict -> EvolutionEditableProfile? in
-                guard let id = dict["id"] as? String,
-                      let stage = dict["stage"] as? String,
-                      let aiToolRaw = dict["aiTool"] as? String,
-                      let aiTool = AIChatTool(rawValue: aiToolRaw) else { return nil }
-                return EvolutionEditableProfile(
-                    id: id,
-                    stage: stage,
-                    aiTool: aiTool,
-                    mode: dict["mode"] as? String ?? "",
-                    providerID: dict["providerID"] as? String ?? "",
-                    modelID: dict["modelID"] as? String ?? "",
-                    configOptions: [:]
-                )
-            }
-            if !loaded.isEmpty {
-                let normalized = Self.normalizedEvolutionEditableProfiles(loaded)
-                evolutionDefaultProfiles = normalized
-                saveEvolutionDefaultProfiles(normalized)
-                return
-            }
-        }
-        // 尚未配置：用默认结果初始化
-        evolutionDefaultProfiles = AppState.defaultEvolutionEditableProfiles()
+        return normalizedEvolutionEditableProfiles(editable)
     }
 
-    /// 保存 Evolution 全局默认配置到 UserDefaults
+    static func protocolEvolutionDefaultProfiles(
+        from profiles: [EvolutionEditableProfile]
+    ) -> [EvolutionStageProfileInfoV2] {
+        let normalized = normalizedEvolutionEditableProfiles(profiles)
+        return normalized.map { profile in
+            let model: EvolutionModelSelectionV2? = {
+                guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else { return nil }
+                return EvolutionModelSelectionV2(
+                    providerID: profile.providerID,
+                    modelID: profile.modelID
+                )
+            }()
+            return EvolutionStageProfileInfoV2(
+                stage: profile.stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode.isEmpty ? nil : profile.mode,
+                model: model,
+                configOptions: profile.configOptions
+            )
+        }
+    }
+
+    /// 从 Core 同步状态加载 Evolution 全局默认配置
+    func loadEvolutionDefaultProfiles() {
+        applyEvolutionDefaultProfilesFromCore(clientSettings.evolutionDefaultProfiles)
+    }
+
+    func applyEvolutionDefaultProfilesFromCore(_ profiles: [EvolutionStageProfileInfoV2]) {
+        if profiles.isEmpty {
+            clientSettings.evolutionDefaultProfiles = AppState.protocolEvolutionDefaultProfiles(
+                from: AppState.defaultEvolutionEditableProfiles()
+            )
+            evolutionDefaultProfiles = AppState.defaultEvolutionEditableProfiles()
+            return
+        }
+
+        let normalized = AppState.normalizedEvolutionProfiles(profiles)
+        clientSettings.evolutionDefaultProfiles = normalized
+        evolutionDefaultProfiles = AppState.editableEvolutionProfiles(from: normalized)
+    }
+
+    /// 保存 Evolution 全局默认配置到 Core
     func saveEvolutionDefaultProfiles(_ profiles: [EvolutionEditableProfile]) {
         let normalized = Self.normalizedEvolutionEditableProfiles(profiles)
         evolutionDefaultProfiles = normalized
-        let jsonArray: [[String: Any]] = normalized.map { profile in
-            [
-                "id": profile.id,
-                "stage": profile.stage,
-                "aiTool": profile.aiTool.rawValue,
-                "mode": profile.mode,
-                "providerID": profile.providerID,
-                "modelID": profile.modelID,
-                "configOptions": profile.configOptions
-            ]
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: jsonArray) {
-            UserDefaults.standard.set(data, forKey: Self.evolutionDefaultProfilesKeyV2)
+        clientSettings.evolutionDefaultProfiles = Self.protocolEvolutionDefaultProfiles(from: normalized)
+        if clientSettingsLoaded {
+            saveClientSettings()
         }
     }
 

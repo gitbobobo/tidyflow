@@ -112,6 +112,7 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     func handleClientSettingsResult(_ settings: ClientSettings) {
         guard let appState else { return }
         appState.clientSettings = settings
+        appState.applyEvolutionDefaultProfilesFromCore(settings.evolutionDefaultProfiles)
         if appState.clientSettings.keybindings.isEmpty {
             appState.clientSettings.keybindings = KeybindingConfig.defaultKeybindings()
         }

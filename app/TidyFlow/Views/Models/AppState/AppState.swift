@@ -664,7 +664,7 @@ class AppState: ObservableObject {
 
         setupCommands()
 
-        // 从 UserDefaults 加载 Evolution 全局默认配置
+        // 先用内置默认值初始化，连接 Core 后再同步真实的 Evolution 全局默认配置
         loadEvolutionDefaultProfiles()
 
         // 转发阶段聊天回放 store 的消息，兼容旧的数组状态读取路径。

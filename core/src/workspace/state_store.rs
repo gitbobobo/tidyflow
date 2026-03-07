@@ -90,7 +90,7 @@ impl StateStore {
         let mut client_settings = ClientSettings::default();
         if let Some(row) = sqlx::query(
             r#"
-            SELECT merge_ai_agent, fixed_port, remote_access_enabled
+            SELECT merge_ai_agent, fixed_port, remote_access_enabled, evolution_default_profiles_json
             FROM client_settings
             WHERE id = 1
             "#,
@@ -110,6 +110,13 @@ impl StateStore {
                 .ok()
                 .unwrap_or(0)
                 != 0;
+            let evolution_default_profiles_json: String = row
+                .try_get("evolution_default_profiles_json")
+                .unwrap_or_else(|_| "[]".to_string());
+            client_settings.evolution_default_profiles = serde_json::from_str(
+                &evolution_default_profiles_json,
+            )
+            .unwrap_or_default();
         }
 
         client_settings.custom_commands = sqlx::query(
@@ -497,8 +504,14 @@ impl StateStore {
 
         sqlx::query(
             r#"
-            INSERT INTO client_settings (id, merge_ai_agent, fixed_port, remote_access_enabled)
-            VALUES (1, ?1, ?2, ?3)
+            INSERT INTO client_settings (
+                id,
+                merge_ai_agent,
+                fixed_port,
+                remote_access_enabled,
+                evolution_default_profiles_json
+            )
+            VALUES (1, ?1, ?2, ?3, ?4)
             "#,
         )
         .bind(state.client_settings.merge_ai_agent.clone())
@@ -508,6 +521,10 @@ impl StateStore {
         } else {
             0_i64
         })
+        .bind(
+            serde_json::to_string(&state.client_settings.evolution_default_profiles)
+                .map_err(|e| StateError::WriteError(e.to_string()))?,
+        )
         .execute(&mut *tx)
         .await
         .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -873,7 +890,8 @@ impl StateStore {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 merge_ai_agent TEXT,
                 fixed_port INTEGER NOT NULL DEFAULT 0,
-                remote_access_enabled INTEGER NOT NULL DEFAULT 0
+                remote_access_enabled INTEGER NOT NULL DEFAULT 0,
+                evolution_default_profiles_json TEXT NOT NULL DEFAULT '[]'
             )
             "#,
             r#"
@@ -953,7 +971,28 @@ impl StateStore {
                 .await
                 .map_err(|e| StateError::WriteError(e.to_string()))?;
         }
+        self.ensure_client_settings_columns().await?;
         Ok(())
+    }
+
+    async fn ensure_client_settings_columns(&self) -> Result<(), StateError> {
+        let result = sqlx::query(
+            "ALTER TABLE client_settings ADD COLUMN evolution_default_profiles_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .execute(&self.pool)
+        .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name") {
+                    Ok(())
+                } else {
+                    Err(StateError::WriteError(message))
+                }
+            }
+        }
     }
 }
 
@@ -1002,6 +1041,13 @@ mod tests {
         state.client_settings.merge_ai_agent = Some("codex".to_string());
         state.client_settings.fixed_port = 18439;
         state.client_settings.remote_access_enabled = true;
+        state.client_settings.evolution_default_profiles = vec![EvolutionStageProfile {
+            stage: "auto_commit".to_string(),
+            ai_tool: "opencode".to_string(),
+            mode: Some("agent".to_string()),
+            model: None,
+            config_options: HashMap::new(),
+        }];
         state.client_settings.custom_commands = vec![CustomCommand {
             id: "cmd-1".to_string(),
             name: "Build".to_string(),
@@ -1087,6 +1133,11 @@ mod tests {
         assert_eq!(
             loaded.client_settings.merge_ai_agent.as_deref(),
             Some("codex")
+        );
+        assert_eq!(loaded.client_settings.evolution_default_profiles.len(), 1);
+        assert_eq!(
+            loaded.client_settings.evolution_default_profiles[0].ai_tool,
+            "opencode"
         );
         assert_eq!(loaded.client_settings.custom_commands.len(), 1);
         assert_eq!(

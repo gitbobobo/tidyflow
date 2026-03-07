@@ -135,6 +135,9 @@ pub struct ClientSettings {
     /// 是否开启远程访问（开启后 Core 绑定 0.0.0.0）
     #[serde(default)]
     pub remote_access_enabled: bool,
+    /// Evolution 全局默认配置
+    #[serde(default)]
+    pub evolution_default_profiles: Vec<EvolutionStageProfile>,
     /// Evolution 代理配置（key: "project/workspace"）
     #[serde(default)]
     pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,

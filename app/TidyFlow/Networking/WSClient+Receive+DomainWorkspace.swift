@@ -192,6 +192,7 @@ extension WSClient {
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
+            let evolutionDefaultProfiles = parseEvolutionStageProfiles(json["evolution_default_profiles"])
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
             let workspaceTodos = parseWorkspaceTodosFromClientSettings(json["workspace_todos"])
             var keybindings: [KeybindingConfig] = []
@@ -211,6 +212,7 @@ extension WSClient {
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
+                evolutionDefaultProfiles: evolutionDefaultProfiles,
                 evolutionAgentProfiles: evolutionAgentProfiles,
                 workspaceTodos: workspaceTodos,
                 keybindings: keybindings

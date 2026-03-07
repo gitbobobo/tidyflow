@@ -95,7 +95,15 @@ impl EvolutionManager {
         };
 
         let profiles = if from_state.is_empty() {
-            default_stage_profiles()
+            let defaults = {
+                let state = ctx.app_state.read().await;
+                state.client_settings.evolution_default_profiles.clone()
+            };
+            if defaults.is_empty() {
+                default_stage_profiles()
+            } else {
+                normalize_profiles_lenient(from_persisted_profiles(defaults))
+            }
         } else {
             normalize_profiles_lenient(from_persisted_profiles(from_state))
         };

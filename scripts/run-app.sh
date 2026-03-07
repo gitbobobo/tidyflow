@@ -36,7 +36,7 @@ mkdir -p "$BUILD_DIR"
 # 1. 先编译 Rust Core（开发模式默认使用 debug，加快本地联调）
 echo "[run-app] Building tidyflow-core ($CORE_PROFILE)..."
 export PATH="$HOME/.cargo/bin:$PATH"
-(cd "$CORE_DIR" && cargo build "${CARGO_ARGS[@]}")
+(cd "$CORE_DIR" && cargo build ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"})
 echo "[run-app] Core build done."
 
 # 2. 构建 Swift App（复用 Xcode 增量产物，Core 由脚本自行注入）

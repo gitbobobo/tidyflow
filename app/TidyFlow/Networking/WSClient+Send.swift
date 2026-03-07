@@ -828,41 +828,48 @@ extension WSClient {
 
     /// 保存客户端设置
     func requestSaveClientSettings(settings: ClientSettings) {
-        let payload = SaveClientSettingsRequest(
-            customCommands: settings.customCommands.map { cmd in
-                SaveClientSettingsRequest.CustomCommandPayload(
-                    id: cmd.id,
-                    name: cmd.name,
-                    icon: cmd.icon,
-                    command: cmd.command
-                )
+        var payload: [String: Any] = [
+            "type": "save_client_settings",
+            "custom_commands": settings.customCommands.map { cmd in
+                [
+                    "id": cmd.id,
+                    "name": cmd.name,
+                    "icon": cmd.icon,
+                    "command": cmd.command
+                ]
             },
-            workspaceShortcuts: settings.workspaceShortcuts,
-            mergeAIAgent: settings.mergeAIAgent,
-            fixedPort: settings.fixedPort,
-            remoteAccessEnabled: settings.remoteAccessEnabled,
-            workspaceTodos: settings.workspaceTodos.mapValues { items in
+            "workspace_shortcuts": settings.workspaceShortcuts,
+            "fixed_port": settings.fixedPort,
+            "remote_access_enabled": settings.remoteAccessEnabled,
+            "evolution_default_profiles": settings.evolutionDefaultProfiles.map { $0.toJSON() },
+            "workspace_todos": settings.workspaceTodos.mapValues { items in
                 items.map { item in
-                    SaveClientSettingsRequest.WorkspaceTodoPayload(
-                        id: item.id,
-                        title: item.title,
-                        note: item.note,
-                        status: item.status.rawValue,
-                        order: item.order,
-                        createdAtMs: item.createdAtMs,
-                        updatedAtMs: item.updatedAtMs
-                    )
+                    var todo: [String: Any] = [
+                        "id": item.id,
+                        "title": item.title,
+                        "status": item.status.rawValue,
+                        "order": item.order,
+                        "created_at_ms": item.createdAtMs,
+                        "updated_at_ms": item.updatedAtMs
+                    ]
+                    if let note = item.note {
+                        todo["note"] = note
+                    }
+                    return todo
                 }
             },
-            keybindings: settings.keybindings.map { kb in
-                SaveClientSettingsRequest.KeybindingPayload(
-                    commandId: kb.commandId,
-                    keyCombination: kb.keyCombination,
-                    context: kb.context
-                )
+            "keybindings": settings.keybindings.map { kb in
+                [
+                    "commandId": kb.commandId,
+                    "keyCombination": kb.keyCombination,
+                    "context": kb.context
+                ]
             }
-        )
-        sendTyped(payload, requestId: UUID().uuidString)
+        ]
+        if let mergeAIAgent = settings.mergeAIAgent {
+            payload["merge_ai_agent"] = mergeAIAgent
+        }
+        send(payload)
     }
 
     // MARK: - v1.22: 文件监控

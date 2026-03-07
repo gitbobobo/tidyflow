@@ -424,9 +424,6 @@ final class MobileAppState: ObservableObject {
     private let wsClient = WSClient()
     /// 重连任务（指数退避）
     private var reconnectTask: Task<Void, Never>?
-    private static let evolutionDefaultProfilesKeyV2 = "evolution_default_profiles_v2"
-    private static let evolutionDefaultProfilesKeyV1 = "evolution_default_profiles_v1"
-
     init() {
         setupWSCallbacks()
         for tool in AIChatTool.allCases {
@@ -696,6 +693,7 @@ final class MobileAppState: ObservableObject {
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
+            evolutionDefaultProfiles: evolutionDefaultProfiles,
             evolutionAgentProfiles: [:],
             workspaceTodos: workspaceTodosByKey,
             keybindings: keybindings
@@ -1758,78 +1756,21 @@ final class MobileAppState: ObservableObject {
     }
 
     private func loadEvolutionDefaultProfiles() {
-        func parseStoredProfiles(_ data: Data) -> [EvolutionStageProfileInfoV2] {
-            guard let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                return []
-            }
-            return jsonArray.compactMap { dict in
-                guard let stage = dict["stage"] as? String,
-                      let aiToolRaw = dict["aiTool"] as? String,
-                      let aiTool = AIChatTool(rawValue: aiToolRaw) else {
-                    return nil
-                }
-                let modeRaw = (dict["mode"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let providerID = (dict["providerID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let modelID = (dict["modelID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let model: EvolutionModelSelectionV2? = {
-                    guard !providerID.isEmpty, !modelID.isEmpty else { return nil }
-                    return EvolutionModelSelectionV2(providerID: providerID, modelID: modelID)
-                }()
-                let configOptions = dict["configOptions"] as? [String: Any] ?? [:]
-                return EvolutionStageProfileInfoV2(
-                    stage: stage,
-                    aiTool: aiTool,
-                    mode: modeRaw.isEmpty ? nil : modeRaw,
-                    model: model,
-                    configOptions: configOptions
-                )
-            }
-        }
-
-        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV2) {
-            let loaded = parseStoredProfiles(data)
-            if !loaded.isEmpty {
-                evolutionDefaultProfiles = Self.normalizedEvolutionProfiles(loaded)
-                return
-            }
-        }
-
-        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV1) {
-            let loaded = parseStoredProfiles(data)
-            if !loaded.isEmpty {
-                let normalized = Self.normalizedEvolutionProfiles(loaded)
-                evolutionDefaultProfiles = normalized
-                saveEvolutionDefaultProfiles(normalized)
-                return
-            }
-        }
-
         evolutionDefaultProfiles = Self.defaultEvolutionProfiles()
     }
 
     func saveEvolutionDefaultProfiles(_ profiles: [EvolutionStageProfileInfoV2]) {
         let normalized = Self.normalizedEvolutionProfiles(profiles)
         evolutionDefaultProfiles = normalized
-        let jsonArray: [[String: Any]] = normalized.map { profile in
-            let providerID = profile.model?.providerID ?? ""
-            let modelID = profile.model?.modelID ?? ""
-            let mode = profile.mode ?? ""
-            let configOptions = JSONSerialization.isValidJSONObject(profile.configOptions)
-                ? profile.configOptions
-                : [:]
-            return [
-                "id": profile.stage,
-                "stage": profile.stage,
-                "aiTool": profile.aiTool.rawValue,
-                "mode": mode,
-                "providerID": providerID,
-                "modelID": modelID,
-                "configOptions": configOptions,
-            ]
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: jsonArray) {
-            UserDefaults.standard.set(data, forKey: Self.evolutionDefaultProfilesKeyV2)
-        }
+        applyEvolutionDefaultProfilesFromCore(normalized)
+        saveClientSettings()
+    }
+
+    private func applyEvolutionDefaultProfilesFromCore(_ profiles: [EvolutionStageProfileInfoV2]) {
+        let normalized = profiles.isEmpty
+            ? Self.defaultEvolutionProfiles()
+            : Self.normalizedEvolutionProfiles(profiles)
+        evolutionDefaultProfiles = normalized
     }
 
     private func setEvolutionProviders(
@@ -4326,6 +4267,7 @@ final class MobileAppState: ObservableObject {
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
+            self.applyEvolutionDefaultProfilesFromCore(settings.evolutionDefaultProfiles)
             self.workspaceTodosByKey = settings.workspaceTodos
             self.keybindings = settings.keybindings.isEmpty ? KeybindingConfig.defaultKeybindings() : settings.keybindings
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles

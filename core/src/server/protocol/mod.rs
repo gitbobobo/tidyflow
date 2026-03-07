@@ -329,6 +329,9 @@ pub enum ClientMessage {
         /// 是否开启远程访问（开启后允许局域网连接）
         #[serde(default)]
         remote_access_enabled: Option<bool>,
+        /// Evolution 全局默认配置；为 None 时保持服务端现值不变。
+        #[serde(default)]
+        evolution_default_profiles: Option<Vec<EvolutionStageProfileInfo>>,
         /// 工作空间待办（key: "project:workspace"）；为 None 时保持服务端现值不变。
         #[serde(default)]
         workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
@@ -1126,6 +1129,8 @@ pub enum ServerMessage {
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         remote_access_enabled: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        evolution_default_profiles: Vec<EvolutionStageProfileInfo>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]

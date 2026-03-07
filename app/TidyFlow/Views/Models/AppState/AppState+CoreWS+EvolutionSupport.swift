@@ -380,30 +380,13 @@ extension AppState {
     func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
 
-        // 用户全局默认配置（本地 UserDefaults，已定制为非默认工具）始终具有最高优先级，
-        // 确保用户在 Settings 中更改 AI 工具后，所有项目都能正确反映新选择，
-        // 不被服务端同步的旧工作区配置（如更改前的 Opencode 快照）或
-        // clientSettings 里残留的旧工具信息覆盖。
+        // 用户在 Settings 中保存到 Core 的全局默认配置始终具有最高优先级，
+        // 确保未显式配置工作区时，所有项目都使用同一套系统默认值。
         if !evolutionDefaultProfiles.isEmpty {
-            let userDefaults = evolutionDefaultProfiles.map { item -> EvolutionStageProfileInfoV2 in
-                let model: EvolutionModelSelectionV2? = {
-                    guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
-                    return EvolutionModelSelectionV2(
-                        providerID: item.providerID,
-                        modelID: item.modelID
-                    )
-                }()
-                return EvolutionStageProfileInfoV2(
-                    stage: item.stage,
-                    aiTool: item.aiTool,
-                    mode: item.mode.isEmpty ? nil : item.mode,
-                    model: model,
-                    configOptions: item.configOptions
-                )
-            }
-            let normalizedUserDefaults = Self.normalizedEvolutionProfiles(userDefaults)
-            if !isDefaultEvolutionProfiles(normalizedUserDefaults) {
-                return normalizedUserDefaults
+            let defaults = AppState.protocolEvolutionDefaultProfiles(from: evolutionDefaultProfiles)
+            let normalizedDefaults = Self.normalizedEvolutionProfiles(defaults)
+            if !isDefaultEvolutionProfiles(normalizedDefaults) {
+                return normalizedDefaults
             }
         }
 
@@ -419,22 +402,7 @@ extension AppState {
             return Self.normalizedEvolutionProfiles(profiles)
         }
         if !evolutionDefaultProfiles.isEmpty {
-            let defaults = evolutionDefaultProfiles.map { item in
-                let model: EvolutionModelSelectionV2? = {
-                    guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
-                    return EvolutionModelSelectionV2(
-                        providerID: item.providerID,
-                        modelID: item.modelID
-                    )
-                }()
-                return EvolutionStageProfileInfoV2(
-                    stage: item.stage,
-                    aiTool: item.aiTool,
-                    mode: item.mode.isEmpty ? nil : item.mode,
-                    model: model,
-                    configOptions: item.configOptions
-                )
-            }
+            let defaults = AppState.protocolEvolutionDefaultProfiles(from: evolutionDefaultProfiles)
             return Self.normalizedEvolutionProfiles(defaults)
         }
         return Self.defaultEvolutionProfiles()

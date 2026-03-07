@@ -12,6 +12,8 @@ pub struct SaveClientSettingsParams {
     pub merge_ai_agent: Option<String>,
     pub fixed_port: Option<u16>,
     pub remote_access_enabled: Option<bool>,
+    /// None: 保持现值；Some: 覆盖全局 Evolution 默认配置。
+    pub evolution_default_profiles: Option<Vec<EvolutionStageProfileInfo>>,
     /// None: 保持现值；Some: 覆盖整个 workspace_todos。
     pub workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
     /// None: 保持现值；Some: 覆盖全部快捷键绑定。
@@ -61,6 +63,7 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
         fixed_port: state.client_settings.fixed_port,
         remote_access_enabled: state.client_settings.remote_access_enabled,
+        evolution_default_profiles: to_protocol_profiles(&state.client_settings.evolution_default_profiles),
         evolution_agent_profiles,
         workspace_todos,
         keybindings,
@@ -88,6 +91,9 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
     }
     if let Some(enabled) = params.remote_access_enabled {
         state.client_settings.remote_access_enabled = enabled;
+    }
+    if let Some(profiles) = params.evolution_default_profiles {
+        state.client_settings.evolution_default_profiles = from_protocol_profiles(profiles);
     }
     if let Some(workspace_todos) = params.workspace_todos {
         state.client_settings.workspace_todos = workspace_todos
@@ -138,6 +144,22 @@ fn to_protocol_todos(input: &[WorkspaceTodoItem]) -> Vec<WorkspaceTodoInfo> {
         .collect()
 }
 
+fn from_protocol_profiles(input: Vec<EvolutionStageProfileInfo>) -> Vec<EvolutionStageProfile> {
+    input
+        .into_iter()
+        .map(|profile| EvolutionStageProfile {
+            stage: profile.stage,
+            ai_tool: profile.ai_tool,
+            mode: profile.mode,
+            model: profile.model.map(|model| crate::workspace::state::EvolutionModelSelection {
+                provider_id: model.provider_id,
+                model_id: model.model_id,
+            }),
+            config_options: profile.config_options,
+        })
+        .collect()
+}
+
 fn from_protocol_todos(input: Vec<WorkspaceTodoInfo>) -> Vec<WorkspaceTodoItem> {
     input
         .into_iter()
@@ -169,6 +191,7 @@ mod tests {
             merge_ai_agent: None,
             fixed_port: None,
             remote_access_enabled: None,
+            evolution_default_profiles: None,
             workspace_todos: None,
             keybindings: None,
         }

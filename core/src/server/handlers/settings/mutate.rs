@@ -20,6 +20,7 @@ pub async fn handle_mutate_message(
             merge_ai_agent,
             fixed_port,
             remote_access_enabled,
+            evolution_default_profiles,
             workspace_todos,
             keybindings,
         } => {
@@ -32,6 +33,7 @@ pub async fn handle_mutate_message(
                     merge_ai_agent: merge_ai_agent.clone(),
                     fixed_port: *fixed_port,
                     remote_access_enabled: *remote_access_enabled,
+                    evolution_default_profiles: evolution_default_profiles.clone(),
                     workspace_todos: workspace_todos.clone(),
                     keybindings: keybindings.clone(),
                 },
