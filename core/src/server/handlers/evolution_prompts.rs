@@ -9,9 +9,8 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得把注释示例当成真实数据保留。
 
 阶段任务：
-1. 评估项目能力。
-2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪；`mapped_direction_type`、`direction_type`、`selected_direction_type` 可自由命名，但必须是非空字符串。
-3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），写入 `direction.jsonc.acceptance_criteria`，供后续 `plan/verify` 使用。
+1. 基于当前项目状态确定本轮唯一的进化方向。
+2. 仅输出一句可直接理解的方向描述，写入 `direction.jsonc.direction_statement`。
 
 必须更新：
 - `direction.jsonc`
@@ -25,10 +24,11 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 2. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得删除结构或臆造字段。
 
 阶段任务：
-1. 将方向决策拆解为可执行 `work_items`，并给出可落地验证路径。
+1. 基于 `direction.jsonc.direction_statement` 将方向决策拆解为可执行 `work_items`，并给出可落地验证路径。
 2. `work_items` 必须可执行且可验证：`id` 唯一、`implementation_agent` 合法、`linked_check_ids` 非空且都能在 checks 中找到。
 3. `verification_plan.checks` 的检查项必须可运行且 `id` 唯一。
-4. `verification_plan.acceptance_mapping` 必须完整覆盖 `direction.jsonc.acceptance_criteria`，且每个映射至少关联一个实际 work item。
+4. `acceptance_criteria` 必须由本阶段制定，`criteria_id` 唯一且描述可验证。
+5. `verification_plan.acceptance_mapping` 必须完整覆盖 `plan.jsonc.acceptance_criteria`，且每个映射至少关联一个实际 work item。
 
 必须更新：
 - `plan.jsonc`

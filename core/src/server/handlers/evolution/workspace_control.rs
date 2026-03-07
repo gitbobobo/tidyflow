@@ -38,6 +38,7 @@ fn non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
 #[allow(dead_code)]
 fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
     non_empty_string(stage_json.get("title"))
+        .or_else(|| non_empty_string(stage_json.get("direction_statement")))
 }
 
 fn extract_cycle_title_from_cycle_file(cycle_json: &serde_json::Value) -> Option<String> {
@@ -894,6 +895,15 @@ mod tests {
         });
         let title = extract_cycle_title_from_direction_stage(&stage_json);
         assert_eq!(title.as_deref(), Some("新标题"));
+    }
+
+    #[test]
+    fn extract_cycle_title_from_direction_stage_should_fallback_to_direction_statement() {
+        let stage_json = serde_json::json!({
+            "direction_statement": "  方向标题  "
+        });
+        let title = extract_cycle_title_from_direction_stage(&stage_json);
+        assert_eq!(title.as_deref(), Some("方向标题"));
     }
 
     #[test]

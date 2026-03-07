@@ -467,10 +467,54 @@ fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+fn collect_plan_acceptance_criteria_ids(
+    value: &serde_json::Value,
+    report: &mut ValidationReport,
+) -> Option<HashSet<String>> {
+    let acceptance_criteria = value.get("acceptance_criteria").and_then(|v| v.as_array());
+    let mut criteria_ids = HashSet::new();
+    match acceptance_criteria {
+        Some(items) => {
+            if items.is_empty() {
+                report.push("plan.jsonc.acceptance_criteria 不能为空");
+            }
+            for (idx, item) in items.iter().enumerate() {
+                let Some(criteria_id) = id_from_value(item, &["criteria_id"]) else {
+                    report.push(format!("acceptance_criteria[{}] 缺少 criteria_id", idx));
+                    continue;
+                };
+                if !criteria_ids.insert(criteria_id.clone()) {
+                    report.push(format!(
+                        "plan.jsonc.acceptance_criteria 存在重复 criteria_id: {}",
+                        criteria_id
+                    ));
+                }
+                let description = item
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim())
+                    .unwrap_or_default();
+                if description.is_empty() {
+                    report.push(format!(
+                        "acceptance_criteria[{}].description 不能为空",
+                        idx
+                    ));
+                }
+            }
+            Some(criteria_ids)
+        }
+        None => {
+            report.push("plan.jsonc 缺少 acceptance_criteria");
+            None
+        }
+    }
+}
+
 fn parse_plan_routing_tables_report(
     value: &serde_json::Value,
 ) -> (Option<PlanRoutingTables>, ValidationReport) {
     let mut report = ValidationReport::default();
+    let expected_criteria_ids = collect_plan_acceptance_criteria_ids(value, &mut report);
 
     let checks = value
         .pointer("/verification_plan/checks")
@@ -594,6 +638,7 @@ fn parse_plan_routing_tables_report(
     let mut criteria_to_checks: HashMap<String, Vec<String>> = HashMap::new();
     match acceptance_mapping {
         Some(acceptance_mapping) => {
+            let mut seen_criteria_ids = HashSet::new();
             for (idx, item) in acceptance_mapping.iter().enumerate() {
                 let Some(item_obj) = item.as_object() else {
                     report.push(format!("acceptance_mapping[{}] 必须是对象", idx));
@@ -605,6 +650,12 @@ fn parse_plan_routing_tables_report(
                     report.push(format!("acceptance_mapping[{}] 缺少 criteria_id", idx));
                     continue;
                 };
+                if !seen_criteria_ids.insert(criteria_id.clone()) {
+                    report.push(format!(
+                        "verification_plan.acceptance_mapping 存在重复 criteria_id: {}",
+                        criteria_id
+                    ));
+                }
                 let Some(check_ids_raw) = item_obj.get("check_ids").and_then(|v| v.as_array())
                 else {
                     report.push(format!("acceptance_mapping[{}] 缺少 check_ids", idx));
@@ -648,8 +699,20 @@ fn parse_plan_routing_tables_report(
                 }
                 criteria_to_checks.insert(criteria_id, mapped_checks);
             }
+            if acceptance_mapping.is_empty() {
+                report.push("verification_plan.acceptance_mapping 不能为空");
+            }
         }
         None => report.push("plan.jsonc 缺少 verification_plan.acceptance_mapping"),
+    }
+    if let Some(expected_criteria_ids) = expected_criteria_ids {
+        let actual_criteria_ids: HashSet<String> = criteria_to_checks.keys().cloned().collect();
+        if actual_criteria_ids != expected_criteria_ids {
+            report.push(format!(
+                "verification_plan.acceptance_mapping 与 plan.acceptance_criteria 不一致: mapping={:?}, plan={:?}",
+                actual_criteria_ids, expected_criteria_ids
+            ));
+        }
     }
 
     if report.is_empty() {
@@ -758,6 +821,7 @@ fn parse_non_empty_string_field(value: Option<&serde_json::Value>) -> Option<Str
 
 fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
     parse_non_empty_string_field(stage_json.get("title"))
+        .or_else(|| parse_non_empty_string_field(stage_json.get("direction_statement")))
 }
 
 fn parse_rfc3339_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
@@ -1315,70 +1379,8 @@ fn direction_stage_template(cycle_id: &str) -> String {
   "cycle_id": "__CYCLE_ID__",
   // 阶段状态；运行中写 running，完成后写 completed/failed/blocked
   "status": "running",
-  // 本轮标题，必须是非空字符串
-  "title": "",
-  "decision": {
-    // 决策结果；direction 阶段通常保留 n/a
-    "result": "n/a",
-    // 方向决策原因，必须非空
-    "reason": "",
-    "context": {
-      "capability_assessment": {
-        // UI 能力评估：none | partial | full
-        "ui_capability": "none",
-        // 测试能力评估：none | partial | full
-        "test_capability": "none",
-        // 构建能力评估：none | partial | full
-        "build_capability": "none",
-        // 运行/验证能力评估：none | partial | full
-        "runtime_capability": "none",
-        // 上述结论的证据说明，必须非空
-        "rationale": ""
-      }
-    }
-  },
-  // 项目类型，必须非空
-  "project_type": "",
-  // 本轮 UI 能力结论：none | partial | full
-  "ui_capability": "none",
-  // 关注领域列表。保持数组；按下方注释示例对象复制并填写字段。
-  "domains": [
-    // 示例对象：请复制该结构填写 1..N 个领域对象，不要保留本注释对象本身。
-    // {
-    //   "domain": "desktop_player",
-    //   "name": "桌面端播放器",
-    //   "priority": "high",
-    //   "status": "active",
-    //   "evidence_paths": [],
-    //   "findings": [],
-    //   "opportunities": [
-    //     {
-    //       "title": "播放控制体验补齐",
-    //       "summary": "描述机会与价值",
-    //       "mapped_direction_type": "播放体验 升级"
-    //     }
-    //   ]
-    // }
-  ],
-  // 本轮最终选中的方向标签，由代理自由命名，必须是非空字符串
-  "selected_direction_type": "",
-  // 候选方向评分，必须提供 3..5 个并按 score 降序排列
-  "candidate_scores": [
-    // {
-    //   "direction_type": "播放体验 升级",
-    //   "score": 0.85,
-    //   "rationale": "排序理由"
-    // }
-  ],
-  // 最终方向说明，必须非空
-  "final_reason": "",
-  // 可验证验收标准，必须非空数组
-  "acceptance_criteria": [
-    // {
-    //   "criteria_id": "AC-001",
-    //   "description": "可验证描述"
-    // }
-  ],
+  // 本轮唯一方向句，必须是非空字符串；一句话即可说明本轮要进化什么
+  "direction_statement": "",
   // 阶段交接信息：三个字段都必须是数组
   "handoff": {
     "completed": [],
@@ -1412,6 +1414,13 @@ fn plan_stage_template(cycle_id: &str) -> String {
   },
   // 本轮计划摘要，必须非空
   "summary": "",
+  // 本轮验收标准，由 plan 阶段定义且必须可验证
+  "acceptance_criteria": [
+    // {
+    //   "criteria_id": "AC-001",
+    //   "description": "可验证描述"
+    // }
+  ],
   // 工作项列表，不能为空
   "work_items": [
     // {
@@ -1439,7 +1448,7 @@ fn plan_stage_template(cycle_id: &str) -> String {
       //   "expected": "exit_code=0"
       // }
     ],
-    // 验收标准与检查项的映射，必须完整覆盖 direction.acceptance_criteria
+    // 验收标准与检查项的映射，必须完整覆盖 plan.acceptance_criteria
     "acceptance_mapping": [
       // {
       //   "criteria_id": "AC-001",
@@ -1469,10 +1478,8 @@ fn plan_markdown_template(cycle_id: &str) -> String {
 - 本轮目标：
 
 {direction}
-- 标题：
-- 方向标签：
-- 最终原因：
-- 验收标准：
+- 方向句：
+- 计划阶段将在此处补充验收标准：
 
 {work_items}
 ### WI-001 占位标题
@@ -1632,7 +1639,8 @@ fn verify_stage_template(
     //   "details": "执行结果摘要"
     // }
   ],
-  // 验收标准评估，必须完整覆盖 plan.verification_plan.acceptance_mapping
+  // 验收标准评估，必须完整覆盖 plan.acceptance_criteria
+  // criteria_id 集必须与 plan.acceptance_criteria 完全一致
   "acceptance_evaluation": [
     // {
     //   "criteria_id": "AC-001",
@@ -1813,77 +1821,6 @@ impl EvolutionManager {
         }
         report.capture(validate_handoff_info("plan.jsonc", &value));
         report.capture(validate_plan_markdown_artifact(cycle_dir, &value));
-
-        let direction_value = read_json_file(cycle_dir, "direction.jsonc")
-            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
-
-        let plan_mapping = value
-            .pointer("/verification_plan/acceptance_mapping")
-            .and_then(|v| v.as_array());
-        let plan_criteria = plan_mapping.map(|items| {
-            let mut criteria = HashSet::new();
-            for (idx, item) in items.iter().enumerate() {
-                match id_from_value(item, &["criteria_id"]) {
-                    Some(criteria_id) => {
-                        criteria.insert(criteria_id);
-                    }
-                    None => report.push(format!("acceptance_mapping[{}] 缺少 criteria_id", idx)),
-                }
-            }
-            if criteria.is_empty() {
-                report.push("verification_plan.acceptance_mapping 不能为空");
-            }
-            criteria
-        });
-        if plan_mapping.is_none() {
-            report.push("plan.jsonc 缺少 verification_plan.acceptance_mapping");
-        }
-
-        let direction_criteria = direction_value
-            .get("acceptance_criteria")
-            .and_then(|v| v.as_array());
-        let direction_criteria_ids = direction_criteria.map(|items| {
-            let mut criteria = HashSet::new();
-            for (idx, item) in items.iter().enumerate() {
-                match id_from_value(item, &["criteria_id"]) {
-                    Some(criteria_id) => {
-                        criteria.insert(criteria_id);
-                    }
-                    None => report.push(format!(
-                        "direction.acceptance_criteria[{}] 缺少 criteria_id",
-                        idx
-                    )),
-                }
-                let description = item
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.trim())
-                    .unwrap_or_default();
-                if description.is_empty() {
-                    report.push(format!(
-                        "direction.acceptance_criteria[{}].description 不能为空",
-                        idx
-                    ));
-                }
-            }
-            if criteria.is_empty() {
-                report.push("direction.acceptance_criteria 不能为空");
-            }
-            criteria
-        });
-        if direction_criteria.is_none() {
-            report.push("direction.jsonc 缺少 acceptance_criteria");
-        }
-        if let (Some(plan_criteria), Some(direction_criteria_ids)) =
-            (plan_criteria, direction_criteria_ids)
-        {
-            if plan_criteria != direction_criteria_ids {
-                report.push(format!(
-                    "plan.acceptance_mapping 与 direction.acceptance_criteria 不一致: plan={:?}, direction={:?}",
-                    plan_criteria, direction_criteria_ids
-                ));
-            }
-        }
 
         report.into_error("artifact_contract_violation")
     }
@@ -2870,19 +2807,19 @@ impl EvolutionManager {
 
         let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?
-            .pointer("/verification_plan/acceptance_mapping")
+            .get("acceptance_criteria")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
                 ArtifactValidationError::new(
                     "artifact_contract_violation",
-                    "plan.jsonc 缺少 verification_plan.acceptance_mapping",
+                    "plan.jsonc 缺少 acceptance_criteria",
                 )
             })?
             .iter()
             .enumerate()
             .map(|(idx, item)| {
                 id_from_value(item, &["criteria_id"])
-                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
+                    .ok_or_else(|| format!("acceptance_criteria[{}] 缺少 criteria_id", idx))
             })
             .collect::<Result<HashSet<String>, String>>()
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
@@ -3277,238 +3214,26 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        match extract_cycle_title_from_direction_stage(&stage_value) {
-            Some(title) if title.trim().is_empty() => report.push("direction.jsonc.title 不能为空"),
-            Some(_) => {}
-            None => report.push("direction.jsonc 缺少 title"),
-        }
-        let capability = stage_value
-            .pointer("/decision/context/capability_assessment")
-            .and_then(|v| v.as_object());
-        match capability {
-            Some(capability) => {
-                for key in [
-                    "ui_capability",
-                    "test_capability",
-                    "build_capability",
-                    "runtime_capability",
-                    "rationale",
-                ] {
-                    match capability.get(key) {
-                        Some(value) => match value.as_str() {
-                            Some(text) if !text.trim().is_empty() => {}
-                            Some(_) => report.push(format!(
-                                "direction.jsonc.decision.context.capability_assessment.{} 不能为空",
-                                key
-                            )),
-                            None => {
-                                if key == "rationale" {
-                                    report.push(format!(
-                                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串",
-                                        key
-                                    ));
-                                } else {
-                                    report.push(format!(
-                                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
-                                        key
-                                    ));
-                                }
-                            }
-                        },
-                        None => report.push(format!(
-                            "direction.jsonc.decision.context.capability_assessment.{} 缺少",
-                            key
-                        )),
-                    }
-                }
-            }
-            None => report.push("direction.jsonc 缺少 decision.context.capability_assessment"),
-        }
         report.capture(validate_handoff_info("direction.jsonc", &stage_value));
 
-        for key in ["project_type", "ui_capability", "updated_at"] {
+        match stage_value.get("direction_statement") {
+            Some(value) => match value.as_str() {
+                Some(text) if !text.trim().is_empty() => {}
+                Some(_) => report.push("direction.jsonc.direction_statement 不能为空"),
+                None => report.push("direction.jsonc.direction_statement 必须是非空字符串"),
+            },
+            None => report.push("direction.jsonc 缺少 direction_statement"),
+        }
+
+        for key in ["updated_at"] {
             match stage_value.get(key) {
                 Some(value) => match value.as_str() {
                     Some(text) if !text.trim().is_empty() => {}
                     Some(_) => report.push(format!("direction.jsonc.{} 不能为空", key)),
-                    None => {
-                        if key == "ui_capability" {
-                            report.push(format!(
-                                "direction.jsonc.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
-                                key
-                            ));
-                        } else {
-                            report.push(format!("direction.jsonc.{} 必须是非空字符串", key));
-                        }
-                    }
+                    None => report.push(format!("direction.jsonc.{} 必须是非空字符串", key)),
                 },
                 None => report.push(format!("direction.jsonc.{} 缺少", key)),
             }
-        }
-        let domains = stage_value.get("domains").and_then(|v| v.as_array());
-        match domains {
-            Some(domains) => {
-                if domains.is_empty() {
-                    report.push("direction.jsonc.domains 不能为空");
-                }
-                for (idx, domain) in domains.iter().enumerate() {
-                    let Some(obj) = domain.as_object() else {
-                        report.push(format!("direction.jsonc.domains[{}] 必须是对象", idx));
-                        continue;
-                    };
-                    for key in ["domain", "status"] {
-                        if obj
-                            .get(key)
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.trim().is_empty())
-                            .unwrap_or(true)
-                        {
-                            report
-                                .push(format!("direction.jsonc.domains[{}].{} 不能为空", idx, key));
-                        }
-                    }
-                    if obj
-                        .get("evidence_paths")
-                        .and_then(|v| v.as_array())
-                        .is_none()
-                    {
-                        report.push(format!(
-                            "direction.jsonc.domains[{}].evidence_paths 缺少数组",
-                            idx
-                        ));
-                    }
-                    if obj.get("findings").and_then(|v| v.as_array()).is_none() {
-                        report.push(format!(
-                            "direction.jsonc.domains[{}].findings 缺少数组",
-                            idx
-                        ));
-                    }
-                    match obj.get("opportunities").and_then(|v| v.as_array()) {
-                        Some(opportunities) => {
-                            for (op_idx, op) in opportunities.iter().enumerate() {
-                                match op.get("mapped_direction_type") {
-                                    Some(raw_value) => match raw_value.as_str() {
-                                        Some(text) if !text.trim().is_empty() => {}
-                                        Some(_) => report.push(format!(
-                                            "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 不能为空",
-                                            idx, op_idx
-                                        )),
-                                        None => report.push(format!(
-                                            "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 必须是非空字符串",
-                                            idx, op_idx
-                                        )),
-                                    },
-                                    None => report.push(format!(
-                                        "direction.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
-                                        idx, op_idx
-                                    )),
-                                }
-                            }
-                        }
-                        None => report.push(format!(
-                            "direction.jsonc.domains[{}].opportunities 缺少数组",
-                            idx
-                        )),
-                    }
-                }
-            }
-            None => report.push("direction.jsonc 缺少 domains"),
-        }
-
-        match stage_value.get("selected_direction_type") {
-            Some(raw_value) => match raw_value.as_str() {
-                Some(text) if !text.trim().is_empty() => {}
-                Some(_) => report.push("direction.jsonc.selected_direction_type 不能为空"),
-                None => report.push("direction.jsonc.selected_direction_type 必须是非空字符串"),
-            },
-            None => report.push("direction.jsonc.selected_direction_type 缺失"),
-        }
-        let candidate_scores = stage_value
-            .get("candidate_scores")
-            .and_then(|v| v.as_array());
-        match candidate_scores {
-            Some(candidate_scores) => {
-                if candidate_scores.len() < 3 || candidate_scores.len() > 5 {
-                    report.push(format!(
-                        "direction.jsonc.candidate_scores 数量必须在 3..=5，当前 {}",
-                        candidate_scores.len()
-                    ));
-                }
-                let mut previous_score: Option<f64> = None;
-                for (idx, score_item) in candidate_scores.iter().enumerate() {
-                    match score_item.get("direction_type").or_else(|| score_item.get("type")) {
-                        Some(raw_value) => match raw_value.as_str() {
-                            Some(text) if !text.trim().is_empty() => {}
-                            Some(_) => report.push(format!(
-                                "direction.jsonc.candidate_scores[{}].direction_type 不能为空",
-                                idx
-                            )),
-                            None => report.push(format!(
-                                "direction.jsonc.candidate_scores[{}].direction_type 必须是非空字符串",
-                                idx
-                            )),
-                        },
-                        None => report.push(format!(
-                            "direction.jsonc.candidate_scores[{}] 缺少 direction_type",
-                            idx
-                        )),
-                    }
-                    match score_item.get("score").and_then(|v| v.as_f64()) {
-                        Some(score) if (0.0..=1.0).contains(&score) => {
-                            if let Some(prev) = previous_score {
-                                if score > prev {
-                                    report.push("direction.candidate_scores 必须按 score 降序排列");
-                                }
-                            }
-                            previous_score = Some(score);
-                        }
-                        Some(score) => report.push(format!(
-                            "candidate_scores[{}].score 必须在 0..=1，当前 {}",
-                            idx, score
-                        )),
-                        None => report.push(format!("candidate_scores[{}].score 缺失", idx)),
-                    }
-                }
-            }
-            None => report.push("direction.jsonc.candidate_scores 缺失"),
-        }
-        let final_reason = stage_value
-            .get("final_reason")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim())
-            .unwrap_or_default();
-        if final_reason.is_empty() {
-            report.push("direction.jsonc.final_reason 不能为空");
-        }
-        let criteria = stage_value
-            .get("acceptance_criteria")
-            .and_then(|v| v.as_array());
-        match criteria {
-            Some(criteria) => {
-                if criteria.is_empty() {
-                    report.push("direction.jsonc.acceptance_criteria 不能为空");
-                }
-                for (idx, item) in criteria.iter().enumerate() {
-                    if id_from_value(item, &["criteria_id"]).is_none() {
-                        report.push(format!(
-                            "direction.jsonc.acceptance_criteria[{}] 缺少 criteria_id",
-                            idx
-                        ));
-                    }
-                    let description = item
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .map(|v| v.trim())
-                        .unwrap_or_default();
-                    if description.is_empty() {
-                        report.push(format!(
-                            "direction.jsonc.acceptance_criteria[{}].description 不能为空",
-                            idx
-                        ));
-                    }
-                }
-            }
-            None => report.push("direction.jsonc.acceptance_criteria 缺失"),
         }
         report.into_error("artifact_contract_violation")
     }
@@ -3640,6 +3365,42 @@ impl EvolutionManager {
         Ok(out)
     }
 
+    fn extract_plan_acceptance_criteria(
+        value: &serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let criteria = value
+            .get("acceptance_criteria")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "plan.jsonc 缺少 acceptance_criteria".to_string())?;
+
+        let mut out = Vec::new();
+        for item in criteria {
+            let Some(obj) = item.as_object() else {
+                return Err("acceptance_criteria 条目必须是对象".to_string());
+            };
+            let criteria_id = obj
+                .get("criteria_id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| "acceptance_criteria 条目缺少 criteria_id".to_string())?;
+            let description = obj
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("{} 的 description 不能为空", criteria_id))?;
+            out.push(serde_json::json!({
+                "criteria_id": criteria_id,
+                "description": description,
+            }));
+        }
+        if out.is_empty() {
+            return Err("plan.jsonc.acceptance_criteria 不能为空".to_string());
+        }
+        Ok(out)
+    }
+
     async fn ensure_acceptance_consistency(&self, key: &str, cycle_id: &str) -> Result<(), String> {
         let workspace_root = {
             let state = self.state.lock().await;
@@ -3651,7 +3412,7 @@ impl EvolutionManager {
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let parsed = read_json(&cycle_dir.join("plan.jsonc"))
             .map_err(|e| format!("读取 plan.jsonc 失败: {}", e))?;
-        let criteria_from_plan = Self::extract_acceptance_mapping_criteria(&parsed)?;
+        let criteria_from_plan = Self::extract_plan_acceptance_criteria(&parsed)?;
         let expected_ids: std::collections::HashSet<String> = criteria_from_plan
             .iter()
             .filter_map(|v| {
@@ -3660,12 +3421,8 @@ impl EvolutionManager {
                     .map(|s| s.to_string())
             })
             .collect();
-        let direction = read_json(&cycle_dir.join("direction.jsonc"))
-            .map_err(|e| format!("读取 direction.jsonc 失败: {}", e))?;
-        let actual_ids: std::collections::HashSet<String> = direction
-            .get("acceptance_criteria")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| "direction.jsonc.acceptance_criteria 为空".to_string())?
+        let actual_ids: std::collections::HashSet<String> =
+            Self::extract_acceptance_mapping_criteria(&parsed)?
             .iter()
             .filter_map(|v| {
                 v.get("criteria_id")
@@ -3675,7 +3432,7 @@ impl EvolutionManager {
             .collect();
         if expected_ids != actual_ids {
             return Err(format!(
-                "criteria_id 集不一致: plan={:?}, cycle={:?}",
+                "criteria_id 集不一致: acceptance_criteria={:?}, acceptance_mapping={:?}",
                 expected_ids, actual_ids
             ));
         }
@@ -6563,6 +6320,10 @@ mod tests {
             "cycle_id": "c-1",
             "goal": "demo",
             "scope": {"in": ["core"], "out": []},
+            "acceptance_criteria": [
+                {"criteria_id": "ac-1", "description": "验收标准 1"},
+                {"criteria_id": "ac-2", "description": "验收标准 2"}
+            ],
             "work_items": work_items,
             "verification_plan": {
                 "checks": [
@@ -6750,40 +6511,7 @@ mod tests {
                 "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
-                "title": "标题",
-                "decision": {
-                    "context": {
-                        "capability_assessment": {
-                            "ui_capability": "full",
-                            "test_capability": "full",
-                            "build_capability": "full",
-                            "runtime_capability": "full",
-                            "rationale": "ok"
-                        }
-                    }
-                },
-                "project_type": "macos",
-                "ui_capability": "full",
-                "domains": [{
-                    "domain": "core",
-                    "status": "active",
-                    "evidence_paths": [],
-                    "findings": [],
-                    "opportunities": [{
-                        "mapped_direction_type": "播放体验 升级"
-                    }]
-                }],
-                "selected_direction_type": "播放体验 升级",
-                "candidate_scores": [
-                    {"direction_type": "播放体验 升级", "score": 0.9},
-                    {"direction_type": "启动速度 优化", "score": 0.7},
-                    {"direction_type": "错误提示 清晰化", "score": 0.5}
-                ],
-                "final_reason": "reason",
-                "acceptance_criteria": [
-                    {"criteria_id": "ac-1", "description": "d1"},
-                    {"criteria_id": "ac-2", "description": "d2"}
-                ],
+                "direction_statement": "优先提升自主进化计划链路的稳定性与可验证性。",
                 "handoff": empty_handoff_json(),
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
@@ -6793,7 +6521,7 @@ mod tests {
             serde_json::json!({
                 "$schema_version": "2.0",
                 "cycle_id": "c-1",
-                "title": "标题",
+                "title": "优先提升自主进化计划链路的稳定性与可验证性。",
                 "status": "running",
                 "stage_runtime": {},
                 "executions": []
@@ -6995,15 +6723,15 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_non_empty_constraint() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "direction.jsonc.title 不能为空",
+            "direction.jsonc.direction_statement 不能为空",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
-            "direction.jsonc.title 不能为空",
-            &["direction.jsonc.title 不能为空"],
+            "direction.jsonc.direction_statement 不能为空",
+            &["direction.jsonc.direction_statement 不能为空"],
             &["将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。"],
             "direction.jsonc / cycle.jsonc",
             &raw_error,
@@ -7012,20 +6740,20 @@ mod tests {
     }
 
     #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_direction_ui_capability_constraint(
+    fn build_validation_reminder_message_should_match_snapshot_for_direction_missing_field_constraint(
     ) {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "direction.jsonc.ui_capability 不能为空",
+            "direction.jsonc 缺少 direction_statement",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
-            "direction.jsonc.ui_capability 不能为空",
-            &["direction.jsonc.ui_capability 不能为空"],
-            &["ui_capability 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。"],
+            "direction.jsonc 缺少 direction_statement",
+            &["direction.jsonc 缺少 direction_statement"],
+            &["补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。"],
             "direction.jsonc / cycle.jsonc",
             &raw_error,
         );
@@ -7117,43 +6845,38 @@ mod tests {
     fn build_validation_reminder_message_should_include_all_issues_and_deduped_fix_hints() {
         let err = ArtifactValidationError::with_issues(
             "artifact_contract_violation",
-            "共 3 项问题；首项：direction.jsonc.domains[0] 必须是对象",
+            "共 3 项问题；首项：direction.jsonc.direction_statement 不能为空",
             vec![
-                "direction.jsonc.domains[0] 必须是对象".to_string(),
-                "direction.jsonc.domains[1].domain 不能为空".to_string(),
-                "direction.jsonc.acceptance_criteria 不能为空".to_string(),
+                "direction.jsonc.direction_statement 不能为空".to_string(),
+                "direction.jsonc.updated_at 不能为空".to_string(),
+                "direction.jsonc.direction_statement 不能为空".to_string(),
             ],
         );
         let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
-        assert!(msg.contains("摘要：共 3 项问题；首项：direction.jsonc.domains[0] 必须是对象"));
-        assert!(msg.contains("1. direction.jsonc.domains[0] 必须是对象"));
-        assert!(msg.contains("2. direction.jsonc.domains[1].domain 不能为空"));
-        assert!(msg.contains("3. direction.jsonc.acceptance_criteria 不能为空"));
-        assert_eq!(
-            msg.matches("将该字段改为对象类型（{}），并补齐对象内必填子字段。")
-                .count(),
-            1
-        );
+        assert!(msg.contains("摘要：共 3 项问题；首项：direction.jsonc.direction_statement 不能为空"));
+        assert!(msg.contains("1. direction.jsonc.direction_statement 不能为空"));
+        assert!(msg.contains("2. direction.jsonc.updated_at 不能为空"));
+        assert!(msg.contains("3. direction.jsonc.direction_statement 不能为空"));
         assert_eq!(msg.matches("将必填字段填为非空值").count(), 1);
     }
 
     #[test]
     fn stage_templates_should_include_field_comments_and_example_objects() {
         let direction = direction_stage_template("c-42");
-        assert!(direction.contains("// 本轮 UI 能力结论：none | partial | full"));
-        assert!(direction.contains("//   \"domain\": \"desktop_player\""));
-        assert!(direction.contains("//       \"mapped_direction_type\": \"播放体验 升级\""));
-        assert!(direction.contains("// 本轮最终选中的方向标签，由代理自由命名，必须是非空字符串"));
-        assert!(direction.contains("\"title\": \"\""));
+        assert!(direction.contains("// 本轮唯一方向句，必须是非空字符串；一句话即可说明本轮要进化什么"));
+        assert!(direction.contains("\"direction_statement\": \"\""));
+        assert!(!direction.contains("\"title\": \"\""));
 
         let plan = plan_stage_template("c-42");
+        assert!(plan.contains("// 本轮验收标准，由 plan 阶段定义且必须可验证"));
         assert!(plan.contains("// 工作项列表，不能为空"));
         assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
-        assert!(!plan.contains("selected_direction_type"));
+        assert!(plan.contains("// 验收标准与检查项的映射，必须完整覆盖 plan.acceptance_criteria"));
 
         let plan_markdown = plan_markdown_template("c-42");
         assert!(plan_markdown.contains("# 本轮目标"));
+        assert!(plan_markdown.contains("- 方向句："));
         assert!(plan_markdown.contains("## 工作项分配"));
         assert!(plan_markdown.contains("### WI-001 占位标题"));
         assert!(plan_markdown.contains("## 验证计划"));
@@ -7165,7 +6888,7 @@ mod tests {
 
         let verify = verify_stage_template("c-42", 1, 3);
         assert!(verify
-            .contains("// 验收标准评估，必须完整覆盖 plan.verification_plan.acceptance_mapping"));
+            .contains("// criteria_id 集必须与 plan.acceptance_criteria 完全一致"));
         assert!(verify.contains("//   \"criteria_id\": \"AC-001\""));
         assert!(verify.contains("// 需要重实现时必须输出完整 selector 信息"));
 
@@ -7212,115 +6935,48 @@ mod tests {
                 "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
-                "title": "",
-                "decision": {
-                    "context": {
-                        "capability_assessment": {
-                            "ui_capability": "full",
-                            "test_capability": "full",
-                            "build_capability": "full",
-                            "runtime_capability": "full",
-                            "rationale": ""
-                        }
-                    }
-                },
-                "project_type": "macos",
-                "ui_capability": "full",
-                "domains": [
-                    "core",
-                    {
-                        "domain": "",
-                        "status": "active",
-                        "evidence_paths": [],
-                        "findings": [],
-                        "opportunities": []
-                    }
-                ],
-                "selected_direction_type": "architecture",
-                "candidate_scores": [],
-                "final_reason": "",
-                "acceptance_criteria": [],
+                "direction_statement": "",
                 "handoff": empty_handoff_json(),
-                "updated_at": "2026-03-02T00:00:00Z"
+                "updated_at": ""
             }),
         );
 
         let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
             .expect_err("invalid direction artifact should fail");
-        assert_eq!(err.issues().len(), 7);
-        assert_eq!(err.issues()[0], "direction.jsonc 缺少 title");
-        assert!(err.contains("direction.jsonc.domains[0] 必须是对象"));
-        assert!(err.contains("direction.jsonc.domains[1].domain 不能为空"));
-        assert!(err.contains("direction.jsonc.candidate_scores 数量必须在 3..=5"));
-        assert!(err.contains("direction.jsonc.final_reason 不能为空"));
-        assert!(err.contains("direction.jsonc.acceptance_criteria 不能为空"));
+        assert_eq!(err.issues().len(), 2);
+        assert_eq!(err.issues()[0], "direction.jsonc.direction_statement 不能为空");
+        assert!(err.contains("direction.jsonc.updated_at 不能为空"));
     }
 
     #[test]
-    fn validate_direction_artifact_should_accept_free_text_direction_labels() {
+    fn validate_direction_artifact_should_accept_single_sentence_direction() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
 
         EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
-            .expect("自由文本方向标签应通过校验");
+            .expect("一句话方向应通过校验");
     }
 
     #[test]
-    fn validate_direction_artifact_should_reject_blank_direction_labels() {
+    fn validate_direction_artifact_should_reject_blank_direction_statement() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
         write_json(
             &dir.path().join("direction.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
+                "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
-                "title": "标题",
-                "decision": {
-                    "context": {
-                        "capability_assessment": {
-                            "ui_capability": "full",
-                            "test_capability": "full",
-                            "build_capability": "full",
-                            "runtime_capability": "full",
-                            "rationale": "ok"
-                        }
-                    }
-                },
-                "project_type": "macos",
-                "ui_capability": "full",
-                "domains": [{
-                    "domain": "core",
-                    "status": "active",
-                    "evidence_paths": [],
-                    "findings": [],
-                    "opportunities": [{
-                        "mapped_direction_type": "   "
-                    }]
-                }],
-                "selected_direction_type": "   ",
-                "candidate_scores": [
-                    {"direction_type": "   ", "score": 0.9},
-                    {"direction_type": "启动速度 优化", "score": 0.7},
-                    {"direction_type": "错误提示 清晰化", "score": 0.5}
-                ],
-                "final_reason": "reason",
-                "acceptance_criteria": [
-                    {"criteria_id": "ac-1", "description": "d1"},
-                    {"criteria_id": "ac-2", "description": "d2"}
-                ],
+                "direction_statement": "   ",
                 "handoff": empty_handoff_json(),
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
 
         let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
-            .expect_err("空白方向标签应失败");
-        assert!(err.contains("direction.jsonc.selected_direction_type 不能为空"));
-        assert!(err.contains(
-            "direction.jsonc.domains[0].opportunities[0].mapped_direction_type 不能为空"
-        ));
-        assert!(err.contains("direction.jsonc.candidate_scores[0].direction_type 不能为空"));
+            .expect_err("空白方向句应失败");
+        assert!(err.contains("direction.jsonc.direction_statement 不能为空"));
     }
 
     #[test]
@@ -7605,7 +7261,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_reject_direction_missing_title() {
+    fn validate_stage_artifacts_should_reject_direction_missing_statement() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
 
@@ -7614,12 +7270,12 @@ mod tests {
         stage_direction
             .as_object_mut()
             .expect("direction.jsonc should be object")
-            .remove("title");
+            .remove("direction_statement");
         write_json(&dir.path().join("direction.jsonc"), stage_direction);
 
         let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
-            .expect_err("missing title should fail");
-        assert!(err.contains("title"));
+            .expect_err("missing direction_statement should fail");
+        assert!(err.contains("direction_statement"));
     }
 
     #[test]
@@ -9819,15 +9475,7 @@ mod tests {
   "stage": "direction",
   "cycle_id": "test-cycle",
   "status": "completed",
-  "title": "测试",
-  "decision": { "result": "n/a", "reason": "ok", "context": { "capability_assessment": { "ui_capability": "full", "test_capability": "full", "build_capability": "full", "runtime_capability": "full", "rationale": "ok" } } },
-  "project_type": "test",
-  "ui_capability": "full",
-  "domains": [{ "domain": "test", "status": "active", "evidence_paths": [], "findings": [] }],
-  "selected_direction_type": "test_dir",
-  "candidate_scores": [{ "direction_type": "test_dir", "score": 0.9, "rationale": "ok" }],
-  "final_reason": "ok",
-  "acceptance_criteria": [{ "criteria_id": "AC-001", "description": "test" }],
+  "direction_statement": "测试方向",
   "handoff": { "completed": ["done"], "risks": [], "next": [] },
   "updated_at": "2026-01-01T00:00:00Z"
 }"#,
@@ -10067,7 +9715,7 @@ mod tests {
             );
         }
 
-        // Part 3: direction.jsonc 缺少 title 必填字段应被 schema 校验拒绝
+        // Part 3: direction.jsonc 缺少 direction_statement 必填字段应被 schema 校验拒绝
         {
             let dir = tempdir().expect("tempdir should be created");
             write_json(
@@ -10077,43 +9725,17 @@ mod tests {
                     "stage": "direction",
                     "cycle_id": "c-1",
                     "status": "done",
-                    // title 故意缺失
-                    "decision": {
-                        "result": "n/a",
-                        "reason": "",
-                        "context": {
-                            "capability_assessment": {
-                                "ui_capability": "full",
-                                "test_capability": "full",
-                                "build_capability": "full",
-                                "runtime_capability": "full",
-                                "rationale": "ok"
-                            }
-                        }
-                    },
-                    "project_type": "macos",
-                    "ui_capability": "full",
-                    "domains": [],
-                    "selected_direction_type": "test",
-                    "candidate_scores": [
-                        {"direction_type": "test", "score": 0.9},
-                        {"direction_type": "foo", "score": 0.7},
-                        {"direction_type": "bar", "score": 0.5}
-                    ],
-                    "final_reason": "reason",
-                    "acceptance_criteria": [
-                        {"criteria_id": "ac-1", "description": "d1"}
-                    ],
+                    // direction_statement 故意缺失
                     "handoff": empty_handoff_json(),
                     "updated_at": "2026-03-02T00:00:00Z"
                 }),
             );
 
             let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
-                .expect_err("缺少 title 应被 schema 校验拒绝");
+                .expect_err("缺少 direction_statement 应被 schema 校验拒绝");
             assert!(
-                err.contains("title"),
-                "错误信息应提及缺失字段 title: {}",
+                err.contains("direction_statement"),
+                "错误信息应提及缺失字段 direction_statement: {}",
                 err
             );
         }
