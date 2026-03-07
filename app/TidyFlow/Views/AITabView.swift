@@ -717,6 +717,12 @@ struct AITabView: View {
                 aiTool: session.aiTool,
                 sessionId: session.id
             )
+            appState.wsClient.requestAISlashCommands(
+                projectName: session.projectName,
+                workspaceName: session.workspaceName,
+                aiTool: session.aiTool,
+                sessionId: session.id
+            )
             appState.wsClient.requestAISessionSubscribe(
                 project: session.projectName,
                 workspace: session.workspaceName,
@@ -739,6 +745,12 @@ struct AITabView: View {
             force: true
         )
         appState.wsClient.requestAISessionConfigOptions(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            aiTool: session.aiTool,
+            sessionId: session.id
+        )
+        appState.wsClient.requestAISlashCommands(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
             aiTool: session.aiTool,

@@ -1002,6 +1002,18 @@ class AppState: ObservableObject {
         } else {
             objectWillChange.send()
         }
+        // 验证当前选中的模型在新 provider 列表中是否仍然有效；
+        // 若已失效则清除选择，避免发送时携带不存在的模型导致请求出错。
+        let currentModel = aiSelectedModelByTool[tool] ?? nil
+        if let model = currentModel {
+            let allModels = providers.flatMap { $0.models }
+            let stillValid = allModels.contains(where: {
+                $0.id == model.modelID && $0.providerID == model.providerID
+            })
+            if !stillValid {
+                setAISelectedModel(nil, for: tool)
+            }
+        }
     }
 
     func setAIAgents(_ agents: [AIAgentInfo], for tool: AIChatTool) {

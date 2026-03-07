@@ -116,6 +116,7 @@ impl AiAgent for CodexAppServerAgent {
         if outbound_hint.agent.is_some()
             || outbound_hint.model_provider_id.is_some()
             || outbound_hint.model_id.is_some()
+            || outbound_hint.config_options.is_some()
         {
             self.selection_hints
                 .lock()
@@ -372,12 +373,44 @@ impl AiAgent for CodexAppServerAgent {
         _directory: &str,
         _session_id: Option<&str>,
     ) -> Result<Vec<AiSlashCommand>, String> {
-        Ok(vec![AiSlashCommand {
-            name: "new".to_string(),
-            description: "新建会话".to_string(),
-            action: "client".to_string(),
-            input_hint: None,
-        }])
+        Ok(vec![
+            AiSlashCommand {
+                name: "new".to_string(),
+                description: "新建会话".to_string(),
+                action: "client".to_string(),
+                input_hint: None,
+            },
+            AiSlashCommand {
+                name: "code".to_string(),
+                description: "生成或修改代码".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("<任务描述>".to_string()),
+            },
+            AiSlashCommand {
+                name: "explain".to_string(),
+                description: "解释代码或概念".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("<代码或概念>".to_string()),
+            },
+            AiSlashCommand {
+                name: "fix".to_string(),
+                description: "修复错误或问题".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("<错误描述>".to_string()),
+            },
+            AiSlashCommand {
+                name: "review".to_string(),
+                description: "审查代码质量与风格".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("<代码片段或文件路径>".to_string()),
+            },
+            AiSlashCommand {
+                name: "ask".to_string(),
+                description: "向 Codex 提问".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("<问题>".to_string()),
+            },
+        ])
     }
 
     async fn reply_question(
@@ -580,11 +613,17 @@ impl AiAgent for CodexAppServerAgent {
 
         let (model_id, model_provider) = Self::parse_model_selection(model);
         let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
+        // 将 config_overrides 中的 thought_level 回写到 outbound_hint，保证会话恢复后能复现
+        let outbound_config_options = reasoning_effort.as_ref().map(|effort| {
+            let mut map = HashMap::new();
+            map.insert("thought_level".to_string(), serde_json::json!(effort));
+            map
+        });
         let outbound_hint = AiSessionSelectionHint {
             agent: collaboration_mode.clone(),
             model_provider_id: model_provider.clone(),
             model_id: model_id.clone(),
-            config_options: None,
+            config_options: outbound_config_options,
         };
         let turn_id = match self
             .client

@@ -2195,6 +2195,12 @@ final class MobileAppState: ObservableObject {
             aiTool: targetTool,
             sessionId: session.id
         )
+        wsClient.requestAISlashCommands(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            aiTool: targetTool,
+            sessionId: session.id
+        )
         requestAISessionStatus(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
@@ -4846,6 +4852,17 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             self.aiProviders = providers
+            // 验证当前选中的模型在新 provider 列表中是否仍然有效；
+            // 若已失效则清除选择，避免发送时携带不存在的模型导致请求出错。
+            if let selectedModel = self.aiSelectedModel {
+                let allModels = providers.flatMap { $0.models }
+                let stillValid = allModels.contains(where: {
+                    $0.id == selectedModel.modelID && $0.providerID == selectedModel.providerID
+                })
+                if !stillValid {
+                    self.aiSelectedModel = nil
+                }
+            }
             self.isAILoadingModels = false
             self.wsClient.requestAISessionConfigOptions(
                 projectName: ev.projectName,
