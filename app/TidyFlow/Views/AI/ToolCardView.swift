@@ -937,7 +937,8 @@ struct ToolCardView: View {
 
     private func buildTerminalSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
-        if !invocation.input.isEmpty {
+        // 命令摘要已提升到卡片标题区域时，正文不重复渲染 input section，避免信息冗余
+        if terminalCommandSummary(invocation) == nil && !invocation.input.isEmpty {
             sections.append(section(id: "terminal-input", title: "input", any: invocation.input))
         }
         if let progress = toolProgressSection(invocation, idPrefix: "terminal") {
@@ -1148,10 +1149,31 @@ struct ToolCardView: View {
         if toolID == "todowrite" || toolID == "todoread" {
             return todoSummary(invocation) ?? "任务列表"
         }
+        if toolID == "terminal", let command = terminalCommandSummary(invocation), !command.isEmpty {
+            return "terminal(\(command))"
+        }
         if let title = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title
         }
         return toolDisplayName(toolID)
+    }
+
+    /// 从终端工具调用输入中提取命令摘要字符串，用于在卡片标题区域直接显示。
+    /// 依次检查 command / cmd / script 字段；均不存在时返回 nil，触发标题回退。
+    private func terminalCommandSummary(_ invocation: AIToolInvocationState) -> String? {
+        let commandKeys = ["command", "cmd", "script"]
+        for key in commandKeys {
+            if let raw = stringValue(invocation.input[key]) {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                // 头部空间有限，超长命令截断后加省略号
+                if trimmed.count > 60 {
+                    return String(trimmed.prefix(57)) + "…"
+                }
+                return trimmed
+            }
+        }
+        return nil
     }
 
     private func extractSessionId(from value: Any?, keys: Set<String>) -> String? {

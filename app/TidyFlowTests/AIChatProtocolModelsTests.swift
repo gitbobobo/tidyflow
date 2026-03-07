@@ -833,6 +833,94 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertTrue(terminalSections.contains("terminal-progress"))
     }
 
+    func testTerminalCardTitleShowsCommandSummary() {
+        // 终端工具卡片标题应在 input.command 存在时显示命令摘要
+        let terminalWithCommand = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "completed",
+                "input": ["command": "ls -la"],
+                "output": "total 8\ndrwxr-xr-x  2 user group 64 Jan 1 00:00 ."
+            ],
+            callID: "c-tc-1",
+            partMetadata: nil
+        )
+        let presentation = terminalWithCommand.debugPresentationForTests()
+        XCTAssertEqual(presentation.displayTitle, "terminal(ls -la)", "命令摘要应出现在卡片标题中")
+    }
+
+    func testTerminalCardBodyExcludesInputSectionWhenCommandInTitle() {
+        // 命令摘要已进标题后，正文不应再出现 terminal-input section
+        let terminalWithCommand = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "completed",
+                "input": ["command": "npm test"],
+                "output": "PASS all tests"
+            ],
+            callID: "c-tc-2",
+            partMetadata: nil
+        )
+        let sections = terminalWithCommand.debugPresentationForTests().sections.map(\.id)
+        XCTAssertFalse(sections.contains("terminal-input"), "命令已在标题展示时，正文不应重复渲染 terminal-input section")
+        XCTAssertTrue(sections.contains("terminal-output"), "执行输出仍应在正文展示")
+    }
+
+    func testTerminalCardTitleFallsBackWhenNoCommand() {
+        // 无 command 字段时，终端卡片标题应回退到稳定的工具名或 invocation.title
+        let terminalNoCommand = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "running",
+                "input": ["env": "production"],
+                "output": ""
+            ],
+            callID: "c-tc-3",
+            partMetadata: nil
+        )
+        let presentation = terminalNoCommand.debugPresentationForTests()
+        XCTAssertFalse(presentation.displayTitle.isEmpty, "无命令时标题不应为空")
+        XCTAssertFalse(presentation.displayTitle.hasPrefix("terminal("), "无命令时标题不应包含括号命令格式")
+        // 无命令时 input section 应正常渲染（回退路径）
+        let sections = terminalNoCommand.debugPresentationForTests().sections.map(\.id)
+        XCTAssertTrue(sections.contains("terminal-input"), "无命令摘要时 input section 应保留在正文")
+    }
+
+    func testTerminalCardTitleUsesTooltitleWhenNoCommand() {
+        // 无 command 字段但有 toolTitle（via invocation.title）时，应展示 toolTitle
+        let terminalWithTitle = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "completed",
+                "title": "执行数据库迁移",
+                "input": ["env": "production"]
+            ],
+            callID: "c-tc-4",
+            toolTitle: "执行数据库迁移",
+            partMetadata: nil
+        )
+        let presentation = terminalWithTitle.debugPresentationForTests()
+        XCTAssertEqual(presentation.displayTitle, "执行数据库迁移", "无命令时应回退到 toolTitle")
+    }
+
+    func testTerminalCardCommandSummaryTruncatesLongCommand() {
+        // 超长命令应被截断，不应导致标题溢出
+        let longCmd = String(repeating: "a", count: 80)
+        let terminalLongCmd = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "running",
+                "input": ["command": longCmd]
+            ],
+            callID: "c-tc-5",
+            partMetadata: nil
+        )
+        let title = terminalLongCmd.debugPresentationForTests().displayTitle
+        XCTAssertTrue(title.hasPrefix("terminal("), "长命令标题仍应以 terminal( 开头")
+        XCTAssertTrue(title.hasSuffix("…)"), "超长命令应以省略号结尾")
+        XCTAssertLessThanOrEqual(title.count, 75, "标题长度不应过长")
+    }
+
     func testAISessionMessagesToChatMessagesMapsToolCallExtendedFields() {
         let payload = AISessionMessagesV2(
             projectName: "tidyflow",
