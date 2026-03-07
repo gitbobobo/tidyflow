@@ -387,7 +387,7 @@ extension AppState {
     }
 
     /// 将 AI 会话状态映射为 TerminalAIStatus 并更新该工作空间下所有终端 tab。
-    /// 每个工作空间的 AI 会话与终端 tab 建立稳定映射，实现逐 tab 状态可视化。
+    /// 状态映射规则由共享语义层 TerminalSessionSemantics 提供，双端保持一致。
     private func syncAIStatusToTerminalTabs(
         projectName: String,
         workspaceName: String,
@@ -400,23 +400,13 @@ extension AppState {
         let tabs = workspaceTabs[globalKey] ?? []
         guard !tabs.isEmpty else { return }
 
-        // 将后端状态字符串映射为六态枚举；toolName 优先使用后端工具名，否则回退到 AI 工具显示名
-        let displayName = toolName ?? aiTool.displayName
-        let terminalStatus: TerminalAIStatus
-        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "running":
-            terminalStatus = .running(toolName: displayName)
-        case "awaiting_input":
-            terminalStatus = .awaitingInput
-        case "success":
-            terminalStatus = .success
-        case "failure", "error":
-            terminalStatus = .failure(message: errorMessage)
-        case "cancelled":
-            terminalStatus = .cancelled
-        default:
-            terminalStatus = .idle
-        }
+        // 通过共享语义层映射 AI 状态，不再维护本地 switch/case
+        let terminalStatus = TerminalSessionSemantics.terminalAIStatus(
+            from: status,
+            errorMessage: errorMessage,
+            toolName: toolName,
+            aiToolDisplayName: aiTool.displayName
+        )
 
         for tab in tabs where tab.kind == .terminal {
             terminalStore.updateTerminalAIStatus(tabId: tab.id, status: terminalStatus)

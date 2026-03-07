@@ -365,7 +365,8 @@ extension AppState {
         }
         let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
         bindTermToTab(tabId: tabId, termId: result.termId, globalKey: globalKey)
-        terminalAttachRequestedAtByTermId[result.termId] = Date()
+        // 通过共享终端存储记录 attach 请求时间
+        terminalSessionStore.recordAttachRequest(termId: result.termId)
         wsClient.requestTermAttach(termId: result.termId)
         wsClient.requestTermList()
     }
@@ -375,15 +376,16 @@ extension AppState {
             TFLog.app.warning("收到 term_attached 但未找到 tab，term=\(result.termId, privacy: .public)")
             return
         }
-        if let requestedAt = terminalAttachRequestedAtByTermId.removeValue(forKey: result.termId) {
-            let costMs = Int(Date().timeIntervalSince(requestedAt) * 1000)
+        // 通过共享终端存储处理 attach 完成（含 RTT 日志）
+        if let rtt = terminalSessionStore.handleTermAttached(result: result) {
+            let costMs = Int(rtt * 1000)
             TFLog.app.info("perf.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
         }
         terminalState = .ready(sessionId: result.termId)
         if !result.scrollback.isEmpty {
             emitTerminalOutput(termId: result.termId, bytes: result.scrollback)
             wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
-            termOutputUnackedBytesByTermId[result.termId] = 0
+            terminalSessionStore.resetUnackedBytes(for: result.termId)
         }
         if let sink = terminalSink, terminalSinkTabId == tabId {
             sink.focusTerminal()
@@ -405,9 +407,8 @@ extension AppState {
         if let tabId = terminalTabIdBySessionId.removeValue(forKey: termId) {
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
-            termOutputUnackedBytesByTermId.removeValue(forKey: termId)
-            terminalAttachRequestedAtByTermId.removeValue(forKey: termId)
-            terminalDetachRequestedAtByTermId.removeValue(forKey: termId)
+            // 通过共享终端存储清理所有与该 termId 相关的追踪状态
+            terminalSessionStore.handleTermClosed(termId: termId)
             for (globalKey, var tabs) in workspaceTabs {
                 if let index = tabs.firstIndex(where: { $0.id == tabId }) {
                     tabs[index].terminalSessionId = nil
@@ -429,9 +430,8 @@ extension AppState {
                 terminalSessionByTabId.removeValue(forKey: tabId)
                 staleTerminalTabs.remove(tabId)
                 terminalTabIdBySessionId.removeValue(forKey: termId)
-                termOutputUnackedBytesByTermId.removeValue(forKey: termId)
-                terminalAttachRequestedAtByTermId.removeValue(forKey: termId)
-                terminalDetachRequestedAtByTermId.removeValue(forKey: termId)
+                // 通过共享终端存储清理所有与该 termId 相关的追踪状态
+                terminalSessionStore.handleTermClosed(termId: termId)
                 tabs[index].terminalSessionId = nil
                 workspaceTabs[globalKey] = tabs
                 if terminalSinkTabId == tabId {
@@ -450,9 +450,8 @@ extension AppState {
         }
         terminalSessionByTabId.removeAll()
         terminalTabIdBySessionId.removeAll()
-        termOutputUnackedBytesByTermId.removeAll()
-        terminalAttachRequestedAtByTermId.removeAll()
-        terminalDetachRequestedAtByTermId.removeAll()
+        // 通过共享终端存储清理断线时的追踪状态
+        terminalSessionStore.handleDisconnect()
         terminalState = .idle
     }
 
@@ -463,7 +462,8 @@ extension AppState {
             for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
                 if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
                     TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
-                    terminalAttachRequestedAtByTermId[sessionId] = Date()
+                    // 通过共享终端存储记录重连 attach 请求时间
+                    terminalSessionStore.recordAttachRequest(termId: sessionId)
                     wsClient.requestTermAttach(termId: sessionId)
                 }
             }
@@ -490,7 +490,8 @@ extension AppState {
 
         if let termId = terminalSessionByTabId[tab.id], !termId.isEmpty {
             terminalTabIdBySessionId[termId] = tab.id
-            terminalAttachRequestedAtByTermId[termId] = Date()
+            // 通过共享终端存储记录 attach 请求时间
+            terminalSessionStore.recordAttachRequest(termId: termId)
             wsClient.requestTermAttach(termId: termId)
             requestTerminal()
             return
@@ -528,7 +529,8 @@ extension AppState {
            previousTabId != tabId,
            let previousTermId = terminalSessionByTabId[previousTabId],
            !previousTermId.isEmpty {
-            terminalDetachRequestedAtByTermId[previousTermId] = Date()
+            // 通过共享终端存储记录 detach 请求时间
+            terminalSessionStore.recordDetachRequest(termId: previousTermId)
             wsClient.requestTermDetach(termId: previousTermId)
         }
 
@@ -548,7 +550,8 @@ extension AppState {
             if isPerfTerminalAutoDetachEnabled,
                let termId = terminalSessionByTabId[tabId],
                !termId.isEmpty {
-                terminalDetachRequestedAtByTermId[termId] = Date()
+                // 通过共享终端存储记录 detach 请求时间
+                terminalSessionStore.recordDetachRequest(termId: termId)
                 wsClient.requestTermDetach(termId: termId)
             }
             terminalSink = nil
@@ -561,9 +564,8 @@ extension AppState {
     private func bindTermToTab(tabId: UUID, termId: String, globalKey: String) {
         if let oldTermId = terminalSessionByTabId[tabId], oldTermId != termId {
             terminalTabIdBySessionId.removeValue(forKey: oldTermId)
-            termOutputUnackedBytesByTermId.removeValue(forKey: oldTermId)
-            terminalAttachRequestedAtByTermId.removeValue(forKey: oldTermId)
-            terminalDetachRequestedAtByTermId.removeValue(forKey: oldTermId)
+            // 通过共享终端存储清理旧 termId 的追踪状态
+            terminalSessionStore.handleTermClosed(termId: oldTermId)
         }
         if let oldTabId = terminalTabIdBySessionId[termId], oldTabId != tabId {
             terminalSessionByTabId.removeValue(forKey: oldTabId)
@@ -573,6 +575,8 @@ extension AppState {
         terminalTabIdBySessionId[termId] = tabId
         staleTerminalTabs.remove(tabId)
         pendingSpawnTabs.remove(tabId)
+        // 通过共享终端存储记录工作区首次打开时间
+        terminalSessionStore.recordWorkspaceOpenTimeIfNeeded(key: globalKey)
         if workspaceTerminalOpenTime[globalKey] == nil {
             workspaceTerminalOpenTime[globalKey] = Date()
         }
@@ -615,12 +619,12 @@ extension AppState {
             }
         }
 
-        let newUnacked = (termOutputUnackedBytesByTermId[termId] ?? 0) + bytes.count
+        // 通过共享终端存储追踪 ACK 计数
+        terminalSessionStore.addUnackedBytes(bytes.count, for: termId)
+        let newUnacked = terminalSessionStore.unackedBytes(for: termId)
         if newUnacked >= termOutputAckThreshold {
             wsClient.sendTermOutputAck(termId: termId, bytes: newUnacked)
-            termOutputUnackedBytesByTermId[termId] = 0
-        } else {
-            termOutputUnackedBytesByTermId[termId] = newUnacked
+            terminalSessionStore.clearUnackedBytes(for: termId)
         }
     }
 

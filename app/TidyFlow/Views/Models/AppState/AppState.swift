@@ -328,6 +328,9 @@ class AppState: ObservableObject {
     // 终端领域状态（独立 ObservableObject，减少终端状态变化对全局视图的影响）
     let terminalStore = TerminalStore()
 
+    // 共享终端会话存储（按 project/workspace/termId 隔离，macOS/iOS 双端通用）
+    let terminalSessionStore = TerminalSessionStore()
+
     // 编辑器领域状态（独立 ObservableObject，减少编辑器状态变化对全局视图的影响）
     let editorStore = EditorStore()
 

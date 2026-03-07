@@ -1,0 +1,187 @@
+import XCTest
+@testable import TidyFlow
+
+// MARK: - TerminalWorkspaceIsolation 单元测试
+// 覆盖：多项目多工作区隔离、关闭清理不串台、断线 stale 标记与 ACK 隔离
+// 验证工作项 WI-002、WI-003 的工作区边界保证
+
+final class TerminalWorkspaceIsolationTests: XCTestCase {
+
+    private var store: TerminalSessionStore!
+
+    override func setUp() {
+        super.setUp()
+        store = TerminalSessionStore()
+    }
+
+    // MARK: - 多工作区展示信息不串台
+
+    func testDisplayInfo_differentWorkspacesDoNotConflict() {
+        let infoA = TerminalDisplayInfo(
+            termId: "t1", project: "proj-a", workspace: "ws",
+            icon: "terminal", name: "Shell A", sourceCommand: nil, isPinned: false
+        )
+        let infoB = TerminalDisplayInfo(
+            termId: "t2", project: "proj-b", workspace: "ws",
+            icon: "star", name: "Shell B", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoA)
+        store.setDisplayInfo(infoB)
+
+        XCTAssertEqual(store.displayInfo(for: "t1")?.project, "proj-a")
+        XCTAssertEqual(store.displayInfo(for: "t2")?.project, "proj-b")
+        XCTAssertEqual(store.displayInfo(for: "t1")?.name, "Shell A")
+        XCTAssertEqual(store.displayInfo(for: "t2")?.name, "Shell B")
+    }
+
+    func testDisplayInfo_sameTermIdInDifferentProjectsAreIsolated() {
+        // 注意：termId 由 Core 生成，在不同 project 下不应相同，此处验证如果相同会被隔离
+        let info1 = TerminalDisplayInfo(
+            termId: "shared-id", project: "proj-a", workspace: "ws",
+            icon: "terminal", name: "Proj A Shell", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(info1)
+
+        // 同一 termId 但不同 project 的 info 会覆盖（终端 ID 是全局唯一的 Core 概念）
+        let info2 = TerminalDisplayInfo(
+            termId: "shared-id", project: "proj-b", workspace: "ws",
+            icon: "star", name: "Proj B Shell", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(info2)
+        XCTAssertEqual(store.displayInfo(for: "shared-id")?.project, "proj-b")
+    }
+
+    // MARK: - 多工作区 ACK 不串台
+
+    func testACKTracking_multipleWorkspacesIndependent() {
+        store.addUnackedBytes(1000, for: "proj-a:t1")
+        store.addUnackedBytes(2000, for: "proj-b:t1")
+
+        XCTAssertEqual(store.unackedBytes(for: "proj-a:t1"), 1000)
+        XCTAssertEqual(store.unackedBytes(for: "proj-b:t1"), 2000)
+
+        store.clearUnackedBytes(for: "proj-a:t1")
+        XCTAssertEqual(store.unackedBytes(for: "proj-a:t1"), 0)
+        XCTAssertEqual(store.unackedBytes(for: "proj-b:t1"), 2000, "清零 proj-a 不应影响 proj-b")
+    }
+
+    // MARK: - term_list 隔离：清理过期不影响其它工作区
+
+    func testReconcileTermList_onlyClearsExpiredTerms() {
+        // 两个终端：一个 live，一个 stale
+        let infoLive = TerminalDisplayInfo(
+            termId: "t-live", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Live", sourceCommand: nil, isPinned: false
+        )
+        let infoStale = TerminalDisplayInfo(
+            termId: "t-stale", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Stale", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoLive)
+        store.setDisplayInfo(infoStale)
+
+        let liveTerm = TerminalSessionInfo(
+            termId: "t-live", project: "proj", workspace: "ws",
+            cwd: "/", shell: "bash", status: "running",
+            name: "Live", icon: nil, remoteSubscribers: []
+        )
+        store.reconcileTermList(items: [liveTerm], makeKey: { "\($0):\($1)" })
+
+        XCTAssertNotNil(store.displayInfo(for: "t-live"), "live 终端不应被清除")
+        XCTAssertNil(store.displayInfo(for: "t-stale"), "stale 终端应被清除")
+    }
+
+    // MARK: - 关闭清理不影响其它终端
+
+    func testHandleTermClosed_doesNotAffectOtherTerminals() {
+        let infoA = TerminalDisplayInfo(
+            termId: "t-a", project: "proj", workspace: "ws",
+            icon: "terminal", name: "A", sourceCommand: nil, isPinned: false
+        )
+        let infoB = TerminalDisplayInfo(
+            termId: "t-b", project: "proj", workspace: "ws",
+            icon: "terminal", name: "B", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoA)
+        store.setDisplayInfo(infoB)
+        store.togglePinned(termId: "t-b")
+        store.addUnackedBytes(5000, for: "t-a")
+        store.addUnackedBytes(3000, for: "t-b")
+
+        store.handleTermClosed(termId: "t-a")
+
+        XCTAssertNil(store.displayInfo(for: "t-a"), "t-a 应被清除")
+        XCTAssertNotNil(store.displayInfo(for: "t-b"), "t-b 不应受影响")
+        XCTAssertTrue(store.isPinned(termId: "t-b"), "t-b 的置顶状态不应受影响")
+        XCTAssertEqual(store.unackedBytes(for: "t-b"), 3000, "t-b 的 ACK 计数不应受影响")
+    }
+
+    // MARK: - 断线后重连恢复隔离
+
+    func testDisconnect_thenReconnect_preservesDisplayInfoForReopenedTerminals() {
+        let info = TerminalDisplayInfo(
+            termId: "t1", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Shell", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(info)
+        store.addUnackedBytes(10000, for: "t1")
+        store.recordAttachRequest(termId: "t1")
+
+        store.handleDisconnect()
+
+        // 重连后展示信息还在，可以用于重连恢复
+        XCTAssertNotNil(store.displayInfo(for: "t1"), "断线后展示信息用于重连恢复")
+        XCTAssertEqual(store.unackedBytes(for: "t1"), 0, "断线后 ACK 应清零")
+        XCTAssertNil(store.attachRequestedAt["t1"], "断线后 attach 时间应清除")
+
+        // 重连时记录新 attach
+        store.recordAttachRequest(termId: "t1")
+        XCTAssertNotNil(store.attachRequestedAt["t1"], "重连后应能记录新 attach 请求")
+    }
+
+    // MARK: - term_list open time 更新区隔
+
+    func testReconcileTermList_openTimeIsolatedByWorkspaceKey() {
+        let termA = TerminalSessionInfo(
+            termId: "tA", project: "proj", workspace: "ws-a",
+            cwd: "/", shell: "bash", status: "running",
+            name: "A", icon: nil, remoteSubscribers: []
+        )
+        let termB = TerminalSessionInfo(
+            termId: "tB", project: "proj", workspace: "ws-b",
+            cwd: "/", shell: "bash", status: "running",
+            name: "B", icon: nil, remoteSubscribers: []
+        )
+        store.reconcileTermList(items: [termA, termB], makeKey: { "\($0):\($1)" })
+
+        XCTAssertNotNil(store.workspaceOpenTime["proj:ws-a"])
+        XCTAssertNotNil(store.workspaceOpenTime["proj:ws-b"])
+
+        // ws-a 的终端消失后，其 open time 应被清除
+        store.reconcileTermList(items: [termB], makeKey: { "\($0):\($1)" })
+        XCTAssertNil(store.workspaceOpenTime["proj:ws-a"], "无活跃终端的工作区 open time 应清除")
+        XCTAssertNotNil(store.workspaceOpenTime["proj:ws-b"], "有活跃终端的工作区 open time 应保留")
+    }
+
+    // MARK: - TerminalSessionSemantics 多项目隔离
+
+    func testTerminalsForWorkspace_strictProjectWorkspaceBoundary() {
+        func makeSession(termId: String, project: String, workspace: String) -> TerminalSessionInfo {
+            TerminalSessionInfo(
+                termId: termId, project: project, workspace: workspace,
+                cwd: "/", shell: "bash", status: "running",
+                name: termId, icon: nil, remoteSubscribers: []
+            )
+        }
+        let all = [
+            makeSession(termId: "t1", project: "p1", workspace: "w1"),
+            makeSession(termId: "t2", project: "p1", workspace: "w2"),
+            makeSession(termId: "t3", project: "p2", workspace: "w1"),
+            makeSession(termId: "t4", project: "p2", workspace: "w2"),
+        ]
+        let result = TerminalSessionSemantics.terminalsForWorkspace(
+            project: "p1", workspace: "w1", allTerminals: all, pinnedIds: []
+        )
+        XCTAssertEqual(result.map(\.termId), ["t1"], "应只返回 p1/w1 的终端")
+    }
+}

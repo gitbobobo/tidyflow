@@ -136,6 +136,13 @@ WTS0003 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef
 WTS0004 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0012 /* WorkspaceTaskStore.swift */; };
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */; };
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */; };
+TSS0001 /* TerminalSessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSS0011 /* TerminalSessionSemantics.swift */; };
+TSS0002 /* TerminalSessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSS0011 /* TerminalSessionSemantics.swift */; };
+TSST001 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSST011 /* TerminalSessionStore.swift */; };
+TSST002 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSST011 /* TerminalSessionStore.swift */; };
+TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSLT011 /* TerminalSessionSemanticLayerTests.swift */; };
+TSST003 /* TerminalSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSST013 /* TerminalSessionStoreTests.swift */; };
+TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TWIT011 /* TerminalWorkspaceIsolationTests.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
 		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 		MDL000316 /* AppState+CoreWS+MessageHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000116 /* AppState+CoreWS+MessageHandlers.swift */; };
@@ -359,6 +366,11 @@ WTS0011 /* WorkspaceTaskSemantics.swift */ = {isa = PBXFileReference; lastKnownF
 WTS0012 /* WorkspaceTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskStore.swift; sourceTree = "<group>"; };
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskSemanticLayerTests.swift; sourceTree = "<group>"; };
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskQueueSemanticsTests.swift; sourceTree = "<group>"; };
+TSS0011 /* TerminalSessionSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionSemantics.swift; sourceTree = "<group>"; };
+TSST011 /* TerminalSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStore.swift; sourceTree = "<group>"; };
+TSLT011 /* TerminalSessionSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionSemanticLayerTests.swift; sourceTree = "<group>"; };
+TSST013 /* TerminalSessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStoreTests.swift; sourceTree = "<group>"; };
+TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWorkspaceIsolationTests.swift; sourceTree = "<group>"; };
 		CSEM0011 /* ConnectionSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemantics.swift; sourceTree = "<group>"; };
 		CSEM0013 /* ConnectionSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemanticLayerTests.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
@@ -603,6 +615,9 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; 
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
+TSLT011 /* TerminalSessionSemanticLayerTests.swift */,
+TSST013 /* TerminalSessionStoreTests.swift */,
+TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
 				);
 			path = TidyFlowTests;
@@ -694,6 +709,8 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL00011B /* WorkspaceKeySemantics.swift */,
 				CSEM0011 /* ConnectionSemantics.swift */,
 				WTS0012 /* WorkspaceTaskStore.swift */,
+TSS0011 /* TerminalSessionSemantics.swift */,
+TSST011 /* TerminalSessionStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
@@ -946,6 +963,8 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				WTS0001 /* WorkspaceTaskSemantics.swift in Sources */,
 				CSEM0001 /* ConnectionSemantics.swift in Sources */,
 				WTS0003 /* WorkspaceTaskStore.swift in Sources */,
+TSS0001 /* TerminalSessionSemantics.swift in Sources */,
+TSST001 /* TerminalSessionStore.swift in Sources */,
 				MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
 				RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */,
 				RMT00002 /* AppState+RemoteTerminals.swift in Sources */,
@@ -1059,6 +1078,9 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
+TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */,
+TSST003 /* TerminalSessionStoreTests.swift in Sources */,
+TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
