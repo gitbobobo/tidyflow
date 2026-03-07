@@ -55,7 +55,11 @@ fn resolve_cycle_history_title(
 }
 
 fn parse_cycle_handoff(cycle_json: &serde_json::Value) -> Option<EvolutionHandoffInfo> {
-    let handoff = cycle_json.get("handoff")?.as_object()?;
+    parse_handoff_from_value(cycle_json.get("handoff")?)
+}
+
+fn parse_handoff_from_value(handoff_val: &serde_json::Value) -> Option<EvolutionHandoffInfo> {
+    let handoff = handoff_val.as_object()?;
     let parse_section = |key: &str| -> Vec<String> {
         handoff
             .get(key)
@@ -150,12 +154,17 @@ fn parse_cycle_stage_history_entries(
             .and_then(|value| value.as_object())
             .and_then(|timing| timing.get("duration_ms"))
             .and_then(|value| value.as_u64());
+        // 从阶段 runtime 中提取该阶段自身的交接文档，供历史查看时的代理级筛选使用
+        let handoff = runtime
+            .get("handoff")
+            .and_then(|value| parse_handoff_from_value(value));
         stages.push(EvolutionCycleStageHistoryEntry {
             stage: (*stage).to_string(),
             agent: agent_name(stage).to_string(),
             ai_tool,
             status,
             duration_ms,
+            handoff,
         });
     }
     stages
@@ -612,6 +621,30 @@ impl EvolutionManager {
 
         self.broadcast_scheduler(ctx).await;
         self.spawn_worker(key, 0, ctx.clone()).await;
+        Ok(())
+    }
+
+    /// 在循环运行或排队中动态调整最大轮次上限
+    pub(super) async fn adjust_loop_round(
+        &self,
+        project: &str,
+        workspace: &str,
+        new_limit: u32,
+        _ctx: &HandlerContext,
+    ) -> Result<(), String> {
+        let new_limit = new_limit.max(1);
+        let key = workspace_key(project, workspace);
+        let mut state = self.state.lock().await;
+        let Some(entry) = state.workspaces.get_mut(&key) else {
+            return Err(format!("evo_cycle_not_found: {}", key));
+        };
+        if entry.status != "running" && entry.status != "queued" {
+            return Err(format!(
+                "evo_adjust_loop_round_not_allowed: status={}",
+                entry.status
+            ));
+        }
+        entry.loop_round_limit = new_limit;
         Ok(())
     }
 

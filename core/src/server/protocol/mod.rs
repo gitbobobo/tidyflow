@@ -741,6 +741,12 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
     },
+    #[serde(rename = "evo_adjust_loop_round")]
+    EvoAdjustLoopRound {
+        project: String,
+        workspace: String,
+        loop_round_limit: u32,
+    },
     #[serde(rename = "evidence_get_snapshot")]
     EvidenceGetSnapshot {
         project: String,
@@ -2101,6 +2107,9 @@ pub struct EvolutionCycleStageHistoryEntry {
     pub ai_tool: String,
     pub status: String,
     pub duration_ms: Option<u64>,
+    /// 该阶段自身的交接文档（从阶段 artifact 解析），用于历史查看时的代理级筛选
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<EvolutionHandoffInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

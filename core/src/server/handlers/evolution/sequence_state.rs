@@ -28,12 +28,13 @@ impl EvolutionManager {
                 .stage_statuses
                 .insert(stage.to_string(), status.to_string());
 
-            // 记录代理开始运行时间
+            // 每次进入 running 状态时重置计时起点，确保重试链路中只统计本次代理会话耗时
             if status == "running" {
                 entry
                     .stage_started_ats
-                    .entry(stage.to_string())
-                    .or_insert_with(|| chrono::Utc::now().to_rfc3339());
+                    .insert(stage.to_string(), chrono::Utc::now().to_rfc3339());
+                // 清除上次完成的耗时，避免快照显示旧轮次的 duration
+                entry.stage_duration_ms.remove(stage);
             }
 
             // 代理完成时计算耗时
