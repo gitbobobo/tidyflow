@@ -51,7 +51,7 @@ extension AppState {
     /// 生成全局唯一的工作空间键（包含项目名称）
     /// 用于所有需要区分不同项目同名工作空间的缓存
     func globalWorkspaceKey(projectName: String, workspaceName: String) -> String {
-        return "\(projectName):\(workspaceName)"
+        return WorkspaceKeySemantics.globalKey(project: projectName, workspace: workspaceName)
     }
     
     /// 获取当前选中的全局工作空间键

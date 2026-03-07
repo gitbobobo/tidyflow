@@ -69,7 +69,7 @@ extension AppState {
     /// 使文件缓存失效（收到文件变化通知时调用）
     /// 采用增量更新策略：不清除缓存，直接获取新数据覆盖旧数据，避免界面闪烁
     func invalidateFileCache(project: String, workspace: String) {
-        let prefix = "\(project):\(workspace):"
+        let prefix = WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: workspace)
         let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
 
         // 收集所有展开的目录路径
@@ -233,7 +233,7 @@ extension AppState {
 
     /// 生成文件列表缓存键（包含项目名称以区分不同项目的同名工作空间）
     private func fileListCacheKey(project: String, workspace: String, path: String) -> String {
-        return "\(project):\(workspace):\(path)"
+        return WorkspaceKeySemantics.fileCacheKey(project: project, workspace: workspace, path: path)
     }
 
     /// 处理文件列表结果

@@ -177,6 +177,8 @@ WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */ = {isa = PBXBuil
 		UX100003 /* ProjectConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100013 /* ProjectConfigView.swift */; };
 		UX100004 /* ProjectCommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100014 /* ProjectCommandEditSheet.swift */; };
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
+		MDL00031B /* WorkspaceKeySemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011B /* WorkspaceKeySemantics.swift */; };
+		WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WKS10011 /* WorkspaceKeySemanticsTests.swift */; };
 /* End PBXBuildFile section */
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
@@ -399,6 +401,8 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; 
 		UX100013 /* ProjectConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectConfigView.swift; sourceTree = "<group>"; };
 		UX100014 /* ProjectCommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandEditSheet.swift; sourceTree = "<group>"; };
 		UX100015 /* ProjectCommandsMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsMenuView.swift; sourceTree = "<group>"; };
+		MDL00011B /* WorkspaceKeySemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemantics.swift; sourceTree = "<group>"; };
+		WKS10011 /* WorkspaceKeySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemanticsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -599,6 +603,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; 
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
+				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -686,6 +691,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL000113 /* BackgroundTaskManager.swift */,
 				MDL000112 /* BackgroundTaskModels.swift */,
 				WTS0011 /* WorkspaceTaskSemantics.swift */,
+				MDL00011B /* WorkspaceKeySemantics.swift */,
 				CSEM0011 /* ConnectionSemantics.swift */,
 				WTS0012 /* WorkspaceTaskStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
@@ -926,6 +932,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */,
 				MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */,
 				MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */,
+				MDL00031B /* WorkspaceKeySemantics.swift in Sources */,
 				MDL00030C /* AppState+FileOps.swift in Sources */,
 				MDL00030D /* AppState+Projects.swift in Sources */,
 				MDL00030E /* AppState+Tabs.swift in Sources */,
@@ -1052,6 +1059,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
+				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

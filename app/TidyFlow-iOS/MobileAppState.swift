@@ -1930,12 +1930,7 @@ final class MobileAppState: ObservableObject {
     }
 
     func normalizeEvolutionWorkspaceName(_ workspace: String) -> String {
-        let trimmed = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.caseInsensitiveCompare("(default)") == .orderedSame ||
-            trimmed.caseInsensitiveCompare("default") == .orderedSame {
-            return "default"
-        }
-        return trimmed
+        return WorkspaceKeySemantics.normalizeWorkspaceName(workspace)
     }
 
     private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
@@ -5010,15 +5005,15 @@ final class MobileAppState: ObservableObject {
     }
 
     private func explorerCacheKey(project: String, workspace: String, path: String) -> String {
-        "\(project):\(workspace):\(path)"
+        WorkspaceKeySemantics.fileCacheKey(project: project, workspace: workspace, path: path)
     }
 
     private func explorerCachePrefix(project: String, workspace: String) -> String {
-        "\(project):\(workspace):"
+        WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: workspace)
     }
 
     func globalWorkspaceKey(project: String, workspace: String) -> String {
-        "\(project):\(workspace)"
+        WorkspaceKeySemantics.globalKey(project: project, workspace: workspace)
     }
 
     private func applyEvolutionProfilesFromClientSettings(

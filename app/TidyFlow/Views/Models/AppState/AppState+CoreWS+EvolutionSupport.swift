@@ -501,12 +501,7 @@ extension AppState {
     }
 
     func normalizeEvolutionWorkspaceName(_ workspace: String) -> String {
-        let trimmed = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.caseInsensitiveCompare("(default)") == .orderedSame ||
-            trimmed.caseInsensitiveCompare("default") == .orderedSame {
-            return "default"
-        }
-        return trimmed
+        return WorkspaceKeySemantics.normalizeWorkspaceName(workspace)
     }
 
     func applyEvolutionProfilesFromClientSettings(
