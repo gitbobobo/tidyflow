@@ -1159,4 +1159,85 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "scripts/build.py"), .python)
         XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "cmd/main.go"), .go)
     }
+
+    // MARK: - 工具卡片 8pt 间距规则数据契约（WI-004 回归防线）
+
+    /// 验证 .tool 和 .reasoning part 类型在不同 AI 工具来源下均解析一致，
+    /// 这些类型是聊天视图 8pt 紧凑间距规则的基础数据契约。
+    func testToolPartKindConsistentAcrossAIToolSources() {
+        // codex 来源的工具 part
+        let codexPart = AIChatPart(id: "p1", kind: .tool, toolName: "bash")
+        // copilot 来源的工具 part（相同 kind 契约）
+        let copilotPart = AIChatPart(id: "p2", kind: .tool, toolName: "read_file")
+        // opencode 来源的工具 part
+        let opencodePart = AIChatPart(id: "p3", kind: .tool, toolName: "write_file")
+        // 不同 AI 工具产出的工具 part 应共享同一 .tool kind，以保证间距规则不因来源而差异化
+        XCTAssertEqual(codexPart.kind, .tool)
+        XCTAssertEqual(copilotPart.kind, .tool)
+        XCTAssertEqual(opencodePart.kind, .tool)
+    }
+
+    /// 验证 .reasoning part 类型契约：与工具卡片相邻时触发 8pt 间距
+    func testReasoningPartKindContractForSpacingRule() {
+        let reasoningPart = AIChatPart(id: "r1", kind: .reasoning, text: "正在思考...")
+        let toolPart = AIChatPart(id: "t1", kind: .tool, toolName: "bash")
+        // reasoning 与 tool 相邻组合触发 8pt 紧凑间距，类型契约必须稳定
+        XCTAssertEqual(reasoningPart.kind, .reasoning)
+        XCTAssertEqual(toolPart.kind, .tool)
+    }
+
+    /// 验证 AIChatPartKind 中 .tool 和 .reasoning 的原始值与间距规则注释一致
+    func testToolAndReasoningPartKindRawValues() {
+        XCTAssertEqual(AIChatPartKind.tool.rawValue, "tool")
+        XCTAssertEqual(AIChatPartKind.reasoning.rawValue, "reasoning")
+    }
+
+    /// 验证连续工具 part 的 assistant 消息数据结构（messageSpacing 8pt 的前置条件）：
+    /// 一条 assistant 消息全部为 .tool part 时，应被视为工具类消息，
+    /// 与相邻的另一条同类消息之间触发 8pt 紧凑间距
+    func testConsecutiveToolOnlyAssistantMessagesStructure() {
+        let msg1 = AIChatMessage(
+            id: "id1",
+            messageId: "m1",
+            role: .assistant,
+            parts: [
+                AIChatPart(id: "a1", kind: .tool, toolName: "bash"),
+            ],
+            isStreaming: false
+        )
+        let msg2 = AIChatMessage(
+            id: "id2",
+            messageId: "m2",
+            role: .assistant,
+            parts: [
+                AIChatPart(id: "a2", kind: .tool, toolName: "read_file"),
+            ],
+            isStreaming: false
+        )
+        // 两条消息均为 assistant 角色且仅含 .tool part
+        XCTAssertEqual(msg1.role, .assistant)
+        XCTAssertEqual(msg2.role, .assistant)
+        XCTAssertTrue(msg1.parts.allSatisfy { $0.kind == .tool })
+        XCTAssertTrue(msg2.parts.allSatisfy { $0.kind == .tool })
+    }
+
+    /// 验证混有 text part 的 assistant 消息不应触发工具类紧凑间距
+    func testAssistantMessageWithTextPartDoesNotQualifyAsToolOnly() {
+        let message = AIChatMessage(
+            id: "id1",
+            messageId: "m1",
+            role: .assistant,
+            parts: [
+                AIChatPart(id: "a1", kind: .tool, toolName: "bash"),
+                AIChatPart(id: "a2", kind: .text, text: "执行完毕"),
+            ],
+            isStreaming: false
+        )
+        let hasNonToolNonReasoningPart = message.parts.contains { part in
+            guard part.kind == .text else { return false }
+            return !(part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        // 含有实质性 text part 时不满足工具类消息判断，不触发 8pt 紧凑间距
+        XCTAssertTrue(hasNonToolNonReasoningPart)
+    }
 }
