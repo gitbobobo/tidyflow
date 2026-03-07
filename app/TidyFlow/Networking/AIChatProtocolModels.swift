@@ -1376,34 +1376,6 @@ struct EvolutionSchedulerInfoV2: Equatable {
     }
 }
 
-struct EvolutionHandoffInfoV2: Equatable {
-    let completed: [String]
-    let risks: [String]
-    let next: [String]
-
-    var isEmpty: Bool {
-        completed.isEmpty && risks.isEmpty && next.isEmpty
-    }
-
-    static func from(json: [String: Any]) -> EvolutionHandoffInfoV2? {
-        func parseSection(_ key: String) -> [String] {
-            (json[key] as? [Any] ?? [])
-                .compactMap { value -> String? in
-                    guard let text = value as? String else { return nil }
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmed.isEmpty ? nil : trimmed
-                }
-        }
-
-        let handoff = EvolutionHandoffInfoV2(
-            completed: parseSection("completed"),
-            risks: parseSection("risks"),
-            next: parseSection("next")
-        )
-        return handoff.isEmpty ? nil : handoff
-    }
-}
-
 struct EvolutionWorkspaceItemV2: Equatable {
     let project: String
     let workspace: String
@@ -1417,7 +1389,6 @@ struct EvolutionWorkspaceItemV2: Equatable {
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
     let executions: [EvolutionSessionExecutionEntryV2]
-    let handoff: EvolutionHandoffInfoV2?
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let rateLimitErrorMessage: String?
@@ -1442,7 +1413,6 @@ struct EvolutionWorkspaceItemV2: Equatable {
         let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
         let executions = (json["executions"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
-        let handoff = EvolutionHandoffInfoV2.from(json: json["handoff"] as? [String: Any] ?? [:])
         return EvolutionWorkspaceItemV2(
             project: project,
             workspace: workspace,
@@ -1456,7 +1426,6 @@ struct EvolutionWorkspaceItemV2: Equatable {
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,
             executions: executions,
-            handoff: handoff,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
             rateLimitErrorMessage: json["rate_limit_error_message"] as? String
@@ -1589,8 +1558,6 @@ struct EvolutionCycleStageHistoryEntryV2 {
     let aiTool: String
     let status: String
     let durationMs: UInt64?
-    /// 该阶段自身的交接文档，用于历史查看时的代理级筛选
-    let handoff: EvolutionHandoffInfoV2?
 
     static func from(json: [String: Any]) -> EvolutionCycleStageHistoryEntryV2? {
         guard let stage = parseOptionalString(json["stage"]) else { return nil }
@@ -1603,14 +1570,12 @@ struct EvolutionCycleStageHistoryEntryV2 {
             if let v = json["duration_ms"] as? Double { return UInt64(v) }
             return nil
         }()
-        let handoff = EvolutionHandoffInfoV2.from(json: json["handoff"] as? [String: Any] ?? [:])
         return EvolutionCycleStageHistoryEntryV2(
             stage: stage,
             agent: agent,
             aiTool: aiTool,
             status: status,
-            durationMs: durationMs,
-            handoff: handoff
+            durationMs: durationMs
         )
     }
 }
@@ -1625,7 +1590,6 @@ struct EvolutionCycleHistoryItemV2 {
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let executions: [EvolutionSessionExecutionEntryV2]
-    let handoff: EvolutionHandoffInfoV2?
     let stages: [EvolutionCycleStageHistoryEntryV2]
 
     static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
@@ -1639,7 +1603,6 @@ struct EvolutionCycleHistoryItemV2 {
         let terminalErrorMessage = parseOptionalString(json["terminal_error_message"])
         let executions = (json["executions"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
-        let handoff = EvolutionHandoffInfoV2.from(json: json["handoff"] as? [String: Any] ?? [:])
         let stages = (json["stages"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionCycleStageHistoryEntryV2.from(json: $0) }
         return EvolutionCycleHistoryItemV2(
@@ -1652,7 +1615,6 @@ struct EvolutionCycleHistoryItemV2 {
             terminalReasonCode: terminalReasonCode,
             terminalErrorMessage: terminalErrorMessage,
             executions: executions,
-            handoff: handoff,
             stages: stages
         )
     }

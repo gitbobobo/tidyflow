@@ -14,10 +14,8 @@ struct EvolutionPipelineView: View {
     @State private var loopRoundLimit: Int = 1
     @State private var lastLoopRoundWorkspaceContext: String = ""
     @State private var isBlockerSheetPresented: Bool = false
-    @State private var isHandoffSheetPresented: Bool = false
-    @State private var selectedHandoffCycleID: String?
-    /// 手动选定的代理级交接文档阶段名；nil 表示查看循环级汇总
-    @State private var selectedHandoffStageName: String? = nil
+    @State private var isPlanDocumentSheetPresented: Bool = false
+    @State private var selectedPlanDocumentCycleID: String?
     @State private var selectedCycleDetail: PipelineCycleDetailPayload?
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
 
@@ -181,8 +179,8 @@ struct EvolutionPipelineView: View {
         .sheet(isPresented: $isBlockerSheetPresented) {
             blockerSheet
         }
-        .sheet(isPresented: $isHandoffSheetPresented) {
-            handoffSheet
+        .sheet(isPresented: $isPlanDocumentSheetPresented) {
+            planDocumentSheet
         }
     }
 
@@ -332,13 +330,13 @@ struct EvolutionPipelineView: View {
                     Divider().frame(height: 14)
 
                     Button {
-                        loadHandoffAndPresent()
+                        loadPlanDocumentAndPresent()
                     } label: {
                         Image(systemName: "doc.text")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("evolution.page.action.previewHandoff".localized)
+                    .help("evolution.page.action.previewPlanDocument".localized)
                     .disabled(currentItem == nil)
                 }
             }
@@ -663,7 +661,7 @@ struct EvolutionPipelineView: View {
                     },
                     onDocumentTap: {
                         if let cycleID = currentItem?.cycleID {
-                            openHandoffSheet(for: cycleID)
+                            openPlanDocumentSheet(for: cycleID)
                         }
                     }
                 ) {
@@ -682,7 +680,7 @@ struct EvolutionPipelineView: View {
                         PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
                     } : cycle.stageEntries,
                     isHistory: true,
-                    onDocumentTap: { openHandoffSheet(for: cycle.id) }
+                    onDocumentTap: { openPlanDocumentSheet(for: cycle.id) }
                 ) {
                     openHistoryCycleDetailSheet(cycle)
                 }
@@ -789,7 +787,7 @@ struct EvolutionPipelineView: View {
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .buttonStyle(.borderless)
-                    .help("evolution.page.action.previewHandoff".localized)
+                    .help("evolution.page.action.previewPlanDocument".localized)
                 }
 
                 Image(systemName: "chevron.right")
@@ -927,22 +925,21 @@ struct EvolutionPipelineView: View {
         selectedCycleDetail = makeHistoryCycleDetailPayload(cycle)
     }
 
-    private func openHandoffSheet(for cycleID: String) {
+    private func openPlanDocumentSheet(for cycleID: String) {
         guard let workspace else { return }
-        selectedHandoffCycleID = cycleID
-        selectedHandoffStageName = nil
-        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
-        isHandoffSheetPresented = true
+        selectedPlanDocumentCycleID = cycleID
+        appState.requestEvolutionPlanDocument(project: project, workspace: workspace, cycleID: cycleID)
+        isPlanDocumentSheetPresented = true
     }
 
-    private func refreshSelectedHandoff() {
-        if let cycleID = selectedHandoffCycleID {
+    private func refreshSelectedPlanDocument() {
+        if let cycleID = selectedPlanDocumentCycleID {
             guard let workspace else { return }
-            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+            appState.requestEvolutionPlanDocument(project: project, workspace: workspace, cycleID: cycleID)
             return
         }
         if let item = currentItem {
-            appState.requestEvolutionHandoff(project: project, workspace: item.workspace, cycleID: item.cycleID)
+            appState.requestEvolutionPlanDocument(project: project, workspace: item.workspace, cycleID: item.cycleID)
         }
     }
 
@@ -1933,196 +1930,67 @@ struct EvolutionPipelineView: View {
         return normalized == "running" || isCompletedStatus(normalized)
     }
 
-    // MARK: - Handoff
+    // MARK: - 计划文档
 
-    private func loadHandoffAndPresent() {
+    private func loadPlanDocumentAndPresent() {
         guard let item = currentItem else { return }
-        openHandoffSheet(for: item.cycleID)
+        openPlanDocumentSheet(for: item.cycleID)
     }
 
-    @ViewBuilder
-    private func handoffSection(
-        titleKey: String,
-        icon: String,
-        color: Color,
-        items: [String]
-    ) -> some View {
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(titleKey.localized, systemImage: icon)
-                    .font(.headline)
-                    .foregroundColor(color)
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Circle()
-                                .fill(color.opacity(0.8))
-                                .frame(width: 6, height: 6)
-                                .padding(.top, 6)
-                            Text(item)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color.opacity(0.08))
-            )
-        }
-    }
-
-    /// 当前选中循环中有完整交接文档的阶段列表，用于代理级筛选
-    private var handoffStageEntries: [EvolutionCycleStageHistoryEntryV2] {
-        guard let cycleID = selectedHandoffCycleID, let workspace else { return [] }
-        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: workspace)
-        return appState.evolutionCycleHistories[key]?
-            .first(where: { $0.cycleID == cycleID })?
-            .stages.filter { $0.handoff != nil } ?? []
-    }
-
-    /// 根据当前选中的阶段（或 nil 表示循环级汇总）返回要展示的 handoff
-    private var resolvedHandoff: EvolutionHandoffInfoV2? {
-        if let stageName = selectedHandoffStageName {
-            return handoffStageEntries.first(where: { $0.stage == stageName })?.handoff
-        }
-        return appState.evolutionHandoff
-    }
-
-    private var handoffSheet: some View {
+    private var planDocumentSheet: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // 代理选择器：当有多个阶段级交接文档时显示
-                let stageEntries = handoffStageEntries
-                if stageEntries.count > 0 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            // 循环汇总选项
-                            Button {
-                                selectedHandoffStageName = nil
-                            } label: {
-                                Text("evolution.page.handoff.cycleSummary".localized)
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(selectedHandoffStageName == nil
-                                                ? Color.accentColor.opacity(0.18)
-                                                : Color.secondary.opacity(0.1))
-                                    )
-                                    .foregroundColor(selectedHandoffStageName == nil ? .accentColor : .secondary)
-                            }
-                            .buttonStyle(.plain)
-
-                            ForEach(stageEntries, id: \.stage) { entry in
-                                Button {
-                                    selectedHandoffStageName = entry.stage
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Circle()
-                                            .fill(stageColor(entry.stage))
-                                            .frame(width: 6, height: 6)
-                                        Text(entry.agent.isEmpty ? entry.stage : entry.agent)
-                                            .font(.caption)
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(selectedHandoffStageName == entry.stage
-                                                ? stageColor(entry.stage).opacity(0.18)
-                                                : Color.secondary.opacity(0.1))
-                                    )
-                                    .foregroundColor(selectedHandoffStageName == entry.stage
-                                        ? stageColor(entry.stage)
-                                        : .secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
+            Group {
+                if appState.evolutionPlanDocumentLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("evolution.page.planDocument.loading".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    Divider()
-                }
-
-                Group {
-                    if appState.evolutionHandoffLoading {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text("evolution.page.handoff.loading".localized)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let error = appState.evolutionHandoffError, selectedHandoffStageName == nil {
-                        VStack(spacing: 12) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: 32))
-                                .foregroundColor(.secondary)
-                            Text(error)
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let handoff = resolvedHandoff {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 14) {
-                                handoffSection(
-                                    titleKey: "evolution.page.handoff.completed",
-                                    icon: "checkmark.circle.fill",
-                                    color: .green,
-                                    items: handoff.completed
-                                )
-                                handoffSection(
-                                    titleKey: "evolution.page.handoff.risks",
-                                    icon: "exclamationmark.triangle.fill",
-                                    color: .orange,
-                                    items: handoff.risks
-                                )
-                                handoffSection(
-                                    titleKey: "evolution.page.handoff.next",
-                                    icon: "arrow.right.circle.fill",
-                                    color: .blue,
-                                    items: handoff.next
-                                )
-                            }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = appState.evolutionPlanDocumentError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text(error)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let content = appState.evolutionPlanDocumentContent {
+                    ScrollView {
+                        MarkdownTextView(text: content)
                             .padding(16)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else {
-                        VStack(spacing: 12) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 32))
-                                .foregroundColor(.secondary)
-                            Text("evolution.page.handoff.empty".localized)
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text("evolution.page.planDocument.empty".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("evolution.page.handoff.title".localized)
+            .navigationTitle("evolution.page.planDocument.title".localized)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        refreshSelectedHandoff()
+                        refreshSelectedPlanDocument()
                     } label: {
-                        Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
+                        Label("evolution.page.planDocument.refresh".localized, systemImage: "arrow.clockwise")
                     }
-                    .disabled(selectedHandoffCycleID == nil && currentItem == nil)
+                    .disabled(selectedPlanDocumentCycleID == nil && currentItem == nil)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("common.close".localized) {
-                        selectedHandoffCycleID = nil
-                        selectedHandoffStageName = nil
-                        isHandoffSheetPresented = false
+                        selectedPlanDocumentCycleID = nil
+                        isPlanDocumentSheetPresented = false
                     }
                 }
             }

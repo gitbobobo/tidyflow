@@ -1297,8 +1297,8 @@ struct MobileEvolutionView: View {
     @State private var pendingProfileSaveDate: Date?
     @State private var hasPendingUserProfileEdit: Bool = false
     @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
-    @State private var isHandoffSheetPresented: Bool = false
-    @State private var selectedHandoffCycleID: String?
+    @State private var isPlanDocumentSheetPresented: Bool = false
+    @State private var selectedPlanDocumentCycleID: String?
     @State private var selectedCycleDetail: MobileCycleDetailPayload?
 
     private struct EvolutionBlockerDraft {
@@ -1500,10 +1500,10 @@ struct MobileEvolutionView: View {
 
                 Button {
                     if let item {
-                        openHandoffSheet(cycleID: item.cycleID)
+                        openPlanDocumentSheet(cycleID: item.cycleID)
                     }
                 } label: {
-                    Label("evolution.page.action.previewHandoff".localized, systemImage: "doc.text")
+                    Label("evolution.page.action.previewPlanDocument".localized, systemImage: "doc.text")
                 }
                 .disabled(item == nil)
             }
@@ -1738,8 +1738,8 @@ struct MobileEvolutionView: View {
         }
         .navigationTitle("evolution.page.title".localized)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $isHandoffSheetPresented) {
-            mobileHandoffSheet
+        .sheet(isPresented: $isPlanDocumentSheetPresented) {
+            mobilePlanDocumentSheet
         }
         .sheet(item: $selectedCycleDetail) { detail in
             mobileCycleDetailSheet(detail)
@@ -1774,18 +1774,18 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private var mobileHandoffSheet: some View {
+    private var mobilePlanDocumentSheet: some View {
         NavigationStack {
             Group {
-                if appState.evolutionHandoffLoading {
+                if appState.evolutionPlanDocumentLoading {
                     VStack(spacing: 12) {
                         ProgressView()
-                        Text("evolution.page.handoff.loading".localized)
+                        Text("evolution.page.planDocument.loading".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = appState.evolutionHandoffError {
+                } else if let error = appState.evolutionPlanDocumentError {
                     VStack(spacing: 12) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: 32))
@@ -1796,7 +1796,7 @@ struct MobileEvolutionView: View {
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let content = appState.evolutionHandoffContent {
+                } else if let content = appState.evolutionPlanDocumentContent {
                     ScrollView {
                         Text(LocalizedStringKey(content))
                             .padding(16)
@@ -1808,47 +1808,47 @@ struct MobileEvolutionView: View {
                         Image(systemName: "doc.text")
                             .font(.system(size: 32))
                             .foregroundColor(.secondary)
-                        Text("evolution.page.handoff.empty".localized)
+                        Text("evolution.page.planDocument.empty".localized)
                             .font(.callout)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("evolution.page.handoff.title".localized)
+            .navigationTitle("evolution.page.planDocument.title".localized)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        refreshSelectedHandoff()
+                        refreshSelectedPlanDocument()
                     } label: {
-                        Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
+                        Label("evolution.page.planDocument.refresh".localized, systemImage: "arrow.clockwise")
                     }
-                    .disabled(selectedHandoffCycleID == nil && item == nil)
+                    .disabled(selectedPlanDocumentCycleID == nil && item == nil)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("common.close".localized) {
-                        selectedHandoffCycleID = nil
-                        isHandoffSheetPresented = false
+                        selectedPlanDocumentCycleID = nil
+                        isPlanDocumentSheetPresented = false
                     }
                 }
             }
         }
     }
 
-    private func openHandoffSheet(cycleID: String) {
-        selectedHandoffCycleID = cycleID
-        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
-        isHandoffSheetPresented = true
+    private func openPlanDocumentSheet(cycleID: String) {
+        selectedPlanDocumentCycleID = cycleID
+        appState.requestEvolutionPlanDocument(project: project, workspace: workspace, cycleID: cycleID)
+        isPlanDocumentSheetPresented = true
     }
 
-    private func refreshSelectedHandoff() {
-        if let cycleID = selectedHandoffCycleID {
-            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+    private func refreshSelectedPlanDocument() {
+        if let cycleID = selectedPlanDocumentCycleID {
+            appState.requestEvolutionPlanDocument(project: project, workspace: workspace, cycleID: cycleID)
             return
         }
         if let item {
-            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
+            appState.requestEvolutionPlanDocument(project: project, workspace: workspace, cycleID: item.cycleID)
         }
     }
 
@@ -2526,7 +2526,7 @@ struct MobileEvolutionView: View {
                             }
                             Spacer()
                             Button {
-                                openHandoffSheet(cycleID: cycle.cycleID)
+                                openPlanDocumentSheet(cycleID: cycle.cycleID)
                             } label: {
                                 Image(systemName: "doc.text")
                                     .font(.caption.weight(.semibold))

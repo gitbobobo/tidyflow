@@ -273,11 +273,11 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayError: String?
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
-    @Published var evolutionHandoffContent: String?
-    @Published var evolutionHandoffLoading: Bool = false
-    @Published var evolutionHandoffError: String?
+    @Published var evolutionPlanDocumentContent: String?
+    @Published var evolutionPlanDocumentLoading: Bool = false
+    @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
-    private var pendingHandoffReadPath: String?
+    private var pendingPlanDocumentReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
@@ -822,16 +822,16 @@ final class MobileAppState: ObservableObject {
         wsClient.requestFileRead(project: project, workspace: workspace, path: path)
     }
 
-    func requestEvolutionHandoff(project: String, workspace: String, cycleID: String) {
+    func requestEvolutionPlanDocument(project: String, workspace: String, cycleID: String) {
         guard isConnected else {
-            evolutionHandoffError = "连接已断开"
+            evolutionPlanDocumentError = "连接已断开"
             return
         }
-        let path = ".tidyflow/evolution/\(cycleID)/handoff.md"
-        evolutionHandoffContent = nil
-        evolutionHandoffLoading = true
-        evolutionHandoffError = nil
-        pendingHandoffReadPath = path
+        let path = ".tidyflow/evolution/\(cycleID)/plan.md"
+        evolutionPlanDocumentContent = nil
+        evolutionPlanDocumentLoading = true
+        evolutionPlanDocumentError = nil
+        pendingPlanDocumentReadPath = path
         wsClient.requestFileRead(project: project, workspace: workspace, path: path)
     }
 
@@ -3865,21 +3865,21 @@ final class MobileAppState: ObservableObject {
         wsClient.onFileReadResult = { [weak self] result in
             guard let self else { return }
 
-            // Handoff 文档预览分流
-            if let pendingPath = self.pendingHandoffReadPath, pendingPath == result.path {
-                self.pendingHandoffReadPath = nil
-                self.evolutionHandoffLoading = false
+            // 计划文档预览分流
+            if let pendingPath = self.pendingPlanDocumentReadPath, pendingPath == result.path {
+                self.pendingPlanDocumentReadPath = nil
+                self.evolutionPlanDocumentLoading = false
                 let bytes = Data(result.content)
                 if let text = String(data: bytes, encoding: .utf8) {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        self.evolutionHandoffError = "evolution.page.handoff.empty".localized
-                        self.evolutionHandoffContent = nil
+                        self.evolutionPlanDocumentError = "evolution.page.planDocument.empty".localized
+                        self.evolutionPlanDocumentContent = nil
                     } else {
-                        self.evolutionHandoffContent = text
+                        self.evolutionPlanDocumentContent = text
                     }
                 } else {
-                    self.evolutionHandoffError = "evolution.page.handoff.empty".localized
-                    self.evolutionHandoffContent = nil
+                    self.evolutionPlanDocumentError = "evolution.page.planDocument.empty".localized
+                    self.evolutionPlanDocumentContent = nil
                 }
                 return
             }
@@ -4254,10 +4254,10 @@ final class MobileAppState: ObservableObject {
                 self.explorerPreviewError = message
                 self.explorerPreviewContent = ""
             }
-            if self.pendingHandoffReadPath != nil {
-                self.pendingHandoffReadPath = nil
-                self.evolutionHandoffLoading = false
-                self.evolutionHandoffError = message
+            if self.pendingPlanDocumentReadPath != nil {
+                self.pendingPlanDocumentReadPath = nil
+                self.evolutionPlanDocumentLoading = false
+                self.evolutionPlanDocumentError = message
             }
             if !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty {
                 let key = self.aiContextKey(project: self.aiActiveProject, workspace: self.aiActiveWorkspace)

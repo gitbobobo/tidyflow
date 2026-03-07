@@ -728,7 +728,6 @@ extension AppState {
                 return
             }
             let existing = self.evolutionWorkspaceItems[existingIndex]
-            // 构建更新后的条目，保留只有快照才携带的 handoff 字段
             let updated = EvolutionWorkspaceItemV2(
                 project: ev.project,
                 workspace: workspace,
@@ -742,7 +741,6 @@ extension AppState {
                 verifyIterationLimit: ev.verifyIterationLimit,
                 agents: ev.agents,
                 executions: ev.executions,
-                handoff: existing.handoff,
                 terminalReasonCode: ev.terminalReasonCode,
                 terminalErrorMessage: ev.terminalErrorMessage,
                 rateLimitErrorMessage: ev.rateLimitErrorMessage
@@ -1150,6 +1148,12 @@ extension AppState {
                 cache.error = errorMsg
                 fileIndexCache[globalKey] = cache
             }
+        }
+
+        if pendingEvolutionPlanDocumentReadPath != nil {
+            pendingEvolutionPlanDocumentReadPath = nil
+            evolutionPlanDocumentLoading = false
+            evolutionPlanDocumentError = errorMsg
         }
 
         // 历史分页请求失败时，避免“加载更早消息”按钮长期停留在 loading。

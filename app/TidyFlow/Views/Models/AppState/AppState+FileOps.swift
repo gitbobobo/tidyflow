@@ -169,6 +169,20 @@ extension AppState {
     }
 
     func handleFileReadResult(_ result: FileReadResult) {
+        if let pendingPath = pendingEvolutionPlanDocumentReadPath, pendingPath == result.path {
+            pendingEvolutionPlanDocumentReadPath = nil
+            evolutionPlanDocumentLoading = false
+            let content = String(decoding: result.content, as: UTF8.self)
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                evolutionPlanDocumentError = "evolution.page.planDocument.empty".localized
+                evolutionPlanDocumentContent = nil
+            } else {
+                evolutionPlanDocumentError = nil
+                evolutionPlanDocumentContent = content
+            }
+            return
+        }
+
         let key = editorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
 
         guard pendingFileReadRequests.contains(key) else {

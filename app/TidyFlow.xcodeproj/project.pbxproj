@@ -181,7 +181,7 @@
 			TST1000F /* MessageListVirtualizationPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1001F /* MessageListVirtualizationPerformanceTests.swift */; };
 			TST10021 /* EvolutionExecutionTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10025 /* EvolutionExecutionTimingTests.swift */; };
 			TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10026 /* EvolutionReplaySessionIsolationTests.swift */; };
-			TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10027 /* EvolutionHistoryAgentHandoffTests.swift */; };
+			TST10023 /* EvolutionHistoryParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10027 /* EvolutionHistoryParsingTests.swift */; };
 			TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */; };
 			TST10031 /* CodexChatConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10029 /* CodexChatConfigurationTests.swift */; };
 			TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002A /* CodexSlashCommandIntegrationTests.swift */; };
@@ -243,7 +243,7 @@
 			TST1001F /* MessageListVirtualizationPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListVirtualizationPerformanceTests.swift; sourceTree = "<group>"; };
 			TST10025 /* EvolutionExecutionTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionExecutionTimingTests.swift; sourceTree = "<group>"; };
 			TST10026 /* EvolutionReplaySessionIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionReplaySessionIsolationTests.swift; sourceTree = "<group>"; };
-			TST10027 /* EvolutionHistoryAgentHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionHistoryAgentHandoffTests.swift; sourceTree = "<group>"; };
+			TST10027 /* EvolutionHistoryParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionHistoryParsingTests.swift; sourceTree = "<group>"; };
 			TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionLoopRoundAdjustmentTests.swift; sourceTree = "<group>"; };
 			TST10029 /* CodexChatConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexChatConfigurationTests.swift; sourceTree = "<group>"; };
 			TST1002A /* CodexSlashCommandIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSlashCommandIntegrationTests.swift; sourceTree = "<group>"; };
@@ -554,7 +554,7 @@
 				TST1001F /* MessageListVirtualizationPerformanceTests.swift */,
 				TST10025 /* EvolutionExecutionTimingTests.swift */,
 				TST10026 /* EvolutionReplaySessionIsolationTests.swift */,
-				TST10027 /* EvolutionHistoryAgentHandoffTests.swift */,
+				TST10027 /* EvolutionHistoryParsingTests.swift */,
 					TST10028 /* EvolutionLoopRoundAdjustmentTests.swift */,
 					TST10029 /* CodexChatConfigurationTests.swift */,
 					TST1002A /* CodexSlashCommandIntegrationTests.swift */,
@@ -986,7 +986,7 @@
 				TST1000F /* MessageListVirtualizationPerformanceTests.swift in Sources */,
 				TST10021 /* EvolutionExecutionTimingTests.swift in Sources */,
 				TST10022 /* EvolutionReplaySessionIsolationTests.swift in Sources */,
-				TST10023 /* EvolutionHistoryAgentHandoffTests.swift in Sources */,
+				TST10023 /* EvolutionHistoryParsingTests.swift in Sources */,
 				TST10024 /* EvolutionLoopRoundAdjustmentTests.swift in Sources */,
 				TST10031 /* CodexChatConfigurationTests.swift in Sources */,
 				TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */,

@@ -18,24 +18,20 @@ extension AppState {
         wsClient.requestEvoListCycleHistory(project: project, workspace: normalizedWorkspace)
     }
 
-    // MARK: - Handoff 预览
+    // MARK: - 计划文档预览
 
-    func requestEvolutionHandoff(project: String, workspace: String, cycleID: String) {
+    func requestEvolutionPlanDocument(project: String, workspace: String, cycleID: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        evolutionHandoff = nil
-        evolutionHandoffLoading = false
-        evolutionHandoffError = nil
-        if let item = evolutionItem(project: project, workspace: normalizedWorkspace),
-           item.cycleID == cycleID {
-            evolutionHandoff = item.handoff
+        guard connectionState == .connected else {
+            evolutionPlanDocumentError = "连接已断开"
             return
         }
-        if let handoff = evolutionCycleHistories[key]?
-            .first(where: { $0.cycleID == cycleID })?
-            .handoff {
-            evolutionHandoff = handoff
-        }
+        let path = ".tidyflow/evolution/\(cycleID)/plan.md"
+        evolutionPlanDocumentContent = nil
+        evolutionPlanDocumentLoading = true
+        evolutionPlanDocumentError = nil
+        pendingEvolutionPlanDocumentReadPath = path
+        wsClient.requestFileRead(project: project, workspace: normalizedWorkspace, path: path)
     }
 
     // MARK: - Evidence

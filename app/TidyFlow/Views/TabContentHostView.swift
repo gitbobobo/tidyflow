@@ -1795,7 +1795,7 @@ struct EvolutionTabView: View {
     @State private var isSessionViewerPresented: Bool = false
     @State private var viewerStage: String?
     @State private var isBlockerSheetPresented: Bool = false
-    @State private var isHandoffSheetPresented: Bool = false
+    @State private var isPlanDocumentSheetPresented: Bool = false
     @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
 
     private struct EvolutionAgentDisplayItem {
@@ -1889,8 +1889,8 @@ struct EvolutionTabView: View {
         .sheet(isPresented: $isBlockerSheetPresented) {
             blockerSheet
         }
-        .sheet(isPresented: $isHandoffSheetPresented) {
-            handoffSheet
+        .sheet(isPresented: $isPlanDocumentSheetPresented) {
+            planDocumentSheet
         }
         .onAppear {
             refreshData()
@@ -2257,9 +2257,9 @@ struct EvolutionTabView: View {
                             .disabled(!controlCapability.canResume)
                             Divider().frame(height: 16)
                             Button {
-                                loadHandoffAndPresent()
+                                loadPlanDocumentAndPresent()
                             } label: {
-                                Label("evolution.page.action.previewHandoff".localized, systemImage: "doc.text")
+                                Label("evolution.page.action.previewPlanDocument".localized, systemImage: "doc.text")
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -2323,61 +2323,26 @@ struct EvolutionTabView: View {
         }
     }
 
-    // MARK: - Handoff 文档预览
+    // MARK: - 计划文档预览
 
-    private func loadHandoffAndPresent() {
+    private func loadPlanDocumentAndPresent() {
         guard let item = currentItem else { return }
-        appState.requestEvolutionHandoff(project: project, workspace: item.workspace, cycleID: item.cycleID)
-        isHandoffSheetPresented = true
+        appState.requestEvolutionPlanDocument(project: project, workspace: item.workspace, cycleID: item.cycleID)
+        isPlanDocumentSheetPresented = true
     }
 
-    @ViewBuilder
-    private func handoffSection(
-        titleKey: String,
-        icon: String,
-        color: Color,
-        items: [String]
-    ) -> some View {
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(titleKey.localized, systemImage: icon)
-                    .font(.headline)
-                    .foregroundColor(color)
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Circle()
-                                .fill(color.opacity(0.8))
-                                .frame(width: 6, height: 6)
-                                .padding(.top, 6)
-                            Text(item)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color.opacity(0.08))
-            )
-        }
-    }
-
-    private var handoffSheet: some View {
+    private var planDocumentSheet: some View {
         NavigationStack {
             Group {
-                if appState.evolutionHandoffLoading {
+                if appState.evolutionPlanDocumentLoading {
                     VStack(spacing: 12) {
                         ProgressView()
-                        Text("evolution.page.handoff.loading".localized)
+                        Text("evolution.page.planDocument.loading".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = appState.evolutionHandoffError {
+                } else if let error = appState.evolutionPlanDocumentError {
                     VStack(spacing: 12) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: 32))
@@ -2388,28 +2353,9 @@ struct EvolutionTabView: View {
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let handoff = appState.evolutionHandoff {
+                } else if let content = appState.evolutionPlanDocumentContent {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.completed",
-                                icon: "checkmark.circle.fill",
-                                color: .green,
-                                items: handoff.completed
-                            )
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.risks",
-                                icon: "exclamationmark.triangle.fill",
-                                color: .orange,
-                                items: handoff.risks
-                            )
-                            handoffSection(
-                                titleKey: "evolution.page.handoff.next",
-                                icon: "arrow.right.circle.fill",
-                                color: .blue,
-                                items: handoff.next
-                            )
-                        }
+                        MarkdownTextView(text: content)
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -2418,26 +2364,26 @@ struct EvolutionTabView: View {
                         Image(systemName: "doc.text")
                             .font(.system(size: 32))
                             .foregroundColor(.secondary)
-                        Text("evolution.page.handoff.empty".localized)
+                        Text("evolution.page.planDocument.empty".localized)
                             .font(.callout)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("evolution.page.handoff.title".localized)
+            .navigationTitle("evolution.page.planDocument.title".localized)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        loadHandoffAndPresent()
+                        loadPlanDocumentAndPresent()
                     } label: {
-                        Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
+                        Label("evolution.page.planDocument.refresh".localized, systemImage: "arrow.clockwise")
                     }
                     .disabled(currentItem == nil)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
-                        isHandoffSheetPresented = false
+                        isPlanDocumentSheetPresented = false
                     } label: {
                         Text("common.close".localized)
                     }

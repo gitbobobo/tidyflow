@@ -456,9 +456,9 @@ class AppState: ObservableObject {
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
-    @Published var evolutionHandoff: EvolutionHandoffInfoV2?
-    @Published var evolutionHandoffLoading: Bool = false
-    @Published var evolutionHandoffError: String?
+    @Published var evolutionPlanDocumentContent: String?
+    @Published var evolutionPlanDocumentLoading: Bool = false
+    @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
@@ -537,6 +537,8 @@ class AppState: ObservableObject {
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
     var evidenceReadRequestByWorkspace: [String: EvidenceReadRequestState] = [:]
+    /// Evolution：计划文档读取上下文（按 cycle 文件路径识别）
+    var pendingEvolutionPlanDocumentReadPath: String?
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
