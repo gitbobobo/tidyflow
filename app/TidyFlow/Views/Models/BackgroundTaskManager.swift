@@ -16,6 +16,9 @@ class BackgroundTaskManager: ObservableObject {
     /// 有“未读完成”的工作空间（用于侧边栏铃铛提示），用户切换到此工作空间后清除
     @Published var workspaceKeysWithUnseenCompletion: Set<String> = []
 
+    /// 共享任务存储：视图层从这里读取展示数据（平台无关），控制操作仍通过 BackgroundTaskManager 路由
+    let taskStore = WorkspaceTaskStore()
+
     private let maxCompletedPerWorkspace = 5
 
     // MARK: - 入队
@@ -26,6 +29,7 @@ class BackgroundTaskManager: ObservableObject {
             pendingQueues[key] = []
         }
         pendingQueues[key]?.append(task)
+        taskStore.upsert(task.toItem())
     }
 
     // MARK: - 调度
@@ -71,6 +75,8 @@ class BackgroundTaskManager: ObservableObject {
             }
             runningNonBlockingTasks[key]?.append(task)
         }
+
+        taskStore.upsert(task.toItem())
 
         Task {
             let result = await performTask(task, appState: appState)
@@ -167,11 +173,16 @@ class BackgroundTaskManager: ObservableObject {
         if key != appState.currentGlobalWorkspaceKey {
             workspaceKeysWithUnseenCompletion.insert(key)
         }
+
+        // 同步至共享存储（upsert 会自动检测活跃→终态转换并标记未读）
+        taskStore.upsert(task.toItem(), currentWorkspaceKey: appState.currentGlobalWorkspaceKey)
+        taskStore.trimCompleted(for: key)
     }
 
     /// 用户切换到某工作空间后清除该工作空间的未读完成提示
     func clearUnseenCompletion(for key: String) {
         workspaceKeysWithUnseenCompletion.remove(key)
+        taskStore.markSeen(for: key)
     }
 
     /// 任务完成后刷新 Git 缓存
@@ -204,6 +215,7 @@ class BackgroundTaskManager: ObservableObject {
         for (key, queue) in pendingQueues {
             if let idx = queue.firstIndex(where: { $0.id == taskId }) {
                 pendingQueues[key]?.remove(at: idx)
+                taskStore.remove(id: taskId.uuidString)
                 return
             }
         }
@@ -293,6 +305,10 @@ class BackgroundTaskManager: ObservableObject {
         if let count = completedQueues[key]?.count, count > maxCompletedPerWorkspace {
             completedQueues[key] = Array(completedQueues[key]!.prefix(maxCompletedPerWorkspace))
         }
+
+        // 同步至共享存储
+        taskStore.upsert(task.toItem())
+        taskStore.trimCompleted(for: key)
     }
 
     /// 调整 pending 队列顺序
@@ -313,6 +329,8 @@ class BackgroundTaskManager: ObservableObject {
             runningNonBlockingTasks[key] = []
         }
         runningNonBlockingTasks[key]?.append(task)
+
+        taskStore.upsert(task.toItem())
     }
 
     /// 完成远程任务（直接标记完成并移入 completed 队列）
@@ -350,6 +368,10 @@ class BackgroundTaskManager: ObservableObject {
         if key != appState.currentGlobalWorkspaceKey {
             workspaceKeysWithUnseenCompletion.insert(key)
         }
+
+        // 同步至共享存储
+        taskStore.upsert(task.toItem(), currentWorkspaceKey: appState.currentGlobalWorkspaceKey)
+        taskStore.trimCompleted(for: key)
     }
 
     // MARK: - 查询
@@ -396,6 +418,11 @@ class BackgroundTaskManager: ObservableObject {
             return pending.taskIconName
         }
         return nil
+    }
+
+    /// 将指定任务的最新快照同步至共享存储（供 lastOutputLine 等字段实时更新时调用）
+    func syncTaskSnapshot(_ task: BackgroundTask) {
+        taskStore.upsert(task.toItem())
     }
 
     // MARK: - 系统通知

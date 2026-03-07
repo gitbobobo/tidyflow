@@ -391,7 +391,7 @@ struct WorkspaceRowView: View {
 
     /// 该工作空间是否有未读完成的后台任务（侧边栏铃铛提示）
     private var hasUnseenCompletion: Bool {
-        taskManager.workspaceKeysWithUnseenCompletion.contains(globalWorkspaceKey)
+        taskManager.taskStore.unseenCompletionKeys.contains(globalWorkspaceKey)
     }
 
     /// 右侧活动图标：聊天流式 / 自主进化 / 后台任务（可并存）

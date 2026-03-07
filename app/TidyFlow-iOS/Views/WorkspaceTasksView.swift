@@ -1,28 +1,32 @@
 import SwiftUI
 
-/// 工作空间后台任务列表页。
+/// 工作空间后台任务列表页。消费 WorkspaceTaskSemantics / WorkspaceTaskStore 共享语义层。
 struct WorkspaceTasksView: View {
     @EnvironmentObject var appState: MobileAppState
     let project: String
     let workspace: String
 
-    private var tasks: [MobileWorkspaceTask] {
+    private var workspaceKey: String {
+        appState.globalWorkspaceKey(project: project, workspace: workspace)
+    }
+
+    private var tasks: [WorkspaceTaskItem] {
         appState.tasksForWorkspace(project: project, workspace: workspace)
     }
 
-    private var activeTasks: [MobileWorkspaceTask] {
-        tasks.filter { $0.status.isActive }
+    private var activeTasks: [WorkspaceTaskItem] {
+        appState.taskStore.activeTasks(for: workspaceKey)
     }
 
-    private var completedTasks: [MobileWorkspaceTask] {
+    private var completedTasks: [WorkspaceTaskItem] {
         tasks.filter { $0.status == .completed }
     }
 
-    private var failedTasks: [MobileWorkspaceTask] {
-        tasks.filter { $0.status == .failed }
+    private var failedTasks: [WorkspaceTaskItem] {
+        tasks.filter { $0.status == .failed || $0.status == .unknown }
     }
 
-    private var cancelledTasks: [MobileWorkspaceTask] {
+    private var cancelledTasks: [WorkspaceTaskItem] {
         tasks.filter { $0.status == .cancelled }
     }
 
@@ -32,7 +36,7 @@ struct WorkspaceTasksView: View {
                 ContentUnavailableView("暂无后台任务", systemImage: "tray")
             } else {
                 if !activeTasks.isEmpty {
-                    Section("进行中") {
+                    Section(WorkspaceTaskStatus.running.sectionTitle) {
                         ForEach(activeTasks) { task in
                             taskRow(task)
                         }
@@ -40,7 +44,7 @@ struct WorkspaceTasksView: View {
                 }
 
                 if !failedTasks.isEmpty {
-                    Section("失败") {
+                    Section(WorkspaceTaskStatus.failed.sectionTitle) {
                         ForEach(failedTasks) { task in
                             taskRow(task)
                         }
@@ -48,7 +52,7 @@ struct WorkspaceTasksView: View {
                 }
 
                 if !completedTasks.isEmpty {
-                    Section("已完成") {
+                    Section(WorkspaceTaskStatus.completed.sectionTitle) {
                         ForEach(completedTasks) { task in
                             taskRow(task)
                         }
@@ -56,7 +60,7 @@ struct WorkspaceTasksView: View {
                 }
 
                 if !cancelledTasks.isEmpty {
-                    Section("已取消") {
+                    Section(WorkspaceTaskStatus.cancelled.sectionTitle) {
                         ForEach(cancelledTasks) { task in
                             taskRow(task)
                         }
@@ -83,13 +87,13 @@ struct WorkspaceTasksView: View {
     }
 
     @ViewBuilder
-    private func taskRow(_ task: MobileWorkspaceTask) -> some View {
+    private func taskRow(_ task: WorkspaceTaskItem) -> some View {
         HStack(spacing: 10) {
-            MobileCommandIconView(iconName: task.icon, size: 16)
+            MobileCommandIconView(iconName: task.iconName, size: 16)
             VStack(alignment: .leading, spacing: 3) {
                 Text(task.title)
                     .font(.body)
-                Text(taskStatusText(task))
+                Text(task.statusSummaryText())
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 if let line = task.lastOutputLine, !line.isEmpty {
@@ -129,57 +133,9 @@ struct WorkspaceTasksView: View {
     }
 
     @ViewBuilder
-    private func taskStatusIcon(_ task: MobileWorkspaceTask) -> some View {
-        switch task.status {
-        case .pending:
-            Image(systemName: "clock")
-                .foregroundColor(.secondary)
-        case .running:
-            ProgressView()
-                .scaleEffect(0.9)
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
-        case .failed:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundColor(.red)
-        case .cancelled:
-            Image(systemName: "slash.circle")
-                .foregroundColor(.secondary)
-        }
-    }
-
-    private func taskStatusText(_ task: MobileWorkspaceTask) -> String {
-        let status: String
-        switch task.status {
-        case .pending: status = "等待中"
-        case .running: status = "运行中"
-        case .completed: status = "已完成"
-        case .failed: status = "失败"
-        case .cancelled: status = "已取消"
-        }
-
-        var parts = [status]
-        if !task.message.isEmpty {
-            parts.append(task.message)
-        }
-        if let completedAt = task.completedAt, !task.status.isActive {
-            parts.append(relativeTimeString(completedAt))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func relativeTimeString(_ date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 {
-            return "刚刚"
-        } else if interval < 3600 {
-            return "\(Int(interval / 60))分钟前"
-        } else if interval < 86400 {
-            return "\(Int(interval / 3600))小时前"
-        } else {
-            return "\(Int(interval / 86400))天前"
-        }
+    private func taskStatusIcon(_ task: WorkspaceTaskItem) -> some View {
+        Image(systemName: task.status.completedIconName)
+            .foregroundColor(task.status.completedIconColor)
     }
 }
 

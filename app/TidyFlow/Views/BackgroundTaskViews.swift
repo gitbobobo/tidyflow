@@ -13,7 +13,7 @@ struct BackgroundTaskToolbarButton: View {
 
     private var activeCount: Int {
         guard let key = currentWorkspaceKey else { return 0 }
-        return taskManager.activeTaskCount(for: key)
+        return taskManager.taskStore.activeCount(for: key)
     }
 
     var body: some View {
@@ -92,8 +92,7 @@ struct BackgroundTaskPopoverView: View {
         }
         .frame(width: 380, height: 420)
         .onAppear {
-            let hasActive = !taskManager.allRunningTasks(for: workspaceKey).isEmpty
-                || !taskManager.pendingTasks(for: workspaceKey).isEmpty
+            let hasActive = taskManager.taskStore.activeCount(for: workspaceKey) > 0
             selectedTab = hasActive ? 0 : 1
         }
     }

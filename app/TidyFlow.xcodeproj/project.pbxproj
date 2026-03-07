@@ -121,6 +121,12 @@
 		MDL000311 /* AppState+EditorTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000111 /* AppState+EditorTerminal.swift */; };
 		MDL000312 /* BackgroundTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000112 /* BackgroundTaskModels.swift */; };
 		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
+WTS0001 /* WorkspaceTaskSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0011 /* WorkspaceTaskSemantics.swift */; };
+WTS0002 /* WorkspaceTaskSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0011 /* WorkspaceTaskSemantics.swift */; };
+WTS0003 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0012 /* WorkspaceTaskStore.swift */; };
+WTS0004 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0012 /* WorkspaceTaskStore.swift */; };
+WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */; };
+WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
 		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 		MDL000316 /* AppState+CoreWS+MessageHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000116 /* AppState+CoreWS+MessageHandlers.swift */; };
@@ -334,6 +340,10 @@
 		MDL000111 /* AppState+EditorTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EditorTerminal.swift"; sourceTree = "<group>"; };
 		MDL000112 /* BackgroundTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskModels.swift; sourceTree = "<group>"; };
 		MDL000113 /* BackgroundTaskManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskManager.swift; sourceTree = "<group>"; };
+WTS0011 /* WorkspaceTaskSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskSemantics.swift; sourceTree = "<group>"; };
+WTS0012 /* WorkspaceTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskStore.swift; sourceTree = "<group>"; };
+WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskSemanticLayerTests.swift; sourceTree = "<group>"; };
+WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskQueueSemanticsTests.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
 		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
 		MDL000116 /* AppState+CoreWS+MessageHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+MessageHandlers.swift"; sourceTree = "<group>"; };
@@ -570,6 +580,8 @@
 					TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */,
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
+WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
+WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -654,6 +666,8 @@
 				MDL000202 /* AppState */,
 				MDL000113 /* BackgroundTaskManager.swift */,
 				MDL000112 /* BackgroundTaskModels.swift */,
+				WTS0011 /* WorkspaceTaskSemantics.swift */,
+				WTS0012 /* WorkspaceTaskStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
@@ -901,6 +915,8 @@
 				EDS00001 /* EditorStore.swift in Sources */,
 				MDL000312 /* BackgroundTaskModels.swift in Sources */,
 				MDL000313 /* BackgroundTaskManager.swift in Sources */,
+				WTS0001 /* WorkspaceTaskSemantics.swift in Sources */,
+				WTS0003 /* WorkspaceTaskStore.swift in Sources */,
 				MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
 				RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */,
 				RMT00002 /* AppState+RemoteTerminals.swift in Sources */,
@@ -1007,6 +1023,8 @@
 				TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */,
 				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
+WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
+WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

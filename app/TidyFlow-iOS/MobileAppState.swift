@@ -31,23 +31,8 @@ private struct PairErrorHTTPResponse: Decodable {
     let message: String
 }
 
-enum MobileWorkspaceTaskType: String {
-    case aiCommit
-    case aiMerge
-    case projectCommand
-}
-
-enum MobileWorkspaceTaskStatus: String {
-    case pending
-    case running
-    case completed
-    case failed
-    case cancelled
-
-    var isActive: Bool {
-        self == .pending || self == .running
-    }
-}
+// MobileWorkspaceTaskType、MobileWorkspaceTaskStatus 和 MobileWorkspaceTask 已迁移至
+// WorkspaceTaskSemantics.swift（WorkspaceTaskType / WorkspaceTaskStatus / WorkspaceTaskItem）
 
 enum ReconnectState: Equatable {
     case idle
@@ -55,22 +40,7 @@ enum ReconnectState: Equatable {
     case failed
 }
 
-struct MobileWorkspaceTask: Identifiable, Equatable {
-    let id: String
-    let project: String
-    let workspace: String
-    let type: MobileWorkspaceTaskType
-    var title: String
-    var icon: String
-    var status: MobileWorkspaceTaskStatus
-    var message: String
-    let createdAt: Date
-    var startedAt: Date?
-    var completedAt: Date?
-    var commandId: String?
-    var remoteTaskId: String?
-    var lastOutputLine: String?
-}
+// MobileWorkspaceTask 已迁移至 WorkspaceTaskSemantics.swift 中的 WorkspaceTaskItem
 
 struct MobileWorkspaceGitSummary: Equatable {
     let additions: Int
@@ -209,7 +179,8 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
-    @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
+    /// 工作区任务共享存储（取代原 workspaceTasksByKey，与 macOS 共享语义层对齐）
+    let taskStore = WorkspaceTaskStore()
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
     @Published var keybindings: [KeybindingConfig] = KeybindingConfig.defaultKeybindings()
     // v1.40: 工作流模板
@@ -1009,19 +980,19 @@ final class MobileAppState: ObservableObject {
         wsClient.requestGitCommit(project: project, workspace: workspace, message: message)
     }
 
-    func tasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
+    func tasksForWorkspace(project: String, workspace: String) -> [WorkspaceTaskItem] {
         let key = globalWorkspaceKey(project: project, workspace: workspace)
-        let tasks = workspaceTasksByKey[key] ?? []
-        return tasks.sorted { lhs, rhs in
-            if lhs.status.isActive != rhs.status.isActive {
-                return lhs.status.isActive && !rhs.status.isActive
+        return taskStore.allTasks(for: key).sorted { lhs, rhs in
+            if lhs.status.sortWeight != rhs.status.sortWeight {
+                return lhs.status.sortWeight < rhs.status.sortWeight
             }
             return lhs.createdAt > rhs.createdAt
         }
     }
 
-    func runningTasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
-        tasksForWorkspace(project: project, workspace: workspace).filter { $0.status.isActive }
+    func runningTasksForWorkspace(project: String, workspace: String) -> [WorkspaceTaskItem] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return taskStore.activeTasks(for: key)
     }
 
     func todosForWorkspace(project: String, workspace: String) -> [WorkspaceTodoItem] {
@@ -1175,14 +1146,15 @@ final class MobileAppState: ObservableObject {
     }
 
     func activeTaskIconForWorkspace(project: String, workspace: String) -> String? {
-        runningTasksForWorkspace(project: project, workspace: workspace).first?.icon
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return taskStore.sidebarActiveIconName(for: key)
     }
 
-    func canCancelTask(_ task: MobileWorkspaceTask) -> Bool {
+    func canCancelTask(_ task: WorkspaceTaskItem) -> Bool {
         task.status.isActive
     }
 
-    func cancelTask(_ task: MobileWorkspaceTask) {
+    func cancelTask(_ task: WorkspaceTaskItem) {
         guard canCancelTask(task) else { return }
 
         switch task.type {
@@ -1219,9 +1191,7 @@ final class MobileAppState: ObservableObject {
     /// 清除指定工作空间的已完成任务
     func clearCompletedTasks(project: String, workspace: String) {
         let key = globalWorkspaceKey(project: project, workspace: workspace)
-        guard var tasks = workspaceTasksByKey[key] else { return }
-        tasks.removeAll { !$0.status.isActive }
-        workspaceTasksByKey[key] = tasks.isEmpty ? nil : tasks
+        taskStore.clearCompleted(for: key)
     }
 
     func runAICommit(project: String, workspace: String) {
@@ -4106,8 +4076,7 @@ final class MobileAppState: ObservableObject {
             let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
             let localTaskId = self.aiCommitPendingTaskIds.first.flatMap { taskId -> String? in
                 // 验证 taskId 归属的 workspace key 匹配
-                if let tasks = self.workspaceTasksByKey[key],
-                   tasks.contains(where: { $0.id == taskId && $0.status.isActive }) {
+                if self.taskStore.allTasks(for: key).contains(where: { $0.id == taskId && $0.status.isActive }) {
                     return taskId
                 }
                 return nil
@@ -4295,9 +4264,8 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             // 按 project + workspace + operation_type 查找活跃任务并标记取消
             let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            let taskType: MobileWorkspaceTaskType = result.operationType == "ai_merge" ? .aiMerge : .aiCommit
-            if let tasks = self.workspaceTasksByKey[key],
-               let task = tasks.first(where: { $0.type == taskType && $0.status.isActive }) {
+            let taskType: WorkspaceTaskType = result.operationType == "ai_merge" ? .aiMerge : .aiCommit
+            if let task = self.taskStore.allTasks(for: key).first(where: { $0.type == taskType && $0.status.isActive }) {
                 self.mutateTask(task.id) { t in
                     t.status = .cancelled
                     t.message = "已取消"
@@ -5108,21 +5076,21 @@ final class MobileAppState: ObservableObject {
     private func restoreTasksFromSnapshot(_ entries: [TaskSnapshotEntry]) {
         // 收集当前本地已有的 remoteTaskId，避免重复创建
         let existingRemoteIds: Set<String> = Set(
-            workspaceTasksByKey.values.flatMap { $0 }.compactMap { $0.remoteTaskId }
+            taskStore.tasksByKey.values.flatMap { $0 }.compactMap { $0.remoteTaskId }
         )
 
         for entry in entries {
             // 跳过已存在的任务
             if existingRemoteIds.contains(entry.taskId) { continue }
 
-            let taskType: MobileWorkspaceTaskType
+            let taskType: WorkspaceTaskType
             switch entry.taskType {
             case "ai_commit": taskType = .aiCommit
             case "ai_merge": taskType = .aiMerge
             default: taskType = .projectCommand
             }
 
-            let status: MobileWorkspaceTaskStatus
+            let status: WorkspaceTaskStatus
             switch entry.status {
             case "running": status = .running
             case "completed": status = .completed
@@ -5133,14 +5101,16 @@ final class MobileAppState: ObservableObject {
 
             let startedDate = Date(timeIntervalSince1970: TimeInterval(entry.startedAt) / 1000.0)
             let completedDate = entry.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
+            let key = globalWorkspaceKey(project: entry.project, workspace: entry.workspace)
 
-            let task = MobileWorkspaceTask(
+            let item = WorkspaceTaskItem(
                 id: UUID().uuidString,
                 project: entry.project,
                 workspace: entry.workspace,
+                workspaceGlobalKey: key,
                 type: taskType,
                 title: entry.title,
-                icon: taskType == .projectCommand ? "terminal" : "sparkles",
+                iconName: taskType == .projectCommand ? "terminal" : "sparkles",
                 status: status,
                 message: entry.message ?? "",
                 createdAt: startedDate,
@@ -5148,17 +5118,15 @@ final class MobileAppState: ObservableObject {
                 completedAt: completedDate,
                 commandId: entry.commandId,
                 remoteTaskId: entry.taskId,
-                lastOutputLine: nil
+                lastOutputLine: nil,
+                isCancellable: status.isActive
             )
 
-            let key = globalWorkspaceKey(project: entry.project, workspace: entry.workspace)
-            var tasks = workspaceTasksByKey[key] ?? []
-            tasks.append(task)
-            workspaceTasksByKey[key] = tasks
+            taskStore.upsert(item)
 
             // 维护 remoteTaskId 映射（running 状态的项目命令需要接收后续输出）
             if taskType == .projectCommand && status == .running {
-                projectCommandTaskIdByRemoteTaskId[entry.taskId] = task.id
+                projectCommandTaskIdByRemoteTaskId[entry.taskId] = item.id
             }
         }
     }
@@ -5292,18 +5260,20 @@ final class MobileAppState: ObservableObject {
     private func createTask(
         project: String,
         workspace: String,
-        type: MobileWorkspaceTaskType,
+        type: WorkspaceTaskType,
         title: String,
         icon: String,
         message: String
-    ) -> MobileWorkspaceTask {
-        let task = MobileWorkspaceTask(
+    ) -> WorkspaceTaskItem {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let item = WorkspaceTaskItem(
             id: UUID().uuidString,
             project: project,
             workspace: workspace,
+            workspaceGlobalKey: key,
             type: type,
             title: title,
-            icon: icon,
+            iconName: icon,
             status: .running,
             message: message,
             createdAt: Date(),
@@ -5311,27 +5281,19 @@ final class MobileAppState: ObservableObject {
             completedAt: nil,
             commandId: nil,
             remoteTaskId: nil,
-            lastOutputLine: nil
+            lastOutputLine: nil,
+            isCancellable: true
         )
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
-        var tasks = workspaceTasksByKey[key] ?? []
-        tasks.append(task)
-        workspaceTasksByKey[key] = tasks
-        return task
+        taskStore.upsert(item)
+        return item
     }
 
-    private func mutateTask(_ taskId: String, mutate: (inout MobileWorkspaceTask) -> Void) {
-        for (key, var tasks) in workspaceTasksByKey {
-            if let index = tasks.firstIndex(where: { $0.id == taskId }) {
-                mutate(&tasks[index])
-                workspaceTasksByKey[key] = tasks
-                return
-            }
-        }
+    private func mutateTask(_ taskId: String, mutate: (inout WorkspaceTaskItem) -> Void) {
+        taskStore.mutate(id: taskId, mutate)
     }
 
-    private func findLatestActiveTaskId(project: String, type: MobileWorkspaceTaskType) -> String? {
-        workspaceTasksByKey.values
+    private func findLatestActiveTaskId(project: String, type: WorkspaceTaskType) -> String? {
+        taskStore.tasksByKey.values
             .flatMap { $0 }
             .filter { $0.project == project && $0.type == type && $0.status.isActive }
             .sorted { $0.createdAt > $1.createdAt }

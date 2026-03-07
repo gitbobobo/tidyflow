@@ -168,11 +168,15 @@ extension AppState {
         if let executionId = projectCommandExecutionIdByRemoteTaskId[taskId],
            let execution = projectCommandExecutions[executionId] {
             execution.task?.lastOutputLine = line
+            if let task = execution.task {
+                taskManager.syncTaskSnapshot(task)
+            }
             return
         }
         // 远程任务
         if let task = remoteProjectCommandTasks[taskId] {
             task.lastOutputLine = line
+            taskManager.syncTaskSnapshot(task)
         }
     }
 

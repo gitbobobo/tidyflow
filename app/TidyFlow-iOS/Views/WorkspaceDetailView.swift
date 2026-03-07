@@ -11,11 +11,11 @@ struct WorkspaceDetailView: View {
         appState.terminalsForWorkspace(project: project, workspace: workspace)
     }
 
-    private var runningTasks: [MobileWorkspaceTask] {
+    private var runningTasks: [WorkspaceTaskItem] {
         appState.runningTasksForWorkspace(project: project, workspace: workspace)
     }
 
-    private var allTasks: [MobileWorkspaceTask] {
+    private var allTasks: [WorkspaceTaskItem] {
         appState.tasksForWorkspace(project: project, workspace: workspace)
     }
 
@@ -136,7 +136,7 @@ struct WorkspaceDetailView: View {
                 } else {
                     ForEach(runningTasks) { task in
                         HStack(spacing: 10) {
-                            MobileCommandIconView(iconName: task.icon, size: 16)
+                            MobileCommandIconView(iconName: task.iconName, size: 16)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(task.title)
                                 Text(task.message)

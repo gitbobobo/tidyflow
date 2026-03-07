@@ -2,70 +2,22 @@ import Foundation
 import Combine
 import SwiftUI
 
-// MARK: - 后台任务类型
+// MARK: - 后台任务类型（复用共享语义，保留 typealias 供已有 macOS 代码无缝使用）
 
-enum BackgroundTaskType: String, CaseIterable {
-    case aiCommit
-    case aiMerge
-    case projectCommand
+typealias BackgroundTaskType = WorkspaceTaskType
 
-    var displayName: String {
-        switch self {
-        case .aiCommit: return "task.aiCommit".localized
-        case .aiMerge: return "task.aiMerge".localized
-        case .projectCommand: return "task.projectCommand".localized
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .aiCommit: return "sparkles"
-        case .aiMerge: return "cpu"
-        case .projectCommand: return "terminal"
-        }
-    }
-
-    /// 阻塞任务：同一工作空间同时只能运行一个
-    var isBlocking: Bool {
-        switch self {
-        case .aiCommit, .aiMerge: return true
-        case .projectCommand: return false // 由命令配置决定
-        }
-    }
+extension WorkspaceTaskType {
+    /// macOS 兼容别名：用于旧代码对 displayName 的引用
+    var displayName: String { defaultDisplayName }
+    /// macOS 兼容别名：用于旧代码对 iconName 的引用
+    var iconName: String { defaultIconName }
+    /// macOS 兼容别名：用于旧代码对 isBlocking 的引用（项目命令实际阻塞性由命令配置决定）
+    var isBlocking: Bool { isBlockingByDefault }
 }
 
-// MARK: - 后台任务状态
+// MARK: - 后台任务状态（复用共享语义，保留 typealias 供已有 macOS 代码无缝使用）
 
-enum BackgroundTaskStatus: String {
-    case pending
-    case running
-    case completed
-    case failed
-    case unknown
-    case cancelled
-
-    /// 已完成任务行的图标名
-    var completedIconName: String {
-        switch self {
-        case .completed: return "checkmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
-        case .unknown: return "questionmark.circle.fill"
-        case .cancelled: return "stop.circle.fill"
-        default: return "circle"
-        }
-    }
-
-    /// 已完成任务行的图标颜色
-    var completedIconColor: Color {
-        switch self {
-        case .completed: return .green
-        case .failed: return .red
-        case .unknown: return .orange
-        case .cancelled: return .secondary
-        default: return .secondary
-        }
-    }
-}
+typealias BackgroundTaskStatus = WorkspaceTaskStatus
 
 /// 任务结果状态（三态）
 enum TaskResultStatus {
@@ -370,5 +322,35 @@ class BackgroundTask: ObservableObject, Identifiable {
         let minutes = seconds / 60
         let secs = seconds % 60
         return "\(minutes)m \(secs)s"
+    }
+
+    // MARK: - 共享存储快照
+
+    /// 将本地执行任务转换为平台无关的 WorkspaceTaskItem，用于同步至 WorkspaceTaskStore
+    func toItem() -> WorkspaceTaskItem {
+        let parts = workspaceGlobalKey.split(separator: ":", maxSplits: 1)
+        let project = parts.count >= 1 ? String(parts[0]) : ""
+        let workspace = parts.count >= 2 ? String(parts[1]) : ""
+        return WorkspaceTaskItem(
+            id: id.uuidString,
+            project: project,
+            workspace: workspace,
+            workspaceGlobalKey: workspaceGlobalKey,
+            type: type,
+            title: displayTitle,
+            iconName: taskIconName,
+            status: status,
+            message: result?.message ?? lastOutputLine ?? "",
+            createdAt: createdAt,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            commandId: {
+                if case .projectCommand(let ctx) = context { return ctx.commandId }
+                return nil
+            }(),
+            remoteTaskId: remoteTaskId,
+            lastOutputLine: lastOutputLine,
+            isCancellable: status.isActive
+        )
     }
 }
