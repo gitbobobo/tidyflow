@@ -34,10 +34,26 @@ private struct PairErrorHTTPResponse: Decodable {
 // MobileWorkspaceTaskType、MobileWorkspaceTaskStatus 和 MobileWorkspaceTask 已迁移至
 // WorkspaceTaskSemantics.swift（WorkspaceTaskType / WorkspaceTaskStatus / WorkspaceTaskItem）
 
+// ReconnectState 保留用于 DisconnectBannerView 向后兼容；
+// 新代码应使用 MobileAppState.connectionPhase（见 ConnectionSemantics.swift）。
 enum ReconnectState: Equatable {
     case idle
     case reconnecting(attempt: Int, maxAttempts: Int)
     case failed
+}
+
+// iOS 专属：从 ConnectionPhase 派生 ReconnectState（向后兼容桥接）
+extension ConnectionPhase {
+    var toReconnectState: ReconnectState {
+        switch self {
+        case .reconnecting(let attempt, let max):
+            return .reconnecting(attempt: attempt, maxAttempts: max)
+        case .reconnectFailed:
+            return .failed
+        default:
+            return .idle
+        }
+    }
 }
 
 // MobileWorkspaceTask 已迁移至 WorkspaceTaskSemantics.swift 中的 WorkspaceTaskItem
@@ -162,10 +178,14 @@ final class MobileAppState: ObservableObject {
     @Published var connecting: Bool = false
     @Published var autoConnecting: Bool = false
     @Published var hasSavedConnection: Bool = false
-    @Published var isConnected: Bool = false
+    /// 共享连接语义层：单一入口表达所有连接阶段，与 macOS 保持行为语义一致。
+    @Published var connectionPhase: ConnectionPhase = .intentionallyDisconnected
+    /// 是否已连接（从 connectionPhase 派生，向后兼容）
+    var isConnected: Bool { connectionPhase.isConnected }
+    /// 重连状态（从 connectionPhase 派生，向后兼容）
+    var reconnectState: ReconnectState { connectionPhase.toReconnectState }
     @Published var connectionMessage: String = ""
     @Published var errorMessage: String = ""
-    @Published var reconnectState: ReconnectState = .idle
 
     // 数据
     @Published var projects: [ProjectInfo] = []
@@ -522,6 +542,7 @@ final class MobileAppState: ObservableObject {
                 reconnect: false
             )
             wsClient.connect()
+            connectionPhase = .connecting
             connectionMessage = "已配对，正在连接..."
 
             // 保存连接信息
@@ -535,6 +556,7 @@ final class MobileAppState: ObservableObject {
             ))
             hasSavedConnection = true
         } catch {
+            connectionPhase = .pairingFailed(reason: error.localizedDescription)
             errorMessage = error.localizedDescription
         }
     }
@@ -542,7 +564,7 @@ final class MobileAppState: ObservableObject {
     func disconnect() {
         cancelReconnect()
         wsClient.disconnect()
-        isConnected = false
+        connectionPhase = .intentionallyDisconnected
         currentTermId = ""
         setCtrlArmed(false)
         connectionMessage = "已断开"
@@ -563,49 +585,49 @@ final class MobileAppState: ObservableObject {
             reconnect: false
         )
         wsClient.connect()
+        connectionPhase = .connecting
 
         // 等待连接结果，超时 5 秒
         let deadline = Date().addingTimeInterval(5)
-        while !isConnected && Date() < deadline {
+        while !connectionPhase.isConnected && Date() < deadline {
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
-        if !isConnected {
+        if !connectionPhase.isConnected {
+            connectionPhase = .intentionallyDisconnected
             connectionMessage = "自动连接超时，请手动配对"
         }
     }
 
-    /// 使用指数退避重连（5次尝试：0.5s, 1s, 2s, 4s, 8s）
+    /// 使用指数退避重连（共享 ReconnectPolicy：5 次尝试，退避 0.5s/1s/2s/4s/8s）
     func reconnectWithBackoff() {
         reconnectTask?.cancel()
-        
+
         reconnectTask = Task { [weak self] in
             guard let self else { return }
-            
-            let delays: [TimeInterval] = [0.5, 1, 2, 4, 8]
-            let maxAttempts = delays.count
-            
-            for (index, delay) in delays.enumerated() {
+
+            let maxAttempts = ReconnectPolicy.maxAttempts
+
+            for attempt in 1...maxAttempts {
                 if Task.isCancelled { return }
-                
-                let attempt = index + 1
+
                 await MainActor.run {
-                    self.reconnectState = .reconnecting(attempt: attempt, maxAttempts: maxAttempts)
+                    self.connectionPhase = .reconnecting(attempt: attempt, maxAttempts: maxAttempts)
                 }
-                
+
                 guard let saved = ConnectionStorage.load() else {
                     await MainActor.run {
-                        self.reconnectState = .failed
+                        self.connectionPhase = .reconnectFailed
                     }
                     return
                 }
-                
+
                 await MainActor.run {
                     self.wsClient.disconnect()
                 }
-                
-                // 等待旧连接完全清理（disconnect 会取消 webSocketTask，需要时间完全关闭）
-                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-                
+
+                // 等待旧连接完全清理
+                try? await Task.sleep(nanoseconds: UInt64(ReconnectPolicy.disconnectDrainDelay * 1_000_000_000))
+
                 await MainActor.run {
                     self.wsClient.updateAuthToken(saved.wsToken)
                     self.wsClient.updateBaseURL(
@@ -614,45 +636,45 @@ final class MobileAppState: ObservableObject {
                     )
                     self.wsClient.connect()
                 }
-                
-                // 等待连接结果，每轮最多等待 3 秒
-                let pollDeadline = Date().addingTimeInterval(3)
+
+                // 等待连接结果，每轮最多等待 perAttemptTimeout 秒
+                let pollDeadline = Date().addingTimeInterval(ReconnectPolicy.perAttemptTimeout)
                 while !Task.isCancelled {
-                    let connected = await MainActor.run { self.isConnected }
+                    let connected = await MainActor.run { self.connectionPhase.isConnected }
                     if connected {
-                        await MainActor.run { self.reconnectState = .idle }
                         return
                     }
                     if Date() >= pollDeadline { break }
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
-                
+
                 if Task.isCancelled { return }
-                
+
                 // 如果还有下一次尝试，等待指数退避时间
                 if attempt < maxAttempts {
+                    let delay = ReconnectPolicy.delay(for: attempt)
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
             }
-            
+
             // 所有尝试都失败
             await MainActor.run {
-                self.reconnectState = .failed
+                self.connectionPhase = .reconnectFailed
             }
         }
     }
-    
+
     /// 重置状态并重新开始指数退避重连
     func retryReconnect() {
-        reconnectState = .idle
+        connectionPhase = .intentionallyDisconnected
         reconnectWithBackoff()
     }
-    
+
     /// 取消正在进行的重连任务
     func cancelReconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
-        reconnectState = .idle
+        connectionPhase = .intentionallyDisconnected
     }
 
     /// 清除保存的连接信息
@@ -3631,9 +3653,8 @@ final class MobileAppState: ObservableObject {
     private func setupWSCallbacks() {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             guard let self else { return }
-            self.isConnected = connected
             if connected {
-                self.reconnectState = .idle
+                self.connectionPhase = .connected
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
@@ -3647,7 +3668,10 @@ final class MobileAppState: ObservableObject {
             } else {
                 self.connectionMessage = "连接断开"
                 if !self.wsClient.isIntentionalDisconnect {
+                    // 意外断连：通过共享语义层驱动重连
                     self.reconnectWithBackoff()
+                } else {
+                    self.connectionPhase = .intentionallyDisconnected
                 }
             }
         }

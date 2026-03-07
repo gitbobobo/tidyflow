@@ -137,7 +137,7 @@ extension AppState {
 
         coreProcessManager.onCoreFailed = { [weak self] message in
             TFLog.core.error("Core failed: \(message, privacy: .public)")
-            self?.connectionState = .disconnected
+            self?.connectionPhase = .intentionallyDisconnected
             self?.markStartupFailedIfNeeded(message: message)
         }
 
@@ -145,12 +145,12 @@ extension AppState {
             TFLog.core.warning("Core restarting (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public))")
             // Disconnect WebSocket during restart
             self?.wsClient.disconnect()
-            self?.connectionState = .disconnected
+            self?.connectionPhase = .intentionallyDisconnected
         }
 
         coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
             TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
-            self?.connectionState = .disconnected
+            self?.connectionPhase = .intentionallyDisconnected
             self?.markStartupFailedIfNeeded(message: message)
         }
 

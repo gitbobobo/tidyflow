@@ -14,8 +14,8 @@ extension AppState {
         }
 
         wsClient.onConnectionStateChanged = { [weak self] connected in
-            self?.connectionState = connected ? .connected : .disconnected
             if connected {
+                self?.connectionPhase = .connected
                 self?.markStartupReadyIfNeeded()
                 self?.reconnectAttempt = 0  // 重置自动重连计数
                 self?.wsClient.requestListProjects()
@@ -26,10 +26,12 @@ extension AppState {
                 self?.requestTerminalReattach()
             } else if !(self?.wsClient.isIntentionalDisconnect ?? true),
                       self?.coreProcessManager.isRunning == true {
-                // 意外断连且 Core 仍在运行，触发自动重连
+                // 意外断连且 Core 仍在运行，更新语义层并触发自动重连
                 TFLog.core.warning("WebSocket 意外断连，触发自动重连")
                 self?.markAllTerminalSessionsStale()
                 self?.startAutoReconnect()
+            } else {
+                self?.connectionPhase = .intentionallyDisconnected
             }
         }
 

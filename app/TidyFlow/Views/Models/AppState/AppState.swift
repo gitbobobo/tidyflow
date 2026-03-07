@@ -232,7 +232,10 @@ class AppState: ObservableObject {
 
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
-    @Published var connectionState: ConnectionState = .disconnected
+    /// 共享连接语义层：单一入口表达所有连接阶段，视图和组件应优先读取此属性。
+    @Published var connectionPhase: ConnectionPhase = .intentionallyDisconnected
+    /// 向后兼容导出（二值）；新代码请使用 `connectionPhase`。
+    var connectionState: ConnectionState { connectionPhase.legacyConnectionState }
     /// mac 启动门禁：首次 WS 连通前仅展示启动页
     @Published var startupPhase: StartupPhase = .loading
     /// 最近一次生成的移动端配对码（6 位）
@@ -653,7 +656,7 @@ class AppState: ObservableObject {
 
     // 系统唤醒通知观察者
     var wakeObserver: NSObjectProtocol?
-    // 自动重连状态
+    /// 自动重连内部计数（机制层）；连接语义状态通过 `connectionPhase` 对外暴露。
     var reconnectAttempt = 0
     // 重连后延迟拉取非当前 AI 工具会话列表的任务（用于削峰）
     var deferredAISessionReloadWorkItem: DispatchWorkItem?

@@ -49,8 +49,7 @@ extension AppState {
 
     // MARK: - 系统唤醒探活 + 自动重连
 
-    private static let maxReconnectAttempts = 5
-    private static let reconnectDelays: [TimeInterval] = [0.5, 1.0, 2.0, 4.0, 8.0]
+    // 退避策略常量由共享 ReconnectPolicy 提供，确保 macOS/iOS 使用同一份参数。
     private static let aiSessionListLimit = 50
     private static let aiDeferredSessionReloadDelay: TimeInterval = 0.35
 
@@ -139,21 +138,24 @@ extension AppState {
 
     func startAutoReconnect() {
         // 防止重复触发（唤醒探活 + 意外断连回调可能同时触发）
-        guard reconnectAttempt == 0 else {
+        guard !connectionPhase.isReconnecting else {
             TFLog.core.info("自动重连已在进行中，跳过")
             return
         }
+        reconnectAttempt = 0
         attemptReconnect()
     }
 
     func attemptReconnect() {
-        guard reconnectAttempt < Self.maxReconnectAttempts else {
-            TFLog.core.error("自动重连失败，已达最大重试次数 \(Self.maxReconnectAttempts)")
+        guard reconnectAttempt < ReconnectPolicy.maxAttempts else {
+            TFLog.core.error("自动重连失败，已达最大重试次数 \(ReconnectPolicy.maxAttempts)")
+            connectionPhase = .reconnectFailed
             return
         }
 
-        let delay = Self.reconnectDelays[min(reconnectAttempt, Self.reconnectDelays.count - 1)]
+        let delay = ReconnectPolicy.delay(for: reconnectAttempt + 1)
         reconnectAttempt += 1
+        connectionPhase = .reconnecting(attempt: reconnectAttempt, maxAttempts: ReconnectPolicy.maxAttempts)
         TFLog.core.info("自动重连第 \(self.reconnectAttempt) 次，延迟 \(delay)s")
 
         // 重连 Swift WSClient (WS①)
@@ -162,7 +164,7 @@ extension AppState {
         // 等待连接结果后判断是否需要继续重试
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 2.0) { [weak self] in
             guard let self else { return }
-            if self.connectionState == .connected {
+            if self.connectionPhase.isConnected {
                 TFLog.core.info("自动重连成功")
                 self.reconnectAttempt = 0
             } else {

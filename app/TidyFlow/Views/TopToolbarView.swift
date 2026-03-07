@@ -69,11 +69,11 @@ struct ConnectionStatusView: View {
     @EnvironmentObject var appState: AppState
 
     private var statusColor: Color {
-        appState.connectionState == .connected ? .green : .red
+        appState.connectionPhase.isConnected ? .green : .red
     }
 
     private var helpText: String {
-        appState.connectionState == .connected ? "connection.connected".localized : "connection.disconnected".localized
+        appState.connectionPhase.isConnected ? "connection.connected".localized : "connection.disconnected".localized
     }
 
     var body: some View {
@@ -105,7 +105,7 @@ struct ProjectBranchView: View {
     }
 
     private var diagnosticsHelpText: String {
-        let connectionText = appState.connectionState == .connected
+        let connectionText = appState.connectionPhase.isConnected
             ? "connection.connected".localized
             : "connection.disconnected".localized
         let base = String(
@@ -114,7 +114,7 @@ struct ProjectBranchView: View {
             diagnosticsSnapshot.items.count,
             connectionText
         )
-        if appState.connectionState == .connected {
+        if appState.connectionPhase.isConnected {
             return base
         }
         return "\(base)\n\("toolbar.diagnostics.disconnectedHint".localized)"
@@ -133,7 +133,7 @@ struct ProjectBranchView: View {
                     Circle()
                         .fill(diagnosticsColor)
                         .frame(width: 8, height: 8)
-                    if appState.connectionState != .connected {
+                    if !appState.connectionPhase.isConnected {
                         Circle()
                             .stroke(Color.red, lineWidth: 1)
                             .frame(width: 10, height: 10)

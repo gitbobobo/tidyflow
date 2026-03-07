@@ -3,12 +3,10 @@ import SwiftUI
 #if os(iOS)
 struct DisconnectBannerView: View {
     @EnvironmentObject var appState: MobileAppState
-    
+
     var body: some View {
         Group {
-            switch appState.reconnectState {
-            case .idle:
-                EmptyView()
+            switch appState.connectionPhase {
             case .reconnecting(let attempt, let maxAttempts):
                 HStack(spacing: 8) {
                     ProgressView()
@@ -24,7 +22,7 @@ struct DisconnectBannerView: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.red)
                 .foregroundColor(.white)
-            case .failed:
+            case .reconnectFailed:
                 HStack {
                     Text("重连失败")
                         .font(.footnote)
@@ -47,9 +45,11 @@ struct DisconnectBannerView: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.red)
                 .foregroundColor(.white)
+            default:
+                EmptyView()
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: appState.reconnectState)
+        .animation(.easeInOut(duration: 0.3), value: appState.connectionPhase)
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

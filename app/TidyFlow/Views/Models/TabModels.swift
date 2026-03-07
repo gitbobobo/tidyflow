@@ -23,6 +23,8 @@ enum TerminalAIStatus: Equatable {
     }
 }
 
+/// 二值连接状态，保留用于向后兼容（如 GitCacheState 回调）。
+/// 新代码应使用 `ConnectionPhase`（见 ConnectionSemantics.swift），它表达完整的连接阶段语义。
 enum ConnectionState {
     case connected
     case disconnected

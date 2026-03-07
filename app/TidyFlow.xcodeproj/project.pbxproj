@@ -130,6 +130,8 @@
 		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
 WTS0001 /* WorkspaceTaskSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0011 /* WorkspaceTaskSemantics.swift */; };
 WTS0002 /* WorkspaceTaskSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0011 /* WorkspaceTaskSemantics.swift */; };
+		CSEM0001 /* ConnectionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSEM0011 /* ConnectionSemantics.swift */; };
+		CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSEM0013 /* ConnectionSemanticLayerTests.swift */; };
 WTS0003 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0012 /* WorkspaceTaskStore.swift */; };
 WTS0004 /* WorkspaceTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0012 /* WorkspaceTaskStore.swift */; };
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */; };
@@ -355,6 +357,8 @@ WTS0011 /* WorkspaceTaskSemantics.swift */ = {isa = PBXFileReference; lastKnownF
 WTS0012 /* WorkspaceTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskStore.swift; sourceTree = "<group>"; };
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskSemanticLayerTests.swift; sourceTree = "<group>"; };
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskQueueSemanticsTests.swift; sourceTree = "<group>"; };
+		CSEM0011 /* ConnectionSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemantics.swift; sourceTree = "<group>"; };
+		CSEM0013 /* ConnectionSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemanticLayerTests.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
 		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
 		MDL000116 /* AppState+CoreWS+MessageHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+MessageHandlers.swift"; sourceTree = "<group>"; };
@@ -592,6 +596,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; 
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
 					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
+					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				);
@@ -681,6 +686,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL000113 /* BackgroundTaskManager.swift */,
 				MDL000112 /* BackgroundTaskModels.swift */,
 				WTS0011 /* WorkspaceTaskSemantics.swift */,
+				CSEM0011 /* ConnectionSemantics.swift */,
 				WTS0012 /* WorkspaceTaskStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
@@ -931,6 +937,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL000312 /* BackgroundTaskModels.swift in Sources */,
 				MDL000313 /* BackgroundTaskManager.swift in Sources */,
 				WTS0001 /* WorkspaceTaskSemantics.swift in Sources */,
+				CSEM0001 /* ConnectionSemantics.swift in Sources */,
 				WTS0003 /* WorkspaceTaskStore.swift in Sources */,
 				MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
 				RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */,
@@ -1043,6 +1050,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
 				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
+CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
