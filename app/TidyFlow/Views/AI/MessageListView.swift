@@ -47,7 +47,8 @@ struct MessageListView: View {
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
-    private let renderBufferCount: Int = 12
+    /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
+    private let virtualizationWindow = MessageVirtualizationWindow()
 
     init(
         messages: [AIChatMessage],
@@ -153,25 +154,19 @@ struct MessageListView: View {
         let visibleIndices = displayMessages.enumerated().compactMap { index, message in
             visibleMessageIDs.contains(message.id) ? index : nil
         }
-        guard let minVisible = visibleIndices.min(),
-              let maxVisible = visibleIndices.max() else {
-            return nil
-        }
-        let lower = max(0, minVisible - renderBufferCount)
-        let upper = min(displayMessages.count - 1, maxVisible + renderBufferCount)
-        return lower...upper
+        return virtualizationWindow.computeFullRenderRange(
+            visibleIndices: visibleIndices,
+            totalCount: displayMessages.count
+        )
     }
 
     private func shouldFullyRender(message: AIChatMessage, index: Int) -> Bool {
-        if message.isStreaming {
-            return true
-        }
-        guard let range = fullRenderRange else {
-            let warmStartCount = renderBufferCount * 3
-            let lowerBound = max(0, displayMessages.count - warmStartCount)
-            return index >= lowerBound
-        }
-        return range.contains(index)
+        return virtualizationWindow.shouldFullyRender(
+            index: index,
+            isStreaming: message.isStreaming,
+            fullRenderRange: fullRenderRange,
+            totalCount: displayMessages.count
+        )
     }
 
     var body: some View {

@@ -225,3 +225,74 @@ final class ChatScrollPolicy {
         return now.timeIntervalSince(confirmedAt) < configuration.nearBottomConfirmationTimeout
     }
 }
+
+// MARK: - 消息虚拟化窗口模型
+
+/// 消息列表虚拟化窗口决策模型。
+///
+/// 封装可见区缓冲区计算与完整/轻量渲染决策逻辑，使其与 SwiftUI 视图解耦，
+/// 可在单元测试中独立验证，适用于普通聊天、回放聊天和子代理会话等所有场景。
+struct MessageVirtualizationWindow: Equatable {
+    /// 缓冲区大小：可见窗口两端各预热的消息数量。
+    let bufferCount: Int
+    /// warm start 倍数：首次无可见信息时从尾部预热的范围（bufferCount × warmStartMultiplier）。
+    let warmStartMultiplier: Int
+
+    init(bufferCount: Int = 12, warmStartMultiplier: Int = 3) {
+        self.bufferCount = bufferCount
+        self.warmStartMultiplier = warmStartMultiplier
+    }
+
+    /// 根据已知可见消息索引，计算完整渲染索引范围（含两端缓冲区）。
+    ///
+    /// - Parameters:
+    ///   - visibleIndices: 当前确认可见的消息索引集合（由 onAppear/onDisappear 跟踪）
+    ///   - totalCount: 消息总数
+    /// - Returns: 完整渲染范围；若 visibleIndices 为空则返回 nil（调用方应回退到 warm start）
+    func computeFullRenderRange(visibleIndices: [Int], totalCount: Int) -> ClosedRange<Int>? {
+        guard totalCount > 0,
+              let minVisible = visibleIndices.min(),
+              let maxVisible = visibleIndices.max() else {
+            return nil
+        }
+        let lower = max(0, minVisible - bufferCount)
+        let upper = min(totalCount - 1, maxVisible + bufferCount)
+        return lower...upper
+    }
+
+    /// 计算 warm start 尾部预热范围：无可见索引时从尾部预热 bufferCount × warmStartMultiplier 条消息。
+    ///
+    /// - Parameter totalCount: 消息总数
+    /// - Returns: 预热范围；消息为空时返回 nil
+    func warmStartRange(totalCount: Int) -> ClosedRange<Int>? {
+        guard totalCount > 0 else { return nil }
+        let warmStartCount = bufferCount * warmStartMultiplier
+        let lowerBound = max(0, totalCount - warmStartCount)
+        return lowerBound...(totalCount - 1)
+    }
+
+    /// 判断指定索引的消息是否应完整渲染。
+    ///
+    /// 决策优先级：
+    /// 1. 流式消息强制完整渲染，保证流式体验不中断。
+    /// 2. 若有明确 fullRenderRange，使用范围判断。
+    /// 3. 否则回退到 warm start 尾部预热策略。
+    ///
+    /// - Parameters:
+    ///   - index: 消息在 displayMessages 中的索引
+    ///   - isStreaming: 该消息是否处于流式输出中
+    ///   - fullRenderRange: 由 computeFullRenderRange 计算得到的渲染范围（可为 nil）
+    ///   - totalCount: 消息总数（用于 warm start 回退）
+    func shouldFullyRender(
+        index: Int,
+        isStreaming: Bool,
+        fullRenderRange: ClosedRange<Int>?,
+        totalCount: Int
+    ) -> Bool {
+        if isStreaming { return true }
+        guard let range = fullRenderRange else {
+            return warmStartRange(totalCount: totalCount)?.contains(index) ?? false
+        }
+        return range.contains(index)
+    }
+}
