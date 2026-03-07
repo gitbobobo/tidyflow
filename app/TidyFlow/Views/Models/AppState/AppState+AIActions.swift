@@ -145,8 +145,8 @@ extension AppState {
         // 获取 AI Agent 名称
         let agentName = clientSettings.mergeAIAgent
 
-        // 获取默认分支名
-        let defaultBranch = gitCache.getGitBranchCache(workspaceKey: workspaceName)?.current ?? "main"
+        // 从共享语义快照读取默认分支，避免将当前分支误当作默认分支传递
+        let defaultBranch = gitCache.getGitSemanticSnapshot(workspaceKey: workspaceName).defaultBranch ?? "main"
 
         return await withCheckedContinuation { continuation in
             let _ = registerAIMergeContinuation(

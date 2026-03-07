@@ -216,13 +216,11 @@ extension GitCacheState {
     }
 
     func hasStagedChanges(workspaceKey: String) -> Bool {
-        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
-        return gitStatusCache[key]?.hasStagedChanges ?? false
+        return getGitSemanticSnapshot(workspaceKey: workspaceKey).hasStagedChanges
     }
 
     func stagedCount(workspaceKey: String) -> Int {
-        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
-        return gitStatusCache[key]?.stagedCount ?? 0
+        return getGitSemanticSnapshot(workspaceKey: workspaceKey).stagedItems.count
     }
 
     // MARK: - Phase UX-3a: Git Rebase API

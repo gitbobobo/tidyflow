@@ -120,14 +120,10 @@ struct ProjectBranchView: View {
         return "\(base)\n\("toolbar.diagnostics.disconnectedHint".localized)"
     }
 
-    /// 当前分支名称
+    /// 当前分支名称（统一从共享语义快照读取，与 Git 状态数据源保持一致）
     private var currentBranch: String? {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitBranchCache(workspaceKey: ws),
-              !cache.current.isEmpty else {
-            return nil
-        }
-        return cache.current
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).currentBranch
     }
 
     var body: some View {

@@ -27,8 +27,9 @@ struct WorkspaceDetailView: View {
         appState.pendingTodoCountForWorkspace(project: project, workspace: workspace)
     }
 
-    private var gitSummary: MobileWorkspaceGitSummary {
-        appState.gitSummaryForWorkspace(project: project, workspace: workspace)
+    /// 使用共享语义快照，消除与 MobileWorkspaceGitSummary 的重复状态
+    private var gitSnapshot: GitPanelSemanticSnapshot {
+        appState.gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot
     }
 
     private var projectCommands: [ProjectCommand] {
@@ -40,12 +41,12 @@ struct WorkspaceDetailView: View {
             Section("代码变更") {
                 NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
                     HStack(spacing: 16) {
-                        Label("+\(gitSummary.additions)", systemImage: "plus")
+                        Label("+\(gitSnapshot.totalAdditions)", systemImage: "plus")
                             .foregroundColor(.green)
-                        Label("-\(gitSummary.deletions)", systemImage: "minus")
+                        Label("-\(gitSnapshot.totalDeletions)", systemImage: "minus")
                             .foregroundColor(.red)
                         Spacer()
-                        if let branch = gitSummary.defaultBranch, !branch.isEmpty {
+                        if let branch = gitSnapshot.defaultBranch, !branch.isEmpty {
                             Label(branch, systemImage: "arrow.triangle.branch")
                                 .font(.caption)
                                 .foregroundColor(.secondary)

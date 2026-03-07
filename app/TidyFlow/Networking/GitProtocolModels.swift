@@ -589,6 +589,16 @@ struct GitPanelSemanticSnapshot: Equatable {
         stagedItems.isEmpty && trackedUnstagedItems.isEmpty && untrackedItems.isEmpty
     }
 
+    /// 所有变更文件（staged + unstaged）的 additions 汇总，macOS 与 iOS 共享同一计算路径
+    var totalAdditions: Int {
+        (stagedItems + unstagedItems).reduce(0) { $0 + ($1.additions ?? 0) }
+    }
+
+    /// 所有变更文件（staged + unstaged）的 deletions 汇总，macOS 与 iOS 共享同一计算路径
+    var totalDeletions: Int {
+        (stagedItems + unstagedItems).reduce(0) { $0 + ($1.deletions ?? 0) }
+    }
+
     // MARK: - 分支 divergence 文案（macOS/iOS 共享格式）
 
     /// 产出分支差异展示文案，由 macOS 与 iOS 共享相同的格式化规则

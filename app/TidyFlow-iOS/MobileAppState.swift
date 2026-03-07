@@ -208,7 +208,6 @@ final class MobileAppState: ObservableObject {
     @Published var customCommands: [CustomCommand] = []
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
-    @Published var workspaceGitSummary: [String: MobileWorkspaceGitSummary] = [:]
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
@@ -964,9 +963,14 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    /// 从共享语义快照派生工作区 Git 摘要，消除 workspaceGitSummary 的独立状态维护
     func gitSummaryForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitSummary {
-        workspaceGitSummary[globalWorkspaceKey(project: project, workspace: workspace)] ??
-        MobileWorkspaceGitSummary(additions: 0, deletions: 0, defaultBranch: nil)
+        let snapshot = gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot
+        return MobileWorkspaceGitSummary(
+            additions: snapshot.totalAdditions,
+            deletions: snapshot.totalDeletions,
+            defaultBranch: snapshot.defaultBranch
+        )
     }
 
     func gitDetailStateForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitDetailState {
@@ -3924,15 +3928,8 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onGitStatusResult = { [weak self] result in
             guard let self else { return }
-            let additions = result.items.reduce(0) { $0 + ( $1.additions ?? 0 ) }
-            let deletions = result.items.reduce(0) { $0 + ( $1.deletions ?? 0 ) }
             let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            self.workspaceGitSummary[key] = MobileWorkspaceGitSummary(
-                additions: additions,
-                deletions: deletions,
-                defaultBranch: result.defaultBranch
-            )
-            // 同步更新 Git 详情状态
+            // 统一写入 workspaceGitDetailState，additions/deletions 汇总通过 semanticSnapshot 按需计算
             var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
             detail.currentBranch = result.currentBranch
             detail.defaultBranch = result.defaultBranch

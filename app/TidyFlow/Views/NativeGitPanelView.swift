@@ -190,11 +190,10 @@ struct NativeGitPanelView: View {
         return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasUntrackedChanges
     }
 
-    /// 当前工作区是否存在暂存的更改（用于决定是否显示「暂存的更改」顶层区）
+    /// 当前工作区是否存在暂存的更改（统一从共享语义快照读取）
     private var hasStagedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.hasStagedChanges
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasStagedChanges
     }
 }
 

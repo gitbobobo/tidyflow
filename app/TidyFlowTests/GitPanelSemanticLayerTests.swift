@@ -262,4 +262,54 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertNil(empty.currentBranch)
         XCTAssertNil(empty.defaultBranch)
     }
+
+    // MARK: - 7. totalAdditions / totalDeletions 汇总（WI-001 验证）
+
+    private func makeItemWithStats(path: String, status: String, staged: Bool, additions: Int, deletions: Int) -> GitStatusItem {
+        GitStatusItem(
+            id: path,
+            path: path,
+            status: status,
+            staged: staged,
+            renameFrom: nil,
+            additions: additions,
+            deletions: deletions
+        )
+    }
+
+    func test_totalAdditions_aggregatesAcrossStagedAndUnstaged() {
+        let items = [
+            makeItemWithStats(path: "a.swift", status: "M", staged: true, additions: 10, deletions: 2),
+            makeItemWithStats(path: "b.swift", status: "M", staged: false, additions: 5, deletions: 3),
+            makeItemWithStats(path: "c.swift", status: "??", staged: false, additions: 0, deletions: 0),
+        ]
+        let snapshot = makeCache(items: items).semanticSnapshot
+
+        XCTAssertEqual(snapshot.totalAdditions, 15, "staged 和 unstaged 的 additions 应合并计算")
+        XCTAssertEqual(snapshot.totalDeletions, 5, "staged 和 unstaged 的 deletions 应合并计算")
+    }
+
+    func test_totalAdditions_handlesNilAsZero() {
+        let items = [
+            makeItem(path: "a.swift", status: "M", staged: true),   // additions = nil
+            makeItem(path: "b.swift", status: "M", staged: false),  // additions = nil
+        ]
+        let snapshot = makeCache(items: items).semanticSnapshot
+
+        XCTAssertEqual(snapshot.totalAdditions, 0)
+        XCTAssertEqual(snapshot.totalDeletions, 0)
+    }
+
+    func test_totalAdditions_emptySnapshotIsZero() {
+        let snapshot = makeCache(items: []).semanticSnapshot
+        XCTAssertEqual(snapshot.totalAdditions, 0)
+        XCTAssertEqual(snapshot.totalDeletions, 0)
+    }
+
+    // MARK: - 8. empty() 中 totalAdditions/totalDeletions 为零
+    func test_emptySnapshot_totalAdditionsDeletionsAreZero() {
+        let empty = GitPanelSemanticSnapshot.empty()
+        XCTAssertEqual(empty.totalAdditions, 0)
+        XCTAssertEqual(empty.totalDeletions, 0)
+    }
 }
