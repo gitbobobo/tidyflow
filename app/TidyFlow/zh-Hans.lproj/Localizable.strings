@@ -406,6 +406,7 @@
 "evolution.page.handoff.completed" = "已完成";
 "evolution.page.handoff.risks" = "风险";
 "evolution.page.handoff.next" = "下一步";
+"evolution.page.handoff.cycleSummary" = "循环汇总";
 "evolution.page.report.title" = "Report 文档";
 "evolution.page.report.empty" = "暂无 Report 文档";
 "evolution.page.report.loading" = "加载中…";
