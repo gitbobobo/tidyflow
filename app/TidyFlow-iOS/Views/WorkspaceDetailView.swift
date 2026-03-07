@@ -658,20 +658,44 @@ struct MobileEvidenceView: View {
                 }
             }
             
-            // 类型切换 Picker
+            // 类型切换 Tab 栏（与 macOS TabContentHostView 按钮式 Tab 栏语义对齐）
             Section {
-                Picker("类型", selection: $selectedTab) {
+                HStack(spacing: 0) {
                     ForEach(EvidenceTabType.allCases) { tab in
-                        Label(tab.displayName, systemImage: tab.iconName)
-                            .tag(tab)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTab = tab
+                            }
+                            clearPreview()
+                            stopScreenshotThumbnailPrefetch()
+                            processNextScreenshotThumbnailLoadIfNeeded()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: tab.iconName)
+                                    .font(.system(size: 12))
+                                Text("\(tab.displayName)(\(snapshot.map { tab.itemCount(in: $0) } ?? 0))")
+                                    .font(.system(size: 12))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                selectedTab == tab
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .foregroundColor(selectedTab == tab ? .accentColor : .primary)
+                            .contentShape(Rectangle())
+                            .animation(.easeInOut(duration: 0.2), value: selectedTab)
+                        }
+                        .buttonStyle(.plain)
+
+                        if tab != EvidenceTabType.allCases.last {
+                            Divider()
+                                .frame(height: 20)
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-                .onChange(of: selectedTab) { _, _ in
-                    clearPreview()
-                    stopScreenshotThumbnailPrefetch()
-                    processNextScreenshotThumbnailLoadIfNeeded()
-                }
+                .listRowInsets(EdgeInsets())
             }
 
             if snapshotLoading && snapshot == nil {

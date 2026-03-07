@@ -121,39 +121,10 @@ private struct MobileWorkspaceActivityIconsView: View {
     let indicators: [MobileWorkspaceActivityIndicator]
 
     var body: some View {
-        indicatorIcons(maskStyle: false)
-            .overlay {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: indicators.isEmpty)) { timeline in
-                    GeometryReader { proxy in
-                        let cycle = timeline.date.timeIntervalSinceReferenceDate
-                            .truncatingRemainder(dividingBy: 1.8) / 1.8
-                        let width = max(8, proxy.size.width * 0.45)
-                        let offset = (cycle * 1.6 - 0.3) * proxy.size.width
-                        LinearGradient(
-                            colors: [
-                                .clear,
-                                Color.white.opacity(0.85),
-                                .clear
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(width: width, height: proxy.size.height * 1.6)
-                        .rotationEffect(.degrees(16))
-                        .offset(x: offset, y: -proxy.size.height * 0.3)
-                    }
-                }
-                .mask(indicatorIcons(maskStyle: true))
-                .allowsHitTesting(false)
-            }
-    }
-
-    @ViewBuilder
-    private func indicatorIcons(maskStyle: Bool) -> some View {
         HStack(spacing: 4) {
             ForEach(indicators) { indicator in
                 MobileCommandIconView(iconName: indicator.iconName, size: 11)
-                    .foregroundColor(maskStyle ? .white : .secondary)
+                    .foregroundColor(.secondary)
                     .frame(width: 12, height: 12)
             }
         }
