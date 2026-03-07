@@ -1516,4 +1516,137 @@ final class AIChatProtocolModelsTests: XCTestCase {
             profileWs2?.configOptions["thought_level"] as? String
         )
     }
+
+    // MARK: - AISessionSemantics 共享语义层
+
+    func testMergedSelectionHintPrimaryWins() {
+        let primary = AISessionSelectionHint(agent: "my-agent", modelProviderID: "anthropic", modelID: "claude-3", configOptions: nil)
+        let fallback = AISessionSelectionHint(agent: "fallback-agent", modelProviderID: "openai", modelID: "gpt-4", configOptions: nil)
+        let merged = AISessionSemantics.mergedSelectionHint(primary: primary, fallback: fallback)
+        XCTAssertEqual(merged?.agent, "my-agent")
+        XCTAssertEqual(merged?.modelProviderID, "anthropic")
+        XCTAssertEqual(merged?.modelID, "claude-3")
+    }
+
+    func testMergedSelectionHintFallbackFillsMissingFields() {
+        let primary = AISessionSelectionHint(agent: "my-agent", modelProviderID: nil, modelID: nil, configOptions: nil)
+        let fallback = AISessionSelectionHint(agent: nil, modelProviderID: "openai", modelID: "gpt-4", configOptions: nil)
+        let merged = AISessionSemantics.mergedSelectionHint(primary: primary, fallback: fallback)
+        XCTAssertEqual(merged?.agent, "my-agent")
+        XCTAssertEqual(merged?.modelProviderID, "openai")
+        XCTAssertEqual(merged?.modelID, "gpt-4")
+    }
+
+    func testMergedSelectionHintNilPrimaryReturnsFallback() {
+        let fallback = AISessionSelectionHint(agent: "fb", modelProviderID: nil, modelID: nil, configOptions: nil)
+        let merged = AISessionSemantics.mergedSelectionHint(primary: nil, fallback: fallback)
+        XCTAssertEqual(merged?.agent, "fb")
+    }
+
+    func testMergedSelectionHintConfigOptionsMerged() {
+        let primary = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["thought_level": "high"])
+        let fallback = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["thought_level": "low", "other": "value"])
+        let merged = AISessionSemantics.mergedSelectionHint(primary: primary, fallback: fallback)
+        XCTAssertEqual(merged?.configOptions?["thought_level"] as? String, "high", "primary configOptions 应覆盖 fallback")
+        XCTAssertEqual(merged?.configOptions?["other"] as? String, "value", "fallback 独有字段应保留")
+    }
+
+    func testInferSelectionHintFromMessagesUserMessageFirst() {
+        let userMsg = AIProtocolMessageInfo(
+            id: "m1",
+            role: "user",
+            createdAt: nil,
+            agent: "claude-agent",
+            modelProviderID: "anthropic",
+            modelID: "claude-3",
+            parts: []
+        )
+        let assistantMsg = AIProtocolMessageInfo(
+            id: "m2",
+            role: "assistant",
+            createdAt: nil,
+            agent: "other-agent",
+            modelProviderID: "openai",
+            modelID: "gpt-4",
+            parts: []
+        )
+        let hint = AISessionSemantics.inferSelectionHintFromMessages([userMsg, assistantMsg])
+        XCTAssertEqual(hint?.agent, "claude-agent", "应优先从 user 消息推导 agent")
+    }
+
+    func testInferSelectionHintFromMessagesEmptyReturnsNil() {
+        let hint = AISessionSemantics.inferSelectionHintFromMessages([])
+        XCTAssertNil(hint)
+    }
+
+    func testRebuildPendingQuestionRequestsSkipsCompletedStatus() {
+        let completedPart = AIProtocolPartInfo(
+            id: "p-completed",
+            partType: "tool",
+            text: nil, mime: nil, filename: nil, url: nil,
+            synthetic: nil, ignored: nil, source: nil,
+            toolName: "question",
+            toolCallId: "call-1",
+            toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
+            toolState: [
+                "status": "completed",
+                "questions": [["id": "q1", "question": "Hello?", "default": "yes"]]
+            ],
+            toolPartMetadata: ["request_id": "req-1"]
+        )
+        let message = AIProtocolMessageInfo(
+            id: "m1", role: "assistant", createdAt: nil, agent: nil,
+            modelProviderID: nil, modelID: nil, parts: [completedPart]
+        )
+        let requests = AISessionSemantics.rebuildPendingQuestionRequests(sessionId: "s1", messages: [message])
+        XCTAssertTrue(requests.isEmpty, "completed 状态的 question part 不应重建为 pending request")
+    }
+
+    func testRebuildPendingQuestionRequestsBuildsActiveRequest() {
+        let activePart = AIProtocolPartInfo(
+            id: "p-active",
+            partType: "tool",
+            text: nil, mime: nil, filename: nil, url: nil,
+            synthetic: nil, ignored: nil, source: nil,
+            toolName: "question",
+            toolCallId: "call-2",
+            toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
+            toolState: [
+                "status": "waiting",
+                "questions": [["id": "q2", "question": "Continue?", "default": "yes"]]
+            ],
+            toolPartMetadata: ["request_id": "req-2"]
+        )
+        let message = AIProtocolMessageInfo(
+            id: "m2", role: "assistant", createdAt: nil, agent: nil,
+            modelProviderID: nil, modelID: nil, parts: [activePart]
+        )
+        let requests = AISessionSemantics.rebuildPendingQuestionRequests(sessionId: "sess-abc", messages: [message])
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.id, "req-2")
+        XCTAssertEqual(requests.first?.sessionId, "sess-abc")
+        XCTAssertEqual(requests.first?.questions.count, 1)
+    }
+
+    func testRebuildPendingQuestionRequestsDeduplicatesByRequestId() {
+        func makePart(id: String, callId: String) -> AIProtocolPartInfo {
+            AIProtocolPartInfo(
+                id: id, partType: "tool",
+                text: nil, mime: nil, filename: nil, url: nil,
+                synthetic: nil, ignored: nil, source: nil,
+                toolName: "question", toolCallId: callId,
+                toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
+                toolState: ["status": "waiting", "questions": [["id": "q1", "question": "Q?", "default": "yes"]]],
+                toolPartMetadata: ["request_id": "same-req-id"]
+            )
+        }
+        let msg1 = AIProtocolMessageInfo(id: "m1", role: "assistant", createdAt: nil, agent: nil, modelProviderID: nil, modelID: nil, parts: [makePart(id: "p1", callId: "c1")])
+        let msg2 = AIProtocolMessageInfo(id: "m2", role: "assistant", createdAt: nil, agent: nil, modelProviderID: nil, modelID: nil, parts: [makePart(id: "p2", callId: "c2")])
+        let requests = AISessionSemantics.rebuildPendingQuestionRequests(sessionId: "s1", messages: [msg1, msg2])
+        XCTAssertEqual(requests.count, 1, "相同 request_id 只应建立一条 pending request")
+    }
+
+    func testDefaultMessagesPageSizeIs50() {
+        XCTAssertEqual(AISessionSemantics.defaultMessagesPageSize, 50)
+    }
 }

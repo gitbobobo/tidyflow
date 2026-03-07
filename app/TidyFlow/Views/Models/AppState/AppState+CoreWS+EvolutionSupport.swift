@@ -697,7 +697,7 @@ extension AppState {
 
         if let messages = ev.messages {
             evolutionReplayStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: messages
             )
@@ -786,7 +786,7 @@ extension AppState {
 
         if let messages = ev.messages {
             subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: messages
             )

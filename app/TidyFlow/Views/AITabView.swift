@@ -231,7 +231,7 @@ struct AITabView: View {
     /// 延迟拉取非当前工具会话列表的任务（削峰）
     @State private var deferredSessionListLoadWorkItem: DispatchWorkItem? = nil
     private let aiSessionListLimit = 50
-    private let aiSessionMessagesPageSize = 50
+    private let aiSessionMessagesPageSize = AISessionSemantics.defaultMessagesPageSize
     private let deferredSessionListDelay: TimeInterval = 0.35
 
     private var canSwitchAITool: Bool {
@@ -1514,21 +1514,17 @@ struct AITabView: View {
 
     private func loadOlderMessages() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
-              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty,
-              aiChatStore.historyHasMore else { return }
-        guard let beforeMessageId = aiChatStore.historyNextBeforeMessageId,
-              !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            aiChatStore.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
-            return
-        }
-        aiChatStore.setHistoryLoading(true)
-        appState.wsClient.requestAISessionMessages(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
+              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return }
+        let context = AISessionHistoryCoordinator.Context(
+            project: appState.selectedProjectName,
+            workspace: ws,
             aiTool: appState.aiChatTool,
-            sessionId: sessionId,
-            limit: aiSessionMessagesPageSize,
-            beforeMessageId: beforeMessageId
+            sessionId: sessionId
+        )
+        AISessionHistoryCoordinator.loadOlderPage(
+            context: context,
+            wsClient: appState.wsClient,
+            store: aiChatStore
         )
     }
 }

@@ -336,6 +336,51 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertEqual(store.messages[1].parts[0].toolState?["status"] as? String, "error")
     }
 
+    // MARK: - 分页历史加载
+
+    func testUpdateHistoryPaginationSetsCursorAndHasMore() {
+        let store = AIChatStore()
+        store.updateHistoryPagination(hasMore: true, nextBeforeMessageId: "cursor-123")
+        XCTAssertTrue(store.historyHasMore)
+        XCTAssertEqual(store.historyNextBeforeMessageId, "cursor-123")
+    }
+
+    func testUpdateHistoryPaginationFalseResetsState() {
+        let store = AIChatStore()
+        store.updateHistoryPagination(hasMore: true, nextBeforeMessageId: "old-cursor")
+        store.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
+        XCTAssertFalse(store.historyHasMore)
+        XCTAssertNil(store.historyNextBeforeMessageId)
+    }
+
+    func testPrependMessagesWithDeduplication() {
+        let store = AIChatStore()
+        let existing = AIProtocolMessageInfo(
+            id: "m-existing", role: "user", createdAt: nil, agent: nil,
+            modelProviderID: nil, modelID: nil, parts: [makeTextPart(id: "p1", text: "hi")]
+        )
+        store.replaceMessagesFromSessionCache([existing], isStreaming: false)
+
+        let olderDup = AIProtocolMessageInfo(
+            id: "m-existing", role: "user", createdAt: nil, agent: nil,
+            modelProviderID: nil, modelID: nil, parts: [makeTextPart(id: "p1", text: "hi")]
+        )
+        let olderNew = AIProtocolMessageInfo(
+            id: "m-older", role: "user", createdAt: nil, agent: nil,
+            modelProviderID: nil, modelID: nil, parts: [makeTextPart(id: "p2", text: "older")]
+        )
+        // 转为 AIChatMessage 以使用 prependMessages
+        let existingStore = AIChatStore()
+        existingStore.replaceMessagesFromSessionCache([olderDup, olderNew], isStreaming: false)
+        let olderMessages = existingStore.messages
+        store.prependMessages(olderMessages)
+
+        // olderDup 已存在，不应重复添加；olderNew 应出现在最前面
+        XCTAssertEqual(store.messages.count, 2)
+        XCTAssertEqual(store.messages.first?.messageId, "m-older")
+        XCTAssertEqual(store.messages.last?.messageId, "m-existing")
+    }
+
     private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

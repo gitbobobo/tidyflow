@@ -74,27 +74,6 @@ extension AppState {
         )
     }
 
-    private func mergedAISessionSelectionHint(
-        primary: AISessionSelectionHint?,
-        fallback: AISessionSelectionHint?
-    ) -> AISessionSelectionHint? {
-        if primary == nil { return fallback }
-        if fallback == nil { return primary }
-        var mergedConfigOptions: [String: Any] = fallback?.configOptions ?? [:]
-        if let primaryConfig = primary?.configOptions {
-            for (optionID, value) in primaryConfig {
-                mergedConfigOptions[optionID] = value
-            }
-        }
-        let merged = AISessionSelectionHint(
-            agent: primary?.agent ?? fallback?.agent,
-            modelProviderID: primary?.modelProviderID ?? fallback?.modelProviderID,
-            modelID: primary?.modelID ?? fallback?.modelID,
-            configOptions: mergedConfigOptions.isEmpty ? nil : mergedConfigOptions
-        )
-        return merged.isEmpty ? nil : merged
-    }
-
     func handleAISessionStarted(_ ev: AISessionStartedV2) {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -198,11 +177,11 @@ extension AppState {
                 }
                 return
             }
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: ev.messages
             )
-            let inferredHint = self?.inferAISessionSelectionHintFromMessages(ev.messages)
+            let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(ev.messages)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 store.replaceMessages(mapped)
@@ -211,7 +190,7 @@ extension AppState {
                     hasMore: ev.hasMore,
                     nextBeforeMessageId: ev.nextBeforeMessageId
                 )
-                let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
+                let effectiveHint = AISessionSemantics.mergedSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
                 self.sendAISelectionPipelineLog(
                     event: "session_messages_received",
                     tool: ev.aiTool,
@@ -252,8 +231,8 @@ extension AppState {
 
         if let messages = ev.messages {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let inferredHint = self?.inferAISessionSelectionHintFromMessages(messages)
-                let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(messages)
+                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                     sessionId: ev.sessionId,
                     messages: messages
                 )
@@ -270,7 +249,7 @@ extension AppState {
                     }
                     store.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
                     store.replaceQuestionRequests(restoredQuestions)
-                    let effectiveHint = self.mergedAISessionSelectionHint(
+                    let effectiveHint = AISessionSemantics.mergedSelectionHint(
                         primary: ev.selectionHint,
                         fallback: inferredHint
                     )

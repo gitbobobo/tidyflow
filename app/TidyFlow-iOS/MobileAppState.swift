@@ -1673,11 +1673,16 @@ final class MobileAppState: ObservableObject {
         )
         subAgentViewerStore.clearAll()
         subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
-        wsClient.requestAISessionSubscribe(
+        let subAgentContext = AISessionHistoryCoordinator.Context(
             project: project,
             workspace: normalizedWorkspace,
-            aiTool: aiTool.rawValue,
+            aiTool: aiTool,
             sessionId: trimmedSessionId
+        )
+        AISessionHistoryCoordinator.subscribeAndLoadRecent(
+            context: subAgentContext,
+            wsClient: wsClient,
+            store: subAgentViewerStore
         )
         requestAISessionStatus(
             projectName: project,
@@ -1685,13 +1690,6 @@ final class MobileAppState: ObservableObject {
             aiTool: aiTool,
             sessionId: trimmedSessionId,
             force: true
-        )
-        wsClient.requestAISessionMessages(
-            projectName: project,
-            workspaceName: normalizedWorkspace,
-            aiTool: aiTool,
-            sessionId: trimmedSessionId,
-            limit: 50
         )
     }
 
@@ -1955,7 +1953,7 @@ final class MobileAppState: ObservableObject {
 
         if let messages = ev.messages {
             subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: messages
             )
@@ -2189,22 +2187,19 @@ final class MobileAppState: ObservableObject {
 
         aiCurrentSessionId = session.id
         aiChatStore.setCurrentSessionId(session.id)
-        aiChatStore.addSubscription(session.id)
         aiChatStore.setAbortPendingSessionId(nil)
         aiChatStore.clearMessages()
 
-        wsClient.requestAISessionSubscribe(
+        let context = AISessionHistoryCoordinator.Context(
             project: session.projectName,
             workspace: session.workspaceName,
-            aiTool: targetTool.rawValue,
+            aiTool: targetTool,
             sessionId: session.id
         )
-        wsClient.requestAISessionMessages(
-            projectName: session.projectName,
-            workspaceName: session.workspaceName,
-            aiTool: targetTool,
-            sessionId: session.id,
-            limit: 50
+        AISessionHistoryCoordinator.subscribeAndLoadRecent(
+            context: context,
+            wsClient: wsClient,
+            store: aiChatStore
         )
         wsClient.requestAISessionConfigOptions(
             projectName: session.projectName,
@@ -2257,21 +2252,17 @@ final class MobileAppState: ObservableObject {
 
     /// 加载更早的 AI 聊天消息（历史分页）
     func loadOlderAIChatMessages() {
-        guard let sessionId = aiCurrentSessionId, !sessionId.isEmpty,
-              aiChatStore.historyHasMore else { return }
-        guard let beforeMessageId = aiChatStore.historyNextBeforeMessageId,
-              !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            aiChatStore.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
-            return
-        }
-        aiChatStore.setHistoryLoading(true)
-        wsClient.requestAISessionMessages(
-            projectName: aiActiveProject,
-            workspaceName: aiActiveWorkspace,
+        guard let sessionId = aiCurrentSessionId, !sessionId.isEmpty else { return }
+        let context = AISessionHistoryCoordinator.Context(
+            project: aiActiveProject,
+            workspace: aiActiveWorkspace,
             aiTool: aiChatTool,
-            sessionId: sessionId,
-            limit: 40,
-            beforeMessageId: beforeMessageId
+            sessionId: sessionId
+        )
+        AISessionHistoryCoordinator.loadOlderPage(
+            context: context,
+            wsClient: wsClient,
+            store: aiChatStore
         )
     }
 
@@ -2563,19 +2554,16 @@ final class MobileAppState: ObservableObject {
             aiChatStore.clearMessages()
             return
         }
-        wsClient.requestAISessionSubscribe(
+        let context = AISessionHistoryCoordinator.Context(
             project: aiActiveProject,
             workspace: aiActiveWorkspace,
-            aiTool: aiChatTool.rawValue,
+            aiTool: aiChatTool,
             sessionId: sessionId
         )
-        aiChatStore.addSubscription(sessionId)
-        wsClient.requestAISessionMessages(
-            projectName: aiActiveProject,
-            workspaceName: aiActiveWorkspace,
-            aiTool: aiChatTool,
-            sessionId: sessionId,
-            limit: 50
+        AISessionHistoryCoordinator.subscribeAndLoadRecent(
+            context: context,
+            wsClient: wsClient,
+            store: aiChatStore
         )
         wsClient.requestAISessionConfigOptions(
             projectName: aiActiveProject,
@@ -2604,25 +2592,22 @@ final class MobileAppState: ObservableObject {
             )
         }
 
-        // 若有选中会话，重新拉取详情以恢复流式状态
+        // 若有选中会话，通过共享协调器重新订阅并补拉以恢复流式状态
         for tool in AIChatTool.allCases {
             let sessions = aiSessionsByTool[tool] ?? []
             guard let sessionId = (tool == aiChatTool ? aiCurrentSessionId : nil),
                   !sessionId.isEmpty,
                   sessions.contains(where: { $0.id == sessionId }) else { continue }
-            wsClient.requestAISessionSubscribe(
+            let context = AISessionHistoryCoordinator.Context(
                 project: aiActiveProject,
                 workspace: aiActiveWorkspace,
-                aiTool: tool.rawValue,
+                aiTool: tool,
                 sessionId: sessionId
             )
-            aiChatStore.addSubscription(sessionId)
-            wsClient.requestAISessionMessages(
-                projectName: aiActiveProject,
-                workspaceName: aiActiveWorkspace,
-                aiTool: tool,
-                sessionId: sessionId,
-                limit: 50
+            AISessionHistoryCoordinator.subscribeAndLoadRecent(
+                context: context,
+                wsClient: wsClient,
+                store: aiChatStore
             )
             wsClient.requestAISessionConfigOptions(
                 projectName: aiActiveProject,
@@ -2798,95 +2783,6 @@ final class MobileAppState: ObservableObject {
             return (name, arguments)
         }
         return (body, "")
-    }
-
-    private static func rebuildPendingQuestionRequests(
-        sessionId: String,
-        messages: [AIProtocolMessageInfo]
-    ) -> [AIQuestionRequestInfo] {
-        var requests: [AIQuestionRequestInfo] = []
-        var seenRequestIDs: Set<String> = []
-
-        for message in messages {
-            for part in message.parts {
-                guard part.partType == "tool" else { continue }
-                let toolName = (part.toolName ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                guard toolName == "question" else { continue }
-                guard let stateDict = part.toolState else { continue }
-
-                let status = ((stateDict["status"] as? String) ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                if status == "completed" || status == "error" || status == "failed" || status == "done" {
-                    continue
-                }
-
-                let input = stateDict["input"] as? [String: Any]
-                let questionsValue = input?["questions"] ?? stateDict["questions"]
-                let questions = parseQuestionInfos(from: questionsValue)
-                guard !questions.isEmpty else { continue }
-
-                let metadata = part.toolPartMetadata ?? [:]
-                let requestId =
-                    stringValue(metadata["request_id"]) ??
-                    stringValue(metadata["requestId"]) ??
-                    stringValue(stateDict["request_id"]) ??
-                    stringValue(stateDict["requestId"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["request_id"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["requestId"]) ??
-                    part.toolCallId
-                guard let requestId, !requestId.isEmpty else { continue }
-                guard !seenRequestIDs.contains(requestId) else { continue }
-                seenRequestIDs.insert(requestId)
-
-                let toolMessageId =
-                    stringValue(metadata["tool_message_id"]) ??
-                    stringValue(metadata["toolMessageId"]) ??
-                    part.id
-
-                requests.append(
-                    AIQuestionRequestInfo(
-                        id: requestId,
-                        sessionId: sessionId,
-                        questions: questions,
-                        toolMessageId: toolMessageId,
-                        toolCallId: part.toolCallId
-                    )
-                )
-            }
-        }
-
-        return requests
-    }
-
-    private static func parseQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
-        if let array = value as? [[String: Any]] {
-            return array.compactMap { AIQuestionInfo.from(json: $0) }
-        }
-        if let array = value as? [Any] {
-            return array.compactMap { item in
-                guard let dict = item as? [String: Any] else { return nil }
-                return AIQuestionInfo.from(json: dict)
-            }
-        }
-        if let dict = value as? [String: Any], let nested = dict["questions"] {
-            return parseQuestionInfos(from: nested)
-        }
-        return []
-    }
-
-    private static func stringValue(_ value: Any?) -> String? {
-        switch value {
-        case let value as String:
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        case let value as NSNumber:
-            return value.stringValue
-        default:
-            return nil
-        }
     }
 
     private func sendPendingAIRequest(
@@ -3256,53 +3152,6 @@ final class MobileAppState: ObservableObject {
         }
         if matches.count == 1 {
             return matches[0]
-        }
-        return nil
-    }
-
-    private func mergedAISessionSelectionHint(
-        primary: AISessionSelectionHint?,
-        fallback: AISessionSelectionHint?
-    ) -> AISessionSelectionHint? {
-        if primary == nil { return fallback }
-        if fallback == nil { return primary }
-        var mergedConfigOptions: [String: Any] = fallback?.configOptions ?? [:]
-        if let primaryConfig = primary?.configOptions {
-            for (optionID, value) in primaryConfig {
-                mergedConfigOptions[optionID] = value
-            }
-        }
-        let merged = AISessionSelectionHint(
-            agent: primary?.agent ?? fallback?.agent,
-            modelProviderID: primary?.modelProviderID ?? fallback?.modelProviderID,
-            modelID: primary?.modelID ?? fallback?.modelID,
-            configOptions: mergedConfigOptions.isEmpty ? nil : mergedConfigOptions
-        )
-        return merged.isEmpty ? nil : merged
-    }
-
-    private func inferAISessionSelectionHintFromMessages(_ messages: [AIProtocolMessageInfo]) -> AISessionSelectionHint? {
-        for message in messages.reversed() where message.role.caseInsensitiveCompare("user") == .orderedSame {
-            let hint = AISessionSelectionHint(
-                agent: message.agent,
-                modelProviderID: message.modelProviderID,
-                modelID: message.modelID,
-                configOptions: nil
-            )
-            if !hint.isEmpty {
-                return hint
-            }
-        }
-        for message in messages.reversed() {
-            let hint = AISessionSelectionHint(
-                agent: message.agent,
-                modelProviderID: message.modelProviderID,
-                modelID: message.modelID,
-                configOptions: nil
-            )
-            if !hint.isEmpty {
-                return hint
-            }
         }
         return nil
     }
@@ -4381,20 +4230,17 @@ final class MobileAppState: ObservableObject {
             sessions.insert(session, at: 0)
             self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
 
-            // WI-003：回放时订阅会话并显式请求最新 50 条历史消息，对齐 macOS 端语义
-            self.aiChatStore.addSubscription(ev.sessionID)
-            self.wsClient.requestAISessionSubscribe(
+            // 通过共享协调器订阅并加载历史，确保与 macOS 端语义一致
+            let evoContext = AISessionHistoryCoordinator.Context(
                 project: ev.project,
                 workspace: normalizedWorkspace,
-                aiTool: aiTool.rawValue,
+                aiTool: aiTool,
                 sessionId: ev.sessionID
             )
-            self.wsClient.requestAISessionMessages(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                limit: 50
+            AISessionHistoryCoordinator.subscribeAndLoadRecent(
+                context: evoContext,
+                wsClient: self.wsClient,
+                store: self.aiChatStore
             )
             self.requestAISessionStatus(
                 projectName: ev.project,
@@ -4675,7 +4521,7 @@ final class MobileAppState: ObservableObject {
             guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
 
             self.aiChatStore.replaceMessages(ev.toChatMessages())
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: ev.messages
             )
@@ -4684,8 +4530,8 @@ final class MobileAppState: ObservableObject {
                 hasMore: ev.hasMore,
                 nextBeforeMessageId: ev.nextBeforeMessageId
             )
-            let inferredHint = self.inferAISessionSelectionHintFromMessages(ev.messages)
-            let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
+            let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(ev.messages)
+            let effectiveHint = AISessionSemantics.mergedSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
             self.applyAISessionSelectionHint(
                 effectiveHint,
                 sessionId: ev.sessionId,
@@ -4715,13 +4561,13 @@ final class MobileAppState: ObservableObject {
                     sessionId: ev.sessionId
                 ) else { return }
                 self.aiChatStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-                let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
                     sessionId: ev.sessionId,
                     messages: messages
                 )
                 self.aiChatStore.replaceQuestionRequests(restoredQuestions)
-                let inferredHint = self.inferAISessionSelectionHintFromMessages(messages)
-                let effectiveHint = self.mergedAISessionSelectionHint(
+                let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(messages)
+                let effectiveHint = AISessionSemantics.mergedSelectionHint(
                     primary: ev.selectionHint,
                     fallback: inferredHint
                 )

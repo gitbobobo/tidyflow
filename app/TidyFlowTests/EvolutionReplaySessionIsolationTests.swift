@@ -120,6 +120,72 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
 
     // MARK: - 私有辅助
 
+    // MARK: - AISessionHistoryCoordinator.Context 隔离
+
+    func testCoordinatorContextEqualityWithSameValues() {
+        let ctx1 = AISessionHistoryCoordinator.Context(
+            project: "project-a",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-123"
+        )
+        let ctx2 = AISessionHistoryCoordinator.Context(
+            project: "project-a",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-123"
+        )
+        XCTAssertEqual(ctx1, ctx2, "相同四元组的 Context 应相等")
+    }
+
+    func testCoordinatorContextInequalityOnDifferentSession() {
+        let ctx1 = AISessionHistoryCoordinator.Context(
+            project: "project-a",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-123"
+        )
+        let ctx2 = AISessionHistoryCoordinator.Context(
+            project: "project-a",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-456"
+        )
+        XCTAssertNotEqual(ctx1, ctx2, "不同 sessionId 的 Context 应不相等，防止跨会话事件混用")
+    }
+
+    func testCoordinatorContextInequalityOnDifferentProject() {
+        let ctx1 = AISessionHistoryCoordinator.Context(
+            project: "project-a",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-1"
+        )
+        let ctx2 = AISessionHistoryCoordinator.Context(
+            project: "project-b",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "session-1"
+        )
+        XCTAssertNotEqual(ctx1, ctx2, "不同 project 的 Context 应不相等，防止跨项目历史合并")
+    }
+
+    func testCoordinatorContextInequalityOnDifferentAITool() {
+        let ctx1 = AISessionHistoryCoordinator.Context(
+            project: "p",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "s1"
+        )
+        let ctx2 = AISessionHistoryCoordinator.Context(
+            project: "p",
+            workspace: "default",
+            aiTool: .codex,
+            sessionId: "s1"
+        )
+        XCTAssertNotEqual(ctx1, ctx2, "不同 aiTool 的 Context 应不相等")
+    }
+
     private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

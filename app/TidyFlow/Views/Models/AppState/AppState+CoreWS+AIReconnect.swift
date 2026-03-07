@@ -1,90 +1,20 @@
 import Foundation
 
 extension AppState {
+    /// 向后兼容包装：委托到共享语义层。
     static func rebuildPendingQuestionRequests(
         sessionId: String,
         messages: [AIProtocolMessageInfo]
     ) -> [AIQuestionRequestInfo] {
-        var requests: [AIQuestionRequestInfo] = []
-        var seenRequestIDs: Set<String> = []
-
-        for message in messages {
-            for part in message.parts {
-                guard part.partType == "tool" else { continue }
-                let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard toolName == "question" else { continue }
-                guard let stateDict = part.toolState else { continue }
-
-                let status = ((stateDict["status"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                // 仅重建未结束的 question，避免把已完成历史误判为待处理。
-                if status == "completed" || status == "error" || status == "failed" || status == "done" {
-                    continue
-                }
-
-                let input = stateDict["input"] as? [String: Any]
-                let questionsValue = input?["questions"] ?? stateDict["questions"]
-                let questions = parseQuestionInfos(from: questionsValue)
-                guard !questions.isEmpty else { continue }
-
-                let metadata = part.toolPartMetadata ?? [:]
-                let requestId =
-                    stringValue(metadata["request_id"]) ??
-                    stringValue(metadata["requestId"]) ??
-                    stringValue(stateDict["request_id"]) ??
-                    stringValue(stateDict["requestId"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["request_id"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["requestId"]) ??
-                    part.toolCallId
-                guard let requestId, !requestId.isEmpty else { continue }
-                guard !seenRequestIDs.contains(requestId) else { continue }
-                seenRequestIDs.insert(requestId)
-
-                let toolMessageId =
-                    stringValue(metadata["tool_message_id"]) ??
-                    stringValue(metadata["toolMessageId"]) ??
-                    part.id
-
-                requests.append(
-                    AIQuestionRequestInfo(
-                        id: requestId,
-                        sessionId: sessionId,
-                        questions: questions,
-                        toolMessageId: toolMessageId,
-                        toolCallId: part.toolCallId
-                    )
-                )
-            }
-        }
-
-        return requests
+        AISessionSemantics.rebuildPendingQuestionRequests(sessionId: sessionId, messages: messages)
     }
 
     static func parseQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
-        if let array = value as? [[String: Any]] {
-            return array.compactMap { AIQuestionInfo.from(json: $0) }
-        }
-        if let array = value as? [Any] {
-            return array.compactMap { item in
-                guard let dict = item as? [String: Any] else { return nil }
-                return AIQuestionInfo.from(json: dict)
-            }
-        }
-        if let dict = value as? [String: Any], let nested = dict["questions"] {
-            return parseQuestionInfos(from: nested)
-        }
-        return []
+        AISessionSemantics.parseQuestionInfos(from: value)
     }
 
     static func stringValue(_ value: Any?) -> String? {
-        switch value {
-        case let value as String:
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        case let value as NSNumber:
-            return value.stringValue
-        default:
-            return nil
-        }
+        AISessionSemantics.stringValue(value)
     }
 
     /// 会话状态兜底收敛：避免 done/error 事件丢失时，输入区长期停留在“停止中”。
@@ -171,18 +101,16 @@ extension AppState {
             TFLog.app.info(
                 "AI reconnect reload: request session messages, tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public)"
             )
-            wsClient.requestAISessionSubscribe(
+            let context = AISessionHistoryCoordinator.Context(
                 project: selectedProjectName,
                 workspace: workspace,
-                aiTool: tool.rawValue,
+                aiTool: tool,
                 sessionId: sessionId
             )
-            wsClient.requestAISessionMessages(
-                projectName: selectedProjectName,
-                workspaceName: workspace,
-                aiTool: tool,
-                sessionId: sessionId,
-                limit: 50
+            AISessionHistoryCoordinator.subscribeAndLoadRecent(
+                context: context,
+                wsClient: wsClient,
+                store: store
             )
         }
     }
