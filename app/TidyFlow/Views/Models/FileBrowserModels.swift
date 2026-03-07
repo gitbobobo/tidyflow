@@ -39,6 +39,16 @@ struct GitStatusIndex {
     /// 空索引
     init() {}
 
+    /// 从 GitStatusItem 列表构建索引（适用于 iOS 端从 MobileWorkspaceGitDetailState 派生）
+    init(fromItems items: [GitStatusItem]) {
+        for item in items {
+            fileStatus[item.path] = item.status
+        }
+        for item in items {
+            propagateToParents(path: item.path, status: item.status)
+        }
+    }
+
     /// 向上传播状态到所有父目录
     private mutating func propagateToParents(path: String, status: String) {
         // 不传播到父目录的状态：

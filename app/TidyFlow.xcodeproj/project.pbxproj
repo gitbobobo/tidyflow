@@ -48,6 +48,9 @@
 		AIC00004 /* AIChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00003 /* AIChatModels.swift */; };
 		AISS0001 /* AISessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISS0011 /* AISessionSemantics.swift */; };
 		AISS0002 /* AISessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISS0011 /* AISessionSemantics.swift */; };
+		EXSL0001 /* ExplorerSemanticLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0011 /* ExplorerSemanticLayer.swift */; };
+		EXSL0002 /* ExplorerSemanticLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0011 /* ExplorerSemanticLayer.swift */; };
+		EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0013 /* ExplorerSemanticLayerTests.swift */; };
 		AISHC001 /* AISessionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHC011 /* AISessionHistoryCoordinator.swift */; };
 		AISHC002 /* AISessionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHC011 /* AISessionHistoryCoordinator.swift */; };
 		AIC0002A /* AISessionStatusRequestLimiter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00028 /* AISessionStatusRequestLimiter.swift */; };
@@ -265,6 +268,8 @@ WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */ = {isa = PBXBuil
 			TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEvidenceTabPresentationTests.swift; sourceTree = "<group>"; };
 			TST1002D /* WorkspaceVisualSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceVisualSemanticsTests.swift; sourceTree = "<group>"; };
 		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
+		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
+		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -586,6 +591,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */ = {isa = PBXFileReference; 
 					TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */,
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
+					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				);
@@ -680,6 +686,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
 				MDL000108 /* FileBrowserModels.swift */,
+				EXSL0011 /* ExplorerSemanticLayer.swift */,
 				MDL000101 /* Notifications.swift */,
 				MDL000115 /* ProjectCommandModels.swift */,
 				MDL000107 /* ProjectWorkspaceModels.swift */,
@@ -934,6 +941,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				TST00002 /* ToastOverlayView.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				SPL00009 /* ExplorerView.swift in Sources */,
+				EXSL0001 /* ExplorerSemanticLayer.swift in Sources */,
 				SPL0000A /* FileDialogViews.swift in Sources */,
 				B3A00001 /* CommandPaletteView.swift in Sources */,
 				B3A00002 /* KeybindingHandler.swift in Sources */,
@@ -1033,6 +1041,7 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 				TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */,
 				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
+				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
 			);

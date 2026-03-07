@@ -730,6 +730,14 @@ final class MobileAppState: ObservableObject {
         explorerFileListCache[explorerCacheKey(project: project, workspace: workspace, path: path)]
     }
 
+    /// 为资源管理器条目语义解析提供按工作区隔离的 Git 状态索引。
+    /// 从当前工作区的 Git 详细状态（staged + unstaged）构建，保证多项目不互相串扰。
+    func explorerGitStatusIndex(project: String, workspace: String) -> GitStatusIndex {
+        let detail = gitDetailStateForWorkspace(project: project, workspace: workspace)
+        let allItems = detail.stagedItems + detail.unstagedItems
+        return GitStatusIndex(fromItems: allItems)
+    }
+
     func fetchExplorerFileList(project: String, workspace: String, path: String = ".") {
         guard isConnected else {
             let key = explorerCacheKey(project: project, workspace: workspace, path: path)

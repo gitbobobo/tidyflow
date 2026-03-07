@@ -233,15 +233,25 @@ struct FileRowView: View {
         appState.isDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
     }
 
-    private var iconName: String {
-        if item.isDir {
-            return isExpanded ? "folder.fill" : "folder"
-        } else {
-            return fileIconName(for: item.name)
-        }
+    /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
+    private var isSelected: Bool {
+        !item.isDir
+            && appState.selectedWorkspaceKey == workspaceKey
+            && appState.activeEditorPath == item.path
     }
 
-    /// 特殊文件的自定义图标视图（CLAUDE.md / AGENTS.md）
+    /// 通过共享语义解析器推导条目展示语义，消除本地重复图标/颜色规则
+    private var presentation: ExplorerItemPresentation {
+        let gitIndex = gitCache.getGitStatusIndex(workspaceKey: workspaceKey)
+        return ExplorerSemanticResolver.resolve(
+            entry: item,
+            gitIndex: gitIndex,
+            isExpanded: isExpanded,
+            isSelected: isSelected
+        )
+    }
+
+    /// 特殊文件的自定义图标视图（CLAUDE.md / AGENTS.md），仅在 presentation.hasSpecialIcon 时渲染
     @ViewBuilder
     private var specialFileIcon: some View {
         if item.name == "CLAUDE.md" {
@@ -259,71 +269,24 @@ struct FileRowView: View {
         }
     }
 
-    /// 是否为需要自定义图标的特殊文件
-    private var hasSpecialIcon: Bool {
-        guard !item.isDir else { return false }
-        return item.name == "CLAUDE.md" || item.name == "AGENTS.md"
-    }
-
-    /// 获取当前项的 Git 状态
-    private var gitStatus: String? {
-        let index = gitCache.getGitStatusIndex(workspaceKey: workspaceKey)
-        return index.getStatus(path: item.path, isDir: item.isDir)
-    }
-
-    /// 根据 Git 状态返回颜色
-    private var gitStatusColor: Color? {
-        GitStatusIndex.colorForStatus(gitStatus)
-    }
-
-    private var iconColor: Color {
-        // 被忽略的文件显示为灰色
-        if item.isIgnored {
-            return Color.gray.opacity(0.5)
-        }
-        // 如果有 Git 状态颜色，使用它；否则使用默认颜色
-        if let statusColor = gitStatusColor {
-            return statusColor
-        }
-        if item.isDir {
-            return .accentColor
-        } else {
-            return .secondary
-        }
-    }
-
-    /// 标题颜色：被忽略时灰色，有 Git 状态时使用状态颜色
-    private var titleColor: Color? {
-        if item.isIgnored {
-            return Color.gray.opacity(0.5)
-        }
-        return gitStatusColor
-    }
-
-    /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
-    private var isSelected: Bool {
-        !item.isDir
-            && appState.selectedWorkspaceKey == workspaceKey
-            && appState.activeEditorPath == item.path
-    }
-
     var body: some View {
+        let p = presentation
         VStack(alignment: .leading, spacing: 0) {
             Group {
-                if hasSpecialIcon {
+                if p.hasSpecialIcon {
                     TreeRowView(
                         isExpandable: item.isDir,
                         isExpanded: isExpanded,
-                        iconName: iconName,
-                        iconColor: iconColor,
+                        iconName: p.iconName,
+                        iconColor: p.iconColor,
                         title: item.name,
                         depth: depth,
-                        isSelected: isSelected,
+                        isSelected: p.isSelected,
                         selectedBackgroundColor: Color.accentColor.opacity(0.35),
-                        trailingText: gitStatus,
-                        trailingIcon: item.isSymlink ? "arrow.uturn.backward" : nil,
-                        titleColor: titleColor,
-                        trailingTextColor: gitStatusColor,
+                        trailingText: p.gitStatus,
+                        trailingIcon: p.trailingIcon,
+                        titleColor: p.titleColor,
+                        trailingTextColor: p.gitStatusColor,
                         customIconView: specialFileIcon,
                         onTap: { handleTap() }
                     )
@@ -331,16 +294,16 @@ struct FileRowView: View {
                     TreeRowView(
                         isExpandable: item.isDir,
                         isExpanded: isExpanded,
-                        iconName: iconName,
-                        iconColor: iconColor,
+                        iconName: p.iconName,
+                        iconColor: p.iconColor,
                         title: item.name,
                         depth: depth,
-                        isSelected: isSelected,
+                        isSelected: p.isSelected,
                         selectedBackgroundColor: Color.accentColor.opacity(0.35),
-                        trailingText: gitStatus,
-                        trailingIcon: item.isSymlink ? "arrow.uturn.backward" : nil,
-                        titleColor: titleColor,
-                        trailingTextColor: gitStatusColor,
+                        trailingText: p.gitStatus,
+                        trailingIcon: p.trailingIcon,
+                        titleColor: p.titleColor,
+                        trailingTextColor: p.gitStatusColor,
                         onTap: { handleTap() }
                     )
                 }
@@ -545,48 +508,4 @@ struct FileRowView: View {
         return true
     }
 
-    /// 根据文件扩展名返回图标名称
-    private func fileIconName(for filename: String) -> String {
-        let ext = (filename as NSString).pathExtension.lowercased()
-        switch ext {
-        case "swift":
-            return "swift"
-        case "rs":
-            return "gear"
-        case "js", "ts", "jsx", "tsx":
-            return "j.square"
-        case "json", "json5":
-            return "curlybraces"
-        case "md", "markdown":
-            return "doc.richtext"
-        case "html", "htm":
-            return "globe"
-        case "css", "scss", "sass":
-            return "paintbrush"
-        case "py":
-            return "chevron.left.forwardslash.chevron.right"
-        case "sh", "bash", "zsh":
-            return "terminal"
-        case "yml", "yaml", "toml":
-            return "doc.badge.gearshape"
-        case "erl", "ets":
-            return "antenna.radiowaves.left.and.right"
-        case "png", "jpg", "jpeg", "gif", "svg", "webp":
-            return "photo"
-        case "mp3", "wav", "m4a":
-            return "music.note"
-        case "mp4", "mov", "avi":
-            return "video"
-        case "zip", "tar", "gz", "rar":
-            return "archivebox"
-        case "pdf":
-            return "doc.fill"
-        case "txt":
-            return "doc.text"
-        case "lock":
-            return "lock"
-        default:
-            return "doc"
-        }
-    }
 }

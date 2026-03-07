@@ -404,7 +404,19 @@ private struct ExplorerFileRowView: View {
         CGFloat(depth) * 14
     }
 
+    /// 通过共享语义解析器推导条目展示语义（与 macOS 保持行为一致）
+    private var presentation: ExplorerItemPresentation {
+        let gitIndex = appState.explorerGitStatusIndex(project: project, workspace: workspace)
+        return ExplorerSemanticResolver.resolve(
+            entry: item,
+            gitIndex: gitIndex,
+            isExpanded: isExpanded,
+            isSelected: false
+        )
+    }
+
     var body: some View {
+        let p = presentation
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 if item.isDir {
@@ -416,10 +428,38 @@ private struct ExplorerFileRowView: View {
                     Color.clear.frame(width: 12, height: 1)
                 }
 
-                Image(systemName: item.isDir ? (isExpanded ? "folder.fill" : "folder") : "doc.text")
-                    .foregroundColor(item.isDir ? .accentColor : .secondary)
+                if p.hasSpecialIcon {
+                    Group {
+                        if item.name == "CLAUDE.md" {
+                            Image("claude-icon")
+                                .resizable()
+                                .interpolation(.high)
+                                .aspectRatio(contentMode: .fit)
+                        } else if item.name == "AGENTS.md" {
+                            Image("agents-icon")
+                                .resizable()
+                                .interpolation(.high)
+                                .aspectRatio(contentMode: .fit)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: p.iconName)
+                        .foregroundColor(p.iconColor)
+                }
                 Text(item.name)
                     .lineLimit(1)
+                    .foregroundColor(p.titleColor)
+                if let trailing = p.trailingIcon {
+                    Image(systemName: trailing)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if let gitStatus = p.gitStatus {
+                    Text(gitStatus)
+                        .font(.caption2)
+                        .foregroundColor(p.gitStatusColor)
+                }
                 Spacer()
             }
             .contentShape(Rectangle())
