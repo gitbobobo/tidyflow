@@ -895,27 +895,7 @@ struct DiffPlaceholderView: View {
 }
 
 // MARK: - Evidence Tab Types
-
-enum EvidenceTabType: String, CaseIterable, Identifiable {
-    case screenshot = "screenshot"
-    case log = "log"
-    
-    var id: String { rawValue }
-    
-    var displayName: String {
-        switch self {
-        case .screenshot: return "截图"
-        case .log: return "日志"
-        }
-    }
-    
-    var iconName: String {
-        switch self {
-        case .screenshot: return "photo"
-        case .log: return "doc.text"
-        }
-    }
-}
+// EvidenceTabType 已移至 EvidenceTabSemantics.swift（Networking 层），macOS 与 iOS 共享同一定义。
 
 struct EvidenceTabView: View {
     @EnvironmentObject var appState: AppState
@@ -963,14 +943,7 @@ struct EvidenceTabView: View {
     /// 根据当前选中的标签页获取对应的证据条目
     private var currentTabItems: [EvidenceItemInfoV2] {
         guard let snapshot else { return [] }
-        return snapshot.items.filter { item in
-            switch selectedTab {
-            case .screenshot:
-                return item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/")
-            case .log:
-                return item.evidenceType == "log" || (!item.mimeType.hasPrefix("image/") && item.evidenceType != "screenshot")
-            }
-        }.sorted { $0.order < $1.order }
+        return selectedTab.filteredItems(from: snapshot)
     }
     
     /// 获取当前标签页下的设备类型列表（保持原有顺序）
@@ -1125,14 +1098,7 @@ struct EvidenceTabView: View {
     
     private func itemsCount(for tab: EvidenceTabType) -> Int {
         guard let snapshot else { return 0 }
-        return snapshot.items.filter { item in
-            switch tab {
-            case .screenshot:
-                return item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/")
-            case .log:
-                return item.evidenceType == "log" || (!item.mimeType.hasPrefix("image/") && item.evidenceType != "screenshot")
-            }
-        }.count
+        return tab.itemCount(in: snapshot)
     }
 
     @ViewBuilder
@@ -1148,8 +1114,8 @@ struct EvidenceTabView: View {
             emptyStateView(icon: "photo.stack", text: "暂无证据数据", showRefresh: true)
         } else if currentTabItems.isEmpty {
             emptyStateView(
-                icon: selectedTab == .screenshot ? "photo" : "doc.text",
-                text: "暂无\(selectedTab.displayName)数据"
+                icon: selectedTab.iconName,
+                text: selectedTab.emptyStateText
             )
         } else {
             mainContent

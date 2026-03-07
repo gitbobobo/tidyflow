@@ -577,27 +577,7 @@ private struct ExplorerFilePreviewSheet: View {
 }
 
 // MARK: - Evidence Tab Types (iOS)
-
-enum MobileEvidenceTabType: String, CaseIterable, Identifiable {
-    case screenshot = "screenshot"
-    case log = "log"
-    
-    var id: String { rawValue }
-    
-    var displayName: String {
-        switch self {
-        case .screenshot: return "截图"
-        case .log: return "日志"
-        }
-    }
-    
-    var iconName: String {
-        switch self {
-        case .screenshot: return "photo"
-        case .log: return "doc.text"
-        }
-    }
-}
+// MobileEvidenceTabType 已统一为 EvidenceTabType（定义于 TabContentHostView.swift），两端共享语义。
 
 struct MobileEvidenceView: View {
     @EnvironmentObject var appState: MobileAppState
@@ -605,7 +585,7 @@ struct MobileEvidenceView: View {
     let project: String
     let workspace: String
 
-    @State private var selectedTab: MobileEvidenceTabType = .screenshot
+    @State private var selectedTab: EvidenceTabType = .screenshot
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
     @State private var itemLoading: Bool = false
@@ -640,14 +620,7 @@ struct MobileEvidenceView: View {
     /// 根据当前选中的标签页获取对应的证据条目
     private var currentTabItems: [EvidenceItemInfoV2] {
         guard let snapshot else { return [] }
-        return snapshot.items.filter { item in
-            switch selectedTab {
-            case .screenshot:
-                return item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/")
-            case .log:
-                return item.evidenceType == "log" || (!item.mimeType.hasPrefix("image/") && item.evidenceType != "screenshot")
-            }
-        }.sorted { $0.order < $1.order }
+        return selectedTab.filteredItems(from: snapshot)
     }
     
     /// 获取当前标签页下的设备类型列表（保持原有顺序）
@@ -688,7 +661,7 @@ struct MobileEvidenceView: View {
             // 类型切换 Picker
             Section {
                 Picker("类型", selection: $selectedTab) {
-                    ForEach(MobileEvidenceTabType.allCases) { tab in
+                    ForEach(EvidenceTabType.allCases) { tab in
                         Label(tab.displayName, systemImage: tab.iconName)
                             .tag(tab)
                     }
@@ -720,8 +693,8 @@ struct MobileEvidenceView: View {
             } else if currentTabItems.isEmpty {
                 Section {
                     ContentUnavailableView(
-                        "暂无\(selectedTab.displayName)数据",
-                        systemImage: selectedTab == .screenshot ? "photo" : "doc.text"
+                        selectedTab.emptyStateText,
+                        systemImage: selectedTab.iconName
                     )
                 }
             } else if snapshot != nil {
