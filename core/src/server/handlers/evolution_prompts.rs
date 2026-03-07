@@ -25,7 +25,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 阶段任务：
 1. 基于 `direction.jsonc.direction_statement` 将方向决策拆解为可执行 `work_items`，并给出可落地验证路径。
-2. `work_items` 必须可执行且可验证：`id` 唯一、`implementation_agent` 合法、`linked_check_ids` 非空且都能在 checks 中找到。
+2. `work_items` 必须可执行且可验证：`id` 唯一、`implementation_agent` 只能是 `implement_general` 或 `implement_visual`、`linked_check_ids` 非空且都能在 checks 中找到。
 3. `verification_plan.checks` 的检查项必须可运行且 `id` 唯一。
 4. `acceptance_criteria` 必须由本阶段制定，`criteria_id` 唯一且描述可验证。
 5. `verification_plan.acceptance_mapping` 必须完整覆盖 `plan.jsonc.acceptance_criteria`，且每个映射至少关联一个实际 work item。

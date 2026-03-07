@@ -576,8 +576,16 @@ fn parse_plan_routing_tables_report(
                 {
                     Some(agent_raw) => match PlanImplementationAgent::parse(agent_raw) {
                         Some(agent) => {
-                            lane_presence.insert(agent);
-                            Some(agent)
+                            if matches!(agent, PlanImplementationAgent::ImplementAdvanced) {
+                                report.push(format!(
+                                    "work_items[{}].implementation_agent 仅允许 implement_general 或 implement_visual",
+                                    idx
+                                ));
+                                None
+                            } else {
+                                lane_presence.insert(agent);
+                                Some(agent)
+                            }
                         }
                         None => {
                             report.push(format!(
@@ -1433,7 +1441,7 @@ fn plan_stage_template(cycle_id: &str) -> String {
     //   "definition_of_done": ["按钮可触发播放/暂停"],
     //   "risk": "low",
     //   "rollback": "git restore --source=HEAD -- <path>",
-    //   "implementation_agent": "implement_general",
+    //   "implementation_agent": "implement_general", // 仅允许 implement_general 或 implement_visual
     //   "linked_check_ids": ["CHK-001"]
     // }
   ],
@@ -8279,6 +8287,32 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("invalid implementation_agent should fail");
         assert!(err.contains("implementation_agent"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_advanced_agent() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+        write_plan_markdown(dir.path());
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_advanced",
+                "linked_check_ids": ["v-1"]
+            })]),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
+            .expect_err("advanced implementation_agent should fail");
+        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
     }
 
     #[test]
