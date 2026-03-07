@@ -719,6 +719,57 @@ extension AppState {
         wsClient.requestEvoSnapshot()
     }
 
+    /// 直接处理 evo_cycle_updated 事件，在不触发全量快照刷新的情况下更新单个工作空间状态。
+    /// 若对应工作空间尚不存在则回退到 pulse（触发全量刷新）。
+    func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
+            guard let existingIndex = self.evolutionWorkspaceItems.firstIndex(where: { $0.workspaceKey == key }) else {
+                // 找不到已有条目时触发全量刷新（首次连接或重连场景）
+                self.wsClient.requestEvoSnapshot()
+                return
+            }
+            let existing = self.evolutionWorkspaceItems[existingIndex]
+            // 构建更新后的条目，保留只有快照才携带的 handoff 字段
+            let updated = EvolutionWorkspaceItemV2(
+                project: ev.project,
+                workspace: workspace,
+                cycleID: ev.cycleID,
+                title: ev.title ?? existing.title,
+                status: ev.status,
+                currentStage: ev.currentStage,
+                globalLoopRound: ev.globalLoopRound,
+                loopRoundLimit: ev.loopRoundLimit,
+                verifyIteration: ev.verifyIteration,
+                verifyIterationLimit: ev.verifyIterationLimit,
+                agents: ev.agents,
+                executions: ev.executions,
+                activeAgents: ev.activeAgents,
+                handoff: existing.handoff,
+                terminalReasonCode: ev.terminalReasonCode,
+                terminalErrorMessage: ev.terminalErrorMessage,
+                rateLimitErrorMessage: ev.rateLimitErrorMessage,
+                selectedDirectionType: ev.selectedDirectionType ?? existing.selectedDirectionType
+            )
+            if self.evolutionWorkspaceItems[existingIndex] != updated {
+                self.evolutionWorkspaceItems[existingIndex] = updated
+                self.scheduleWorkspaceSidebarStatusRefresh(
+                    projectNames: [ev.project],
+                    debounce: 0.2
+                )
+            }
+            if let pendingAction = self.evolutionPendingActionByWorkspace[key],
+               EvolutionControlCapability.shouldClearPendingAction(
+                pendingAction,
+                currentStatus: ev.status
+            ) {
+                self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            }
+        }
+    }
+
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
         // 排序和字典构建移至后台线程
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

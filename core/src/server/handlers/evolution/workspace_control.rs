@@ -673,6 +673,7 @@ impl EvolutionManager {
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
+                selected_direction_type: w.selected_direction_type.clone(),
             });
         }
 

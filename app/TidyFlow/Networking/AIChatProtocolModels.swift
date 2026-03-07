@@ -1414,6 +1414,8 @@ struct EvolutionWorkspaceItemV2: Equatable {
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let rateLimitErrorMessage: String?
+    /// 本轮方向标签，由 direction 阶段写入并在后续各阶段保持一致传递
+    let selectedDirectionType: String?
 
     var workspaceKey: String {
         "\(project):\(workspace)"
@@ -1448,7 +1450,8 @@ struct EvolutionWorkspaceItemV2: Equatable {
             handoff: handoff,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
-            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
+            selectedDirectionType: json["selected_direction_type"] as? String
         )
     }
 }
@@ -1463,6 +1466,58 @@ struct EvolutionSnapshotV2: Equatable {
         let items = (json["workspace_items"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionWorkspaceItemV2.from(json: $0) }
         return EvolutionSnapshotV2(scheduler: scheduler, workspaceItems: items)
+    }
+}
+
+/// evo_cycle_updated 事件的直接解析模型，用于在不触发全量快照刷新的情况下更新单个工作空间状态
+struct EvoCycleUpdatedV2 {
+    let project: String
+    let workspace: String
+    let cycleID: String
+    let title: String?
+    let status: String
+    let currentStage: String
+    let globalLoopRound: Int
+    let loopRoundLimit: Int
+    let verifyIteration: Int
+    let verifyIterationLimit: Int
+    let agents: [EvolutionAgentInfoV2]
+    let executions: [EvolutionSessionExecutionEntryV2]
+    let activeAgents: [String]
+    let terminalReasonCode: String?
+    let terminalErrorMessage: String?
+    let rateLimitErrorMessage: String?
+    let selectedDirectionType: String?
+
+    static func from(json: [String: Any]) -> EvoCycleUpdatedV2? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleID = json["cycle_id"] as? String,
+              let status = json["status"] as? String,
+              let currentStage = json["current_stage"] as? String else { return nil }
+        let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
+        let executions = (json["executions"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
+        let activeAgents = json["active_agents"] as? [String] ?? []
+        return EvoCycleUpdatedV2(
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            title: parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"]),
+            status: status,
+            currentStage: currentStage,
+            globalLoopRound: Int(parseInt64(json["global_loop_round"])),
+            loopRoundLimit: Int(parseInt64(json["loop_round_limit"])),
+            verifyIteration: Int(parseInt64(json["verify_iteration"])),
+            verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
+            agents: agents,
+            executions: executions,
+            activeAgents: activeAgents,
+            terminalReasonCode: json["terminal_reason_code"] as? String,
+            terminalErrorMessage: json["terminal_error_message"] as? String,
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
+            selectedDirectionType: json["selected_direction_type"] as? String
+        )
     }
 }
 

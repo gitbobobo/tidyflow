@@ -202,6 +202,7 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
 
     func handleEvolutionPulse() { appState?.handleEvolutionPulse() }
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { appState?.handleEvolutionSnapshot(snapshot) }
+    func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) { appState?.handleEvolutionCycleUpdated(ev) }
     func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) { appState?.handleEvolutionStageChatOpened(ev) }
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }

@@ -389,7 +389,7 @@ struct ToolCardView: View {
             let limit = section.isCode ? Self.maxCodeSectionChars : Self.maxTextSectionChars
             let clamped = clampText(section.content, limit: limit)
             guard clamped != section.content else { return section }
-            return AIToolSection(id: section.id, title: section.title, content: clamped, isCode: section.isCode)
+            return AIToolSection(id: section.id, title: section.title, content: clamped, isCode: section.isCode, language: section.language)
         }
     }
 
@@ -647,6 +647,16 @@ struct ToolCardView: View {
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.secondary)
 
+                if section.isCode, let lang = section.language, !lang.isEmpty {
+                    Text(lang)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.accentColor.opacity(0.8))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.1))
+                        .cornerRadius(3)
+                }
+
                 Spacer()
 
                 if needsCollapse {
@@ -671,11 +681,22 @@ struct ToolCardView: View {
                 }
             }
 
-            Text(displayText)
-                .textSelection(.enabled)
-                .font(.system(size: 11, design: section.isCode ? .monospaced : .default))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if section.isCode {
+                Text(displayText)
+                    .textSelection(.enabled)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.primary.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(4)
+            } else {
+                Text(displayText)
+                    .textSelection(.enabled)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if needsCollapse && !expanded {
                 Text("…")
@@ -740,7 +761,7 @@ struct ToolCardView: View {
 
         if let metadata = invocation.metadata {
             if let diff = metadata["diff"] as? String, !diff.isEmpty {
-                sections.append(AIToolSection(id: "edit-diff", title: "diff", content: diff, isCode: true))
+                sections.append(AIToolSection(id: "edit-diff", title: "diff", content: diff, isCode: true, language: "diff"))
             }
             if let files = metadata["files"] as? [[String: Any]], !files.isEmpty {
                 if let filesText = formattedEditFiles(files), !filesText.isEmpty {
@@ -772,7 +793,7 @@ struct ToolCardView: View {
 
         if let command = stringValue(invocation.input["command"]),
            !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sections.append(AIToolSection(id: "bash-command", title: "command", content: command, isCode: true))
+            sections.append(AIToolSection(id: "bash-command", title: "command", content: command, isCode: true, language: "bash"))
         }
 
         var remainingInput = invocation.input
@@ -787,7 +808,7 @@ struct ToolCardView: View {
         }
 
         if let output = invocation.output, !output.isEmpty {
-            sections.append(AIToolSection(id: "bash-output", title: "output", content: output, isCode: true))
+            sections.append(AIToolSection(id: "bash-output", title: "output", content: output, isCode: true, language: "text"))
         }
 
         if let error = invocation.error, !error.isEmpty {

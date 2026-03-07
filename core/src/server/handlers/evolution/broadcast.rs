@@ -33,6 +33,7 @@ impl EvolutionManager {
             terminal_reason_code,
             terminal_error_message,
             rate_limit_error_message,
+            selected_direction_type,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -57,6 +58,7 @@ impl EvolutionManager {
                 entry.terminal_reason_code.clone(),
                 entry.terminal_error_message.clone(),
                 entry.rate_limit_error_message.clone(),
+                entry.selected_direction_type.clone(),
             )
         };
 
@@ -90,6 +92,7 @@ impl EvolutionManager {
                 terminal_reason_code,
                 terminal_error_message,
                 rate_limit_error_message,
+                selected_direction_type,
             },
         )
         .await;

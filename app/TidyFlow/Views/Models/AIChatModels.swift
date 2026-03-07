@@ -584,6 +584,16 @@ struct AIToolSection: Identifiable {
     let title: String
     let content: String
     let isCode: Bool
+    /// 代码块语言标识（如 "swift"、"rust"、"bash"、"json"），仅在 isCode=true 时有意义
+    var language: String?
+
+    init(id: String, title: String, content: String, isCode: Bool, language: String? = nil) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.isCode = isCode
+        self.language = language
+    }
 }
 
 struct AIToolPresentation {

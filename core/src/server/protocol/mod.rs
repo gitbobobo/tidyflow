@@ -1594,6 +1594,9 @@ pub enum ServerMessage {
         terminal_error_message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
+        /// 本轮方向标签，由 direction 阶段写入，之后各阶段保持一致传递
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selected_direction_type: Option<String>,
     },
     #[serde(rename = "evo_snapshot")]
     EvoSnapshot {
@@ -2028,6 +2031,9 @@ pub struct EvolutionWorkspaceItem {
     pub terminal_error_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_error_message: Option<String>,
+    /// 本轮方向标签，由 direction 阶段写入，之后各阶段保持一致传递
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_direction_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

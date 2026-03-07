@@ -443,6 +443,72 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.handoff?.next, ["继续跑 xcodebuild"])
     }
 
+    func testEvolutionWorkspaceItemParsesSelectedDirectionType() {
+        let jsonWithDirection: [String: Any] = [
+            "project": "tidyflow",
+            "workspace": "default",
+            "cycle_id": "cycle-2",
+            "title": "AI工作流智能化循环",
+            "status": "running",
+            "current_stage": "implement_general",
+            "global_loop_round": 19,
+            "loop_round_limit": 30,
+            "verify_iteration": 0,
+            "verify_iteration_limit": 5,
+            "agents": [],
+            "active_agents": [],
+            "selected_direction_type": "AI工作流智能化"
+        ]
+        let item = EvolutionWorkspaceItemV2.from(json: jsonWithDirection)
+        XCTAssertNotNil(item)
+        XCTAssertEqual(item?.selectedDirectionType, "AI工作流智能化")
+        XCTAssertEqual(item?.currentStage, "implement_general")
+        XCTAssertEqual(item?.globalLoopRound, 19)
+
+        let jsonWithoutDirection: [String: Any] = [
+            "project": "tidyflow",
+            "workspace": "default",
+            "cycle_id": "cycle-3",
+            "status": "stopped",
+            "current_stage": "direction",
+            "global_loop_round": 1,
+            "loop_round_limit": 3,
+            "verify_iteration": 0,
+            "verify_iteration_limit": 5,
+            "agents": [],
+            "active_agents": []
+        ]
+        let itemWithoutDirection = EvolutionWorkspaceItemV2.from(json: jsonWithoutDirection)
+        XCTAssertNotNil(itemWithoutDirection)
+        XCTAssertNil(itemWithoutDirection?.selectedDirectionType)
+    }
+
+    func testEvoCycleUpdatedV2Parses() {
+        let json: [String: Any] = [
+            "project": "tidyflow",
+            "workspace": "default",
+            "cycle_id": "cycle-19",
+            "title": "AI工作流智能化与系统稳定性提升",
+            "status": "running",
+            "current_stage": "verify",
+            "global_loop_round": 19,
+            "loop_round_limit": 30,
+            "verify_iteration": 1,
+            "verify_iteration_limit": 5,
+            "agents": [],
+            "executions": [],
+            "active_agents": ["verify"],
+            "selected_direction_type": "AI工作流智能化"
+        ]
+        let ev = EvoCycleUpdatedV2.from(json: json)
+        XCTAssertNotNil(ev)
+        XCTAssertEqual(ev?.project, "tidyflow")
+        XCTAssertEqual(ev?.currentStage, "verify")
+        XCTAssertEqual(ev?.verifyIteration, 1)
+        XCTAssertEqual(ev?.selectedDirectionType, "AI工作流智能化")
+        XCTAssertEqual(ev?.activeAgents, ["verify"])
+    }
+
     func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
         let withExecutions: [String: Any] = [
             "cycle_id": "cycle-1",

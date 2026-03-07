@@ -239,11 +239,28 @@ extension WSClient {
         switch action {
         case "evo_scheduler_updated", "evo_scheduler_status",
              "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
-            "evo_stage_changed", "evo_cycle_updated":
+            "evo_stage_changed":
             if let handler = evolutionMessageHandler {
                 handler.handleEvolutionPulse()
             } else {
                 onEvoPulse?()
+            }
+            return true
+        case "evo_cycle_updated":
+            // 优先尝试直接解析并更新工作空间状态，避免触发全量快照重新拉取
+            if let ev = EvoCycleUpdatedV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionCycleUpdated(ev)
+                } else {
+                    onEvoCycleUpdated?(ev)
+                    onEvoPulse?()
+                }
+            } else {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionPulse()
+                } else {
+                    onEvoPulse?()
+                }
             }
             return true
         case "evo_snapshot":
