@@ -1598,16 +1598,12 @@ pub enum ServerMessage {
         agents: Vec<EvolutionAgentInfo>,
         #[serde(default)]
         executions: Vec<EvolutionSessionExecutionEntry>,
-        active_agents: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         terminal_reason_code: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         terminal_error_message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
-        /// 本轮方向标签，由 direction 阶段写入，之后各阶段保持一致传递
-        #[serde(skip_serializing_if = "Option::is_none")]
-        selected_direction_type: Option<String>,
     },
     #[serde(rename = "evo_snapshot")]
     EvoSnapshot {
@@ -1963,8 +1959,6 @@ pub struct EvolutionAgentInfo {
     pub status: String,
     #[serde(default)]
     pub tool_call_count: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_message: Option<String>,
     /// 代理开始运行的 RFC3339 时间戳
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
@@ -2033,7 +2027,6 @@ pub struct EvolutionWorkspaceItem {
     pub agents: Vec<EvolutionAgentInfo>,
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
-    pub active_agents: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub handoff: Option<EvolutionHandoffInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2042,9 +2035,6 @@ pub struct EvolutionWorkspaceItem {
     pub terminal_error_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_error_message: Option<String>,
-    /// 本轮方向标签，由 direction 阶段写入，之后各阶段保持一致传递
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_direction_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

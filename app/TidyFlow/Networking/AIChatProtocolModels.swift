@@ -1274,7 +1274,6 @@ struct EvolutionAgentInfoV2: Equatable {
     let agent: String
     let status: String
     let toolCallCount: Int
-    let latestMessage: String?
     /// 代理开始运行的 RFC3339 时间戳
     let startedAt: String?
     /// 代理运行耗时（毫秒），仅在完成后填充
@@ -1285,7 +1284,6 @@ struct EvolutionAgentInfoV2: Equatable {
               let agent = json["agent"] as? String,
               let status = json["status"] as? String else { return nil }
         let toolCallCount = Int(parseInt64(json["tool_call_count"]))
-        let latestMessage = parseOptionalString(json["latest_message"])
         let startedAt = parseOptionalString(json["started_at"])
         let durationMs: UInt64? = (json["duration_ms"] as? NSNumber).map { $0.uint64Value }
         return EvolutionAgentInfoV2(
@@ -1293,7 +1291,6 @@ struct EvolutionAgentInfoV2: Equatable {
             agent: agent,
             status: status,
             toolCallCount: toolCallCount,
-            latestMessage: latestMessage,
             startedAt: startedAt,
             durationMs: durationMs
         )
@@ -1409,16 +1406,19 @@ struct EvolutionWorkspaceItemV2: Equatable {
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
     let executions: [EvolutionSessionExecutionEntryV2]
-    let activeAgents: [String]
     let handoff: EvolutionHandoffInfoV2?
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let rateLimitErrorMessage: String?
-    /// 本轮方向标签，由 direction 阶段写入并在后续各阶段保持一致传递
-    let selectedDirectionType: String?
 
     var workspaceKey: String {
         "\(project):\(workspace)"
+    }
+
+    var activeAgents: [String] {
+        agents
+            .filter { $0.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "running" }
+            .map(\.agent)
     }
 
     static func from(json: [String: Any]) -> EvolutionWorkspaceItemV2? {
@@ -1431,13 +1431,12 @@ struct EvolutionWorkspaceItemV2: Equatable {
         let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
         let executions = (json["executions"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
-        let activeAgents = json["active_agents"] as? [String] ?? []
         let handoff = EvolutionHandoffInfoV2.from(json: json["handoff"] as? [String: Any] ?? [:])
         return EvolutionWorkspaceItemV2(
             project: project,
             workspace: workspace,
             cycleID: cycleID,
-            title: parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"]),
+            title: parseOptionalString(json["title"]),
             status: status,
             currentStage: currentStage,
             globalLoopRound: Int(parseInt64(json["global_loop_round"])),
@@ -1446,12 +1445,10 @@ struct EvolutionWorkspaceItemV2: Equatable {
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,
             executions: executions,
-            activeAgents: activeAgents,
             handoff: handoff,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
-            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
-            selectedDirectionType: json["selected_direction_type"] as? String
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
 }
@@ -1483,11 +1480,9 @@ struct EvoCycleUpdatedV2 {
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
     let executions: [EvolutionSessionExecutionEntryV2]
-    let activeAgents: [String]
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let rateLimitErrorMessage: String?
-    let selectedDirectionType: String?
 
     static func from(json: [String: Any]) -> EvoCycleUpdatedV2? {
         guard let project = json["project"] as? String,
@@ -1498,12 +1493,11 @@ struct EvoCycleUpdatedV2 {
         let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
         let executions = (json["executions"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
-        let activeAgents = json["active_agents"] as? [String] ?? []
         return EvoCycleUpdatedV2(
             project: project,
             workspace: workspace,
             cycleID: cycleID,
-            title: parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"]),
+            title: parseOptionalString(json["title"]),
             status: status,
             currentStage: currentStage,
             globalLoopRound: Int(parseInt64(json["global_loop_round"])),
@@ -1512,11 +1506,9 @@ struct EvoCycleUpdatedV2 {
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,
             executions: executions,
-            activeAgents: activeAgents,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
-            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
-            selectedDirectionType: json["selected_direction_type"] as? String
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
 }
@@ -1627,7 +1619,7 @@ struct EvolutionCycleHistoryItemV2 {
 
     static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
         guard let cycleID = parseOptionalString(json["cycle_id"]) else { return nil }
-        let title = parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"])
+        let title = parseOptionalString(json["title"])
         let status = parseOptionalString(json["status"]) ?? "unknown"
         let globalLoopRound = Int(parseInt64(json["global_loop_round"]))
         let createdAt = parseOptionalString(json["created_at"]) ?? ""

@@ -234,6 +234,7 @@ fn build_prompt_context(
         "CURRENT_STAGE_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file(stage).unwrap_or("unknown.jsonc")),
         "DIRECTION_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("direction").unwrap()),
         "PLAN_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("plan").unwrap()),
+        "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
         "IMPLEMENT_GENERAL_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_general").unwrap()),
         "IMPLEMENT_VISUAL_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_visual").unwrap()),
         "IMPLEMENT_ADVANCED_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_advanced").unwrap()),
@@ -278,28 +279,34 @@ fn required_context_keys(
         "direction" => {}
         "plan" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
         }
         "implement_general" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
         }
         "implement_visual" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
         }
         "implement_advanced" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
         }
         "verify" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "IMPLEMENT_GENERAL_ARTIFACT_PATH");
             push_required_key(&mut keys, "IMPLEMENT_VISUAL_ARTIFACT_PATH");
             push_required_key(&mut keys, "IMPLEMENT_ADVANCED_ARTIFACT_PATH");
         }
         "auto_commit" => {
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
         }
         _ => {}
@@ -375,18 +382,6 @@ impl EvolutionManager {
         let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
         let existing_cycle = read_json(&cycle_dir.join("cycle.jsonc")).ok();
-
-        let mut stage_files = serde_json::Map::new();
-        for stage in STAGES {
-            stage_files.insert(
-                stage.to_string(),
-                serde_json::Value::String(
-                    stage_artifact_file(stage)
-                        .unwrap_or("unknown.jsonc")
-                        .to_string(),
-                ),
-            );
-        }
 
         let mut stage_runtime = serde_json::Map::new();
         let preserved_stage_runtime = existing_cycle
@@ -468,15 +463,6 @@ impl EvolutionManager {
                 "requested_at": if entry.stop_requested { Utc::now().to_rfc3339() } else { "".to_string() },
                 "reason": if entry.stop_requested { "manual stop" } else { "" }
             },
-            "direction": {
-                "selected_type": entry.selected_direction_type.clone().unwrap_or_default(),
-                "candidate_scores": entry.direction_candidate_scores.clone(),
-                "final_reason": entry.direction_final_reason.clone().unwrap_or_default()
-            },
-            "llm_defined_acceptance": {
-                "criteria": entry.llm_defined_acceptance_criteria.clone()
-            },
-            "stage_files": stage_files,
             "stage_runtime": stage_runtime,
             "executions": entry.session_executions.clone(),
             "handoff": {
@@ -758,6 +744,13 @@ mod tests {
         );
         assert_eq!(
             context
+                .get("PLAN_MARKDOWN_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/plan.md"
+        );
+        assert_eq!(
+            context
                 .get("IMPLEMENT_GENERAL_ARTIFACT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
@@ -798,6 +791,7 @@ mod tests {
         let keys = required_context_keys("implement_advanced", 1, 2);
         assert!(keys.contains(&"MANAGED_BACKLOG_PATH"));
         assert!(keys.contains(&"VERIFY_ARTIFACT_PATH"));
+        assert!(keys.contains(&"PLAN_MARKDOWN_PATH"));
     }
 
     #[test]

@@ -25,8 +25,9 @@ use super::consts::{
 };
 use super::profile::profile_for_stage;
 use super::utils::{
-    cycle_dir_path, inject_stage_artifact_updated_at, read_json, sanitize_validation_attempt,
-    sanitize_validation_attempts, write_json, write_jsonc_text,
+    cycle_dir_path, inject_stage_artifact_updated_at, read_json, read_text,
+    sanitize_validation_attempt, sanitize_validation_attempts, write_json, write_jsonc_text,
+    write_text,
 };
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
@@ -37,6 +38,13 @@ const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
 const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+const PLAN_MARKDOWN_FILE: &str = "plan.md";
+const PLAN_MD_SECTION_GOAL: &str = "# 本轮目标";
+const PLAN_MD_SECTION_DIRECTION: &str = "## 方向摘要";
+const PLAN_MD_SECTION_WORK_ITEMS: &str = "## 工作项分配";
+const PLAN_MD_SECTION_ORDER: &str = "## 执行顺序";
+const PLAN_MD_SECTION_CHECKS: &str = "## 验证计划";
+const PLAN_MD_SECTION_RISKS: &str = "## 风险与边界";
 
 async fn touch_session_index_updated_at_for_evolution(
     ctx: &HandlerContext,
@@ -663,6 +671,13 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
     tables.ok_or_else(|| report.summary())
 }
 
+fn validate_plan_markdown_artifact(
+    cycle_dir: &Path,
+    _plan_value: &serde_json::Value,
+) -> Result<(), String> {
+    read_text_file(cycle_dir, PLAN_MARKDOWN_FILE).map(|_| ())
+}
+
 fn is_criteria_failure_status(status: &str) -> bool {
     matches!(
         normalize_acceptance_evaluation_status(status),
@@ -729,6 +744,11 @@ fn read_json_file(cycle_dir: &Path, file_name: &str) -> Result<serde_json::Value
     read_json(&path)
 }
 
+fn read_text_file(cycle_dir: &Path, file_name: &str) -> Result<String, String> {
+    let path = cycle_dir.join(file_name);
+    read_text(&path)
+}
+
 fn parse_non_empty_string_field(value: Option<&serde_json::Value>) -> Option<String> {
     value
         .and_then(|v| v.as_str())
@@ -737,9 +757,7 @@ fn parse_non_empty_string_field(value: Option<&serde_json::Value>) -> Option<Str
 }
 
 fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
-    parse_non_empty_string_field(stage_json.get("cycle_title")).or_else(|| {
-        parse_non_empty_string_field(stage_json.pointer("/decision/context/selected_title"))
-    })
+    parse_non_empty_string_field(stage_json.get("title"))
 }
 
 fn parse_rfc3339_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
@@ -1298,7 +1316,7 @@ fn direction_stage_template(cycle_id: &str) -> String {
   // 阶段状态；运行中写 running，完成后写 completed/failed/blocked
   "status": "running",
   // 本轮标题，必须是非空字符串
-  "cycle_title": "",
+  "title": "",
   "decision": {
     // 决策结果；direction 阶段通常保留 n/a
     "result": "n/a",
@@ -1394,8 +1412,6 @@ fn plan_stage_template(cycle_id: &str) -> String {
   },
   // 本轮计划摘要，必须非空
   "summary": "",
-  // 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名
-  "selected_direction_type": "",
   // 工作项列表，不能为空
   "work_items": [
     // {
@@ -1443,6 +1459,51 @@ fn plan_stage_template(cycle_id: &str) -> String {
 }
 "#,
         &[("__CYCLE_ID__", cycle_id.to_string())],
+    )
+}
+
+fn plan_markdown_template(cycle_id: &str) -> String {
+    format!(
+        r#"{goal}
+- 循环 ID：{cycle_id}
+- 本轮目标：
+
+{direction}
+- 标题：
+- 方向标签：
+- 最终原因：
+- 验收标准：
+
+{work_items}
+### WI-001 占位标题
+- 负责代理：
+- 目标文件：
+- 完成定义：
+- 关联检查：
+- 风险：
+
+{order}
+1. 先完成方向对应的核心工作项。
+2. 再按依赖顺序推进其余工作项。
+3. 最后集中执行验证计划。
+
+{checks}
+### CHK-001 占位检查
+- 执行方式：
+- 预期结果：
+- 覆盖工作项：
+
+{risks}
+- 风险：
+- 非目标：
+"#,
+        goal = PLAN_MD_SECTION_GOAL,
+        cycle_id = cycle_id,
+        direction = PLAN_MD_SECTION_DIRECTION,
+        work_items = PLAN_MD_SECTION_WORK_ITEMS,
+        order = PLAN_MD_SECTION_ORDER,
+        checks = PLAN_MD_SECTION_CHECKS,
+        risks = PLAN_MD_SECTION_RISKS,
     )
 }
 
@@ -1751,55 +1812,10 @@ impl EvolutionManager {
             ));
         }
         report.capture(validate_handoff_info("plan.jsonc", &value));
-
-        let selected_direction = match value.get("selected_direction_type") {
-            Some(raw_value) => match raw_value.as_str() {
-                Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
-                Some(_) => {
-                    report.push("plan.jsonc.selected_direction_type 不能为空");
-                    None
-                }
-                None => {
-                    report.push("plan.jsonc.selected_direction_type 必须是非空字符串");
-                    None
-                }
-            },
-            None => {
-                report.push("plan.jsonc 缺少 selected_direction_type");
-                None
-            }
-        };
+        report.capture(validate_plan_markdown_artifact(cycle_dir, &value));
 
         let direction_value = read_json_file(cycle_dir, "direction.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
-        let direction_selected = match direction_value.get("selected_direction_type") {
-            Some(raw_value) => match raw_value.as_str() {
-                Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
-                Some(_) => {
-                    report.push("direction.jsonc.selected_direction_type 不能为空");
-                    None
-                }
-                None => {
-                    report.push("direction.jsonc.selected_direction_type 必须是非空字符串");
-                    None
-                }
-            },
-            None => {
-                report.push("direction.jsonc 缺少 selected_direction_type");
-                None
-            }
-        };
-        match (selected_direction.as_deref(), direction_selected.as_deref()) {
-            (Some(selected_direction), Some(direction_selected))
-                if direction_selected != selected_direction =>
-            {
-                report.push(format!(
-                    "selected_direction_type 与 direction.selected_direction_type 不一致: {} != {}",
-                    selected_direction, direction_selected
-                ));
-            }
-            _ => {}
-        }
 
         let plan_mapping = value
             .pointer("/verification_plan/acceptance_mapping")
@@ -3262,11 +3278,9 @@ impl EvolutionManager {
             ));
         }
         match extract_cycle_title_from_direction_stage(&stage_value) {
-            Some(cycle_title) if cycle_title.trim().is_empty() => {
-                report.push("direction.jsonc.cycle_title 不能为空")
-            }
+            Some(title) if title.trim().is_empty() => report.push("direction.jsonc.title 不能为空"),
             Some(_) => {}
-            None => report.push("direction.jsonc 缺少 cycle_title"),
+            None => report.push("direction.jsonc 缺少 title"),
         }
         let capability = stage_value
             .pointer("/decision/context/capability_assessment")
@@ -3632,9 +3646,6 @@ impl EvolutionManager {
             let Some(entry) = state.workspaces.get(key) else {
                 return Err("workspace state missing".to_string());
             };
-            if entry.llm_defined_acceptance_criteria.is_empty() {
-                return Err("cycle llm_defined_acceptance.criteria 为空".to_string());
-            }
             entry.workspace_root.clone()
         };
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
@@ -3649,21 +3660,19 @@ impl EvolutionManager {
                     .map(|s| s.to_string())
             })
             .collect();
-        let actual_ids: std::collections::HashSet<String> = {
-            let state = self.state.lock().await;
-            let Some(entry) = state.workspaces.get(key) else {
-                return Err("workspace state missing".to_string());
-            };
-            entry
-                .llm_defined_acceptance_criteria
-                .iter()
-                .filter_map(|v| {
-                    v.get("criteria_id")
-                        .and_then(|x| x.as_str())
-                        .map(|s| s.to_string())
-                })
-                .collect()
-        };
+        let direction = read_json(&cycle_dir.join("direction.jsonc"))
+            .map_err(|e| format!("读取 direction.jsonc 失败: {}", e))?;
+        let actual_ids: std::collections::HashSet<String> = direction
+            .get("acceptance_criteria")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| "direction.jsonc.acceptance_criteria 为空".to_string())?
+            .iter()
+            .filter_map(|v| {
+                v.get("criteria_id")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
         if expected_ids != actual_ids {
             return Err(format!(
                 "criteria_id 集不一致: plan={:?}, cycle={:?}",
@@ -3688,26 +3697,6 @@ impl EvolutionManager {
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let direction_stage = read_json_file(&cycle_dir, "direction.jsonc")?;
         let cycle_title = extract_cycle_title_from_direction_stage(&direction_stage);
-        let selected_direction_type = direction_stage
-            .get("selected_direction_type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        let candidate_scores = direction_stage
-            .get("candidate_scores")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let final_reason = direction_stage
-            .get("final_reason")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        let acceptance_criteria = direction_stage
-            .get("acceptance_criteria")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
 
         let mut state = self.state.lock().await;
         let Some(entry) = state.workspaces.get_mut(key) else {
@@ -3717,10 +3706,6 @@ impl EvolutionManager {
             return Ok(());
         }
         entry.cycle_title = cycle_title;
-        entry.selected_direction_type = selected_direction_type;
-        entry.direction_candidate_scores = candidate_scores;
-        entry.direction_final_reason = final_reason;
-        entry.llm_defined_acceptance_criteria = acceptance_criteria;
         Ok(())
     }
 
@@ -3955,7 +3940,7 @@ impl EvolutionManager {
     fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
         match stage {
             "direction" => vec![cycle_dir.join("direction.jsonc")],
-            "plan" => vec![cycle_dir.join("plan.jsonc")],
+            "plan" => vec![cycle_dir.join("plan.jsonc"), cycle_dir.join(PLAN_MARKDOWN_FILE)],
             "implement_general" => vec![cycle_dir.join("implement_general.jsonc")],
             "implement_visual" => vec![cycle_dir.join("implement_visual.jsonc")],
             "implement_advanced" => vec![cycle_dir.join("implement_advanced.jsonc")],
@@ -3993,6 +3978,14 @@ impl EvolutionManager {
             .map_err(|e| format!("写入 JSONC 模板失败 ({}): {}", target.display(), e))
     }
 
+    fn ensure_text_template(path: &Path, content: &str) -> Result<(), String> {
+        if path.exists() {
+            return Ok(());
+        }
+        write_text(path, content)
+            .map_err(|e| format!("写入文本模板失败 ({}): {}", path.display(), e))
+    }
+
     fn ensure_stage_templates(
         stage: &str,
         cycle_dir: &Path,
@@ -4020,6 +4013,10 @@ impl EvolutionManager {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("plan.jsonc"),
                     &plan_stage_template(&cycle_id),
+                )?;
+                Self::ensure_text_template(
+                    &cycle_dir.join(PLAN_MARKDOWN_FILE),
+                    &plan_markdown_template(&cycle_id),
                 )?;
             }
             "implement_general" | "implement_visual" | "implement_advanced" => {
@@ -4444,11 +4441,20 @@ impl EvolutionManager {
         let normalized_stage = stage.trim().to_ascii_lowercase();
         match normalized_stage.as_str() {
             "direction" => "direction.jsonc / cycle.jsonc".to_string(),
-            "plan" => "plan.jsonc / direction.jsonc".to_string(),
-            "implement_general" => "implement_general.jsonc / managed.backlog.jsonc".to_string(),
-            "implement_visual" => "implement_visual.jsonc / managed.backlog.jsonc".to_string(),
-            "implement_advanced" => "implement_advanced.jsonc / managed.backlog.jsonc".to_string(),
-            "verify" => "verify.jsonc / plan.jsonc / managed.backlog.jsonc".to_string(),
+            "plan" => "plan.jsonc / plan.md / direction.jsonc".to_string(),
+            "implement_general" => {
+                "implement_general.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
+                    .to_string()
+            }
+            "implement_visual" => {
+                "implement_visual.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
+                    .to_string()
+            }
+            "implement_advanced" => {
+                "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
+                    .to_string()
+            }
+            "verify" => "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc".to_string(),
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
                 let stage_name = if normalized_stage.is_empty() {
@@ -4547,6 +4553,11 @@ impl EvolutionManager {
 
         if normalized_error_message.contains("必须是数字") {
             return "将该字段改为数字类型（JSON number），不要使用字符串或对象。".to_string();
+        }
+        if normalized_error_message.contains("plan.md") && normalized_error_message.contains("读取")
+        {
+            return "补齐 plan.md 文件即可；当前系统只要求该文件存在，不校验其具体格式。"
+                .to_string();
         }
         if normalized_error_message.contains("必须是对象") {
             return "将该字段改为对象类型（{}），并补齐对象内必填子字段。".to_string();
@@ -6273,9 +6284,6 @@ impl EvolutionManager {
             entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
             entry.cycle_title = None;
             entry.cycle_handoff = crate::server::protocol::EvolutionHandoffInfo::default();
-            entry.selected_direction_type = None;
-            entry.direction_candidate_scores.clear();
-            entry.direction_final_reason = None;
             entry.created_at = Utc::now().to_rfc3339();
             entry.current_stage = "direction".to_string();
             entry.status = "queued".to_string();
@@ -6283,7 +6291,6 @@ impl EvolutionManager {
             entry.terminal_error_message = None;
             entry.rate_limit_resume_at = None;
             entry.rate_limit_error_message = None;
-            entry.llm_defined_acceptance_criteria.clear();
             entry.stage_sessions.clear();
             entry.stage_session_history.clear();
             entry.session_executions.clear();
@@ -6525,9 +6532,9 @@ mod tests {
         auto_commit_stage_template, check_workspace_boundary, direction_stage_template,
         ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
         log_evolution_error, managed_backlog_template, parse_adjudication_result_from_json,
-        plan_stage_template, should_force_advanced_reimplementation, should_start_next_round,
-        verify_stage_template, ArtifactValidationError, EvolutionManager, ImplementLane,
-        StageValidationContext,
+        plan_markdown_template, plan_stage_template, should_force_advanced_reimplementation,
+        should_start_next_round, verify_stage_template, ArtifactValidationError,
+        EvolutionManager, ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -6554,7 +6561,6 @@ mod tests {
             "$schema_version": "2.0",
             "stage": "plan",
             "cycle_id": "c-1",
-            "selected_direction_type": "播放体验 升级",
             "goal": "demo",
             "scope": {"in": ["core"], "out": []},
             "work_items": work_items,
@@ -6571,6 +6577,14 @@ mod tests {
             "handoff": empty_handoff_json(),
             "updated_at": "2026-03-02T00:00:00Z"
         })
+    }
+
+    fn write_plan_markdown(dir: &Path) {
+        super::write_text(
+            &dir.join(PLAN_MARKDOWN_FILE),
+            &plan_markdown_template("c-1"),
+        )
+            .expect("write plan markdown failed");
     }
 
     fn base_implement_result_json(
@@ -6736,7 +6750,7 @@ mod tests {
                 "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
-                "cycle_title": "标题",
+                "title": "标题",
                 "decision": {
                     "context": {
                         "capability_assessment": {
@@ -6929,23 +6943,23 @@ mod tests {
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("plan"),
-            "plan.jsonc / direction.jsonc"
+            "plan.jsonc / plan.md / direction.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_general"),
-            "implement_general.jsonc / managed.backlog.jsonc"
+            "implement_general.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_visual"),
-            "implement_visual.jsonc / managed.backlog.jsonc"
+            "implement_visual.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_advanced"),
-            "implement_advanced.jsonc / managed.backlog.jsonc"
+            "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("verify"),
-            "verify.jsonc / plan.jsonc / managed.backlog.jsonc"
+            "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("auto_commit"),
@@ -6961,17 +6975,17 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_missing_field() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "plan.jsonc 缺少 selected_direction_type",
+            "读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("plan", &err);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
-            "plan.jsonc 缺少 selected_direction_type",
-            &["plan.jsonc 缺少 selected_direction_type"],
-            &["补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。"],
-            "plan.jsonc / direction.jsonc",
+            "读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)",
+            &["读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)"],
+            &["补齐 plan.md 文件即可；当前系统只要求该文件存在，不校验其具体格式。"],
+            "plan.jsonc / plan.md / direction.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -6981,15 +6995,15 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_non_empty_constraint() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "direction.jsonc.cycle_title 不能为空",
+            "direction.jsonc.title 不能为空",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
-            "direction.jsonc.cycle_title 不能为空",
-            &["direction.jsonc.cycle_title 不能为空"],
+            "direction.jsonc.title 不能为空",
+            &["direction.jsonc.title 不能为空"],
             &["将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。"],
             "direction.jsonc / cycle.jsonc",
             &raw_error,
@@ -7032,7 +7046,7 @@ mod tests {
             "verify.jsonc.carryover_verification.summary.total 必须是数字",
             &["verify.jsonc.carryover_verification.summary.total 必须是数字"],
             &["将该字段改为数字类型（JSON number），不要使用字符串或对象。"],
-            "verify.jsonc / plan.jsonc / managed.backlog.jsonc",
+            "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -7052,7 +7066,7 @@ mod tests {
             "implement_advanced.jsonc.quick_checks 必须是数组",
             &["implement_advanced.jsonc.quick_checks 必须是数组"],
             &["quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"],
-            "implement_advanced.jsonc / managed.backlog.jsonc",
+            "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -7073,27 +7087,27 @@ mod tests {
             "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
             &["evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0"],
             &["无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。"],
-            "implement_advanced.jsonc / managed.backlog.jsonc",
+            "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
     }
 
     #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
+    fn build_validation_reminder_message_should_match_snapshot_for_plan_markdown_missing() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级",
+            "读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)",
         );
         let raw_error = err.to_stage_error();
         let msg = EvolutionManager::build_validation_reminder_message("plan", &err);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
-            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级",
-            &["selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级"],
-            &["修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。"],
-            "plan.jsonc / direction.jsonc",
+            "读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)",
+            &["读取 plan.md 失败: 读取 /tmp/cycle/plan.md 失败: No such file or directory (os error 2)"],
+            &["补齐 plan.md 文件即可；当前系统只要求该文件存在，不校验其具体格式。"],
+            "plan.jsonc / plan.md / direction.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -7130,14 +7144,20 @@ mod tests {
         assert!(direction.contains("//   \"domain\": \"desktop_player\""));
         assert!(direction.contains("//       \"mapped_direction_type\": \"播放体验 升级\""));
         assert!(direction.contains("// 本轮最终选中的方向标签，由代理自由命名，必须是非空字符串"));
+        assert!(direction.contains("\"title\": \"\""));
 
         let plan = plan_stage_template("c-42");
         assert!(plan.contains("// 工作项列表，不能为空"));
-        assert!(plan.contains(
-            "// 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名"
-        ));
         assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
+        assert!(!plan.contains("selected_direction_type"));
+
+        let plan_markdown = plan_markdown_template("c-42");
+        assert!(plan_markdown.contains("# 本轮目标"));
+        assert!(plan_markdown.contains("## 工作项分配"));
+        assert!(plan_markdown.contains("### WI-001 占位标题"));
+        assert!(plan_markdown.contains("## 验证计划"));
+        assert!(plan_markdown.contains("### CHK-001 占位检查"));
 
         let implement = implement_stage_template("implement_general", "c-42", 1, 2);
         assert!(implement.contains("// backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。"));
@@ -7159,6 +7179,30 @@ mod tests {
     }
 
     #[test]
+    fn ensure_stage_templates_should_create_plan_jsonc_and_plan_markdown() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("cycle.jsonc"),
+            serde_json::json!({
+                "cycle_id": "c-42"
+            }),
+        );
+
+        EvolutionManager::ensure_stage_templates("plan", dir.path(), 1, 3, 2)
+            .expect("plan templates should be created");
+
+        let plan_json = dir.path().join("plan.jsonc");
+        let plan_markdown = dir.path().join(PLAN_MARKDOWN_FILE);
+        assert!(plan_json.exists(), "plan.jsonc should exist");
+        assert!(plan_markdown.exists(), "plan.md should exist");
+
+        let markdown =
+            std::fs::read_to_string(&plan_markdown).expect("plan.md should be readable");
+        assert!(markdown.contains("# 本轮目标"));
+        assert!(markdown.contains("### WI-001 占位标题"));
+    }
+
+    #[test]
     fn validate_direction_artifact_should_aggregate_multiple_issues() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
@@ -7168,7 +7212,7 @@ mod tests {
                 "stage": "direction",
                 "cycle_id": "c-1",
                 "status": "done",
-                "cycle_title": "",
+                "title": "",
                 "decision": {
                     "context": {
                         "capability_assessment": {
@@ -7204,7 +7248,7 @@ mod tests {
         let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
             .expect_err("invalid direction artifact should fail");
         assert_eq!(err.issues().len(), 7);
-        assert_eq!(err.issues()[0], "direction.jsonc 缺少 cycle_title");
+        assert_eq!(err.issues()[0], "direction.jsonc 缺少 title");
         assert!(err.contains("direction.jsonc.domains[0] 必须是对象"));
         assert!(err.contains("direction.jsonc.domains[1].domain 不能为空"));
         assert!(err.contains("direction.jsonc.candidate_scores 数量必须在 3..=5"));
@@ -7231,7 +7275,7 @@ mod tests {
                 "$schema_version": "2.0",
                 "cycle_id": "c-1",
                 "status": "done",
-                "cycle_title": "标题",
+                "title": "标题",
                 "decision": {
                     "context": {
                         "capability_assessment": {
@@ -7280,10 +7324,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_plan_artifact_should_accept_trimmed_free_text_direction_type_consistency() {
+    fn validate_plan_artifact_should_require_plan_markdown_to_exist() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
-        let mut plan = base_plan_json(vec![serde_json::json!({
+        write_json(&dir.path().join("plan.jsonc"), base_plan_json(vec![serde_json::json!({
             "id": "w-1",
             "title": "x",
             "type": "code",
@@ -7295,22 +7339,18 @@ mod tests {
             "rollback": "git restore",
             "implementation_agent": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
-        })]);
-        plan.as_object_mut().expect("plan should be object").insert(
-            "selected_direction_type".to_string(),
-            serde_json::json!("  播放体验 升级  "),
-        );
-        write_json(&dir.path().join("plan.jsonc"), plan);
+        })]));
 
-        EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
-            .expect("忽略首尾空白后应保持一致");
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
+            .expect_err("missing plan.md should fail");
+        assert!(err.contains("plan.md"));
     }
 
     #[test]
-    fn validate_plan_artifact_should_reject_mismatched_free_text_direction_type() {
+    fn validate_plan_artifact_should_accept_existing_plan_markdown() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
-        let mut plan = base_plan_json(vec![serde_json::json!({
+        write_json(&dir.path().join("plan.jsonc"), base_plan_json(vec![serde_json::json!({
             "id": "w-1",
             "title": "x",
             "type": "code",
@@ -7322,18 +7362,11 @@ mod tests {
             "rollback": "git restore",
             "implementation_agent": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
-        })]);
-        plan.as_object_mut().expect("plan should be object").insert(
-            "selected_direction_type".to_string(),
-            serde_json::json!("界面补强"),
-        );
-        write_json(&dir.path().join("plan.jsonc"), plan);
+        })]));
+        write_plan_markdown(dir.path());
 
-        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
-            .expect_err("不同自由文本方向标签应失败");
-        assert!(err.contains(
-            "selected_direction_type 与 direction.selected_direction_type 不一致: 界面补强 != 播放体验 升级"
-        ));
+        EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
+            .expect("existing plan.md should pass");
     }
 
     #[test]
@@ -7572,7 +7605,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_reject_direction_missing_cycle_title() {
+    fn validate_stage_artifacts_should_reject_direction_missing_title() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
 
@@ -7581,12 +7614,12 @@ mod tests {
         stage_direction
             .as_object_mut()
             .expect("direction.jsonc should be object")
-            .remove("cycle_title");
+            .remove("title");
         write_json(&dir.path().join("direction.jsonc"), stage_direction);
 
         let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
-            .expect_err("missing cycle_title should fail");
-        assert!(err.contains("cycle_title"));
+            .expect_err("missing title should fail");
+        assert!(err.contains("title"));
     }
 
     #[test]
@@ -8545,6 +8578,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_missing_implementation_agent() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
+        write_plan_markdown(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -8569,6 +8603,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_invalid_agent() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
+        write_plan_markdown(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -8594,6 +8629,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_missing_linked_check_ids() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
+        write_plan_markdown(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -8618,6 +8654,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_unknown_linked_check_id() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
+        write_plan_markdown(dir.path());
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -9782,7 +9819,7 @@ mod tests {
   "stage": "direction",
   "cycle_id": "test-cycle",
   "status": "completed",
-  "cycle_title": "测试",
+  "title": "测试",
   "decision": { "result": "n/a", "reason": "ok", "context": { "capability_assessment": { "ui_capability": "full", "test_capability": "full", "build_capability": "full", "runtime_capability": "full", "rationale": "ok" } } },
   "project_type": "test",
   "ui_capability": "full",
@@ -10030,7 +10067,7 @@ mod tests {
             );
         }
 
-        // Part 3: direction.jsonc 缺少 cycle_title 必填字段应被 schema 校验拒绝
+        // Part 3: direction.jsonc 缺少 title 必填字段应被 schema 校验拒绝
         {
             let dir = tempdir().expect("tempdir should be created");
             write_json(
@@ -10040,7 +10077,7 @@ mod tests {
                     "stage": "direction",
                     "cycle_id": "c-1",
                     "status": "done",
-                    // cycle_title 故意缺失
+                    // title 故意缺失
                     "decision": {
                         "result": "n/a",
                         "reason": "",
@@ -10073,10 +10110,10 @@ mod tests {
             );
 
             let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
-                .expect_err("缺少 cycle_title 应被 schema 校验拒绝");
+                .expect_err("缺少 title 应被 schema 校验拒绝");
             assert!(
-                err.contains("cycle_title"),
-                "错误信息应提及缺失字段 cycle_title: {}",
+                err.contains("title"),
+                "错误信息应提及缺失字段 title: {}",
                 err
             );
         }

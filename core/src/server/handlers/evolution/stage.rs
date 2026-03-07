@@ -40,7 +40,6 @@ pub(super) fn build_agents(
             agent: agent_name(stage).to_string(),
             status,
             tool_call_count,
-            latest_message: None,
             started_at: stage_started_ats.get(stage).cloned(),
             duration_ms: stage_duration_ms.get(stage).copied(),
         });
@@ -57,32 +56,12 @@ pub(super) fn build_agents(
             agent: agent_name(&stage).to_string(),
             status,
             tool_call_count,
-            latest_message: None,
             started_at: stage_started_ats.get(&stage).cloned(),
             duration_ms: stage_duration_ms.get(&stage).copied(),
         });
     }
 
     agents
-}
-
-pub(super) fn active_agents(stage_statuses: &HashMap<String, String>) -> Vec<String> {
-    let mut stages: Vec<String> = STAGES.iter().map(|stage| stage.to_string()).collect();
-    stages.extend(runtime_extra_stages(stage_statuses));
-    stages
-        .into_iter()
-        .filter_map(|stage| {
-            let status = stage_statuses
-                .get(&stage)
-                .map(|v| v.as_str())
-                .unwrap_or("pending");
-            if status == "running" {
-                Some(agent_name(&stage).to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 pub(super) fn agent_name(stage: &str) -> &'static str {

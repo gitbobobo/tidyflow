@@ -27,7 +27,7 @@ pub(in crate::server::ws) struct SystemSnapshotWorkspaceItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     evolution_cycle_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cycle_title: Option<String>,
+    title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_reason: Option<String>,
 }
@@ -36,7 +36,7 @@ pub(in crate::server::ws) struct SystemSnapshotWorkspaceItem {
 struct EvolutionWorkspaceSummary {
     status: String,
     cycle_id: Option<String>,
-    cycle_title: Option<String>,
+    title: Option<String>,
     failure_reason: Option<String>,
 }
 
@@ -80,7 +80,7 @@ fn evolution_index_from_items(
     let mut index = HashMap::with_capacity(items.len());
     for item in items {
         let cycle_id = non_empty_opt(Some(item.cycle_id.as_str()));
-        let cycle_title = if cycle_id.is_some() {
+        let title = if cycle_id.is_some() {
             non_empty_opt(item.title.as_deref())
         } else {
             None
@@ -91,7 +91,7 @@ fn evolution_index_from_items(
                 status: non_empty_opt(Some(item.status.as_str()))
                     .unwrap_or_else(|| "not_started".to_string()),
                 cycle_id,
-                cycle_title,
+                title,
                 failure_reason: summarize_failure_reason(item),
             },
         );
@@ -153,7 +153,7 @@ fn build_workspace_item(
         .map(|v| v.status.clone())
         .unwrap_or_else(|| "not_started".to_string());
     let evolution_cycle_id = evo.and_then(|v| v.cycle_id.clone());
-    let cycle_title = evo.and_then(|v| v.cycle_title.clone());
+    let title = evo.and_then(|v| v.title.clone());
     let failure_reason = evo.and_then(|v| v.failure_reason.clone());
 
     SystemSnapshotWorkspaceItem {
@@ -164,7 +164,7 @@ fn build_workspace_item(
         workspace_status: workspace.status,
         evolution_status,
         evolution_cycle_id,
-        cycle_title,
+        title,
         failure_reason,
     }
 }
@@ -216,12 +216,10 @@ mod tests {
             verify_iteration_limit: 2,
             agents: Vec::new(),
             executions: Vec::new(),
-            active_agents: Vec::new(),
             handoff: None,
             terminal_reason_code: terminal_reason_code.map(|v| v.to_string()),
             terminal_error_message: terminal_error_message.map(|v| v.to_string()),
             rate_limit_error_message: rate_limit_error_message.map(|v| v.to_string()),
-            selected_direction_type: None,
         }
     }
 
@@ -307,18 +305,18 @@ mod tests {
     }
 
     #[test]
-    fn cycle_title_should_be_none_when_cycle_id_exists_but_title_missing() {
+    fn title_should_be_none_when_cycle_id_exists_but_title_missing() {
         let items = vec![test_item("cycle-1", None, None, None, None)];
         let idx = evolution_index_from_items(&items);
         let summary = idx
             .get(&("demo".to_string(), "default".to_string()))
             .expect("summary should exist");
         assert_eq!(summary.cycle_id.as_deref(), Some("cycle-1"));
-        assert_eq!(summary.cycle_title, None);
+        assert_eq!(summary.title, None);
     }
 
     #[tokio::test]
-    async fn cycle_title_should_be_propagated_when_present() {
+    async fn title_should_be_propagated_when_present() {
         let items = vec![test_item("cycle-2", Some("本轮标题"), None, None, None)];
         let idx = evolution_index_from_items(&items);
         let result =
@@ -329,7 +327,7 @@ mod tests {
             .find(|it| it.project == "demo" && it.workspace == "default")
             .expect("default workspace should exist");
         assert_eq!(default_item.evolution_cycle_id.as_deref(), Some("cycle-2"));
-        assert_eq!(default_item.cycle_title.as_deref(), Some("本轮标题"));
+        assert_eq!(default_item.title.as_deref(), Some("本轮标题"));
     }
 
     #[tokio::test]
@@ -344,7 +342,7 @@ mod tests {
             .expect("default workspace should exist");
         assert_eq!(default_item.evolution_status, "not_started");
         assert_eq!(default_item.evolution_cycle_id, None);
-        assert_eq!(default_item.cycle_title, None);
+        assert_eq!(default_item.title, None);
     }
 
     #[tokio::test]

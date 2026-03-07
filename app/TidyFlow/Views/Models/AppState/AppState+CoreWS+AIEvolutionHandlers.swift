@@ -742,12 +742,10 @@ extension AppState {
                 verifyIterationLimit: ev.verifyIterationLimit,
                 agents: ev.agents,
                 executions: ev.executions,
-                activeAgents: ev.activeAgents,
                 handoff: existing.handoff,
                 terminalReasonCode: ev.terminalReasonCode,
                 terminalErrorMessage: ev.terminalErrorMessage,
-                rateLimitErrorMessage: ev.rateLimitErrorMessage,
-                selectedDirectionType: ev.selectedDirectionType ?? existing.selectedDirectionType
+                rateLimitErrorMessage: ev.rateLimitErrorMessage
             )
             if self.evolutionWorkspaceItems[existingIndex] != updated {
                 self.evolutionWorkspaceItems[existingIndex] = updated

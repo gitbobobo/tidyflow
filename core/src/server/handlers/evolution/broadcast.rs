@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::server::context::{HandlerContext, TaskBroadcastEvent};
 use crate::server::protocol::ServerMessage;
 
-use super::stage::{active_agents, build_agents};
+use super::stage::build_agents;
 use super::EvolutionManager;
 
 impl EvolutionManager {
@@ -33,7 +33,6 @@ impl EvolutionManager {
             terminal_reason_code,
             terminal_error_message,
             rate_limit_error_message,
-            selected_direction_type,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -58,7 +57,6 @@ impl EvolutionManager {
                 entry.terminal_reason_code.clone(),
                 entry.terminal_error_message.clone(),
                 entry.rate_limit_error_message.clone(),
-                entry.selected_direction_type.clone(),
             )
         };
 
@@ -88,11 +86,9 @@ impl EvolutionManager {
                 verify_iteration_limit: verify_limit,
                 agents,
                 executions: session_executions,
-                active_agents: active_agents(&stage_statuses),
                 terminal_reason_code,
                 terminal_error_message,
                 rate_limit_error_message,
-                selected_direction_type,
             },
         )
         .await;

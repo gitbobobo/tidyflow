@@ -193,6 +193,10 @@ pub(super) fn write_jsonc_text(path: &Path, content: &str) -> Result<(), String>
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+pub(super) fn write_text(path: &Path, content: &str) -> Result<(), String> {
+    std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
 pub(super) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let path = normalized_jsonc_path(path);
     let content = std::fs::read_to_string(&path)
@@ -200,6 +204,10 @@ pub(super) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let stripped = strip_jsonc_comments(&content);
     serde_json::from_str::<serde_json::Value>(&stripped)
         .map_err(|e| format!("解析 {} 失败: {}", path.display(), e))
+}
+
+pub(super) fn read_text(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))
 }
 
 pub(super) fn cycle_dir_path(workspace_root: &str, cycle_id: &str) -> Result<PathBuf, String> {

@@ -11,7 +11,7 @@ use crate::server::protocol::{
     EvolutionSessionExecutionEntry, EvolutionWorkspaceItem, ServerMessage,
 };
 
-use super::stage::{active_agents, agent_name, build_agents};
+use super::stage::{agent_name, build_agents};
 use super::utils::{evolution_workspace_dir, read_json, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
@@ -37,13 +37,11 @@ fn non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
 
 #[allow(dead_code)]
 fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
-    non_empty_string(stage_json.get("cycle_title"))
-        .or_else(|| non_empty_string(stage_json.pointer("/decision/context/selected_title")))
+    non_empty_string(stage_json.get("title"))
 }
 
 fn extract_cycle_title_from_cycle_file(cycle_json: &serde_json::Value) -> Option<String> {
     non_empty_string(cycle_json.get("title"))
-        .or_else(|| non_empty_string(cycle_json.get("cycle_title")))
 }
 
 #[allow(dead_code)]
@@ -418,9 +416,6 @@ impl EvolutionManager {
                     cycle_id: cycle_id.clone(),
                     cycle_title: None,
                     cycle_handoff: EvolutionHandoffInfo::default(),
-                    selected_direction_type: None,
-                    direction_candidate_scores: Vec::new(),
-                    direction_final_reason: None,
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
                     loop_round_limit: req.loop_round_limit.max(1),
@@ -429,7 +424,6 @@ impl EvolutionManager {
                     backlog_contract_version: BACKLOG_CONTRACT_VERSION_V2,
                     created_at: now_rfc3339,
                     stop_requested: false,
-                    llm_defined_acceptance_criteria: Vec::new(),
                     terminal_reason_code: None,
                     terminal_error_message: None,
                     rate_limit_resume_at: None,
@@ -701,12 +695,10 @@ impl EvolutionManager {
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents,
                 executions: w.session_executions.clone(),
-                active_agents: active_agents(&w.stage_statuses),
                 handoff: (!w.cycle_handoff.is_empty()).then_some(w.cycle_handoff.clone()),
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
-                selected_direction_type: w.selected_direction_type.clone(),
             });
         }
 
@@ -896,21 +888,16 @@ mod tests {
     }
 
     #[test]
-    fn extract_cycle_title_from_direction_stage_should_prefer_cycle_title() {
+    fn extract_cycle_title_from_direction_stage_should_read_title() {
         let stage_json = serde_json::json!({
-            "cycle_title": "  新标题  ",
-            "decision": {
-                "context": {
-                    "selected_title": "旧标题"
-                }
-            }
+            "title": "  新标题  "
         });
         let title = extract_cycle_title_from_direction_stage(&stage_json);
         assert_eq!(title.as_deref(), Some("新标题"));
     }
 
     #[test]
-    fn extract_cycle_title_from_direction_stage_should_fallback_to_selected_title() {
+    fn extract_cycle_title_from_direction_stage_should_not_fallback_to_legacy_fields() {
         let stage_json = serde_json::json!({
             "decision": {
                 "context": {
@@ -919,16 +906,16 @@ mod tests {
             }
         });
         let title = extract_cycle_title_from_direction_stage(&stage_json);
-        assert_eq!(title.as_deref(), Some("方向标题"));
+        assert_eq!(title, None);
     }
 
     #[test]
-    fn extract_cycle_title_from_cycle_file_should_support_legacy_cycle_title_key() {
+    fn extract_cycle_title_from_cycle_file_should_only_read_title() {
         let cycle_json = serde_json::json!({
-            "cycle_title": "  兼容标题  "
+            "title": "  当前标题  "
         });
         let title = extract_cycle_title_from_cycle_file(&cycle_json);
-        assert_eq!(title.as_deref(), Some("兼容标题"));
+        assert_eq!(title.as_deref(), Some("当前标题"));
     }
 
     #[test]

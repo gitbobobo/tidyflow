@@ -427,8 +427,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
                 "completed": ["完成结构改造"],
                 "risks": ["需要补 UI 构建验证"],
                 "next": ["继续跑 xcodebuild"]
-            ],
-            "active_agents": []
+            ]
         ]
 
         let item = EvolutionWorkspaceItemV2.from(json: json)
@@ -443,8 +442,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.handoff?.next, ["继续跑 xcodebuild"])
     }
 
-    func testEvolutionWorkspaceItemParsesSelectedDirectionType() {
-        let jsonWithDirection: [String: Any] = [
+    func testEvolutionWorkspaceItemDerivesActiveAgentsFromAgentStatus() {
+        let json: [String: Any] = [
             "project": "tidyflow",
             "workspace": "default",
             "cycle_id": "cycle-2",
@@ -455,32 +454,26 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "loop_round_limit": 30,
             "verify_iteration": 0,
             "verify_iteration_limit": 5,
-            "agents": [],
-            "active_agents": [],
-            "selected_direction_type": "AI工作流智能化"
+            "agents": [
+                [
+                    "stage": "implement_general",
+                    "agent": "ImplementGeneralAgent",
+                    "status": "running",
+                    "tool_call_count": 1
+                ],
+                [
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "status": "completed",
+                    "tool_call_count": 0
+                ]
+            ]
         ]
-        let item = EvolutionWorkspaceItemV2.from(json: jsonWithDirection)
+        let item = EvolutionWorkspaceItemV2.from(json: json)
         XCTAssertNotNil(item)
-        XCTAssertEqual(item?.selectedDirectionType, "AI工作流智能化")
         XCTAssertEqual(item?.currentStage, "implement_general")
         XCTAssertEqual(item?.globalLoopRound, 19)
-
-        let jsonWithoutDirection: [String: Any] = [
-            "project": "tidyflow",
-            "workspace": "default",
-            "cycle_id": "cycle-3",
-            "status": "stopped",
-            "current_stage": "direction",
-            "global_loop_round": 1,
-            "loop_round_limit": 3,
-            "verify_iteration": 0,
-            "verify_iteration_limit": 5,
-            "agents": [],
-            "active_agents": []
-        ]
-        let itemWithoutDirection = EvolutionWorkspaceItemV2.from(json: jsonWithoutDirection)
-        XCTAssertNotNil(itemWithoutDirection)
-        XCTAssertNil(itemWithoutDirection?.selectedDirectionType)
+        XCTAssertEqual(item?.activeAgents, ["ImplementGeneralAgent"])
     }
 
     func testEvoCycleUpdatedV2Parses() {
@@ -496,20 +489,16 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "verify_iteration": 1,
             "verify_iteration_limit": 5,
             "agents": [],
-            "executions": [],
-            "active_agents": ["verify"],
-            "selected_direction_type": "AI工作流智能化"
+            "executions": []
         ]
         let ev = EvoCycleUpdatedV2.from(json: json)
         XCTAssertNotNil(ev)
         XCTAssertEqual(ev?.project, "tidyflow")
         XCTAssertEqual(ev?.currentStage, "verify")
         XCTAssertEqual(ev?.verifyIteration, 1)
-        XCTAssertEqual(ev?.selectedDirectionType, "AI工作流智能化")
-        XCTAssertEqual(ev?.activeAgents, ["verify"])
     }
 
-    func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
+    func testEvolutionCycleHistoryParsesExecutionsAndStrictTitleField() {
         let withExecutions: [String: Any] = [
             "cycle_id": "cycle-1",
             "title": "历史循环标题",
@@ -551,9 +540,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(parsedWithExecutions?.terminalErrorMessage, "judge.result.json 缺少 pass 字段")
         XCTAssertEqual(parsedWithExecutions?.handoff?.risks, ["verify 尚未稳定"])
 
-        let fallbackStagesOnly: [String: Any] = [
+        let withoutTitle: [String: Any] = [
             "cycle_id": "cycle-2",
-            "cycle_title": "兼容字段标题",
             "status": "completed",
             "global_loop_round": 1,
             "created_at": "2026-03-01T00:00:00Z",
@@ -568,12 +556,12 @@ final class AIChatProtocolModelsTests: XCTestCase {
                 ]
             ]
         ]
-        let parsedFallback = EvolutionCycleHistoryItemV2.from(json: fallbackStagesOnly)
-        XCTAssertEqual(parsedFallback?.executions.count, 0)
-        XCTAssertEqual(parsedFallback?.stages.count, 1)
-        XCTAssertEqual(parsedFallback?.title, "兼容字段标题")
-        XCTAssertEqual(parsedFallback?.stages.first?.stage, "plan")
-        XCTAssertNil(parsedFallback?.handoff)
+        let parsedWithoutTitle = EvolutionCycleHistoryItemV2.from(json: withoutTitle)
+        XCTAssertEqual(parsedWithoutTitle?.executions.count, 0)
+        XCTAssertEqual(parsedWithoutTitle?.stages.count, 1)
+        XCTAssertNil(parsedWithoutTitle?.title)
+        XCTAssertEqual(parsedWithoutTitle?.stages.first?.stage, "plan")
+        XCTAssertNil(parsedWithoutTitle?.handoff)
     }
 
     func testEvolutionHandoffParsesAndFiltersEmptySections() {

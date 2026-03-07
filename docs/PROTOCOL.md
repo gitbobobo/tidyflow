@@ -92,7 +92,7 @@
   - `workspace_status`
   - `evolution_status`（无运行态记录时为 `not_started`）
   - `evolution_cycle_id`（无循环时为 `null`）
-  - `cycle_title`（有循环且已生成标题时有值，否则为 `null`）
+  - `title`（有循环且已生成标题时有值，否则为 `null`）
   - `failure_reason`（失败原因汇总，无失败时为 `null`；优先级：`terminal_error_message` > `rate_limit_error_message` > `terminal_reason_code`）
 
 ## WS 读取动作移除
