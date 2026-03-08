@@ -58,15 +58,13 @@ pub const STAGE_REIMPLEMENT_PROMPT: &str = r####"
 
 硬性约束：
 1. 全程自主执行，禁止提问。
-2. 只修复系统注入的 `ISSUES_TO_FIX`；不要自行扩展整改范围。
+2. 只修复系统注入的 `REPAIR_ITEMS_TO_COMPLETE`；不要自行扩展整改范围。
 3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；不得删除结构、不得新增未声明字段。
-4. backlog 相关规则与回填契约全部以 JSONC 注释为准。
 
 阶段任务：
-1. 优先阅读 `verify.jsonc` 的裁决结果，再以系统注入的 `ISSUES_TO_FIX` 作为唯一修复清单。
-2. 完成整改并回填证据与检查结果。
+1. 优先阅读 `verify.jsonc` 的裁决结果，再以系统注入的 `REPAIR_ITEMS_TO_COMPLETE` 作为唯一修复清单，并按依赖顺序执行。
+2. 完成整改并按 repair item 回填证据与检查结果。
 3. `quick_checks` 必须输出数组。
-4. 当 `BACKLOG_CONTRACT_VERSION>=2` 时，必须输出 `backlog_resolution_updates`，并使用系统提供的 selector 字段完成回填。
 
 必须更新：
 - 当前重实现阶段实例对应的 JSONC 产物
@@ -87,8 +85,8 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 3. `acceptance_evaluation` 必须完整覆盖 plan 中全部验收标准；状态值必须合法。
 4. 只要存在未通过或证据不足项，`verification_overall.result` 不能为 `pass`。
 5. 执行裁决：填写 `adjudication.criteria_judgement`、`adjudication.overall_result`。
-6. 当需要重实现时，必须输出 `adjudication.full_next_iteration_requirements`；在 backlog v2 下 selector 字段必须完整、非空、非 unknown、可映射到 plan/work_item。
-7. 当 `VERIFY_ITERATION>0` 时，必须完成 `carryover_verification` 覆盖核对与汇总。
+6. 当需要重实现时，必须输出 `adjudication.repair_plan`，明确列出修复项、依赖关系、目标文件、完成定义以及关联检查。
+7. 当 `VERIFY_ITERATION>0` 时，新的 `repair_plan` 必须覆盖本轮仍未通过的验收标准，并对上一轮 repair item 的未完成问题给出延续修复编排。
 
 必须更新：
 - `verify.jsonc`

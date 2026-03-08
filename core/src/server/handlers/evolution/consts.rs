@@ -64,7 +64,6 @@ pub(super) const SESSION_RETRY_BACKOFF_MAX_SECS: u64 = 30;
 
 // 关键阶段产物要求的 schema 版本
 pub(super) const STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION: &str = "2.0";
-pub(super) const MANAGED_BACKLOG_FILE: &str = "managed.backlog.jsonc";
 
 pub(super) fn parse_implement_stage_instance(
     stage: &str,

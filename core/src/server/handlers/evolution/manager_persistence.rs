@@ -5,7 +5,7 @@ use chrono::Utc;
 
 use super::consts::{
     compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
-    stage_artifact_file, ImplementationStageKind, MANAGED_BACKLOG_FILE,
+    reimplement_stage_name, stage_artifact_file, ImplementationStageKind,
 };
 use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
@@ -261,10 +261,14 @@ fn build_prompt_context(
         "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
         "VERIFY_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "verify"),
         "AUTO_COMMIT_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "auto_commit"),
-        "MANAGED_BACKLOG_PATH": cycle_dir.join(MANAGED_BACKLOG_FILE),
+        "LAST_REIMPLEMENT_ARTIFACT_PATH": if verify_iteration > 0 {
+            stage_artifact_path(cycle_dir, &reimplement_stage_name(verify_iteration))
+        } else {
+            cycle_dir.join("reimplement.none.jsonc")
+        },
         "IMPLEMENT_STAGE_KIND": implement_kind,
         "TASKS_TO_COMPLETE": "",
-        "ISSUES_TO_FIX": "",
+        "REPAIR_ITEMS_TO_COMPLETE": "",
         "ENV_CONTRACT_PATH": evolution_workspace_dir(workspace_root)
             .map(|p| p.join("env.contract.jsonc"))
             .unwrap_or_else(|_| Path::new("env.contract.jsonc").to_path_buf()),
@@ -284,7 +288,7 @@ fn push_required_key(keys: &mut Vec<&'static str>, key: &'static str) {
 fn required_context_keys(
     stage: &str,
     verify_iteration: u32,
-    backlog_contract_version: u32,
+    _backlog_contract_version: u32,
 ) -> Vec<&'static str> {
     let mut keys = vec![
         "PROJECT",
@@ -309,7 +313,9 @@ fn required_context_keys(
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
-            push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
+            if verify_iteration > 0 {
+                push_required_key(&mut keys, "LAST_REIMPLEMENT_ARTIFACT_PATH");
+            }
         }
         "auto_commit" => {
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
@@ -327,23 +333,13 @@ fn required_context_keys(
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
-            push_required_key(&mut keys, "ISSUES_TO_FIX");
-            push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
+            push_required_key(&mut keys, "REPAIR_ITEMS_TO_COMPLETE");
         }
         _ => {}
     }
 
     if implementation_stage_kind_for_stage(stage).is_some() && verify_iteration > 0 {
         push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
-    }
-
-    if (implementation_stage_kind_for_stage(stage).is_some()
-        || parse_reimplement_stage_instance(stage).is_some()
-        || stage == "verify")
-        && verify_iteration > 0
-        && backlog_contract_version >= 2
-    {
-        push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
     }
 
     keys
@@ -460,14 +456,10 @@ impl EvolutionManager {
                         .find(|item| item.stage == *stage)
                         .and_then(|item| item.duration_ms)
                 });
-            let validation_attempts = sanitize_validation_attempts(
-                preserved_stage_runtime
-                    .get(stage.as_str())
-                    .and_then(|value| value.get("validation_attempts")),
-            );
-            stage_runtime.insert(
-                stage.to_string(),
-                serde_json::json!({
+            let preserved_stage_entry = preserved_stage_runtime.get(stage.as_str());
+            let validation_attempts =
+                sanitize_validation_attempts(preserved_stage_entry.and_then(|value| value.get("validation_attempts")));
+            let mut stage_payload = serde_json::json!({
                     "status": entry.stage_statuses.get(stage.as_str()).cloned().unwrap_or_else(|| "pending".to_string()),
                     "ai_tool": latest_ai_tool,
                     "timing": {
@@ -478,8 +470,16 @@ impl EvolutionManager {
                     "tool_call_count": entry.stage_tool_call_counts.get(stage.as_str()).copied().unwrap_or(0),
                     "session_ids": session_ids,
                     "validation_attempts": validation_attempts,
-                }),
-            );
+                });
+            if let Some(assigned_repair_plan) = preserved_stage_entry
+                .and_then(|value| value.get("assigned_repair_plan"))
+                .cloned()
+            {
+                if let Some(stage_payload_obj) = stage_payload.as_object_mut() {
+                    stage_payload_obj.insert("assigned_repair_plan".to_string(), assigned_repair_plan);
+                }
+            }
+            stage_runtime.insert(stage.to_string(), stage_payload);
         }
 
         let payload = serde_json::json!({
@@ -617,9 +617,9 @@ impl EvolutionManager {
             );
         }
         if parse_reimplement_stage_instance(stage).is_some() {
-            let issues = Self::issues_to_fix_for_stage(&cycle_dir, stage)?;
+            let issues = Self::repair_items_to_complete_for_stage(&cycle_dir, stage)?;
             context_map.insert(
-                "ISSUES_TO_FIX".to_string(),
+                "REPAIR_ITEMS_TO_COMPLETE".to_string(),
                 serde_json::Value::String(issues),
             );
         }
@@ -779,10 +779,10 @@ mod tests {
         );
         assert_eq!(
             context
-                .get("MANAGED_BACKLOG_PATH")
+                .get("LAST_REIMPLEMENT_ARTIFACT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/managed.backlog.jsonc"
+            "/tmp/tidyflow-cycle/reimplement.1.jsonc"
         );
         assert_eq!(
             context
@@ -822,9 +822,9 @@ mod tests {
     }
 
     #[test]
-    fn required_context_keys_should_include_managed_files_when_reimplementation_enabled() {
+    fn required_context_keys_should_include_repair_plan_inputs_when_reimplementation_enabled() {
         let keys = required_context_keys("reimplement.1", 1, 2);
-        assert!(keys.contains(&"MANAGED_BACKLOG_PATH"));
+        assert!(keys.contains(&"REPAIR_ITEMS_TO_COMPLETE"));
         assert!(keys.contains(&"VERIFY_ARTIFACT_PATH"));
         assert!(keys.contains(&"PLAN_MARKDOWN_PATH"));
     }

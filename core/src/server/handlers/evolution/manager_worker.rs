@@ -723,14 +723,6 @@ impl EvolutionManager {
                     {
                         continue;
                     }
-                    if err.contains("evo_backlog_mapping_missing")
-                        || err.contains("evo_backlog_mapping_ambiguous")
-                    {
-                        warn!(
-                            "managed backlog mapping failure: key={}, stage={}, cycle_id={}, error={}",
-                            key, stage, cycle_id, err
-                        );
-                    }
                     error!(
                         "evolution stage failed: key={}, stage={}, error={}",
                         key, stage, err
