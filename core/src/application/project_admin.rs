@@ -34,7 +34,14 @@ pub async fn import_project_message(
                 }
                 _ => ("import_error".to_string(), e.to_string()),
             };
-            ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
+            ServerMessage::Error {
+                code,
+                message,
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
+            }
         }
     }
 }
@@ -104,7 +111,14 @@ pub async fn create_workspace_message(
                 }
                 _ => ("workspace_error".to_string(), e.to_string()),
             };
-            ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
+            ServerMessage::Error {
+                code,
+                message,
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
+            }
         }
     }
 }

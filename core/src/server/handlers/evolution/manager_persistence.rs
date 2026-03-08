@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 
 use super::consts::{
-    compare_runtime_stage_names, parse_implement_stage_instance,
-    parse_reimplement_stage_instance, stage_artifact_file, ImplementationStageKind,
-    MANAGED_BACKLOG_FILE,
+    compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
+    stage_artifact_file, ImplementationStageKind, MANAGED_BACKLOG_FILE,
 };
 use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
@@ -334,8 +333,7 @@ fn required_context_keys(
         _ => {}
     }
 
-    if implementation_stage_kind_for_stage(stage).is_some() && verify_iteration > 0
-    {
+    if implementation_stage_kind_for_stage(stage).is_some() && verify_iteration > 0 {
         push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
     }
 
@@ -387,11 +385,7 @@ fn build_markdown_context_block(
             lines.push(rendered);
             lines.push("```".to_string());
         } else {
-            lines.push(format!(
-                "- `{}`：`{}`",
-                key,
-                escape_inline_code(&rendered)
-            ));
+            lines.push(format!("- `{}`：`{}`", key, escape_inline_code(&rendered)));
         }
         injected.insert((*key).to_string());
     }
@@ -454,14 +448,18 @@ impl EvolutionManager {
                 .rev()
                 .find(|item| item.stage == *stage && item.completed_at.is_some())
                 .and_then(|item| item.completed_at.clone());
-            let duration_ms = entry.stage_duration_ms.get(stage.as_str()).copied().or_else(|| {
-                entry
-                    .session_executions
-                    .iter()
-                    .rev()
-                    .find(|item| item.stage == *stage)
-                    .and_then(|item| item.duration_ms)
-            });
+            let duration_ms = entry
+                .stage_duration_ms
+                .get(stage.as_str())
+                .copied()
+                .or_else(|| {
+                    entry
+                        .session_executions
+                        .iter()
+                        .rev()
+                        .find(|item| item.stage == *stage)
+                        .and_then(|item| item.duration_ms)
+                });
             let validation_attempts = sanitize_validation_attempts(
                 preserved_stage_runtime
                     .get(stage.as_str())

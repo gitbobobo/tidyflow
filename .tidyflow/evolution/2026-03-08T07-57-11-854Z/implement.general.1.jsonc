@@ -1,69 +1,14 @@
 {
-  // 实现阶段模板：仅回填当前阶段实例负责的执行结果
   "$schema_version": "2.0",
-  // 当前实现阶段名，固定为系统调度值
-  "stage": "implement.general.1",
-  // 当前循环 ID，必须与 cycle.jsonc 保持一致
-  "cycle_id": "2026-03-08T07-57-11-854Z",
-  // 阶段状态；完成后写 done/blocked/failed/skipped
-  "status": "done",
-  "decision": {
-    // 实施阶段通常保留 n/a；如需说明可写 reason
-    "result": "n/a",
-    "reason": ""
+  "backlog_contract_version": 2,
+  "backlog_coverage": [],
+  "backlog_coverage_summary": {
+    "blocked": 0,
+    "done": 0,
+    "not_done": 0,
+    "total": 0
   },
-  // 当前阶段实例的实施摘要，必须存在
-  "summary": "统一了 Rust Core 的项目/工作区生命周期语义（DEFAULT_WORKSPACE_NAME 常量、模块文档），收口协议 schema 与文档约定，修复 macOS fetchFileList 隐式 project 边界与 iOS workspaces.isEmpty 跨项目污染 bug，补齐 Core 定向回归测试，双端构建通过。",
-  // 工作项执行结果，仅填写当前阶段实例处理的 work_items
-  "work_item_results": [
-    {
-      "work_item_id": "WI-001",
-      "status": "done",
-      "summary": "在 state.rs 添加 DEFAULT_WORKSPACE_NAME = \"default\" 公开常量及模块级生命周期文档；project.rs 和 system.rs 改用该常量，消除魔法字符串重复。",
-      "evidence_paths": [
-        "core/src/workspace/state.rs",
-        "core/src/application/project.rs",
-        "core/src/server/ws/http_api/system.rs"
-      ]
-    },
-    {
-      "work_item_id": "WI-002",
-      "status": "done",
-      "summary": "schema/protocol/v7/README.md 补充工作区生命周期状态机与多项目约束；docs/PROTOCOL.md 新增[项目与工作区生命周期]章节；action_table.rs 重新生成消除格式漂移；check 通过。",
-      "evidence_paths": [
-        "schema/protocol/v7/README.md",
-        "docs/PROTOCOL.md",
-        "core/src/server/protocol/action_table.rs"
-      ]
-    },
-    {
-      "work_item_id": "WI-003",
-      "status": "done",
-      "summary": "AppState+FileOps.swift 新增显式 fetchFileList(project:workspaceKey:path:) 重载，修复 refreshFileList 使用 WorkspaceKeySemantics.fileCachePrefix，修复 handleFileCopyResult 显式传 result.project；AppState+Projects.swift 在 handleProjectImported 后请求权威工作区列表。",
-      "evidence_paths": [
-        "app/TidyFlow/Views/Models/AppState/AppState+FileOps.swift",
-        "app/TidyFlow/Views/Models/AppState/AppState+Projects.swift"
-      ]
-    },
-    {
-      "work_item_id": "WI-004",
-      "status": "done",
-      "summary": "MobileAppState.swift 修复 onWorkspacesList 中 || self.workspaces.isEmpty 条件——该条件会让任意项目的首次工作区回包污染当前项目状态，已移除。",
-      "evidence_paths": [
-        "app/TidyFlow-iOS/MobileAppState.swift"
-      ]
-    },
-    {
-      "work_item_id": "WI-005",
-      "status": "done",
-      "summary": "workspace_unit_tests.rs 新增 workspace_lifecycle_tests 模块（7 个测试覆盖常量、HashMap 隔离、排序、序列化）；protocol_unit_tests.rs 新增 project_workspace_error_path_tests 模块（3 个错误路径测试）；全部 36 个 Rust 测试通过；macOS 与 iOS Simulator 构建通过。",
-      "evidence_paths": [
-        "core/tests/workspace_unit_tests.rs",
-        "core/tests/protocol_unit_tests.rs"
-      ]
-    }
-  ],
-  // 实际变更文件路径数组，可为空
+  "backlog_resolution_updates": [],
   "changed_files": [
     "core/src/workspace/state.rs",
     "core/src/application/project.rs",
@@ -77,7 +22,6 @@
     "core/tests/workspace_unit_tests.rs",
     "core/tests/protocol_unit_tests.rs"
   ],
-  // 执行过的命令数组，可为空
   "commands_executed": [
     "./scripts/tidyflow check",
     "./scripts/tools/gen_protocol_action_table.sh",
@@ -85,70 +29,100 @@
     "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=macOS' -derivedDataPath build SKIP_CORE_BUILD=1 build",
     "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -derivedDataPath build SKIP_CORE_BUILD=1 build"
   ],
-  // 快速检查结果数组；即使没有检查项也必须保留 []
+  "cycle_id": "2026-03-08T07-57-11-854Z",
+  "decision": {
+    "reason": "",
+    "result": "n/a"
+  },
+  "failure_backlog": [],
   "quick_checks": [
     {
+      "details": "协议 schema 一致性检查通过；action_table.rs 重新生成后无格式漂移",
       "name": "CHK-001: ./scripts/tidyflow check",
-      "result": "pass",
-      "details": "协议 schema 一致性检查通过；action_table.rs 重新生成后无格式漂移"
+      "result": "pass"
     },
     {
+      "details": "state.rs 定义，project.rs 和 system.rs 均引用，无魔法字符串重复",
       "name": "CHK-002: DEFAULT_WORKSPACE_NAME 常量唯一定义",
-      "result": "pass",
-      "details": "state.rs 定义，project.rs 和 system.rs 均引用，无魔法字符串重复"
+      "result": "pass"
     },
     {
+      "details": "system.rs 模块内联测试，cargo test 36/36 通过",
       "name": "CHK-003: workspace_items_should_be_sorted_by_project_and_workspace",
-      "result": "pass",
-      "details": "system.rs 模块内联测试，cargo test 36/36 通过"
+      "result": "pass"
     },
     {
+      "details": "protocol_unit_tests.rs 中 project_workspace_error_path_tests 模块通过",
       "name": "CHK-004: test_list_workspaces_error_case",
-      "result": "pass",
-      "details": "protocol_unit_tests.rs 中 project_workspace_error_path_tests 模块通过"
+      "result": "pass"
     },
     {
+      "details": "MobileAppState.swift onWorkspacesList 移除 || self.workspaces.isEmpty 条件；iOS Simulator 构建通过",
       "name": "CHK-005: iOS workspaces.isEmpty 跨项目污染修复",
-      "result": "pass",
-      "details": "MobileAppState.swift onWorkspacesList 移除 || self.workspaces.isEmpty 条件；iOS Simulator 构建通过"
+      "result": "pass"
     },
     {
+      "details": "xcodebuild platform=macOS Debug 成功，exit 0",
       "name": "CHK-006: macOS 构建验证",
-      "result": "pass",
-      "details": "xcodebuild platform=macOS Debug 成功，exit 0"
+      "result": "pass"
     },
     {
+      "details": "xcodebuild platform=iOS Simulator iPhone 16 OS=18.6 Debug 成功，exit 0",
       "name": "CHK-007: iOS Simulator 构建验证",
-      "result": "pass",
-      "details": "xcodebuild platform=iOS Simulator iPhone 16 OS=18.6 Debug 成功，exit 0"
+      "result": "pass"
     }
   ],
-  // 当前 verify 重试轮次，由系统注入，不可改为其它数字
+  "stage": "implement.general.1",
+  "status": "done",
+  "summary": "统一了 Rust Core 的项目/工作区生命周期语义（DEFAULT_WORKSPACE_NAME 常量、模块文档），收口协议 schema 与文档约定，修复 macOS fetchFileList 隐式 project 边界与 iOS workspaces.isEmpty 跨项目污染 bug，补齐 Core 定向回归测试，双端构建通过。",
+  "updated_at": "2026-03-08T08:34:44.391217+00:00",
   "verify_iteration": 0,
-  // backlog 契约版本，由系统注入
-  "backlog_contract_version": 2,
-  // backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。
-  // reimplement 阶段必须沿用 ISSUES_TO_FIX / managed.backlog.jsonc 中原始整改项的 implementation_stage_kind。
-  "backlog_resolution_updates": [
-    // {
-    //   "source_criteria_id": "AC-001",
-    //   "source_check_id": "CHK-001",
-    //   "work_item_id": "WI-001",
-    //   "implementation_stage_kind": "general",
-    //   "status": "done",
-    //   "evidence": null,
-    //   "notes": ""
-    // }
-  ],
-  // 以下三个字段由系统同步回填；代理不要伪造主键或改写系统统计
-  "failure_backlog": [],
-  "backlog_coverage": [],
-  "backlog_coverage_summary": {
-    "total": 0,
-    "done": 0,
-    "blocked": 0,
-    "not_done": 0
-  },
-  // 更新时间，由系统自动注入，代理无需填写
-  "updated_at": ""
+  "work_item_results": [
+    {
+      "evidence_paths": [
+        "core/src/workspace/state.rs",
+        "core/src/application/project.rs",
+        "core/src/server/ws/http_api/system.rs"
+      ],
+      "status": "done",
+      "summary": "在 state.rs 添加 DEFAULT_WORKSPACE_NAME = \"default\" 公开常量及模块级生命周期文档；project.rs 和 system.rs 改用该常量，消除魔法字符串重复。",
+      "work_item_id": "WI-001"
+    },
+    {
+      "evidence_paths": [
+        "schema/protocol/v7/README.md",
+        "docs/PROTOCOL.md",
+        "core/src/server/protocol/action_table.rs"
+      ],
+      "status": "done",
+      "summary": "schema/protocol/v7/README.md 补充工作区生命周期状态机与多项目约束；docs/PROTOCOL.md 新增[项目与工作区生命周期]章节；action_table.rs 重新生成消除格式漂移；check 通过。",
+      "work_item_id": "WI-002"
+    },
+    {
+      "evidence_paths": [
+        "app/TidyFlow/Views/Models/AppState/AppState+FileOps.swift",
+        "app/TidyFlow/Views/Models/AppState/AppState+Projects.swift"
+      ],
+      "status": "done",
+      "summary": "AppState+FileOps.swift 新增显式 fetchFileList(project:workspaceKey:path:) 重载，修复 refreshFileList 使用 WorkspaceKeySemantics.fileCachePrefix，修复 handleFileCopyResult 显式传 result.project；AppState+Projects.swift 在 handleProjectImported 后请求权威工作区列表。",
+      "work_item_id": "WI-003"
+    },
+    {
+      "evidence_paths": [
+        "app/TidyFlow-iOS/MobileAppState.swift"
+      ],
+      "status": "done",
+      "summary": "MobileAppState.swift 修复 onWorkspacesList 中 || self.workspaces.isEmpty 条件——该条件会让任意项目的首次工作区回包污染当前项目状态，已移除。",
+      "work_item_id": "WI-004"
+    },
+    {
+      "evidence_paths": [
+        "core/tests/workspace_unit_tests.rs",
+        "core/tests/protocol_unit_tests.rs"
+      ],
+      "status": "done",
+      "summary": "workspace_unit_tests.rs 新增 workspace_lifecycle_tests 模块（7 个测试覆盖常量、HashMap 隔离、排序、序列化）；protocol_unit_tests.rs 新增 project_workspace_error_path_tests 模块（3 个错误路径测试）；全部 36 个 Rust 测试通过；macOS 与 iOS Simulator 构建通过。",
+      "work_item_id": "WI-005"
+    }
+  ]
 }

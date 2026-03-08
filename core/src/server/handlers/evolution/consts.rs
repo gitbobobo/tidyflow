@@ -32,7 +32,6 @@ impl ImplementationStageKind {
             Self::Advanced => "implement_advanced",
         }
     }
-
 }
 
 pub(super) const STAGES: [&str; 4] = ["direction", "plan", "verify", "auto_commit"];
@@ -47,8 +46,10 @@ pub(super) const PROFILE_STAGES: [&str; 7] = [
     "auto_commit",
 ];
 
-pub(super) const IMPLEMENTATION_STAGE_KINDS: [ImplementationStageKind; 2] =
-    [ImplementationStageKind::General, ImplementationStageKind::Visual];
+pub(super) const IMPLEMENTATION_STAGE_KINDS: [ImplementationStageKind; 2] = [
+    ImplementationStageKind::General,
+    ImplementationStageKind::Visual,
+];
 
 pub(super) const MAX_STAGE_RUNTIME_SECS: u64 = 3600;
 pub(super) const DEFAULT_VERIFY_LIMIT: u32 = 5;

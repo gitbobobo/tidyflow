@@ -77,7 +77,14 @@ pub fn file_error_to_response(e: &FileApiError) -> (String, String) {
 
 fn file_error_message(e: &FileApiError) -> ServerMessage {
     let (code, message) = file_error_to_response(e);
-    ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
+    ServerMessage::Error {
+        code,
+        message,
+        project: None,
+        workspace: None,
+        session_id: None,
+        cycle_id: None,
+    }
 }
 
 pub fn file_list_message(root: &Path, project: &str, workspace: &str, path: &str) -> ServerMessage {

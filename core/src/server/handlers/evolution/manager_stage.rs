@@ -13,10 +13,9 @@ use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
-    ensure_agent,
-    infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
-    mark_stream_snapshot_terminal, merge_session_selection_hint, normalize_part_for_wire,
-    record_session_index_created, resolve_directory, seed_stream_snapshot,
+    ensure_agent, infer_selection_hint_from_messages, map_ai_messages_for_wire,
+    map_ai_selection_hint_to_wire, mark_stream_snapshot_terminal, merge_session_selection_hint,
+    normalize_part_for_wire, record_session_index_created, resolve_directory, seed_stream_snapshot,
     split_utf8_text_by_max_bytes, stream_key, touch_session_index_updated_at,
 };
 use crate::server::protocol::ai::AiSessionOrigin;
@@ -25,8 +24,7 @@ use crate::server::protocol::{AIGitCommit, ServerMessage};
 use super::consts::{
     implement_stage_name, parse_implement_stage_instance, parse_reimplement_stage_instance,
     reimplement_stage_name, stage_artifact_file, ImplementationStageKind,
-    IMPLEMENTATION_STAGE_KINDS, MANAGED_BACKLOG_FILE,
-    STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+    IMPLEMENTATION_STAGE_KINDS, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
 };
 use super::profile::profile_for_stage;
 use super::utils::{
@@ -476,10 +474,7 @@ fn collect_plan_acceptance_criteria_ids(
                     .map(|v| v.trim())
                     .unwrap_or_default();
                 if description.is_empty() {
-                    report.push(format!(
-                        "acceptance_criteria[{}].description 不能为空",
-                        idx
-                    ));
+                    report.push(format!("acceptance_criteria[{}].description 不能为空", idx));
                 }
             }
             Some(criteria_ids)
@@ -525,7 +520,8 @@ fn parse_plan_routing_tables_report(
 
     let work_items = value.pointer("/work_items").and_then(|v| v.as_array());
     let mut work_item_ids = HashSet::new();
-    let mut check_to_stage_kinds: HashMap<String, HashSet<ImplementationStageKind>> = HashMap::new();
+    let mut check_to_stage_kinds: HashMap<String, HashSet<ImplementationStageKind>> =
+        HashMap::new();
     match work_items {
         Some(work_items) => {
             if work_items.is_empty() {
@@ -575,7 +571,10 @@ fn parse_plan_routing_tables_report(
                         }
                     },
                     None => {
-                        report.push(format!("work_items[{}] 缺少 implementation_stage_kind", idx));
+                        report.push(format!(
+                            "work_items[{}] 缺少 implementation_stage_kind",
+                            idx
+                        ));
                         None
                     }
                 };
@@ -611,7 +610,10 @@ fn parse_plan_routing_tables_report(
                     }
                     if let Some(agent) = agent {
                         let _ = &work_id;
-                        check_to_stage_kinds.entry(check_id).or_default().insert(agent);
+                        check_to_stage_kinds
+                            .entry(check_id)
+                            .or_default()
+                            .insert(agent);
                     }
                 }
             }
@@ -781,8 +783,7 @@ fn parse_plan_work_items(value: &serde_json::Value) -> Result<Vec<PlanWorkItem>,
             }
             None => Vec::new(),
         };
-        let linked_check_ids =
-            parse_string_list(item_obj, "linked_check_ids", &item_label, false)?;
+        let linked_check_ids = parse_string_list(item_obj, "linked_check_ids", &item_label, false)?;
         let definition_of_done =
             parse_string_list(item_obj, "definition_of_done", &item_label, false)?;
         let targets = parse_string_list(item_obj, "targets", &item_label, true)?;
@@ -865,12 +866,7 @@ fn build_implementation_stage_instances(
                         .get(left)
                         .copied()
                         .unwrap_or(usize::MAX)
-                        .cmp(
-                            &original_positions
-                                .get(right)
-                                .copied()
-                                .unwrap_or(usize::MAX),
-                        )
+                        .cmp(&original_positions.get(right).copied().unwrap_or(usize::MAX))
                 })
         });
 
@@ -1521,12 +1517,15 @@ fn validate_requirement_selector_against_plan(
             selector_label, source_criteria_id, source_check_id
         ));
     }
-    let mapped_agents = tables.check_to_stage_kinds.get(source_check_id).ok_or_else(|| {
-        format!(
-            "{}.source_check_id 未关联任何 implementation_stage_kind: {}",
-            selector_label, source_check_id
-        )
-    })?;
+    let mapped_agents = tables
+        .check_to_stage_kinds
+        .get(source_check_id)
+        .ok_or_else(|| {
+            format!(
+                "{}.source_check_id 未关联任何 implementation_stage_kind: {}",
+                selector_label, source_check_id
+            )
+        })?;
     if !mapped_agents.contains(&implementation_stage_kind) {
         return Err(format!(
             "{}.implementation_stage_kind 与 source_check_id 不匹配: {} -> {}",
@@ -2038,7 +2037,9 @@ impl EvolutionManager {
                 .get("implementation_stage_kind")
                 .and_then(|v| v.as_str())
                 .and_then(ImplementationStageKind::parse)
-                .ok_or_else(|| format!("work_items[{}].implementation_stage_kind 缺失或非法", idx))?;
+                .ok_or_else(|| {
+                    format!("work_items[{}].implementation_stage_kind 缺失或非法", idx)
+                })?;
             let check_ids = obj
                 .get("linked_check_ids")
                 .and_then(|v| v.as_array())
@@ -2079,9 +2080,11 @@ impl EvolutionManager {
         cycle_dir: &Path,
         stage: &str,
     ) -> Result<Option<ImplementationStageInstance>, String> {
-        Ok(Self::resolve_initial_implementation_stage_instances(cycle_dir)?
-            .into_iter()
-            .find(|instance| instance.stage == stage))
+        Ok(
+            Self::resolve_initial_implementation_stage_instances(cycle_dir)?
+                .into_iter()
+                .find(|instance| instance.stage == stage),
+        )
     }
 
     fn next_initial_implementation_stage(
@@ -2093,7 +2096,9 @@ impl EvolutionManager {
             .iter()
             .position(|instance| instance.stage == current_stage)
             .ok_or_else(|| format!("stage {} 不在首轮实现序列中", current_stage))?;
-        Ok(stages.get(position + 1).map(|instance| instance.stage.clone()))
+        Ok(stages
+            .get(position + 1)
+            .map(|instance| instance.stage.clone()))
     }
 
     pub(super) fn tasks_to_complete_for_stage(
@@ -2154,15 +2159,13 @@ impl EvolutionManager {
         Ok(sections.join("\n\n"))
     }
 
-    pub(super) fn issues_to_fix_for_stage(
-        cycle_dir: &Path,
-        stage: &str,
-    ) -> Result<String, String> {
+    pub(super) fn issues_to_fix_for_stage(cycle_dir: &Path, stage: &str) -> Result<String, String> {
         let round = parse_reimplement_stage_instance(stage)
             .ok_or_else(|| format!("不是有效的重实现阶段: {}", stage))?;
         let verify = read_json_file(cycle_dir, "verify.jsonc")?;
-        let requirements = extract_verify_requirements(&verify)
-            .ok_or_else(|| "verify.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string())?;
+        let requirements = extract_verify_requirements(&verify).ok_or_else(|| {
+            "verify.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string()
+        })?;
         let mut sections = Vec::with_capacity(requirements.len());
         for (idx, requirement) in requirements.iter().enumerate() {
             let requirement_id = id_from_value(
@@ -2192,8 +2195,8 @@ impl EvolutionManager {
                 &["source_check_id", "check_id", "linked_check_id"],
             )
             .unwrap_or_else(|| "unknown".to_string());
-            let work_item_id =
-                id_from_value(requirement, &["work_item_id"]).unwrap_or_else(|| "unknown".to_string());
+            let work_item_id = id_from_value(requirement, &["work_item_id"])
+                .unwrap_or_else(|| "unknown".to_string());
             let implementation_stage_kind = requirement
                 .get("implementation_stage_kind")
                 .and_then(|value| value.as_str())
@@ -2371,8 +2374,9 @@ impl EvolutionManager {
                 implementation_stage_kind = Some(parsed);
             }
             if implementation_stage_kind.is_none() {
-                implementation_stage_kind = previous_item
-                    .and_then(|item| ImplementationStageKind::parse(&item.implementation_stage_kind));
+                implementation_stage_kind = previous_item.and_then(|item| {
+                    ImplementationStageKind::parse(&item.implementation_stage_kind)
+                });
             }
             if implementation_stage_kind.is_none() {
                 let mut agent_set: HashSet<ImplementationStageKind> = HashSet::new();
@@ -2937,7 +2941,10 @@ impl EvolutionManager {
                     all_coverage.extend(coverage.iter().cloned());
                 }
                 if !saw_legacy_file {
-                    return Err(format!("读取 {} 失败: No such file or directory", file_name));
+                    return Err(format!(
+                        "读取 {} 失败: No such file or directory",
+                        file_name
+                    ));
                 }
                 return Ok((all_backlog, all_coverage));
             }
@@ -3449,7 +3456,8 @@ impl EvolutionManager {
                         }
 
                         let Some(raw_agent) = raw_agent else {
-                            report.push(format!("{}.implementation_stage_kind 缺失", selector_label));
+                            report
+                                .push(format!("{}.implementation_stage_kind 缺失", selector_label));
                             continue;
                         };
                         if is_unknown_selector_value(raw_agent) {
@@ -3459,7 +3467,8 @@ impl EvolutionManager {
                             ));
                             continue;
                         }
-                        let Some(implementation_stage_kind) = ImplementationStageKind::parse(raw_agent)
+                        let Some(implementation_stage_kind) =
+                            ImplementationStageKind::parse(raw_agent)
                         else {
                             report.push(format!(
                                 "{}.implementation_stage_kind 非法: {}",
@@ -3864,13 +3873,13 @@ impl EvolutionManager {
             .collect();
         let actual_ids: std::collections::HashSet<String> =
             Self::extract_acceptance_mapping_criteria(&parsed)?
-            .iter()
-            .filter_map(|v| {
-                v.get("criteria_id")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-            })
-            .collect();
+                .iter()
+                .filter_map(|v| {
+                    v.get("criteria_id")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
         if expected_ids != actual_ids {
             return Err(format!(
                 "criteria_id 集不一致: acceptance_criteria={:?}, acceptance_mapping={:?}",
@@ -4031,7 +4040,10 @@ impl EvolutionManager {
     fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
         match stage {
             "direction" => vec![cycle_dir.join("direction.jsonc")],
-            "plan" => vec![cycle_dir.join("plan.jsonc"), cycle_dir.join(PLAN_MARKDOWN_FILE)],
+            "plan" => vec![
+                cycle_dir.join("plan.jsonc"),
+                cycle_dir.join(PLAN_MARKDOWN_FILE),
+            ],
             "verify" => vec![cycle_dir.join("verify.jsonc")],
             "auto_commit" => vec![cycle_dir.join("auto_commit.jsonc")],
             other => stage_artifact_file(other)
@@ -4123,8 +4135,8 @@ impl EvolutionManager {
                 )?;
             }
             _ if is_runtime_implement_stage(stage) || is_runtime_reimplement_stage(stage) => {
-                let artifact_file = stage_artifact_file(stage)
-                    .ok_or_else(|| format!("未知实现阶段: {}", stage))?;
+                let artifact_file =
+                    stage_artifact_file(stage).ok_or_else(|| format!("未知实现阶段: {}", stage))?;
                 Self::ensure_jsonc_template(
                     &cycle_dir.join(artifact_file),
                     &implement_stage_template(
@@ -4462,7 +4474,10 @@ impl EvolutionManager {
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
                 if let Some(file_name) = stage_artifact_file(stage) {
-                    return format!("{} / plan.jsonc / plan.md / managed.backlog.jsonc", file_name);
+                    return format!(
+                        "{} / plan.jsonc / plan.md / managed.backlog.jsonc",
+                        file_name
+                    );
                 }
                 let stage_name = if normalized_stage.is_empty() {
                     "unknown".to_string()
@@ -4476,6 +4491,7 @@ impl EvolutionManager {
 
     fn build_validation_fix_hint(stage: &str, error_message: &str) -> String {
         let normalized_error_message = error_message.trim();
+        let normalized_stage = stage.trim().to_ascii_lowercase();
         let expected_stage_kind =
             implementation_stage_kind_for_stage(stage).map(|kind| kind.as_str().to_string());
         let expected_selector_text = match stage.trim().to_ascii_lowercase().as_str() {
@@ -4486,6 +4502,28 @@ impl EvolutionManager {
         };
         let is_execution_stage =
             expected_stage_kind.is_some() || is_runtime_reimplement_stage(stage);
+
+        if normalized_stage == "verify"
+            && normalized_error_message.contains("carryover_verification.items")
+            && normalized_error_message.contains("缺少 backlog 项")
+        {
+            return "carryover_verification.items[*].id 或 item_id 必须与 managed.backlog.jsonc.items[*].id 一一对应；不要自造 CARRYOVER-001 这类占位 ID，也不要只写 backlog 字段。请把报错里缺失的 backlog 真实 id 直接填回对应条目。".to_string();
+        }
+
+        if normalized_stage == "verify"
+            && normalized_error_message.contains("carryover_verification.items[")
+            && (normalized_error_message.contains("缺少有效 id")
+                || normalized_error_message.contains("缺少 id"))
+        {
+            return "carryover_verification.items[*] 必须填写 id 或 item_id，且该值必须直接复用 managed.backlog.jsonc.items[*].id；不要生成新的流水号，也不要只补 backlog / failure_backlog_id 这类旁路字段。".to_string();
+        }
+
+        if normalized_stage == "verify"
+            && normalized_error_message.contains("carryover_verification.summary.total")
+            && normalized_error_message.contains("failure_backlog 数量不一致")
+        {
+            return "carryover_verification.summary.total 必须等于 managed.backlog.jsonc.items 的数量；covered / missing / blocked 也要与 carryover_verification.items 的实际状态统计保持一致。".to_string();
+        }
 
         if is_execution_stage && normalized_error_message.contains("quick_checks") {
             return "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"
@@ -5926,30 +5964,30 @@ impl EvolutionManager {
                 "bootstrap" => next_stage = "direction".to_string(),
                 "direction" => next_stage = "plan".to_string(),
                 "plan" => match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
-                    Ok(cycle_dir) => match Self::resolve_initial_implementation_stage_instances(
-                        &cycle_dir,
-                    ) {
-                        Ok(instances) => {
-                            for instance in &instances {
-                                Self::ensure_runtime_stage_state_pending(
-                                    &mut entry.stage_statuses,
-                                    &mut entry.stage_tool_call_counts,
-                                    &instance.stage,
-                                );
+                    Ok(cycle_dir) => {
+                        match Self::resolve_initial_implementation_stage_instances(&cycle_dir) {
+                            Ok(instances) => {
+                                for instance in &instances {
+                                    Self::ensure_runtime_stage_state_pending(
+                                        &mut entry.stage_statuses,
+                                        &mut entry.stage_tool_call_counts,
+                                        &instance.stage,
+                                    );
+                                }
+                                next_stage = instances
+                                    .first()
+                                    .map(|instance| instance.stage.clone())
+                                    .unwrap_or_else(|| "verify".to_string());
                             }
-                            next_stage = instances
-                                .first()
-                                .map(|instance| instance.stage.clone())
-                                .unwrap_or_else(|| "verify".to_string());
+                            Err(err) => {
+                                entry.status = "failed_system".to_string();
+                                entry.terminal_reason_code =
+                                    Some("evo_initial_stage_resolution_failed".to_string());
+                                entry.terminal_error_message = Some(err);
+                                next_stage = previous.clone();
+                            }
                         }
-                        Err(err) => {
-                            entry.status = "failed_system".to_string();
-                            entry.terminal_reason_code =
-                                Some("evo_initial_stage_resolution_failed".to_string());
-                            entry.terminal_error_message = Some(err);
-                            next_stage = previous.clone();
-                        }
-                    },
+                    }
                     Err(err) => {
                         entry.status = "failed_system".to_string();
                         entry.terminal_reason_code =
@@ -5961,13 +5999,10 @@ impl EvolutionManager {
                 _ if is_runtime_implement_stage(stage) => {
                     match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
                         Ok(cycle_dir) => {
-                            next_stage = Self::next_initial_implementation_stage(
-                                &cycle_dir,
-                                stage,
-                            )
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| "verify".to_string());
+                            next_stage = Self::next_initial_implementation_stage(&cycle_dir, stage)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| "verify".to_string());
                         }
                         Err(err) => {
                             entry.status = "failed_system".to_string();
@@ -6412,8 +6447,8 @@ mod tests {
         ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
         log_evolution_error, managed_backlog_template, parse_adjudication_result_from_json,
         plan_markdown_template, plan_stage_template, should_force_advanced_reimplementation,
-        should_start_next_round, verify_stage_template, ArtifactValidationError,
-        EvolutionManager, ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
+        should_start_next_round, verify_stage_template, ArtifactValidationError, EvolutionManager,
+        ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -6458,7 +6493,7 @@ mod tests {
             &dir.join(PLAN_MARKDOWN_FILE),
             &plan_markdown_template("c-1"),
         )
-            .expect("write plan markdown failed");
+        .expect("write plan markdown failed");
     }
 
     fn base_implement_result_json(
@@ -6663,11 +6698,9 @@ mod tests {
     #[test]
     fn resolve_stage_outcome_from_validated_artifacts_should_ignore_non_verify_stage() {
         let dir = tempdir().expect("tempdir should succeed");
-        let outcome = EvolutionManager::resolve_stage_outcome_from_validated_artifacts(
-            "plan",
-            dir.path(),
-        )
-        .expect("non-verify stage should not require extra outcome parsing");
+        let outcome =
+            EvolutionManager::resolve_stage_outcome_from_validated_artifacts("plan", dir.path())
+                .expect("non-verify stage should not require extra outcome parsing");
         assert_eq!(outcome, None);
     }
 
@@ -6687,11 +6720,9 @@ mod tests {
                 }
             }),
         );
-        let outcome = EvolutionManager::resolve_stage_outcome_from_validated_artifacts(
-            "verify",
-            dir.path(),
-        )
-        .expect("verify outcome should be readable after validation");
+        let outcome =
+            EvolutionManager::resolve_stage_outcome_from_validated_artifacts("verify", dir.path())
+                .expect("verify outcome should be readable after validation");
         assert_eq!(outcome, Some(true));
     }
 
@@ -6747,11 +6778,10 @@ mod tests {
             .expect_err("invalid verify jsonc should fail validation");
         assert!(err.contains("解析"));
         assert!(err.contains("verify.jsonc"));
-        let stage_err =
-            ArtifactValidationError::new("artifact_contract_violation", err.clone()).to_stage_error();
+        let stage_err = ArtifactValidationError::new("artifact_contract_violation", err.clone())
+            .to_stage_error();
         assert!(EvolutionManager::should_retry_validation_with_reminder(
-            "verify",
-            &stage_err
+            "verify", &stage_err
         ));
     }
 
@@ -6987,6 +7017,47 @@ mod tests {
     }
 
     #[test]
+    fn build_validation_reminder_message_should_explain_verify_carryover_missing_id_mapping() {
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "carryover_verification.items[0] 缺少有效 id",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("verify", &err);
+        let expected = expected_validation_reminder(
+            "verify",
+            "artifact_contract_violation",
+            "carryover_verification.items[0] 缺少有效 id",
+            &["carryover_verification.items[0] 缺少有效 id"],
+            &["carryover_verification.items[*] 必须填写 id 或 item_id，且该值必须直接复用 managed.backlog.jsonc.items[*].id；不要生成新的流水号，也不要只补 backlog / failure_backlog_id 这类旁路字段。"],
+            "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
+            &raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_explain_verify_carryover_missing_backlog_item_mapping(
+    ) {
+        let err = ArtifactValidationError::new(
+            "artifact_contract_violation",
+            "carryover_verification.items 缺少 backlog 项: [\"019ccc60-4fdf-7201-adc0-3dd6b8c666d1\"]",
+        );
+        let raw_error = err.to_stage_error();
+        let msg = EvolutionManager::build_validation_reminder_message("verify", &err);
+        let expected = expected_validation_reminder(
+            "verify",
+            "artifact_contract_violation",
+            "carryover_verification.items 缺少 backlog 项: [\"019ccc60-4fdf-7201-adc0-3dd6b8c666d1\"]",
+            &["carryover_verification.items 缺少 backlog 项: [\"019ccc60-4fdf-7201-adc0-3dd6b8c666d1\"]"],
+            &["carryover_verification.items[*].id 或 item_id 必须与 managed.backlog.jsonc.items[*].id 一一对应；不要自造 CARRYOVER-001 这类占位 ID，也不要只写 backlog 字段。请把报错里缺失的 backlog 真实 id 直接填回对应条目。"],
+            "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
+            &raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_implement_quick_checks_array() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
@@ -7059,7 +7130,9 @@ mod tests {
             ],
         );
         let msg = EvolutionManager::build_validation_reminder_message("direction", &err);
-        assert!(msg.contains("摘要：共 3 项问题；首项：direction.jsonc.direction_statement 不能为空"));
+        assert!(
+            msg.contains("摘要：共 3 项问题；首项：direction.jsonc.direction_statement 不能为空")
+        );
         assert!(msg.contains("1. direction.jsonc.direction_statement 不能为空"));
         assert!(msg.contains("2. direction.jsonc.updated_at 不能为空"));
         assert!(msg.contains("3. direction.jsonc.direction_statement 不能为空"));
@@ -7069,7 +7142,9 @@ mod tests {
     #[test]
     fn stage_templates_should_include_field_comments_and_example_objects() {
         let direction = direction_stage_template("c-42");
-        assert!(direction.contains("// 本轮唯一方向句，必须是非空字符串；一句话即可说明本轮要进化什么"));
+        assert!(
+            direction.contains("// 本轮唯一方向句，必须是非空字符串；一句话即可说明本轮要进化什么")
+        );
         assert!(direction.contains("\"direction_statement\": \"\""));
         assert!(!direction.contains("\"title\": \"\""));
 
@@ -7093,8 +7168,7 @@ mod tests {
         assert!(implement.contains("//   \"implementation_stage_kind\": \"general\""));
 
         let verify = verify_stage_template("c-42", 1, 3);
-        assert!(verify
-            .contains("// criteria_id 集必须与 plan.acceptance_criteria 完全一致"));
+        assert!(verify.contains("// criteria_id 集必须与 plan.acceptance_criteria 完全一致"));
         assert!(verify.contains("//   \"criteria_id\": \"AC-001\""));
         assert!(verify.contains("// 需要重实现时必须输出完整 selector 信息"));
 
@@ -7125,8 +7199,7 @@ mod tests {
         assert!(plan_json.exists(), "plan.jsonc should exist");
         assert!(plan_markdown.exists(), "plan.md should exist");
 
-        let markdown =
-            std::fs::read_to_string(&plan_markdown).expect("plan.md should be readable");
+        let markdown = std::fs::read_to_string(&plan_markdown).expect("plan.md should be readable");
         assert!(markdown.contains("# 本轮目标"));
         assert!(markdown.contains("### WI-001 占位标题"));
     }
@@ -7149,7 +7222,10 @@ mod tests {
         let err = EvolutionManager::validate_direction_artifact(dir.path(), None)
             .expect_err("invalid direction artifact should fail");
         assert_eq!(err.issues().len(), 2);
-        assert_eq!(err.issues()[0], "direction.jsonc.direction_statement 不能为空");
+        assert_eq!(
+            err.issues()[0],
+            "direction.jsonc.direction_statement 不能为空"
+        );
         assert!(err.contains("direction.jsonc.updated_at 不能为空"));
     }
 
@@ -7187,19 +7263,22 @@ mod tests {
     fn validate_plan_artifact_should_require_plan_markdown_to_exist() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
-        write_json(&dir.path().join("plan.jsonc"), base_plan_json(vec![serde_json::json!({
-            "id": "w-1",
-            "title": "x",
-            "type": "code",
-            "priority": "p0",
-            "depends_on": [],
-            "targets": ["core/src/lib.rs"],
-            "definition_of_done": ["done"],
-            "risk": "low",
-            "rollback": "git restore",
-            "implementation_stage_kind": "implement_general",
-            "linked_check_ids": ["v-1", "v-2"]
-        })]));
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_stage_kind": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
 
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("missing plan.md should fail");
@@ -7210,19 +7289,22 @@ mod tests {
     fn validate_plan_artifact_should_accept_existing_plan_markdown() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
-        write_json(&dir.path().join("plan.jsonc"), base_plan_json(vec![serde_json::json!({
-            "id": "w-1",
-            "title": "x",
-            "type": "code",
-            "priority": "p0",
-            "depends_on": [],
-            "targets": ["core/src/lib.rs"],
-            "definition_of_done": ["done"],
-            "risk": "low",
-            "rollback": "git restore",
-            "implementation_stage_kind": "implement_general",
-            "linked_check_ids": ["v-1", "v-2"]
-        })]));
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_stage_kind": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
         write_plan_markdown(dir.path());
 
         EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
@@ -7874,7 +7956,9 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
+                vec![
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                ],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
@@ -7927,7 +8011,9 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
+                vec![
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                ],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
@@ -7964,7 +8050,9 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
+                vec![
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                ],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
@@ -8362,7 +8450,9 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
+                vec![
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                ],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
@@ -8602,7 +8692,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_initial_implementation_stage_instances_should_repeat_stage_kind_by_dependency_layer() {
+    fn resolve_initial_implementation_stage_instances_should_repeat_stage_kind_by_dependency_layer()
+    {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8649,15 +8740,20 @@ mod tests {
             ]),
         );
 
-        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
-            .expect("stage instances should resolve");
+        let instances =
+            EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+                .expect("stage instances should resolve");
         let stages = instances
             .iter()
             .map(|item| item.stage.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
             stages,
-            vec!["implement.general.1", "implement.visual.1", "implement.general.2"]
+            vec![
+                "implement.general.1",
+                "implement.visual.1",
+                "implement.general.2"
+            ]
         );
         assert_eq!(instances[0].work_item_ids, vec!["w-1"]);
         assert_eq!(instances[1].work_item_ids, vec!["w-2"]);
@@ -8712,8 +8808,9 @@ mod tests {
             ]),
         );
 
-        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
-            .expect("stage instances should resolve");
+        let instances =
+            EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+                .expect("stage instances should resolve");
         let stages = instances
             .iter()
             .map(|item| item.stage.as_str())
@@ -8724,7 +8821,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_initial_implementation_stage_instances_should_chain_merge_three_adjacent_same_kind() {
+    fn resolve_initial_implementation_stage_instances_should_chain_merge_three_adjacent_same_kind()
+    {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8771,8 +8869,9 @@ mod tests {
             ]),
         );
 
-        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
-            .expect("stage instances should resolve");
+        let instances =
+            EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+                .expect("stage instances should resolve");
         let stages = instances
             .iter()
             .map(|item| item.stage.as_str())
@@ -8829,8 +8928,9 @@ mod tests {
             ]),
         );
 
-        let tasks = EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.2")
-            .expect("tasks should resolve");
+        let tasks =
+            EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.2")
+                .expect("tasks should resolve");
         assert!(tasks.contains("### w-3 通用收尾改动"));
         assert!(tasks.contains("- 实现阶段类型：general"));
         assert!(!tasks.contains("### w-1 通用基础改动"));
@@ -8885,8 +8985,9 @@ mod tests {
             ]),
         );
 
-        let tasks = EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.1")
-            .expect("tasks should resolve");
+        let tasks =
+            EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.1")
+                .expect("tasks should resolve");
         assert!(tasks.contains("### w-1 通用基础改动"));
         assert!(tasks.contains("### w-2 通用中间改动"));
         assert!(tasks.contains("- 实现阶段类型：general"));

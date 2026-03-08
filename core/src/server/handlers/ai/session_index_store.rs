@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, QueryBuilder, Row, Sqlite};
 use tokio::sync::Mutex;
 
-use crate::workspace::sqlite_store;
 use crate::server::protocol::ai::AiSessionOrigin;
+use crate::workspace::sqlite_store;
 
 const AI_SESSION_LIST_DEFAULT_PAGE_SIZE: u32 = 50;
 const AI_SESSION_LIST_MAX_PAGE_SIZE: u32 = 200;
@@ -844,9 +844,7 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert legacy row");
-        store
-            .schema_initialized
-            .store(false, Ordering::Release);
+        store.schema_initialized.store(false, Ordering::Release);
 
         let listed = store
             .list_page("p", "w", Some("codex"), None, None)

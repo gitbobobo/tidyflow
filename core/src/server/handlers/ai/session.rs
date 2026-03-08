@@ -110,7 +110,10 @@ fn resolve_ai_session_messages_source(
 
     if let Some(messages) = agent_messages {
         if cached_snapshot.is_some() {
-            return (messages, AiSessionMessagesSource::SnapshotEmptyFallbackAgent);
+            return (
+                messages,
+                AiSessionMessagesSource::SnapshotEmptyFallbackAgent,
+            );
         }
         return (messages, AiSessionMessagesSource::Agent);
     }
@@ -1558,7 +1561,10 @@ mod tests {
         };
 
         let changed = truncate_tool_view_sections_for_history(&mut message);
-        let tool_view = message.parts[0].tool_view.as_ref().expect("tool_view should exist");
+        let tool_view = message.parts[0]
+            .tool_view
+            .as_ref()
+            .expect("tool_view should exist");
         let section = tool_view.sections.first().expect("section should exist");
 
         assert!(changed);
@@ -1574,8 +1580,10 @@ mod tests {
     fn resolve_messages_source_prefers_agent_when_live_snapshot_is_empty() {
         let cached_snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
         let agent_messages = build_messages(3);
-        let (messages, source) =
-            resolve_ai_session_messages_source(Some(&cached_snapshot), Some(agent_messages.clone()));
+        let (messages, source) = resolve_ai_session_messages_source(
+            Some(&cached_snapshot),
+            Some(agent_messages.clone()),
+        );
 
         assert_eq!(source, AiSessionMessagesSource::SnapshotEmptyFallbackAgent);
         assert_eq!(
