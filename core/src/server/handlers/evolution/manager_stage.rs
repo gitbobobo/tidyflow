@@ -4770,41 +4770,26 @@ impl EvolutionManager {
         Ok(())
     }
 
-    async fn resolve_verify_outcome(&self, key: &str, cycle_id: &str) -> Result<bool, String> {
-        let mut verify_pass = true;
-        let maybe_workspace_root = {
-            let state = self.state.lock().await;
-            state
-                .workspaces
-                .get(key)
-                .map(|entry| entry.workspace_root.clone())
-        };
-
-        if let Some(workspace_root) = maybe_workspace_root {
-            if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
-                if let Ok(json) = read_json_file(&cycle_dir, "verify.jsonc") {
-                    if let Some(parsed) = parse_adjudication_result_from_json(&json) {
-                        verify_pass = parsed;
-                    } else {
-                        return Err(
-                            "verify structured result missing: require verify.jsonc with pass/fail"
-                                .to_string(),
-                        );
-                    }
-                } else {
-                    return Err(
-                        "verify structured result missing: require verify.jsonc".to_string()
-                    );
-                }
+    fn resolve_stage_outcome_from_validated_artifacts(
+        stage: &str,
+        cycle_dir: &Path,
+    ) -> Result<Option<bool>, ArtifactValidationError> {
+        match stage {
+            // 阶段特有结果提取必须建立在统一产物校验已经通过的前提上，
+            // 避免某个阶段提前读产物并绕过 reminder 重试链路。
+            "verify" => {
+                let json = read_json_file(cycle_dir, "verify.jsonc")
+                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+                let verify_pass = parse_adjudication_result_from_json(&json).ok_or_else(|| {
+                    ArtifactValidationError::new(
+                        "artifact_contract_violation",
+                        "verify.jsonc 缺少 adjudication.overall_result.result（必须是 pass 或 fail）",
+                    )
+                })?;
+                Ok(Some(verify_pass))
             }
-        } else {
-            warn!(
-                "verify adjudication resolve skipped: workspace missing, key={}",
-                key
-            );
+            _ => Ok(None),
         }
-
-        Ok(verify_pass)
     }
 
     async fn validate_stage_outputs(
@@ -5130,34 +5115,17 @@ impl EvolutionManager {
         let mut verify_pass = true;
         let mut reminder_attempts: u32 = 0;
         loop {
-            if stage == "verify" {
-                verify_pass = match self.resolve_verify_outcome(key, cycle_id).await {
-                    Ok(value) => value,
-                    Err(err) => {
-                        let tool_call_count = self.stage_tool_call_count(key, stage).await;
-                        self.finalize_session_execution(
-                            key,
-                            stage,
-                            &run_ctx.session_id,
-                            "failed",
-                            tool_call_count,
-                        )
-                        .await;
-                        touch_session_index_updated_at_for_evolution(
-                            ctx,
-                            project,
-                            workspace,
-                            &run_ctx.ai_tool,
-                            &run_ctx.session_id,
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                };
-            }
+            let validation_result = match self.validate_stage_outputs(key, stage, cycle_id).await {
+                Ok(()) => Self::resolve_stage_outcome_from_validated_artifacts(stage, &cycle_dir),
+                Err(validation_err) => Err(validation_err),
+            };
 
-            match self.validate_stage_outputs(key, stage, cycle_id).await {
-                Ok(()) => break,
+            match validation_result {
+                Ok(Some(stage_verify_pass)) => {
+                    verify_pass = stage_verify_pass;
+                    break;
+                }
+                Ok(None) => break,
                 Err(validation_err) => {
                     let validation_err_text = validation_err.to_stage_error();
                     let validation_attempt_no = reminder_attempts + 1;
@@ -6427,6 +6395,101 @@ mod tests {
             }
         });
         assert_eq!(parse_adjudication_result_from_json(&value), Some(true));
+    }
+
+    #[test]
+    fn resolve_stage_outcome_from_validated_artifacts_should_ignore_non_verify_stage() {
+        let dir = tempdir().expect("tempdir should succeed");
+        let outcome = EvolutionManager::resolve_stage_outcome_from_validated_artifacts(
+            "plan",
+            dir.path(),
+        )
+        .expect("non-verify stage should not require extra outcome parsing");
+        assert_eq!(outcome, None);
+    }
+
+    #[test]
+    fn resolve_stage_outcome_from_validated_artifacts_should_parse_verify_pass_result() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("verify.jsonc"),
+            serde_json::json!({
+                "$schema_version": "2.0",
+                "stage": "verify",
+                "cycle_id": "c-1",
+                "adjudication": {
+                    "overall_result": {
+                        "result": "pass"
+                    }
+                }
+            }),
+        );
+        let outcome = EvolutionManager::resolve_stage_outcome_from_validated_artifacts(
+            "verify",
+            dir.path(),
+        )
+        .expect("verify outcome should be readable after validation");
+        assert_eq!(outcome, Some(true));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_verify_invalid_jsonc_with_parse_error() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_empty_implement_result_triplet(dir.path());
+        super::write_jsonc_text(
+            &dir.path().join("verify.jsonc"),
+            r#"{
+  "$schema_version": "2.0",
+  "stage": "verify",
+  "cycle_id": "c-1",
+  "verify_iteration": 0,
+  "verify_iteration_limit": 2,
+  "summary": "bad",
+  "acceptance_evaluation": [],
+  "verification_overall": {"result": "pass"},
+  "carryover_verification": {
+    "items": [],
+    "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}
+  },
+  "adjudication": {
+    "criteria_judgement": [],
+    "overall_result": {
+      "result": "pass",
+      "reason": "本轮目标"建立核心质量基线"已达成"
+    },
+    "full_next_iteration_requirements": []
+  },
+  "updated_at": "2026-03-02T00:00:00Z"
+}"#,
+        )
+        .expect("invalid verify jsonc should be written as raw text");
+
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 2)
+            .expect_err("invalid verify jsonc should fail validation");
+        assert!(err.contains("解析"));
+        assert!(err.contains("verify.jsonc"));
+        let stage_err =
+            ArtifactValidationError::new("artifact_contract_violation", err.clone()).to_stage_error();
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "verify",
+            &stage_err
+        ));
     }
 
     fn expected_validation_reminder(
