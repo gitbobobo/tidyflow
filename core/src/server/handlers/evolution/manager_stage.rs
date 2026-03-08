@@ -911,7 +911,25 @@ fn build_implementation_stage_instances(
         }
     }
 
-    Ok(instances)
+    Ok(merge_adjacent_implementation_stage_instances(instances))
+}
+
+fn merge_adjacent_implementation_stage_instances(
+    instances: Vec<ImplementationStageInstance>,
+) -> Vec<ImplementationStageInstance> {
+    let mut merged: Vec<ImplementationStageInstance> = Vec::with_capacity(instances.len());
+
+    for instance in instances {
+        if let Some(previous) = merged.last_mut() {
+            if previous.kind == instance.kind {
+                previous.work_item_ids.extend(instance.work_item_ids);
+                continue;
+            }
+        }
+        merged.push(instance);
+    }
+
+    merged
 }
 
 fn validate_plan_markdown_artifact(
@@ -8647,6 +8665,123 @@ mod tests {
     }
 
     #[test]
+    fn resolve_initial_implementation_stage_instances_should_merge_adjacent_same_kind() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "通用基础改动",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "通用中间改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-1"],
+                    "targets": ["core/src/server/mod.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-3",
+                    "title": "视觉收尾改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-2"],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "visual",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+
+        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+            .expect("stage instances should resolve");
+        let stages = instances
+            .iter()
+            .map(|item| item.stage.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(stages, vec!["implement.general.1", "implement.visual.1"]);
+        assert_eq!(instances[0].work_item_ids, vec!["w-1", "w-2"]);
+        assert_eq!(instances[1].work_item_ids, vec!["w-3"]);
+    }
+
+    #[test]
+    fn resolve_initial_implementation_stage_instances_should_chain_merge_three_adjacent_same_kind() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "通用基础改动",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "通用中间改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-1"],
+                    "targets": ["core/src/server/mod.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-3",
+                    "title": "通用收尾改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-2"],
+                    "targets": ["core/src/main.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+            ]),
+        );
+
+        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+            .expect("stage instances should resolve");
+        let stages = instances
+            .iter()
+            .map(|item| item.stage.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(stages, vec!["implement.general.1"]);
+        assert_eq!(instances[0].work_item_ids, vec!["w-1", "w-2", "w-3"]);
+    }
+
+    #[test]
     fn tasks_to_complete_for_stage_should_only_include_current_stage_items() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
@@ -8700,6 +8835,62 @@ mod tests {
         assert!(tasks.contains("- 实现阶段类型：general"));
         assert!(!tasks.contains("### w-1 通用基础改动"));
         assert!(!tasks.contains("### w-2 视觉层改动"));
+    }
+
+    #[test]
+    fn tasks_to_complete_for_stage_should_include_all_merged_same_kind_items() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "通用基础改动",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["完成基础抽象"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "通用中间改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-1"],
+                    "targets": ["core/src/server/mod.rs"],
+                    "definition_of_done": ["完成接口收敛"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-3",
+                    "title": "视觉层改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-2"],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["完成视觉接入"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "visual",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+
+        let tasks = EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.1")
+            .expect("tasks should resolve");
+        assert!(tasks.contains("### w-1 通用基础改动"));
+        assert!(tasks.contains("### w-2 通用中间改动"));
+        assert!(tasks.contains("- 实现阶段类型：general"));
+        assert!(!tasks.contains("### w-3 视觉层改动"));
     }
 
     #[test]
