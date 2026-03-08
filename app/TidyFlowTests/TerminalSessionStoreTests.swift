@@ -112,7 +112,7 @@ final class TerminalSessionStoreTests: XCTestCase {
             cwd: "/", shell: "bash", scrollback: [],
             name: "Named", icon: "star"
         )
-        store.handleTermAttached(result: result)
+        let _ = store.handleTermAttached(result: result)
         XCTAssertEqual(store.displayInfo(for: "t2")?.name, "Named")
         XCTAssertEqual(store.displayInfo(for: "t2")?.icon, "star")
     }

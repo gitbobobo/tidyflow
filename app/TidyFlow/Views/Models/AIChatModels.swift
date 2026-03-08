@@ -1,4 +1,5 @@
 import Foundation
+import AppIntents
 #if os(macOS)
 import AppKit
 #endif
@@ -11,9 +12,7 @@ enum AIChatRole: String {
 // AIChatTool, AISessionOrigin, AISessionSelectionHint 已迁移至 TidyFlowShared，
 // 此处添加平台特有的视图层属性扩展。
 
-extension AIChatTool: Identifiable {
-    public var id: String { rawValue }
-
+extension AIChatTool {
     var displayName: String {
         switch self {
         case .opencode: return "OpenCode"

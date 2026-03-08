@@ -196,7 +196,7 @@ struct TerminalSearchBarView: View {
                         searchState.triggerSearch()
                     }
                 }
-                .onChange(of: searchState.query) { _ in
+                .onChange(of: searchState.query) { _, _ in
                     guard searchState.isVisible else { return }
                     searchState.triggerSearch()
                 }

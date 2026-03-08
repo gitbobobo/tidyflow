@@ -1,4 +1,5 @@
 import XCTest
+import AppIntents
 @testable import TidyFlow
 
 // MARK: - Git 面板共享语义层单测
@@ -38,7 +39,6 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         behindBy: Int? = nil
     ) -> GitStatusCache {
         let staged = items.filter { $0.staged == true }
-        let unstaged = items.filter { $0.staged != true }
         let hasStagedChanges = !staged.isEmpty
         return GitStatusCache(
             items: items,
@@ -204,7 +204,7 @@ final class GitPanelSemanticLayerTests: XCTestCase {
     // MARK: - 5. 多工作区隔离
 
     func test_multiWorkspaceIsolation() {
-        var cache = GitCacheState()
+        let cache = GitCacheState()
 
         // 工作区 A：有变更
         let resultA = GitStatusResult(

@@ -1,14 +1,17 @@
 import Foundation
+import AppIntents
 
 // MARK: - 基础 AI 工具类型（跨平台共享）
 
 /// AI 工具标识，与协议 ai_tool 字段对应
-public enum AIChatTool: String, CaseIterable {
+public enum AIChatTool: String, CaseIterable, Identifiable {
     case opencode
     case codex
     case copilot
     case kimi
     case claude_code
+
+    public var id: String { rawValue }
 }
 
 /// AI 会话来源
