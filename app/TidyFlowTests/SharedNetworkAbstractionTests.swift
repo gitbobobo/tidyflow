@@ -44,6 +44,38 @@ final class SharedNetworkAbstractionTests: XCTestCase {
             CoreConnectionState.reconnecting(attempt: 2, maxAttempts: 3)
         )
     }
+
+    // MARK: - 共享连接语义层与网络抽象集成回归
+
+    /// 验证 ConnectionPhase 的迁移辅助方法与网络层共享抽象兼容。
+    func testConnectionPhaseEvaluateDisconnectConsistencyWithSharedAbstraction() {
+        // 主动断开应始终返回确定阶段
+        let intentional = ConnectionPhase.evaluateDisconnect(isIntentional: true, isCoreAvailable: true)
+        XCTAssertNotNil(intentional)
+        XCTAssertEqual(intentional, .intentionallyDisconnected)
+
+        // 意外断连应返回 nil，由调用方决定是否重连
+        let unexpected = ConnectionPhase.evaluateDisconnect(isIntentional: false, isCoreAvailable: true)
+        XCTAssertNil(unexpected, "意外断连时应返回 nil 由调用方触发重连")
+    }
+
+    /// 验证 allowsAutoReconnect 属性覆盖所有 ConnectionPhase 枚举值。
+    func testAllowsAutoReconnectExhaustiveForAllPhases() {
+        let phasesAndExpected: [(ConnectionPhase, Bool)] = [
+            (.connecting, true),
+            (.connected, true),
+            (.reconnecting(attempt: 1, maxAttempts: 5), false),
+            (.reconnectFailed, false),
+            (.pairingFailed(reason: "test"), false),
+            (.intentionallyDisconnected, false),
+        ]
+        for (phase, expected) in phasesAndExpected {
+            XCTAssertEqual(
+                phase.allowsAutoReconnect, expected,
+                "\(phase) 的 allowsAutoReconnect 应为 \(expected)"
+            )
+        }
+    }
 }
 
 // MARK: - 消息处理适配器模式验证

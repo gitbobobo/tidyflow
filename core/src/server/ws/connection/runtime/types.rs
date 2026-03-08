@@ -21,6 +21,10 @@ pub(in crate::server::ws) struct RuntimeSharedState {
     pub(in crate::server::ws) watcher: Arc<tokio::sync::Mutex<WorkspaceWatcher>>,
 }
 
+/// 每个 WebSocket 连接独占一个 SocketRuntime 实例。
+/// 连接关闭时，cleanup_on_disconnect 按 conn_id 回收 subscribed_terms、
+/// AI session subscriptions 和 remote subscriptions，确保旧连接的订阅
+/// 不会泄漏到新连接，也不会在重连后产生重复事件。
 pub(in crate::server::ws) struct SocketRuntime {
     pub app_state: SharedAppState,
     pub subscribed_terms: Arc<tokio::sync::Mutex<HashMap<String, TermSubscription>>>,

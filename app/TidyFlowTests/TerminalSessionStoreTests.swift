@@ -210,4 +210,52 @@ final class TerminalSessionStoreTests: XCTestCase {
         XCTAssertFalse(store.isPinned(termId: "stale"), "term_list 后过期置顶状态应清除")
         XCTAssertNotNil(store.displayInfo(for: "live"), "服务端有 name 的终端应被恢复")
     }
+
+    // MARK: - 重连恢复链路回归
+
+    /// 验证断线 → 重连 → 重新 attach 的完整流程中，追踪状态可被正确恢复。
+    func testDisconnectThenReconnectAttachFlow() {
+        let info = TerminalDisplayInfo(
+            termId: "t1", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Shell", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(info)
+        store.addUnackedBytes(5000, for: "t1")
+        store.recordAttachRequest(termId: "t1")
+
+        // 断线
+        store.handleDisconnect()
+        XCTAssertNotNil(store.displayInfo(for: "t1"), "展示信息保留用于重连恢复")
+        XCTAssertEqual(store.unackedBytes(for: "t1"), 0, "断线后 ACK 清零")
+
+        // 重连时发送新 attach 请求
+        store.recordAttachRequest(termId: "t1")
+        XCTAssertNotNil(store.attachRequestedAt["t1"])
+
+        // 模拟 attach 成功
+        let result = TermAttachedResult(
+            termId: "t1", project: "proj", workspace: "ws",
+            cwd: "/home", shell: "zsh", scrollback: [],
+            name: "Shell", icon: nil
+        )
+        let rtt = store.handleTermAttached(result: result)
+        XCTAssertNotNil(rtt, "重连后 attach 应返回 RTT")
+        XCTAssertNil(store.attachRequestedAt["t1"], "attach 后请求时间应消费")
+    }
+
+    /// 验证 handleDisconnect 幂等性：连续调用不 crash 也不产生副作用。
+    func testHandleDisconnectIsIdempotent() {
+        let info = TerminalDisplayInfo(
+            termId: "t1", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Shell", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(info)
+        store.addUnackedBytes(1000, for: "t1")
+
+        store.handleDisconnect()
+        store.handleDisconnect()
+
+        XCTAssertNotNil(store.displayInfo(for: "t1"), "多次断线后展示信息仍保留")
+        XCTAssertEqual(store.unackedBytes(for: "t1"), 0)
+    }
 }

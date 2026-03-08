@@ -231,4 +231,99 @@ final class ConnectionSemanticLayerTests: XCTestCase {
         // 所有阶段都可以独立创建，证明无 project/workspace 耦合
         XCTAssertEqual(phases.count, 6)
     }
+
+    // MARK: - allowsAutoReconnect 迁移防护
+
+    func testAllowsAutoReconnectForConnecting() {
+        XCTAssertTrue(ConnectionPhase.connecting.allowsAutoReconnect, "connecting 阶段应允许自动重连")
+    }
+
+    func testAllowsAutoReconnectForConnected() {
+        XCTAssertTrue(ConnectionPhase.connected.allowsAutoReconnect, "connected 阶段应允许自动重连（如意外断连后探活失败）")
+    }
+
+    func testAllowsAutoReconnectFalseForReconnecting() {
+        XCTAssertFalse(
+            ConnectionPhase.reconnecting(attempt: 1, maxAttempts: 5).allowsAutoReconnect,
+            "reconnecting 阶段不应重复触发自动重连"
+        )
+    }
+
+    func testAllowsAutoReconnectFalseForReconnectFailed() {
+        XCTAssertFalse(
+            ConnectionPhase.reconnectFailed.allowsAutoReconnect,
+            "reconnectFailed 应拒绝自动重连，需人工恢复"
+        )
+    }
+
+    func testAllowsAutoReconnectFalseForPairingFailed() {
+        XCTAssertFalse(
+            ConnectionPhase.pairingFailed(reason: "invalid_token").allowsAutoReconnect,
+            "pairingFailed 应拒绝自动重连，需重新配对"
+        )
+    }
+
+    func testAllowsAutoReconnectFalseForIntentionallyDisconnected() {
+        XCTAssertFalse(
+            ConnectionPhase.intentionallyDisconnected.allowsAutoReconnect,
+            "intentionallyDisconnected 是用户主动断开，不应自动重连"
+        )
+    }
+
+    // MARK: - evaluateDisconnect 断连决策
+
+    func testEvaluateDisconnectIntentionalReturnsIntentionallyDisconnected() {
+        let phase = ConnectionPhase.evaluateDisconnect(isIntentional: true, isCoreAvailable: true)
+        XCTAssertEqual(phase, .intentionallyDisconnected)
+    }
+
+    func testEvaluateDisconnectCoreUnavailableReturnsIntentionallyDisconnected() {
+        let phase = ConnectionPhase.evaluateDisconnect(isIntentional: false, isCoreAvailable: false)
+        XCTAssertEqual(phase, .intentionallyDisconnected)
+    }
+
+    func testEvaluateDisconnectUnexpectedReturnsNil() {
+        let phase = ConnectionPhase.evaluateDisconnect(isIntentional: false, isCoreAvailable: true)
+        XCTAssertNil(phase, "意外断连应返回 nil，由调用方触发重连")
+    }
+
+    func testEvaluateDisconnectBothTrueReturnsIntentional() {
+        let phase = ConnectionPhase.evaluateDisconnect(isIntentional: true, isCoreAvailable: false)
+        XCTAssertEqual(phase, .intentionallyDisconnected, "主动 + Core 不可用仍应为主动断开")
+    }
+
+    // MARK: - nextReconnectPhase 重连进度推导
+
+    func testNextReconnectPhaseFromZero() {
+        let phase = ConnectionPhase.nextReconnectPhase(currentAttempt: 0)
+        XCTAssertEqual(phase, .reconnecting(attempt: 1, maxAttempts: 5))
+    }
+
+    func testNextReconnectPhaseAtMaxMinusOne() {
+        let phase = ConnectionPhase.nextReconnectPhase(currentAttempt: 4)
+        XCTAssertEqual(phase, .reconnecting(attempt: 5, maxAttempts: 5))
+    }
+
+    func testNextReconnectPhaseExhausted() {
+        let phase = ConnectionPhase.nextReconnectPhase(currentAttempt: 5)
+        XCTAssertEqual(phase, .reconnectFailed, "超出最大次数应返回 reconnectFailed")
+    }
+
+    func testNextReconnectPhaseOverflowStaysExhausted() {
+        let phase = ConnectionPhase.nextReconnectPhase(currentAttempt: 100)
+        XCTAssertEqual(phase, .reconnectFailed)
+    }
+
+    func testNextReconnectPhaseUsesReconnectPolicyMaxAttempts() {
+        // 确认 nextReconnectPhase 内部使用 ReconnectPolicy.maxAttempts
+        for attempt in 0..<ReconnectPolicy.maxAttempts {
+            let phase = ConnectionPhase.nextReconnectPhase(currentAttempt: attempt)
+            if case .reconnecting(let a, let max) = phase {
+                XCTAssertEqual(a, attempt + 1)
+                XCTAssertEqual(max, ReconnectPolicy.maxAttempts)
+            } else {
+                XCTFail("attempt \(attempt) 应返回 .reconnecting，实际返回 \(phase)")
+            }
+        }
+    }
 }

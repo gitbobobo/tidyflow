@@ -139,6 +139,61 @@ final class TerminalWorkspaceIsolationTests: XCTestCase {
         XCTAssertNotNil(store.attachRequestedAt["t1"], "重连后应能记录新 attach 请求")
     }
 
+    // MARK: - 多工作区断线重连不串台
+
+    /// 验证断线后多工作区的终端展示信息独立保留，不会因断线回收而互相干扰。
+    func testDisconnect_multipleWorkspaces_displayInfoIsolated() {
+        let infoA = TerminalDisplayInfo(
+            termId: "t-ws-a", project: "proj", workspace: "ws-a",
+            icon: "terminal", name: "Shell A", sourceCommand: nil, isPinned: false
+        )
+        let infoB = TerminalDisplayInfo(
+            termId: "t-ws-b", project: "proj", workspace: "ws-b",
+            icon: "star", name: "Shell B", sourceCommand: nil, isPinned: true
+        )
+        store.setDisplayInfo(infoA)
+        store.setDisplayInfo(infoB)
+        store.togglePinned(termId: "t-ws-b")
+
+        store.handleDisconnect()
+
+        // 两个工作区的展示信息都应保留
+        XCTAssertNotNil(store.displayInfo(for: "t-ws-a"), "ws-a 展示信息保留")
+        XCTAssertNotNil(store.displayInfo(for: "t-ws-b"), "ws-b 展示信息保留")
+        XCTAssertEqual(store.displayInfo(for: "t-ws-a")?.workspace, "ws-a")
+        XCTAssertEqual(store.displayInfo(for: "t-ws-b")?.workspace, "ws-b")
+        XCTAssertTrue(store.isPinned(termId: "t-ws-b"), "ws-b 的置顶状态应保留")
+    }
+
+    /// 验证重连后只恢复当前工作区的终端，不会把其它工作区的终端数据写入当前上下文。
+    func testReconnect_termListReconcile_doesNotCrossWorkspaceBoundary() {
+        // 预设两个工作区的展示信息
+        let infoA = TerminalDisplayInfo(
+            termId: "t-a", project: "proj", workspace: "ws-a",
+            icon: "terminal", name: "Shell A", sourceCommand: nil, isPinned: false
+        )
+        let infoB = TerminalDisplayInfo(
+            termId: "t-b", project: "proj", workspace: "ws-b",
+            icon: "terminal", name: "Shell B", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoA)
+        store.setDisplayInfo(infoB)
+
+        store.handleDisconnect()
+
+        // 重连后 Core 返回 term_list，只有 ws-a 的终端存活
+        let liveTermA = TerminalSessionInfo(
+            termId: "t-a", project: "proj", workspace: "ws-a",
+            cwd: "/", shell: "bash", status: "running",
+            name: "Shell A", icon: nil, remoteSubscribers: []
+        )
+        store.reconcileTermList(items: [liveTermA], makeKey: { "\($0):\($1)" })
+
+        // ws-a 的终端恢复，ws-b 的终端因不在 term_list 中被清除
+        XCTAssertNotNil(store.displayInfo(for: "t-a"), "存活终端应保留")
+        XCTAssertNil(store.displayInfo(for: "t-b"), "已死终端应被清除，不残留到其它工作区")
+    }
+
     // MARK: - term_list open time 更新区隔
 
     func testReconcileTermList_openTimeIsolatedByWorkspaceKey() {

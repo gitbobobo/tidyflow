@@ -58,6 +58,48 @@ enum ConnectionPhase: Equatable {
     #endif
 }
 
+// MARK: - 状态迁移辅助
+//
+// 以下方法集中连接阶段迁移的决策逻辑，macOS 与 iOS 共用，
+// 避免各平台在回调或探活中独立推导"是否应该重连"或"断连后应进入哪个阶段"。
+
+extension ConnectionPhase {
+    /// 是否允许发起自动重连。
+    /// 排除已在重连、主动断开、配对失败、重连耗尽的场景，
+    /// 防止自动重连误伤非意外断连状态。
+    var allowsAutoReconnect: Bool {
+        switch self {
+        case .reconnecting, .intentionallyDisconnected, .pairingFailed, .reconnectFailed:
+            return false
+        case .connecting, .connected:
+            return true
+        }
+    }
+
+    /// 评估断连后应进入的连接阶段（集中决策，双端共用）。
+    /// - Parameters:
+    ///   - isIntentional: 断开是否由用户或应用主动发起
+    ///   - isCoreAvailable: 后端进程是否仍可用（macOS 为 Core 进程状态，iOS 固定传 true）
+    /// - Returns: 应设置的确定阶段；返回 nil 表示意外断连，调用方应触发自动重连流程。
+    static func evaluateDisconnect(isIntentional: Bool, isCoreAvailable: Bool) -> ConnectionPhase? {
+        if isIntentional || !isCoreAvailable {
+            return .intentionallyDisconnected
+        }
+        return nil
+    }
+
+    /// 根据当前已完成的尝试次数计算下一个重连阶段。
+    /// - Parameter currentAttempt: 已完成的尝试次数（0 起始）
+    /// - Returns: `.reconnecting(...)` 或 `.reconnectFailed`
+    static func nextReconnectPhase(currentAttempt: Int) -> ConnectionPhase {
+        let next = currentAttempt + 1
+        if next > ReconnectPolicy.maxAttempts {
+            return .reconnectFailed
+        }
+        return .reconnecting(attempt: next, maxAttempts: ReconnectPolicy.maxAttempts)
+    }
+}
+
 /// 共享自动重连退避策略：macOS 与 iOS 使用同一份参数，避免双端重连行为漂移。
 enum ReconnectPolicy {
     /// 最大自动重连尝试次数

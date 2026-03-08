@@ -121,4 +121,57 @@ mod tests {
         assert!(is_task_broadcast_target_match(&event, "conn-2"));
         assert!(!is_task_broadcast_target_match(&event, "conn-9"));
     }
+
+    /// 验证旧连接 ID 在重连后不会命中新连接的目标过滤。
+    /// 模拟场景：广播目标只指定新 conn_id，旧 conn_id 被排除。
+    #[test]
+    fn old_connection_excluded_via_target_filter() {
+        let mut targets = HashSet::new();
+        targets.insert("new-conn".to_string());
+        let event = TaskBroadcastEvent {
+            origin_conn_id: "origin".to_string(),
+            message: ServerMessage::Pong,
+            target_conn_ids: Some(Arc::new(targets)),
+            skip_when_single_receiver: false,
+        };
+        assert!(
+            !is_task_broadcast_target_match(&event, "old-conn"),
+            "旧连接 ID 不应命中目标过滤"
+        );
+        assert!(
+            is_task_broadcast_target_match(&event, "new-conn"),
+            "新连接 ID 应命中目标过滤"
+        );
+    }
+
+    /// 验证 origin 过滤与 target 过滤在同一连接上的交互。
+    /// origin_conn_id 即使在 target_conn_ids 中，也会被 handle_task_broadcast_event
+    /// 的 origin 过滤先拦截（此处只测试 target_match 函数本身的行为）。
+    #[test]
+    fn target_match_does_not_consider_origin() {
+        let mut targets = HashSet::new();
+        targets.insert("conn-A".to_string());
+        let event = TaskBroadcastEvent {
+            origin_conn_id: "conn-A".to_string(),
+            message: ServerMessage::Pong,
+            target_conn_ids: Some(Arc::new(targets)),
+            skip_when_single_receiver: false,
+        };
+        // target_match 只看 target_conn_ids，origin 过滤由调用方处理
+        assert!(is_task_broadcast_target_match(&event, "conn-A"));
+    }
+
+    /// 验证空目标集合拒绝所有连接。
+    #[test]
+    fn empty_target_set_rejects_all() {
+        let targets: HashSet<String> = HashSet::new();
+        let event = TaskBroadcastEvent {
+            origin_conn_id: "origin".to_string(),
+            message: ServerMessage::Pong,
+            target_conn_ids: Some(Arc::new(targets)),
+            skip_when_single_receiver: false,
+        };
+        assert!(!is_task_broadcast_target_match(&event, "conn-1"));
+        assert!(!is_task_broadcast_target_match(&event, "conn-2"));
+    }
 }

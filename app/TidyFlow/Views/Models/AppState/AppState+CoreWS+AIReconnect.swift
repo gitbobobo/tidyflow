@@ -105,9 +105,9 @@ extension AppState {
     }
 
     func startAutoReconnect() {
-        // 防止重复触发（唤醒探活 + 意外断连回调可能同时触发）
-        guard !connectionPhase.isReconnecting else {
-            TFLog.core.info("自动重连已在进行中，跳过")
+        // 使用共享语义层统一判断：排除已在重连、主动断开、配对失败、重连耗尽
+        guard connectionPhase.allowsAutoReconnect else {
+            TFLog.core.info("当前连接阶段不允许自动重连，跳过: phase=\(String(describing: self.connectionPhase), privacy: .public)")
             return
         }
         reconnectAttempt = 0
@@ -115,7 +115,8 @@ extension AppState {
     }
 
     func attemptReconnect() {
-        guard reconnectAttempt < ReconnectPolicy.maxAttempts else {
+        let nextPhase = ConnectionPhase.nextReconnectPhase(currentAttempt: reconnectAttempt)
+        if case .reconnectFailed = nextPhase {
             TFLog.core.error("自动重连失败，已达最大重试次数 \(ReconnectPolicy.maxAttempts)")
             connectionPhase = .reconnectFailed
             return
@@ -123,7 +124,7 @@ extension AppState {
 
         let delay = ReconnectPolicy.delay(for: reconnectAttempt + 1)
         reconnectAttempt += 1
-        connectionPhase = .reconnecting(attempt: reconnectAttempt, maxAttempts: ReconnectPolicy.maxAttempts)
+        connectionPhase = nextPhase
         TFLog.core.info("自动重连第 \(self.reconnectAttempt) 次，延迟 \(delay)s")
 
         // 重连 Swift WSClient (WS①)

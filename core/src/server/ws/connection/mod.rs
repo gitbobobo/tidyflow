@@ -116,9 +116,11 @@ pub(super) async fn handle_socket(
     .await;
 
     if !run_connection_loop(&mut socket, &conn_meta, &mut runtime).await {
+        // Hello 消息发送失败，跳过清理（此连接未建立任何订阅）
         return;
     }
 
+    // 连接关闭后按 conn_id 语义清理所有订阅，防止旧连接残留
     cleanup::cleanup_on_disconnect(
         &runtime.subscribed_terms,
         &conn_meta,

@@ -25,14 +25,17 @@ extension AppState {
                 self?.wsClient.requestEvoSnapshot()
                 // 重连后尝试附着已有终端会话
                 self?.requestTerminalReattach()
-            } else if !(self?.wsClient.isIntentionalDisconnect ?? true),
-                      self?.coreProcessManager.isRunning == true {
-                // 意外断连且 Core 仍在运行，更新语义层并触发自动重连
+            } else if let phase = ConnectionPhase.evaluateDisconnect(
+                isIntentional: self?.wsClient.isIntentionalDisconnect ?? true,
+                isCoreAvailable: self?.coreProcessManager.isRunning ?? false
+            ) {
+                // 主动断开或 Core 不可用：直接设置确定阶段
+                self?.connectionPhase = phase
+            } else {
+                // 意外断连且 Core 仍在运行：通过共享语义层触发自动重连
                 TFLog.core.warning("WebSocket 意外断连，触发自动重连")
                 self?.markAllTerminalSessionsStale()
                 self?.startAutoReconnect()
-            } else {
-                self?.connectionPhase = .intentionallyDisconnected
             }
         }
 

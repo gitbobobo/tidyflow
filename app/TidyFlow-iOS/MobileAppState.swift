@@ -509,6 +509,8 @@ final class MobileAppState: ObservableObject {
         terminalSink?.focusTerminal()
 
         guard hasSavedConnection, !wsClient.isIntentionalDisconnect else { return }
+        // 使用共享语义层：配对失败或重连耗尽时不自动重连，需用户手动介入
+        guard connectionPhase.allowsAutoReconnect || connectionPhase.isConnected else { return }
 
         if wsClient.isStale || !isConnected {
             // 后台回来或已断开，直接重连
@@ -635,6 +637,8 @@ final class MobileAppState: ObservableObject {
 
     /// 使用指数退避重连（共享 ReconnectPolicy：5 次尝试，退避 0.5s/1s/2s/4s/8s）
     func reconnectWithBackoff() {
+        // 配对失败或重连耗尽状态不应自动重连，需用户手动介入
+        guard connectionPhase.allowsAutoReconnect || connectionPhase.isReconnecting else { return }
         reconnectTask?.cancel()
 
         reconnectTask = Task { [weak self] in
@@ -3812,11 +3816,15 @@ final class MobileAppState: ObservableObject {
                 self.terminalSink?.focusTerminal()
             } else {
                 self.connectionMessage = "连接断开"
-                if !self.wsClient.isIntentionalDisconnect {
+                if let phase = ConnectionPhase.evaluateDisconnect(
+                    isIntentional: self.wsClient.isIntentionalDisconnect,
+                    isCoreAvailable: true
+                ) {
+                    // 主动断开：直接设置确定阶段
+                    self.connectionPhase = phase
+                } else {
                     // 意外断连：通过共享语义层驱动重连
                     self.reconnectWithBackoff()
-                } else {
-                    self.connectionPhase = .intentionallyDisconnected
                 }
             }
         }
