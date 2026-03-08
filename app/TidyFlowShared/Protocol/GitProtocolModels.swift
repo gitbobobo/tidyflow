@@ -38,6 +38,18 @@ public struct GitDiffResult {
             mode: mode
         )
     }
+
+    public init(project: String, workspace: String, path: String, code: String, format: String, text: String, isBinary: Bool, truncated: Bool, mode: String) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.code = code
+        self.format = format
+        self.text = text
+        self.isBinary = isBinary
+        self.truncated = truncated
+        self.mode = mode
+    }
 }
 
 /// Cached diff for a specific file/mode combination
@@ -67,6 +79,17 @@ public struct DiffCache: Equatable {
     public var isExpired: Bool {
         // Diff cache expires after 30 seconds (more volatile than file index)
         Date().timeIntervalSince(updatedAt) > 30
+    }
+
+    public init(text: String, parsedLines: [DiffLine], isLoading: Bool, error: String?, isBinary: Bool, truncated: Bool, code: String, updatedAt: Date) {
+        self.text = text
+        self.parsedLines = parsedLines
+        self.isLoading = isLoading
+        self.error = error
+        self.isBinary = isBinary
+        self.truncated = truncated
+        self.code = code
+        self.updatedAt = updatedAt
     }
 }
 
@@ -102,6 +125,14 @@ public struct DiffLine: Identifiable, Equatable {
         case .header, .hunk:
             return nil
         }
+    }
+
+    public init(id: Int, kind: DiffLineKind, oldLineNumber: Int?, newLineNumber: Int?, text: String) {
+        self.id = id
+        self.kind = kind
+        self.oldLineNumber = oldLineNumber
+        self.newLineNumber = newLineNumber
+        self.text = text
     }
 }
 
@@ -139,6 +170,12 @@ public struct SplitCell {
             return false
         }
     }
+
+    public init(lineNumber: Int?, text: String, kind: DiffLineKind) {
+        self.lineNumber = lineNumber
+        self.text = text
+        self.kind = kind
+    }
 }
 
 /// Row kind for split view layout
@@ -155,6 +192,14 @@ public struct SplitRow: Identifiable {
     public let left: SplitCell?
     public let right: SplitCell?
     public let fullText: String?  // For header/hunk rows
+
+    public init(id: Int, rowKind: SplitRowKind, left: SplitCell?, right: SplitCell?, fullText: String?) {
+        self.id = id
+        self.rowKind = rowKind
+        self.left = left
+        self.right = right
+        self.fullText = fullText
+    }
 }
 
 /// Builder to convert unified diff lines to split rows
@@ -407,6 +452,16 @@ public struct GitStatusItem: Identifiable, Equatable {
         default: return "secondary"
         }
     }
+
+    public init(id: String, path: String, status: String, staged: Bool?, renameFrom: String?, additions: Int?, deletions: Int?) {
+        self.id = id
+        self.path = path
+        self.status = status
+        self.staged = staged
+        self.renameFrom = renameFrom
+        self.additions = additions
+        self.deletions = deletions
+    }
 }
 
 /// Result from git_status request
@@ -477,6 +532,21 @@ public struct GitStatusResult {
             comparedBranch: comparedBranch
         )
     }
+
+    public init(project: String, workspace: String, items: [GitStatusItem], isGitRepo: Bool, error: String?, hasStagedChanges: Bool, stagedCount: Int, currentBranch: String?, defaultBranch: String?, aheadBy: Int?, behindBy: Int?, comparedBranch: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.items = items
+        self.isGitRepo = isGitRepo
+        self.error = error
+        self.hasStagedChanges = hasStagedChanges
+        self.stagedCount = stagedCount
+        self.currentBranch = currentBranch
+        self.defaultBranch = defaultBranch
+        self.aheadBy = aheadBy
+        self.behindBy = behindBy
+        self.comparedBranch = comparedBranch
+    }
 }
 
 /// Cached git status for a workspace
@@ -499,7 +569,7 @@ public struct GitStatusCache: Equatable {
     public var comparedBranch: String?
 
     /// 从 items 构建缓存，自动拆分 staged/unstaged
-    init(items: [GitStatusItem], isLoading: Bool, error: String?, isGitRepo: Bool,
+    public init(items: [GitStatusItem], isLoading: Bool, error: String?, isGitRepo: Bool,
          updatedAt: Date, hasStagedChanges: Bool, stagedCount: Int,
          currentBranch: String?, defaultBranch: String?,
          aheadBy: Int?, behindBy: Int?, comparedBranch: String?) {
@@ -621,18 +691,18 @@ public struct GitPanelSemanticSnapshot: Equatable {
         if let base = defaultBranch,
            let ahead = aheadBy,
            let behind = behindBy {
-            let branchPair = String(format: "git.branchDivergence.currentVs".localized, base)
+            let branchPair = String(format: "%@ vs default", base)
             if ahead == 0 && behind == 0 {
-                return "\(branchPair) | \("git.branchDivergence.upToDate".localized)"
+                return "\(branchPair) | Up to date"
             }
-            let aheadText = String(format: "git.branchDivergence.aheadCount".localized, ahead)
-            let behindText = String(format: "git.branchDivergence.behindCount".localized, behind)
+            let aheadText = String(format: "+%d", ahead)
+            let behindText = String(format: "-%d", behind)
             return "\(branchPair) | \(aheadText) | \(behindText)"
         }
         if isLoading {
-            return "common.loading".localized
+            return "Loading…"
         }
-        return "git.branchDivergence.unavailable".localized
+        return "Unavailable"
     }
 
     public static func empty() -> GitPanelSemanticSnapshot {
@@ -647,6 +717,18 @@ public struct GitPanelSemanticSnapshot: Equatable {
             aheadBy: nil,
             behindBy: nil
         )
+    }
+
+    public init(stagedItems: [GitStatusItem], trackedUnstagedItems: [GitStatusItem], untrackedItems: [GitStatusItem], isGitRepo: Bool, isLoading: Bool, currentBranch: String?, defaultBranch: String?, aheadBy: Int?, behindBy: Int?) {
+        self.stagedItems = stagedItems
+        self.trackedUnstagedItems = trackedUnstagedItems
+        self.untrackedItems = untrackedItems
+        self.isGitRepo = isGitRepo
+        self.isLoading = isLoading
+        self.currentBranch = currentBranch
+        self.defaultBranch = defaultBranch
+        self.aheadBy = aheadBy
+        self.behindBy = behindBy
     }
 }
 
@@ -686,24 +768,33 @@ public struct GitLogEntry: Identifiable, Equatable {
         let interval = now.timeIntervalSince(date)
 
         if interval < 60 {
-            return "time.justNow".localized
+            return "Just now"
         } else if interval < 3600 {
             let minutes = Int(interval / 60)
-            return String(format: "time.minutesAgo".localized, minutes)
+            return String(format: "%d min ago", minutes)
         } else if interval < 86400 {
             let hours = Int(interval / 3600)
-            return String(format: "time.hoursAgo".localized, hours)
+            return String(format: "%d hr ago", hours)
         } else if interval < 604800 {
             let days = Int(interval / 86400)
-            return String(format: "time.daysAgo".localized, days)
+            return String(format: "%d days ago", days)
         } else if interval < 2592000 {
             let weeks = Int(interval / 604800)
-            return String(format: "time.weeksAgo".localized, weeks)
+            return String(format: "%d wks ago", weeks)
         } else {
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
             return dateFormatter.string(from: date)
         }
+    }
+
+    public init(id: String, sha: String, message: String, author: String, date: String, refs: [String]) {
+        self.id = id
+        self.sha = sha
+        self.message = message
+        self.author = author
+        self.date = date
+        self.refs = refs
     }
 }
 
@@ -745,6 +836,12 @@ public struct GitLogResult {
             entries: entries
         )
     }
+
+    public init(project: String, workspace: String, entries: [GitLogEntry]) {
+        self.project = project
+        self.workspace = workspace
+        self.entries = entries
+    }
 }
 
 /// Git 日志缓存
@@ -767,6 +864,13 @@ public struct GitLogCache: Equatable {
         // Git log cache 过期时间：5 分钟
         Date().timeIntervalSince(updatedAt) > 300
     }
+
+    public init(entries: [GitLogEntry], isLoading: Bool, error: String?, updatedAt: Date) {
+        self.entries = entries
+        self.isLoading = isLoading
+        self.error = error
+        self.updatedAt = updatedAt
+    }
 }
 
 // MARK: - Git Show (单个 commit 详情)
@@ -777,6 +881,12 @@ public struct GitShowFileEntry: Identifiable {
     public let status: String      // "M", "A", "D", "R" 等
     public let path: String
     public let oldPath: String?    // 重命名时的原路径
+
+    public init(status: String, path: String, oldPath: String?) {
+        self.status = status
+        self.path = path
+        self.oldPath = oldPath
+    }
 }
 
 /// Git show 结果（单个 commit 详情）
@@ -830,6 +940,18 @@ public struct GitShowResult {
             files: files
         )
     }
+
+    public init(project: String, workspace: String, sha: String, fullSha: String, message: String, author: String, authorEmail: String, date: String, files: [GitShowFileEntry]) {
+        self.project = project
+        self.workspace = workspace
+        self.sha = sha
+        self.fullSha = fullSha
+        self.message = message
+        self.author = author
+        self.authorEmail = authorEmail
+        self.date = date
+        self.files = files
+    }
 }
 
 /// Git show 缓存（按 SHA 索引）
@@ -837,6 +959,12 @@ public struct GitShowCache {
     public var result: GitShowResult?
     public var isLoading: Bool
     public var error: String?
+
+    public init(result: GitShowResult?, isLoading: Bool, error: String?) {
+        self.result = result
+        self.isLoading = isLoading
+        self.error = error
+    }
 }
 
 // MARK: - Phase C3-2a: Git Stage/Unstage Protocol Models
@@ -871,6 +999,16 @@ public struct GitOpResult {
             scope: scope
         )
     }
+
+    public init(project: String, workspace: String, op: String, ok: Bool, message: String?, path: String?, scope: String) {
+        self.project = project
+        self.workspace = workspace
+        self.op = op
+        self.ok = ok
+        self.message = message
+        self.path = path
+        self.scope = scope
+    }
 }
 
 /// Track in-flight git operations
@@ -878,6 +1016,12 @@ public struct GitOpInFlight: Equatable, Hashable {
     public let op: String       // "stage", "unstage", "discard", or "switch_branch"
     public let path: String?    // nil for "all" scope
     public let scope: String    // "file", "all", or "branch"
+
+    public init(op: String, path: String?, scope: String) {
+        self.op = op
+        self.path = path
+        self.scope = scope
+    }
 }
 
 // MARK: - Phase C3-3a: Git Branch Protocol Models
@@ -886,6 +1030,11 @@ public struct GitOpInFlight: Equatable, Hashable {
 public struct GitBranchItem: Identifiable {
     public let id: String  // Use name as unique ID
     public let name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
 }
 
 /// Result from git_branches request
@@ -918,6 +1067,13 @@ public struct GitBranchesResult {
             branches: branches
         )
     }
+
+    public init(project: String, workspace: String, current: String, branches: [GitBranchItem]) {
+        self.project = project
+        self.workspace = workspace
+        self.current = current
+        self.branches = branches
+    }
 }
 
 /// Cached git branches for a workspace
@@ -936,6 +1092,14 @@ public struct GitBranchCache {
             error: nil,
             updatedAt: .distantPast
         )
+    }
+
+    public init(current: String, branches: [GitBranchItem], isLoading: Bool, error: String?, updatedAt: Date) {
+        self.current = current
+        self.branches = branches
+        self.isLoading = isLoading
+        self.error = error
+        self.updatedAt = updatedAt
     }
 }
 
@@ -964,6 +1128,14 @@ public struct GitCommitResult {
             message: message,
             sha: sha
         )
+    }
+
+    public init(project: String, workspace: String, ok: Bool, message: String?, sha: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.ok = ok
+        self.message = message
+        self.sha = sha
     }
 }
 
@@ -1011,6 +1183,15 @@ public struct GitRebaseResult {
             conflicts: conflicts
         )
     }
+
+    public init(project: String, workspace: String, ok: Bool, state: String, message: String?, conflicts: [String]) {
+        self.project = project
+        self.workspace = workspace
+        self.ok = ok
+        self.state = state
+        self.message = message
+        self.conflicts = conflicts
+    }
 }
 
 /// Result from git_op_status request
@@ -1041,6 +1222,15 @@ public struct GitOpStatusResult {
             onto: onto
         )
     }
+
+    public init(project: String, workspace: String, state: GitOpState, conflicts: [String], head: String?, onto: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.state = state
+        self.conflicts = conflicts
+        self.head = head
+        self.onto = onto
+    }
 }
 
 /// Cached git operation status for a workspace
@@ -1057,6 +1247,13 @@ public struct GitOpStatusCache {
             isLoading: false,
             updatedAt: .distantPast
         )
+    }
+
+    public init(state: GitOpState, conflicts: [String], isLoading: Bool, updatedAt: Date) {
+        self.state = state
+        self.conflicts = conflicts
+        self.isLoading = isLoading
+        self.updatedAt = updatedAt
     }
 }
 
@@ -1133,6 +1330,16 @@ public struct GitMergeToDefaultResult {
             integrationPath: integrationPath
         )
     }
+
+    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], headSha: String?, integrationPath: String?) {
+        self.project = project
+        self.ok = ok
+        self.state = state
+        self.message = message
+        self.conflicts = conflicts
+        self.headSha = headSha
+        self.integrationPath = integrationPath
+    }
 }
 
 /// Result from git_integration_status request
@@ -1177,6 +1384,19 @@ public struct GitIntegrationStatusResult {
             comparedBranch: comparedBranch
         )
     }
+
+    public init(project: String, state: IntegrationState, conflicts: [String], head: String?, defaultBranch: String, path: String, isClean: Bool, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
+        self.project = project
+        self.state = state
+        self.conflicts = conflicts
+        self.head = head
+        self.defaultBranch = defaultBranch
+        self.path = path
+        self.isClean = isClean
+        self.branchAheadBy = branchAheadBy
+        self.branchBehindBy = branchBehindBy
+        self.comparedBranch = comparedBranch
+    }
 }
 
 /// Cached integration status for a project
@@ -1204,6 +1424,18 @@ public struct GitIntegrationStatusCache {
             branchBehindBy: nil,
             comparedBranch: nil
         )
+    }
+
+    public init(state: IntegrationState, conflicts: [String], isLoading: Bool, updatedAt: Date, integrationPath: String?, defaultBranch: String, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
+        self.state = state
+        self.conflicts = conflicts
+        self.isLoading = isLoading
+        self.updatedAt = updatedAt
+        self.integrationPath = integrationPath
+        self.defaultBranch = defaultBranch
+        self.branchAheadBy = branchAheadBy
+        self.branchBehindBy = branchBehindBy
+        self.comparedBranch = comparedBranch
     }
 }
 
@@ -1240,6 +1472,16 @@ public struct GitRebaseOntoDefaultResult {
             integrationPath: integrationPath
         )
     }
+
+    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], headSha: String?, integrationPath: String?) {
+        self.project = project
+        self.ok = ok
+        self.state = state
+        self.message = message
+        self.conflicts = conflicts
+        self.headSha = headSha
+        self.integrationPath = integrationPath
+    }
 }
 
 // MARK: - Phase UX-5: Git Reset Integration Worktree Protocol Models
@@ -1265,6 +1507,13 @@ public struct GitResetIntegrationWorktreeResult {
             path: path
         )
     }
+
+    public init(project: String, ok: Bool, message: String?, path: String?) {
+        self.project = project
+        self.ok = ok
+        self.message = message
+        self.path = path
+    }
 }
 
 // MARK: - AI Git Commit Models
@@ -1282,6 +1531,12 @@ public struct AIGitCommit {
             return nil
         }
         return AIGitCommit(sha: sha, message: message, files: files)
+    }
+
+    public init(sha: String, message: String, files: [String]) {
+        self.sha = sha
+        self.message = message
+        self.files = files
     }
 }
 
@@ -1304,6 +1559,14 @@ public struct EvoAutoCommitResult {
         let commits = commitsArray.compactMap { AIGitCommit.from(json: $0) }
         return EvoAutoCommitResult(project: project, workspace: workspace, success: success, message: message, commits: commits)
     }
+
+    public init(project: String, workspace: String, success: Bool, message: String, commits: [AIGitCommit]) {
+        self.project = project
+        self.workspace = workspace
+        self.success = success
+        self.message = message
+        self.commits = commits
+    }
 }
 
 /// AI Git 合并结果（v1.33）
@@ -1324,6 +1587,14 @@ public struct GitAIMergeResult {
         let conflicts = json["conflicts"] as? [String] ?? []
         return GitAIMergeResult(project: project, workspace: workspace, success: success, message: message, conflicts: conflicts)
     }
+
+    public init(project: String, workspace: String, success: Bool, message: String, conflicts: [String]) {
+        self.project = project
+        self.workspace = workspace
+        self.success = success
+        self.message = message
+        self.conflicts = conflicts
+    }
 }
 
 // MARK: - v1.37: AI 任务取消确认
@@ -1341,6 +1612,12 @@ public struct AITaskCancelled {
             return nil
         }
         return AITaskCancelled(project: project, workspace: workspace, operationType: operationType)
+    }
+
+    public init(project: String, workspace: String, operationType: String) {
+        self.project = project
+        self.workspace = workspace
+        self.operationType = operationType
     }
 }
 
@@ -1379,5 +1656,18 @@ public struct TaskSnapshotEntry {
             startedAt: startedAt,
             completedAt: json["completed_at"] as? Int64
         )
+    }
+
+    public init(taskId: String, project: String, workspace: String, taskType: String, commandId: String?, title: String, status: String, message: String?, startedAt: Int64, completedAt: Int64?) {
+        self.taskId = taskId
+        self.project = project
+        self.workspace = workspace
+        self.taskType = taskType
+        self.commandId = commandId
+        self.title = title
+        self.status = status
+        self.message = message
+        self.startedAt = startedAt
+        self.completedAt = completedAt
     }
 }

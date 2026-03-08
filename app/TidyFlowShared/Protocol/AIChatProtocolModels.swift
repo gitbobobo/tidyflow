@@ -1,5 +1,55 @@
 import Foundation
 
+// MARK: - 基础 AI 工具类型（跨平台共享）
+
+/// AI 工具标识，与协议 ai_tool 字段对应
+public enum AIChatTool: String, CaseIterable {
+    case opencode
+    case codex
+    case copilot
+    case kimi
+    case claude_code
+}
+
+/// AI 会话来源
+public enum AISessionOrigin: String, Equatable {
+    case user
+    case evolutionSystem = "evolution_system"
+
+    public static func from(rawValue: String?) -> AISessionOrigin {
+        guard let rawValue else { return .user }
+        return AISessionOrigin(rawValue: rawValue) ?? .user
+    }
+}
+
+/// AI 会话选择提示（模型/Provider 偏好）
+public struct AISessionSelectionHint: Equatable {
+    public let agent: String?
+    public let modelProviderID: String?
+    public let modelID: String?
+    public let configOptions: [String: Any]?
+
+    public var isEmpty: Bool {
+        let agentEmpty = agent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        let modelEmpty = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        let configEmpty = configOptions?.isEmpty ?? true
+        return agentEmpty && modelEmpty && configEmpty
+    }
+
+    public static func == (lhs: AISessionSelectionHint, rhs: AISessionSelectionHint) -> Bool {
+        lhs.agent == rhs.agent &&
+        lhs.modelProviderID == rhs.modelProviderID &&
+        lhs.modelID == rhs.modelID
+    }
+
+    public init(agent: String?, modelProviderID: String?, modelID: String?, configOptions: [String: Any]?) {
+        self.agent = agent
+        self.modelProviderID = modelProviderID
+        self.modelID = modelID
+        self.configOptions = configOptions
+    }
+}
+
 // MARK: - AI Chat Protocol Models (vNext)
 
 public struct AISessionStartedV2 {
@@ -32,6 +82,17 @@ public struct AISessionStartedV2 {
             selectionHint: selectionHint
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, title: String, updatedAt: Int64, origin: AISessionOrigin, selectionHint: AISessionSelectionHint?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.title = title
+        self.updatedAt = updatedAt
+        self.origin = origin
+        self.selectionHint = selectionHint
+    }
 }
 
 public struct AISessionListV2 {
@@ -57,6 +118,15 @@ public struct AISessionListV2 {
             hasMore: hasMore,
             nextCursor: nextCursor
         )
+    }
+
+    public init(projectName: String, workspaceName: String, filterAIChatTool: AIChatTool?, sessions: [AIProtocolSessionInfo], hasMore: Bool, nextCursor: String?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.filterAIChatTool = filterAIChatTool
+        self.sessions = sessions
+        self.hasMore = hasMore
+        self.nextCursor = nextCursor
     }
 }
 
@@ -96,6 +166,19 @@ public struct AISessionMessagesV2 {
             truncated: truncated
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, beforeMessageId: String?, messages: [AIProtocolMessageInfo], hasMore: Bool, nextBeforeMessageId: String?, selectionHint: AISessionSelectionHint?, truncated: Bool) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.beforeMessageId = beforeMessageId
+        self.messages = messages
+        self.hasMore = hasMore
+        self.nextBeforeMessageId = nextBeforeMessageId
+        self.selectionHint = selectionHint
+        self.truncated = truncated
+    }
 }
 
 public struct AISessionSubscribeAck {
@@ -106,6 +189,11 @@ public struct AISessionSubscribeAck {
         guard let sessionId = json["session_id"] as? String,
               let sessionKey = json["session_key"] as? String else { return nil }
         return AISessionSubscribeAck(sessionId: sessionId, sessionKey: sessionKey)
+    }
+
+    public init(sessionId: String, sessionKey: String) {
+        self.sessionId = sessionId
+        self.sessionKey = sessionKey
     }
 }
 
@@ -213,6 +301,18 @@ public struct AISessionMessagesUpdateV2 {
             ops: ops
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, cacheRevision: UInt64, isStreaming: Bool, selectionHint: AISessionSelectionHint?, messages: [AIProtocolMessageInfo]?, ops: [AIProtocolSessionCacheOp]?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.cacheRevision = cacheRevision
+        self.isStreaming = isStreaming
+        self.selectionHint = selectionHint
+        self.messages = messages
+        self.ops = ops
+    }
 }
 
 public struct AISessionStatusInfoV2 {
@@ -234,6 +334,13 @@ public struct AISessionStatusInfoV2 {
             contextRemainingPercent: contextRemainingPercent,
             toolName: toolName
         )
+    }
+
+    public init(status: String, errorMessage: String?, contextRemainingPercent: Double?, toolName: String?) {
+        self.status = status
+        self.errorMessage = errorMessage
+        self.contextRemainingPercent = contextRemainingPercent
+        self.toolName = toolName
     }
 }
 
@@ -259,6 +366,14 @@ public struct AISessionStatusResultV2 {
             status: status
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, status: AISessionStatusInfoV2) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.status = status
+    }
 }
 
 public struct AISessionStatusUpdateV2 {
@@ -283,6 +398,14 @@ public struct AISessionStatusUpdateV2 {
             status: status
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, status: AISessionStatusInfoV2) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.status = status
+    }
 }
 
 public struct AIProtocolSessionConfigOptionChoice {
@@ -301,6 +424,12 @@ public struct AIProtocolSessionConfigOptionChoice {
             description: description
         )
     }
+
+    public init(value: Any, label: String, description: String?) {
+        self.value = value
+        self.label = label
+        self.description = description
+    }
 }
 
 public struct AIProtocolSessionConfigOptionGroup {
@@ -312,6 +441,11 @@ public struct AIProtocolSessionConfigOptionGroup {
         let options = parseArrayOfDictionaries(json["options"])
             .compactMap { AIProtocolSessionConfigOptionChoice.from(json: $0) }
         return AIProtocolSessionConfigOptionGroup(label: label, options: options)
+    }
+
+    public init(label: String, options: [AIProtocolSessionConfigOptionChoice]) {
+        self.label = label
+        self.options = options
     }
 }
 
@@ -347,6 +481,17 @@ public struct AIProtocolSessionConfigOptionInfo {
             raw: raw
         )
     }
+
+    public init(optionID: String, category: String?, name: String, description: String?, currentValue: Any?, options: [AIProtocolSessionConfigOptionChoice], optionGroups: [AIProtocolSessionConfigOptionGroup], raw: [String: Any]?) {
+        self.optionID = optionID
+        self.category = category
+        self.name = name
+        self.description = description
+        self.currentValue = currentValue
+        self.options = options
+        self.optionGroups = optionGroups
+        self.raw = raw
+    }
 }
 
 public struct AISessionConfigOptionsResult {
@@ -370,6 +515,14 @@ public struct AISessionConfigOptionsResult {
             sessionId: sessionId,
             options: options
         )
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String?, options: [AIProtocolSessionConfigOptionInfo]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.options = options
     }
 }
 
@@ -399,6 +552,16 @@ public struct AIProtocolSessionInfo {
             updatedAt: updatedAt,
             origin: origin
         )
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, id: String, title: String, updatedAt: Int64, origin: AISessionOrigin) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.id = id
+        self.title = title
+        self.updatedAt = updatedAt
+        self.origin = origin
     }
 }
 
@@ -447,6 +610,22 @@ public struct AIProtocolPartInfo {
             toolView: toolView
         )
     }
+
+    public init(id: String, partType: String, text: String?, mime: String?, filename: String?, url: String?, synthetic: Bool?, ignored: Bool?, source: [String: Any]?, toolName: String?, toolCallId: String?, toolKind: String?, toolView: AIToolView?) {
+        self.id = id
+        self.partType = partType
+        self.text = text
+        self.mime = mime
+        self.filename = filename
+        self.url = url
+        self.synthetic = synthetic
+        self.ignored = ignored
+        self.source = source
+        self.toolName = toolName
+        self.toolCallId = toolCallId
+        self.toolKind = toolKind
+        self.toolView = toolView
+    }
 }
 
 public enum AIToolViewSectionStyle: String {
@@ -455,6 +634,15 @@ public enum AIToolViewSectionStyle: String {
     case diff
     case markdown
     case terminal
+}
+
+/// AI 工具调用状态（v7 协议）
+public enum AIToolStatus: String, Equatable {
+    case pending
+    case running
+    case completed
+    case error
+    case unknown
 }
 
 public struct AIToolViewSection: Identifiable, Equatable {
@@ -481,6 +669,16 @@ public struct AIToolViewSection: Identifiable, Equatable {
             copyable: parseBool(json["copyable"]) ?? true,
             collapsedByDefault: parseBool(json["collapsed_by_default"]) ?? false
         )
+    }
+
+    public init(id: String, title: String, content: String, style: AIToolViewSectionStyle, language: String?, copyable: Bool, collapsedByDefault: Bool) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.style = style
+        self.language = language
+        self.copyable = copyable
+        self.collapsedByDefault = collapsedByDefault
     }
 }
 
@@ -513,6 +711,16 @@ public struct AIToolViewLocation: Equatable {
             endColumn: endColumn == 0 ? nil : endColumn,
             label: label
         )
+    }
+
+    public init(uri: String?, path: String?, line: Int?, column: Int?, endLine: Int?, endColumn: Int?, label: String?) {
+        self.uri = uri
+        self.path = path
+        self.line = line
+        self.column = column
+        self.endLine = endLine
+        self.endColumn = endColumn
+        self.label = label
     }
 }
 
@@ -548,6 +756,14 @@ public struct AIToolViewQuestion: Equatable {
             answers: answers
         )
     }
+
+    public init(requestID: String, toolMessageID: String?, promptItems: [AIQuestionInfo], interactive: Bool, answers: [[String]]?) {
+        self.requestID = requestID
+        self.toolMessageID = toolMessageID
+        self.promptItems = promptItems
+        self.interactive = interactive
+        self.answers = answers
+    }
 }
 
 public struct AIToolLinkedSession: Equatable {
@@ -561,6 +777,12 @@ public struct AIToolLinkedSession: Equatable {
               let agentName = parseOptionalString(json["agent_name"]),
               let description = parseOptionalString(json["description"]) else { return nil }
         return AIToolLinkedSession(sessionID: sessionID, agentName: agentName, description: description)
+    }
+
+    public init(sessionID: String, agentName: String, description: String) {
+        self.sessionID = sessionID
+        self.agentName = agentName
+        self.description = description
     }
 }
 
@@ -594,6 +816,19 @@ public struct AIToolView: Equatable {
             linkedSession: AIToolLinkedSession.from(json: json["linked_session"] as? [String: Any])
         )
     }
+
+    public init(status: AIToolStatus, displayTitle: String, statusText: String, summary: String?, headerCommandSummary: String?, durationMs: Double?, sections: [AIToolViewSection], locations: [AIToolViewLocation], question: AIToolViewQuestion?, linkedSession: AIToolLinkedSession?) {
+        self.status = status
+        self.displayTitle = displayTitle
+        self.statusText = statusText
+        self.summary = summary
+        self.headerCommandSummary = headerCommandSummary
+        self.durationMs = durationMs
+        self.sections = sections
+        self.locations = locations
+        self.question = question
+        self.linkedSession = linkedSession
+    }
 }
 
 public struct AIProtocolMessageInfo {
@@ -624,6 +859,16 @@ public struct AIProtocolMessageInfo {
             parts: parts
         )
     }
+
+    public init(id: String, role: String, createdAt: Int64?, agent: String?, modelProviderID: String?, modelID: String?, parts: [AIProtocolPartInfo]) {
+        self.id = id
+        self.role = role
+        self.createdAt = createdAt
+        self.agent = agent
+        self.modelProviderID = modelProviderID
+        self.modelID = modelID
+        self.parts = parts
+    }
 }
 
 public struct AIChatDoneV2 {
@@ -649,6 +894,15 @@ public struct AIChatDoneV2 {
             selectionHint: selectionHint,
             stopReason: stopReason
         )
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, selectionHint: AISessionSelectionHint?, stopReason: String?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.selectionHint = selectionHint
+        self.stopReason = stopReason
     }
 }
 
@@ -677,6 +931,15 @@ public struct AIChatErrorV2 {
             errorCode: errorCode
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, error: String, errorCode: CoreErrorCode) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.error = error
+        self.errorCode = errorCode
+    }
 }
 
 /// 服务端收到 AIChatSend 后、启动 AI adapter 前立即发出，用于通知客户端进入 pending 态。
@@ -693,6 +956,13 @@ public struct AIChatPendingV2 {
               let sessionId = json["session_id"] as? String else { return nil }
         return AIChatPendingV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId)
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+    }
 }
 
 public struct AIQuestionOptionInfo: Equatable {
@@ -705,6 +975,12 @@ public struct AIQuestionOptionInfo: Equatable {
         let optionID = parseOptionalString(json["option_id"]) ?? parseOptionalString(json["optionId"])
         let description = json["description"] as? String ?? ""
         return AIQuestionOptionInfo(optionID: optionID, label: label, description: description)
+    }
+
+    public init(optionID: String?, label: String, description: String) {
+        self.optionID = optionID
+        self.label = label
+        self.description = description
     }
 }
 
@@ -728,6 +1004,14 @@ public struct AIQuestionInfo: Equatable {
             multiple: multiple,
             custom: custom
         )
+    }
+
+    public init(question: String, header: String, options: [AIQuestionOptionInfo], multiple: Bool, custom: Bool) {
+        self.question = question
+        self.header = header
+        self.options = options
+        self.multiple = multiple
+        self.custom = custom
     }
 }
 
@@ -793,6 +1077,14 @@ public struct AIQuestionRequestInfo {
             return nil
         }
     }
+
+    public init(id: String, sessionId: String, questions: [AIQuestionInfo], toolMessageId: String?, toolCallId: String?) {
+        self.id = id
+        self.sessionId = sessionId
+        self.questions = questions
+        self.toolMessageId = toolMessageId
+        self.toolCallId = toolCallId
+    }
 }
 
 public struct AIQuestionAskedV2 {
@@ -817,6 +1109,14 @@ public struct AIQuestionAskedV2 {
             request: request
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, request: AIQuestionRequestInfo) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.request = request
+    }
 }
 
 public struct AIQuestionClearedV2 {
@@ -839,6 +1139,14 @@ public struct AIQuestionClearedV2 {
             sessionId: sessionId,
             requestId: requestId
         )
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, requestId: String) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.requestId = requestId
     }
 }
 
@@ -898,7 +1206,7 @@ private func parseBool(_ any: Any?) -> Bool? {
 }
 
 private func parseUInt64(_ any: Any?) -> UInt64 {
-    public let value = parseInt64(any)
+    let value = parseInt64(any)
     if value < 0 { return 0 }
     return UInt64(value)
 }
@@ -939,7 +1247,7 @@ private func parseByteArray(_ any: Any?) -> [UInt8] {
 }
 
 private extension AISessionSelectionHint {
-    public static func from(json: [String: Any]?) -> AISessionSelectionHint? {
+    static func from(json: [String: Any]?) -> AISessionSelectionHint? {
         guard let json else { return nil }
         let agent = parseOptionalString(json["agent"])?.lowercased()
         let modelProviderID = parseOptionalString(json["model_provider_id"])
@@ -962,7 +1270,7 @@ private extension AISessionSelectionHint {
 
 private func parseConfigOptionsMap(_ any: Any?) -> [String: Any]? {
     guard let dict = parseDictionary(any) else { return nil }
-    public var normalized: [String: Any] = [:]
+    var normalized: [String: Any] = [:]
     normalized.reserveCapacity(dict.count)
     for (key, value) in dict {
         if let normalizedValue = normalizeProtocolJSONValue(value) {
@@ -1029,11 +1337,11 @@ private func parseDouble(_ any: Any?) -> Double? {
 
 private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
     guard let raw = any as? String else { return nil }
-    public let normalizedRaw = raw
+    let normalizedRaw = raw
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
-    public let normalized = normalizedRaw.replacingOccurrences(of: "_", with: "-")
-    public let mapped = switch normalized {
+    let normalized = normalizedRaw.replacingOccurrences(of: "_", with: "-")
+    let mapped = switch normalized {
     case "open-code":
         "opencode"
     case "codex-app-server", "codex-app":
@@ -1069,6 +1377,13 @@ public struct AIProviderListResult {
         let items = (json["providers"] as? [[String: Any]] ?? []).compactMap { AIProtocolProviderInfo.from(json: $0) }
         return AIProviderListResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, providers: items)
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, providers: [AIProtocolProviderInfo]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.providers = providers
+    }
 }
 
 public struct AIProtocolProviderInfo {
@@ -1081,6 +1396,12 @@ public struct AIProtocolProviderInfo {
         let name = json["name"] as? String ?? id
         let models = (json["models"] as? [[String: Any]] ?? []).compactMap { AIProtocolModelInfo.from(json: $0) }
         return AIProtocolProviderInfo(id: id, name: name, models: models)
+    }
+
+    public init(id: String, name: String, models: [AIProtocolModelInfo]) {
+        self.id = id
+        self.name = name
+        self.models = models
     }
 }
 
@@ -1102,6 +1423,13 @@ public struct AIProtocolModelInfo {
             supportsImageInput: supportsImageInput
         )
     }
+
+    public init(id: String, name: String, providerID: String, supportsImageInput: Bool) {
+        self.id = id
+        self.name = name
+        self.providerID = providerID
+        self.supportsImageInput = supportsImageInput
+    }
 }
 
 public struct AIAgentListResult {
@@ -1116,6 +1444,13 @@ public struct AIAgentListResult {
               let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["agents"] as? [[String: Any]] ?? []).compactMap { AIProtocolAgentInfo.from(json: $0) }
         return AIAgentListResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, agents: items)
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, agents: [AIProtocolAgentInfo]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.agents = agents
     }
 }
 
@@ -1137,6 +1472,15 @@ public struct AIProtocolAgentInfo {
             defaultProviderID: json["default_provider_id"] as? String,
             defaultModelID: json["default_model_id"] as? String
         )
+    }
+
+    public init(name: String, description: String?, mode: String?, color: String?, defaultProviderID: String?, defaultModelID: String?) {
+        self.name = name
+        self.description = description
+        self.mode = mode
+        self.color = color
+        self.defaultProviderID = defaultProviderID
+        self.defaultModelID = defaultModelID
     }
 }
 
@@ -1162,6 +1506,14 @@ public struct AISlashCommandsResult {
             commands: items
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionID: String?, commands: [AIProtocolSlashCommand]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionID = sessionID
+        self.commands = commands
+    }
 }
 
 public struct AISlashCommandsUpdateResult {
@@ -1185,6 +1537,14 @@ public struct AISlashCommandsUpdateResult {
             commands: items
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionID: String, commands: [AIProtocolSlashCommand]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionID = sessionID
+        self.commands = commands
+    }
 }
 
 public struct AIProtocolSlashCommand {
@@ -1207,6 +1567,13 @@ public struct AIProtocolSlashCommand {
             inputHint: inputHint
         )
     }
+
+    public init(name: String, description: String, action: String, inputHint: String?) {
+        self.name = name
+        self.description = description
+        self.action = action
+        self.inputHint = inputHint
+    }
 }
 
 // MARK: - Evolution
@@ -1223,6 +1590,12 @@ public struct EvolutionBlockerOptionV2 {
             label: parseOptionalString(json["label"]) ?? optionID,
             description: parseOptionalString(json["description"]) ?? ""
         )
+    }
+
+    public init(optionID: String, label: String, description: String) {
+        self.optionID = optionID
+        self.label = label
+        self.description = description
     }
 }
 
@@ -1261,6 +1634,20 @@ public struct EvolutionBlockerItemV2 {
             allowCustomInput: json["allow_custom_input"] as? Bool ?? true
         )
     }
+
+    public init(blockerID: String, status: String, cycleID: String, stage: String, createdAt: String, source: String, title: String, description: String, questionType: String, options: [EvolutionBlockerOptionV2], allowCustomInput: Bool) {
+        self.blockerID = blockerID
+        self.status = status
+        self.cycleID = cycleID
+        self.stage = stage
+        self.createdAt = createdAt
+        self.source = source
+        self.title = title
+        self.description = description
+        self.questionType = questionType
+        self.options = options
+        self.allowCustomInput = allowCustomInput
+    }
 }
 
 public struct EvolutionBlockingRequiredV2 {
@@ -1291,6 +1678,16 @@ public struct EvolutionBlockingRequiredV2 {
             unresolvedItems: unresolvedItems
         )
     }
+
+    public init(project: String, workspace: String, trigger: String, cycleID: String?, stage: String?, blockerFilePath: String, unresolvedItems: [EvolutionBlockerItemV2]) {
+        self.project = project
+        self.workspace = workspace
+        self.trigger = trigger
+        self.cycleID = cycleID
+        self.stage = stage
+        self.blockerFilePath = blockerFilePath
+        self.unresolvedItems = unresolvedItems
+    }
 }
 
 public struct EvolutionBlockersUpdatedV2 {
@@ -1313,6 +1710,13 @@ public struct EvolutionBlockersUpdatedV2 {
             unresolvedItems: unresolvedItems
         )
     }
+
+    public init(project: String, workspace: String, unresolvedCount: Int, unresolvedItems: [EvolutionBlockerItemV2]) {
+        self.project = project
+        self.workspace = workspace
+        self.unresolvedCount = unresolvedCount
+        self.unresolvedItems = unresolvedItems
+    }
 }
 
 public struct EvolutionBlockerResolutionInputV2 {
@@ -1329,6 +1733,12 @@ public struct EvolutionBlockerResolutionInputV2 {
             json["answer_text"] = answerText
         }
         return json
+    }
+
+    public init(blockerID: String, selectedOptionIDs: [String], answerText: String?) {
+        self.blockerID = blockerID
+        self.selectedOptionIDs = selectedOptionIDs
+        self.answerText = answerText
     }
 }
 
@@ -1364,6 +1774,11 @@ public struct EvolutionModelSelectionV2 {
               !providerHint.isEmpty else { return nil }
         return EvolutionModelSelectionV2(providerID: providerHint, modelID: normalizedModel)
     }
+
+    public init(providerID: String, modelID: String) {
+        self.providerID = providerID
+        self.modelID = modelID
+    }
 }
 
 public struct EvolutionStageProfileInfoV2 {
@@ -1373,7 +1788,7 @@ public struct EvolutionStageProfileInfoV2 {
     public let model: EvolutionModelSelectionV2?
     public let configOptions: [String: Any]
 
-    init(
+    public init(
         stage: String,
         aiTool: AIChatTool,
         mode: String?,
@@ -1457,6 +1872,15 @@ public struct EvolutionAgentInfoV2: Equatable {
             durationMs: durationMs
         )
     }
+
+    public init(stage: String, agent: String, status: String, toolCallCount: Int, startedAt: String?, durationMs: UInt64?) {
+        self.stage = stage
+        self.agent = agent
+        self.status = status
+        self.toolCallCount = toolCallCount
+        self.startedAt = startedAt
+        self.durationMs = durationMs
+    }
 }
 
 public struct EvolutionSessionExecutionEntryV2: Equatable {
@@ -1501,6 +1925,18 @@ public struct EvolutionSessionExecutionEntryV2: Equatable {
             toolCallCount: toolCallCount
         )
     }
+
+    public init(stage: String, agent: String, aiTool: String, sessionID: String, status: String, startedAt: String, completedAt: String?, durationMs: UInt64?, toolCallCount: Int) {
+        self.stage = stage
+        self.agent = agent
+        self.aiTool = aiTool
+        self.sessionID = sessionID
+        self.status = status
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.durationMs = durationMs
+        self.toolCallCount = toolCallCount
+    }
 }
 
 public struct EvolutionSchedulerInfoV2: Equatable {
@@ -1524,6 +1960,13 @@ public struct EvolutionSchedulerInfoV2: Equatable {
             runningCount: Int(parseInt64(json["running_count"])),
             queuedCount: Int(parseInt64(json["queued_count"]))
         )
+    }
+
+    public init(activationState: String, maxParallelWorkspaces: Int, runningCount: Int, queuedCount: Int) {
+        self.activationState = activationState
+        self.maxParallelWorkspaces = maxParallelWorkspaces
+        self.runningCount = runningCount
+        self.queuedCount = queuedCount
     }
 }
 
@@ -1582,6 +2025,24 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
+
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.cycleID = cycleID
+        self.title = title
+        self.status = status
+        self.currentStage = currentStage
+        self.globalLoopRound = globalLoopRound
+        self.loopRoundLimit = loopRoundLimit
+        self.verifyIteration = verifyIteration
+        self.verifyIterationLimit = verifyIterationLimit
+        self.agents = agents
+        self.executions = executions
+        self.terminalReasonCode = terminalReasonCode
+        self.terminalErrorMessage = terminalErrorMessage
+        self.rateLimitErrorMessage = rateLimitErrorMessage
+    }
 }
 
 public struct EvolutionSnapshotV2: Equatable {
@@ -1594,6 +2055,11 @@ public struct EvolutionSnapshotV2: Equatable {
         let items = (json["workspace_items"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionWorkspaceItemV2.from(json: $0) }
         return EvolutionSnapshotV2(scheduler: scheduler, workspaceItems: items)
+    }
+
+    public init(scheduler: EvolutionSchedulerInfoV2, workspaceItems: [EvolutionWorkspaceItemV2]) {
+        self.scheduler = scheduler
+        self.workspaceItems = workspaceItems
     }
 }
 
@@ -1642,6 +2108,24 @@ public struct EvoCycleUpdatedV2 {
             rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
+
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.cycleID = cycleID
+        self.title = title
+        self.status = status
+        self.currentStage = currentStage
+        self.globalLoopRound = globalLoopRound
+        self.loopRoundLimit = loopRoundLimit
+        self.verifyIteration = verifyIteration
+        self.verifyIterationLimit = verifyIterationLimit
+        self.agents = agents
+        self.executions = executions
+        self.terminalReasonCode = terminalReasonCode
+        self.terminalErrorMessage = terminalErrorMessage
+        self.rateLimitErrorMessage = rateLimitErrorMessage
+    }
 }
 
 public struct EvolutionStageChatOpenedV2 {
@@ -1672,6 +2156,15 @@ public struct EvolutionStageChatOpenedV2 {
             sessionID: sessionID
         )
     }
+
+    public init(project: String, workspace: String, cycleID: String, stage: String, aiToolRaw: String, sessionID: String) {
+        self.project = project
+        self.workspace = workspace
+        self.cycleID = cycleID
+        self.stage = stage
+        self.aiToolRaw = aiToolRaw
+        self.sessionID = sessionID
+    }
 }
 
 public struct EvolutionAgentProfileV2 {
@@ -1698,6 +2191,12 @@ public struct EvolutionAgentProfileV2 {
         let stageProfiles = stageProfileDicts
             .compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
         return EvolutionAgentProfileV2(project: project, workspace: workspace, stageProfiles: stageProfiles)
+    }
+
+    public init(project: String, workspace: String, stageProfiles: [EvolutionStageProfileInfoV2]) {
+        self.project = project
+        self.workspace = workspace
+        self.stageProfiles = stageProfiles
     }
 }
 
@@ -1728,6 +2227,14 @@ public struct EvolutionCycleStageHistoryEntryV2 {
             status: status,
             durationMs: durationMs
         )
+    }
+
+    public init(stage: String, agent: String, aiTool: String, status: String, durationMs: UInt64?) {
+        self.stage = stage
+        self.agent = agent
+        self.aiTool = aiTool
+        self.status = status
+        self.durationMs = durationMs
     }
 }
 
@@ -1769,6 +2276,19 @@ public struct EvolutionCycleHistoryItemV2 {
             stages: stages
         )
     }
+
+    public init(cycleID: String, title: String?, status: String, globalLoopRound: Int, createdAt: String, updatedAt: String, terminalReasonCode: String?, terminalErrorMessage: String?, executions: [EvolutionSessionExecutionEntryV2], stages: [EvolutionCycleStageHistoryEntryV2]) {
+        self.cycleID = cycleID
+        self.title = title
+        self.status = status
+        self.globalLoopRound = globalLoopRound
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.terminalReasonCode = terminalReasonCode
+        self.terminalErrorMessage = terminalErrorMessage
+        self.executions = executions
+        self.stages = stages
+    }
 }
 
 public struct EvidenceSubsystemInfoV2 {
@@ -1784,6 +2304,12 @@ public struct EvidenceSubsystemInfoV2 {
         }
         return EvidenceSubsystemInfoV2(id: id, kind: kind, path: path)
     }
+
+    public init(id: String, kind: String, path: String) {
+        self.id = id
+        self.kind = kind
+        self.path = path
+    }
 }
 
 public struct EvidenceIssueInfoV2 {
@@ -1798,6 +2324,12 @@ public struct EvidenceIssueInfoV2 {
             return nil
         }
         return EvidenceIssueInfoV2(code: code, level: level, message: message)
+    }
+
+    public init(code: String, level: String, message: String) {
+        self.code = code
+        self.level = level
+        self.message = message
     }
 }
 
@@ -1841,6 +2373,22 @@ public struct EvidenceItemInfoV2 {
             mimeType: parseOptionalString(json["mime_type"]) ?? "application/octet-stream"
         )
     }
+
+    public init(itemID: String, deviceType: String, evidenceType: String, order: Int, path: String, title: String, description: String, scenario: String?, subsystem: String?, createdAt: String?, sizeBytes: UInt64, exists: Bool, mimeType: String) {
+        self.itemID = itemID
+        self.deviceType = deviceType
+        self.evidenceType = evidenceType
+        self.order = order
+        self.path = path
+        self.title = title
+        self.description = description
+        self.scenario = scenario
+        self.subsystem = subsystem
+        self.createdAt = createdAt
+        self.sizeBytes = sizeBytes
+        self.exists = exists
+        self.mimeType = mimeType
+    }
 }
 
 public struct EvidenceSnapshotV2 {
@@ -1883,6 +2431,19 @@ public struct EvidenceSnapshotV2 {
             updatedAt: updatedAt
         )
     }
+
+    public init(project: String, workspace: String, evidenceRoot: String, indexFile: String, indexExists: Bool, detectedSubsystems: [EvidenceSubsystemInfoV2], detectedDeviceTypes: [String], items: [EvidenceItemInfoV2], issues: [EvidenceIssueInfoV2], updatedAt: String) {
+        self.project = project
+        self.workspace = workspace
+        self.evidenceRoot = evidenceRoot
+        self.indexFile = indexFile
+        self.indexExists = indexExists
+        self.detectedSubsystems = detectedSubsystems
+        self.detectedDeviceTypes = detectedDeviceTypes
+        self.items = items
+        self.issues = issues
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct EvidenceRebuildPromptV2 {
@@ -1918,6 +2479,17 @@ public struct EvidenceRebuildPromptV2 {
             generatedAt: generatedAt
         )
     }
+
+    public init(project: String, workspace: String, prompt: String, evidenceRoot: String, indexFile: String, detectedSubsystems: [EvidenceSubsystemInfoV2], detectedDeviceTypes: [String], generatedAt: String) {
+        self.project = project
+        self.workspace = workspace
+        self.prompt = prompt
+        self.evidenceRoot = evidenceRoot
+        self.indexFile = indexFile
+        self.detectedSubsystems = detectedSubsystems
+        self.detectedDeviceTypes = detectedDeviceTypes
+        self.generatedAt = generatedAt
+    }
 }
 
 public struct EvidenceItemChunkV2 {
@@ -1950,17 +2522,22 @@ public struct EvidenceItemChunkV2 {
             content: parseByteArray(json["content"])
         )
     }
-}
 
-public extension AISessionMessagesV2 {
-    public func toChatMessages() -> [AIChatMessage] {
-        messages.compactMap { message in
-            let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
-            let parts: [AIChatPart] = message.parts.map { AIChatPartNormalization.makeChatPart(from: $0) }
-            return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
-        }
+    public init(project: String, workspace: String, itemID: String, offset: UInt64, nextOffset: UInt64, eof: Bool, totalSizeBytes: UInt64, mimeType: String, content: [UInt8]) {
+        self.project = project
+        self.workspace = workspace
+        self.itemID = itemID
+        self.offset = offset
+        self.nextOffset = nextOffset
+        self.eof = eof
+        self.totalSizeBytes = totalSizeBytes
+        self.mimeType = mimeType
+        self.content = content
     }
 }
+
+// toChatMessages() 扩展依赖平台视图模型层（AIChatMessage 等），
+// 已移至 app/TidyFlow/Views/Models/ 中的平台侧扩展。
 
 // MARK: - AI 会话重命名响应
 public struct AISessionRenameResult {
@@ -1982,6 +2559,15 @@ public struct AISessionRenameResult {
                                      aiTool: aiTool, sessionId: sessionId,
                                      title: title, updatedAt: updatedAt)
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: String, sessionId: String, title: String, updatedAt: Int64) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.title = title
+        self.updatedAt = updatedAt
+    }
 }
 
 // MARK: - AI 会话搜索响应
@@ -1990,7 +2576,7 @@ public struct AISessionSearchResult {
     public let workspaceName: String
     public let aiTool: String
     public let query: String
-    public let sessions: [AISessionInfo]
+    public let sessions: [AIProtocolSessionInfo]
 
     public static func from(json: [String: Any]) -> AISessionSearchResult? {
         guard let projectName = json["project_name"] as? String,
@@ -1999,16 +2585,24 @@ public struct AISessionSearchResult {
               let query = json["query"] as? String,
               let aiChatTool = AIChatTool(rawValue: aiTool) else { return nil }
         let rawSessions = json["sessions"] as? [[String: Any]] ?? []
-        let sessions = rawSessions.compactMap { item -> AISessionInfo? in
+        let sessions = rawSessions.compactMap { item -> AIProtocolSessionInfo? in
             guard let id = item["id"] as? String,
                   let title = item["title"] as? String else { return nil }
-            let updatedAt = (item["updated_at"] as? Int64) ?? (item["updated_at"] as? Int).map { Int64($0) } ?? 0
+            let updatedAt = parseInt64(item["updated_at"])
             let origin = parseAISessionOrigin(item["session_origin"])
-            return AISessionInfo(projectName: projectName, workspaceName: workspaceName,
-                                 aiTool: aiChatTool, id: id, title: title, updatedAt: updatedAt, origin: origin)
+            return AIProtocolSessionInfo(projectName: projectName, workspaceName: workspaceName,
+                                         aiTool: aiChatTool, id: id, title: title, updatedAt: updatedAt, origin: origin)
         }
         return AISessionSearchResult(projectName: projectName, workspaceName: workspaceName,
                                      aiTool: aiTool, query: query, sessions: sessions)
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: String, query: String, sessions: [AIProtocolSessionInfo]) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.query = query
+        self.sessions = sessions
     }
 }
 
@@ -2030,6 +2624,15 @@ public struct AICodeReviewResult: Equatable {
                                   aiTool: aiTool, sessionId: sessionId,
                                   reviewText: json["review_text"] as? String,
                                   error: json["error"] as? String)
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: String, sessionId: String, reviewText: String?, error: String?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.sessionId = sessionId
+        self.reviewText = reviewText
+        self.error = error
     }
 }
 
@@ -2091,6 +2694,15 @@ public struct AICodeCompletionChunk {
             isFinal: isFinal
         )
     }
+
+    public init(projectName: String, workspaceName: String, aiTool: String, requestId: String, delta: String, isFinal: Bool) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.requestId = requestId
+        self.delta = delta
+        self.isFinal = isFinal
+    }
 }
 
 /// 补全完成事件（流结束）
@@ -2120,6 +2732,16 @@ public struct AICodeCompletionDone {
             stopReason: stopReason,
             error: result["error"] as? String
         )
+    }
+
+    public init(projectName: String, workspaceName: String, aiTool: String, requestId: String, completionText: String, stopReason: String, error: String?) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.requestId = requestId
+        self.completionText = completionText
+        self.stopReason = stopReason
+        self.error = error
     }
 }
 
@@ -2170,6 +2792,16 @@ public struct AIFlattenedMessage {
             createdAt: parseInt64(json["created_at"])
         )
     }
+
+    public init(id: String, sessionId: String, kind: AIFlattenedMessageKind, content: String?, toolName: String?, toolCallId: String?, createdAt: Int64) {
+        self.id = id
+        self.sessionId = sessionId
+        self.kind = kind
+        self.content = content
+        self.toolName = toolName
+        self.toolCallId = toolCallId
+        self.createdAt = createdAt
+    }
 }
 
 /// AI 会话平铺消息缓存，按 session_id 索引，revision 单调递增，对应 Rust 侧 AiSessionFlatCache
@@ -2192,6 +2824,12 @@ public struct AISessionFlatCache {
             messages: messages
         )
     }
+
+    public init(sessionId: String, revision: UInt64, messages: [AIFlattenedMessage]) {
+        self.sessionId = sessionId
+        self.revision = revision
+        self.messages = messages
+    }
 }
 
 // MARK: - 多项目上下文协议模型
@@ -2205,6 +2843,11 @@ public struct AIProjectMentionMeta {
         let resolved = (json["resolved"] as? Bool) ?? false
         return AIProjectMentionMeta(projectName: projectName, resolved: resolved)
     }
+
+    public init(projectName: String, resolved: Bool) {
+        self.projectName = projectName
+        self.resolved = resolved
+    }
 }
 
 public struct AIProjectContextSummary {
@@ -2215,5 +2858,10 @@ public struct AIProjectContextSummary {
         guard let projectName = json["project_name"] as? String,
               let contextText = json["context_text"] as? String else { return nil }
         return AIProjectContextSummary(projectName: projectName, contextText: contextText)
+    }
+
+    public init(projectName: String, contextText: String) {
+        self.projectName = projectName
+        self.contextText = contextText
     }
 }

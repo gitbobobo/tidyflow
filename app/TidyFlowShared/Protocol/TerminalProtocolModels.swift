@@ -41,6 +41,18 @@ public struct TerminalSessionInfo {
             remoteSubscribers: subscribers
         )
     }
+
+    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, status: String, name: String?, icon: String?, remoteSubscribers: [RemoteSubscriberDetail]) {
+        self.termId = termId
+        self.project = project
+        self.workspace = workspace
+        self.cwd = cwd
+        self.shell = shell
+        self.status = status
+        self.name = name
+        self.icon = icon
+        self.remoteSubscribers = remoteSubscribers
+    }
 }
 
 /// 远程订阅者详情
@@ -54,6 +66,11 @@ public struct RemoteSubscriberDetail {
             return nil
         }
         return RemoteSubscriberDetail(deviceName: deviceName, connId: connId)
+    }
+
+    public init(deviceName: String, connId: String) {
+        self.deviceName = deviceName
+        self.connId = connId
     }
 }
 
@@ -81,6 +98,16 @@ public struct TermCreatedResult {
             name: json["name"] as? String,
             icon: json["icon"] as? String
         )
+    }
+
+    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, name: String?, icon: String?) {
+        self.termId = termId
+        self.project = project
+        self.workspace = workspace
+        self.cwd = cwd
+        self.shell = shell
+        self.name = name
+        self.icon = icon
     }
 }
 
@@ -115,6 +142,17 @@ public struct TermAttachedResult {
             icon: json["icon"] as? String
         )
     }
+
+    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, scrollback: [UInt8], name: String?, icon: String?) {
+        self.termId = termId
+        self.project = project
+        self.workspace = workspace
+        self.cwd = cwd
+        self.shell = shell
+        self.scrollback = scrollback
+        self.name = name
+        self.icon = icon
+    }
 }
 
 /// term_list 响应
@@ -126,6 +164,10 @@ public struct TermListResult {
             return nil
         }
         return TermListResult(items: arr.compactMap { TerminalSessionInfo.from(json: $0) })
+    }
+
+    public init(items: [TerminalSessionInfo]) {
+        self.items = items
     }
 }
 

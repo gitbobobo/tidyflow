@@ -11,7 +11,7 @@ public struct ProjectCommand: Identifiable, Codable, Equatable {
     public var blocking: Bool
     public var interactive: Bool
 
-    public init(id: String = UUID().uuidString, name: String = "", icon: String = "terminal", command: String = "", blocking: Bool = false, interactive: Bool = false) {
+    public init(id: String, name: String, icon: String, command: String, blocking: Bool, interactive: Bool) {
         self.id = id
         self.name = name
         self.icon = icon
@@ -44,6 +44,12 @@ public struct WorkspaceSidebarStatusInfo {
             evolutionActive: json["evolution_active"] as? Bool ?? false
         )
     }
+
+    public init(taskIcon: String?, chatActive: Bool, evolutionActive: Bool) {
+        self.taskIcon = taskIcon
+        self.chatActive = chatActive
+        self.evolutionActive = evolutionActive
+    }
 }
 
 /// Workspace info returned from import/create operations
@@ -68,6 +74,14 @@ public struct WorkspaceImportInfo {
             status: status,
             sidebarStatus: WorkspaceSidebarStatusInfo.from(json: json["sidebar_status"] as? [String: Any])
         )
+    }
+
+    public init(name: String, root: String, branch: String, status: String, sidebarStatus: WorkspaceSidebarStatusInfo) {
+        self.name = name
+        self.root = root
+        self.branch = branch
+        self.status = status
+        self.sidebarStatus = sidebarStatus
     }
 }
 
@@ -95,6 +109,13 @@ public struct ProjectImportedResult {
             workspace: workspace
         )
     }
+
+    public init(name: String, root: String, defaultBranch: String, workspace: WorkspaceImportInfo?) {
+        self.name = name
+        self.root = root
+        self.defaultBranch = defaultBranch
+        self.workspace = workspace
+    }
 }
 
 /// Result from create_workspace request
@@ -109,6 +130,11 @@ public struct WorkspaceCreatedResult {
             return nil
         }
         return WorkspaceCreatedResult(project: project, workspace: workspace)
+    }
+
+    public init(project: String, workspace: WorkspaceImportInfo) {
+        self.project = project
+        self.workspace = workspace
     }
 }
 
@@ -141,6 +167,13 @@ public struct ProjectInfo {
         }
         return ProjectInfo(name: name, root: root, workspaceCount: workspaceCount, commands: commands)
     }
+
+    public init(name: String, root: String, workspaceCount: Int, commands: [ProjectCommand]) {
+        self.name = name
+        self.root = root
+        self.workspaceCount = workspaceCount
+        self.commands = commands
+    }
 }
 
 /// Result from list_projects request (server sends "projects" message)
@@ -160,6 +193,10 @@ public struct ProjectsListResult {
         }
         
         return ProjectsListResult(items: items)
+    }
+
+    public init(items: [ProjectInfo]) {
+        self.items = items
     }
 }
 
@@ -186,6 +223,14 @@ public struct WorkspaceInfo {
             sidebarStatus: WorkspaceSidebarStatusInfo.from(json: json["sidebar_status"] as? [String: Any])
         )
     }
+
+    public init(name: String, root: String, branch: String, status: String, sidebarStatus: WorkspaceSidebarStatusInfo) {
+        self.name = name
+        self.root = root
+        self.branch = branch
+        self.status = status
+        self.sidebarStatus = sidebarStatus
+    }
 }
 
 /// Result from list_workspaces request (server sends "workspaces" message)
@@ -208,6 +253,11 @@ public struct WorkspacesListResult {
         
         return WorkspacesListResult(project: project, items: items)
     }
+
+    public init(project: String, items: [WorkspaceInfo]) {
+        self.project = project
+        self.items = items
+    }
 }
 
 /// Result from remove_project request
@@ -223,6 +273,12 @@ public struct ProjectRemovedResult {
         }
         let message = json["message"] as? String
         return ProjectRemovedResult(name: name, ok: ok, message: message)
+    }
+
+    public init(name: String, ok: Bool, message: String?) {
+        self.name = name
+        self.ok = ok
+        self.message = message
     }
 }
 
@@ -242,6 +298,13 @@ public struct WorkspaceRemovedResult {
         let message = json["message"] as? String
         return WorkspaceRemovedResult(project: project, workspace: workspace, ok: ok, message: message)
     }
+
+    public init(project: String, workspace: String, ok: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.ok = ok
+        self.message = message
+    }
 }
 
 /// Result from file_index request
@@ -260,6 +323,13 @@ public struct FileIndexResult {
         let truncated = json["truncated"] as? Bool ?? false
         return FileIndexResult(project: project, workspace: workspace, items: items, truncated: truncated)
     }
+
+    public init(project: String, workspace: String, items: [String], truncated: Bool) {
+        self.project = project
+        self.workspace = workspace
+        self.items = items
+        self.truncated = truncated
+    }
 }
 
 /// Cached file index for a workspace
@@ -277,6 +347,14 @@ public struct FileIndexCache {
     public var isExpired: Bool {
         // Cache expires after 10 minutes
         Date().timeIntervalSince(updatedAt) > 600
+    }
+
+    public init(items: [String], truncated: Bool, updatedAt: Date, isLoading: Bool, error: String?) {
+        self.items = items
+        self.truncated = truncated
+        self.updatedAt = updatedAt
+        self.isLoading = isLoading
+        self.error = error
     }
 }
 
@@ -317,6 +395,15 @@ public struct TemplateCommandInfo: Identifiable {
             "blocking": blocking,
             "interactive": interactive
         ]
+    }
+
+    public init(id: String, name: String, icon: String, command: String, blocking: Bool, interactive: Bool) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.command = command
+        self.blocking = blocking
+        self.interactive = interactive
     }
 }
 
@@ -364,6 +451,16 @@ public struct TemplateInfo: Identifiable {
             "builtin": builtin
         ]
     }
+
+    public init(id: String, name: String, description: String, tags: [String], commands: [TemplateCommandInfo], envVars: [[String]], builtin: Bool) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.tags = tags
+        self.commands = commands
+        self.envVars = envVars
+        self.builtin = builtin
+    }
 }
 
 /// 模板列表结果
@@ -376,6 +473,10 @@ public struct TemplatesListResult {
         }
         let items = itemsArray.compactMap { TemplateInfo.from(json: $0) }
         return TemplatesListResult(items: items)
+    }
+
+    public init(items: [TemplateInfo]) {
+        self.items = items
     }
 }
 
@@ -393,6 +494,12 @@ public struct TemplateSavedResult {
         }
         return TemplateSavedResult(template: template, ok: ok, message: json["message"] as? String)
     }
+
+    public init(template: TemplateInfo, ok: Bool, message: String?) {
+        self.template = template
+        self.ok = ok
+        self.message = message
+    }
 }
 
 /// 模板删除结果
@@ -407,6 +514,12 @@ public struct TemplateDeletedResult {
             return nil
         }
         return TemplateDeletedResult(templateId: templateId, ok: ok, message: json["message"] as? String)
+    }
+
+    public init(templateId: String, ok: Bool, message: String?) {
+        self.templateId = templateId
+        self.ok = ok
+        self.message = message
     }
 }
 
@@ -424,6 +537,12 @@ public struct TemplateImportedResult {
         }
         return TemplateImportedResult(template: template, ok: ok, message: json["message"] as? String)
     }
+
+    public init(template: TemplateInfo, ok: Bool, message: String?) {
+        self.template = template
+        self.ok = ok
+        self.message = message
+    }
 }
 
 /// 模板导出结果
@@ -436,5 +555,9 @@ public struct TemplateExportedResult {
             return nil
         }
         return TemplateExportedResult(template: template)
+    }
+
+    public init(template: TemplateInfo) {
+        self.template = template
     }
 }

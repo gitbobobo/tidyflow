@@ -97,7 +97,8 @@ struct ProjectConfigView: View {
                         name: "",
                         icon: "terminal",
                         command: "",
-                        blocking: false
+                        blocking: false,
+                        interactive: false
                     ),
                     isNew: true
                 ) { newCmd in

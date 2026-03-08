@@ -33,6 +33,14 @@ public struct FileReadResult {
             size: size
         )
     }
+
+    public init(project: String, workspace: String, path: String, content: [UInt8], size: UInt64) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.content = content
+        self.size = size
+    }
 }
 
 /// 文件监控订阅成功结果
@@ -46,6 +54,11 @@ public struct WatchSubscribedResult {
             return nil
         }
         return WatchSubscribedResult(project: project, workspace: workspace)
+    }
+
+    public init(project: String, workspace: String) {
+        self.project = project
+        self.workspace = workspace
     }
 }
 
@@ -70,6 +83,13 @@ public struct FileChangedNotification {
             kind: kind
         )
     }
+
+    public init(project: String, workspace: String, paths: [String], kind: String) {
+        self.project = project
+        self.workspace = workspace
+        self.paths = paths
+        self.kind = kind
+    }
 }
 
 /// Git 状态变化通知
@@ -83,6 +103,11 @@ public struct GitStatusChangedNotification {
             return nil
         }
         return GitStatusChangedNotification(project: project, workspace: workspace)
+    }
+
+    public init(project: String, workspace: String) {
+        self.project = project
+        self.workspace = workspace
     }
 }
 
@@ -115,6 +140,15 @@ public struct FileRenameResult {
             message: message
         )
     }
+
+    public init(project: String, workspace: String, oldPath: String, newPath: String, success: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.success = success
+        self.message = message
+    }
 }
 
 /// 文件删除结果
@@ -140,6 +174,14 @@ public struct FileDeleteResult {
             success: success,
             message: message
         )
+    }
+
+    public init(project: String, workspace: String, path: String, success: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.success = success
+        self.message = message
     }
 }
 
@@ -172,6 +214,15 @@ public struct FileMoveResult {
             message: message
         )
     }
+
+    public init(project: String, workspace: String, oldPath: String, newPath: String, success: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.success = success
+        self.message = message
+    }
 }
 
 /// 文件写入结果（新建文件）
@@ -197,6 +248,14 @@ public struct FileWriteResult {
             success: success,
             size: size
         )
+    }
+
+    public init(project: String, workspace: String, path: String, success: Bool, size: UInt64) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.success = success
+        self.size = size
     }
 }
 
@@ -227,6 +286,15 @@ public struct FileCopyResult {
             message: message
         )
     }
+
+    public init(project: String, workspace: String, sourceAbsolutePath: String, destPath: String, success: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.sourceAbsolutePath = sourceAbsolutePath
+        self.destPath = destPath
+        self.success = success
+        self.message = message
+    }
 }
 
 // MARK: - 文件浏览器模型
@@ -241,15 +309,6 @@ public struct FileEntry: Identifiable, Equatable {
     public let isIgnored: Bool
     public let isSymlink: Bool
 
-    public init(name: String, path: String, isDir: Bool, size: UInt64, isIgnored: Bool, isSymlink: Bool) {
-        self.name = name
-        self.path = path
-        self.isDir = isDir
-        self.size = size
-        self.isIgnored = isIgnored
-        self.isSymlink = isSymlink
-    }
-
     /// 从 JSON 解析
     public static func from(json: [String: Any], parentPath: String) -> FileEntry? {
         guard let name = json["name"] as? String,
@@ -262,6 +321,15 @@ public struct FileEntry: Identifiable, Equatable {
         let path = parentPath.isEmpty ? name : "\(parentPath)/\(name)"
         return FileEntry(name: name, path: path, isDir: isDir, size: size, isIgnored: isIgnored, isSymlink: isSymlink)
     }
+
+    public init(name: String, path: String, isDir: Bool, size: UInt64, isIgnored: Bool, isSymlink: Bool) {
+        self.name = name
+        self.path = path
+        self.isDir = isDir
+        self.size = size
+        self.isIgnored = isIgnored
+        self.isSymlink = isSymlink
+    }
 }
 
 /// 文件列表请求结果
@@ -270,13 +338,6 @@ public struct FileListResult {
     public let workspace: String
     public let path: String
     public let items: [FileEntry]
-
-    public init(project: String, workspace: String, path: String, items: [FileEntry]) {
-        self.project = project
-        self.workspace = workspace
-        self.path = path
-        self.items = items
-    }
 
     public static func from(json: [String: Any]) -> FileListResult? {
         guard let project = json["project"] as? String,
@@ -289,5 +350,12 @@ public struct FileListResult {
         let parentPath = path == "." ? "" : path
         let items = itemsJson.compactMap { FileEntry.from(json: $0, parentPath: parentPath) }
         return FileListResult(project: project, workspace: workspace, path: path, items: items)
+    }
+
+    public init(project: String, workspace: String, path: String, items: [FileEntry]) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.items = items
     }
 }

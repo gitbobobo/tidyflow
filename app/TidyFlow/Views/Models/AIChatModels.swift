@@ -8,14 +8,11 @@ enum AIChatRole: String {
     case assistant
 }
 
-enum AIChatTool: String, CaseIterable, Identifiable {
-    case opencode
-    case codex
-    case copilot
-    case kimi
-    case claude_code
+// AIChatTool, AISessionOrigin, AISessionSelectionHint 已迁移至 TidyFlowShared，
+// 此处添加平台特有的视图层属性扩展。
 
-    var id: String { rawValue }
+extension AIChatTool: Identifiable {
+    public var id: String { rawValue }
 
     var displayName: String {
         switch self {
@@ -35,16 +32,6 @@ enum AIChatTool: String, CaseIterable, Identifiable {
         case .kimi: return "kimi-icon"
         case .claude_code: return "claude-code-icon"
         }
-    }
-}
-
-enum AISessionOrigin: String, Equatable {
-    case user
-    case evolutionSystem = "evolution_system"
-
-    static func from(rawValue: String?) -> AISessionOrigin {
-        guard let rawValue else { return .user }
-        return AISessionOrigin(rawValue: rawValue) ?? .user
     }
 }
 
@@ -476,22 +463,11 @@ enum AIQuestionLocalCompletion {
     }
 }
 
-enum AIToolStatus: String {
-    case pending
-    case running
-    case completed
-    case error
-    case unknown
+// AIToolStatus 已迁移至 TidyFlowShared/Protocol/AIChatProtocolModels.swift，
+// 此处添加平台视图层属性扩展。
 
-    var text: String {
-        switch self {
-        case .pending: return "pending"
-        case .running: return "running"
-        case .completed: return "completed"
-        case .error: return "error"
-        case .unknown: return "unknown"
-        }
-    }
+extension AIToolStatus {
+    var text: String { rawValue }
 }
 
 struct AIToolSection: Identifiable {
@@ -566,6 +542,18 @@ struct AIChatMessage: Identifiable {
         self.isStreaming = isStreaming
         self.renderRevision = renderRevision
         self.timestamp = timestamp
+    }
+}
+
+// MARK: - AISessionMessagesV2 平台侧扩展：转换为视图模型消息列表
+
+extension AISessionMessagesV2 {
+    func toChatMessages() -> [AIChatMessage] {
+        messages.compactMap { message in
+            let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
+            let parts: [AIChatPart] = message.parts.map { AIChatPartNormalization.makeChatPart(from: $0) }
+            return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
+        }
     }
 }
 
@@ -2122,30 +2110,7 @@ struct AIModelSelection: Equatable {
 }
 
 /// 历史会话最近一次输入选择提示（后端 best-effort 下发）
-struct AISessionSelectionHint: Equatable {
-    let agent: String?
-    let modelProviderID: String?
-    let modelID: String?
-    let configOptions: [String: Any]?
-
-    var isEmpty: Bool {
-        let agentEmpty = agent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-        let modelEmpty = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-        let configEmpty = configOptions?.isEmpty ?? true
-        return agentEmpty && modelEmpty && configEmpty
-    }
-
-    static func == (lhs: AISessionSelectionHint, rhs: AISessionSelectionHint) -> Bool {
-        guard lhs.agent == rhs.agent,
-              lhs.modelProviderID == rhs.modelProviderID,
-              lhs.modelID == rhs.modelID else {
-            return false
-        }
-        let left = NSDictionary(dictionary: lhs.configOptions ?? [:])
-        let right = NSDictionary(dictionary: rhs.configOptions ?? [:])
-        return left.isEqual(right)
-    }
-}
+// AISessionSelectionHint 已迁移至 TidyFlowShared/Protocol/AIChatProtocolModels.swift
 
 // MARK: - Agent
 
