@@ -25,6 +25,42 @@
 6. `app/TidyFlow/Networking/WSClient+Send.swift` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 7. `app/TidyFlow/Web/main/protocol-rules.js` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 
+## 项目/工作区协议语义约束
+
+### default 虚拟工作区
+
+每个项目均有一个 `default` 虚拟工作区，由 Core 在 `list_workspaces` 响应和 `system_snapshot` 结果中动态注入。
+- **`workspace_status` 始终为 `ready`**，不随项目状态变化。
+- 指向项目根目录（`Project.root_path`）。
+- 不存储在 `Project.workspaces` HashMap 中；客户端**不得**在本地生成该工作区。
+- 在 `(project, workspace)` 排序下，`default` 始终排在该项目其他命名工作区之前（字典序靠前）。
+
+### 工作区生命周期状态（`workspace_status`）
+
+| 状态值 | 含义 |
+|--------|------|
+| `ready` | 完全就绪，可以使用 |
+| `creating` | git worktree 已创建，等待 setup |
+| `initializing` | setup 脚本执行中 |
+| `setup_failed` | setup 失败，需手动修复 |
+| `destroying` | 标记删除中，不接受新操作 |
+
+`workspace_status` 的状态机转换（见 `core/src/workspace/state.rs`）：
+
+```
+Creating → Initializing → Ready
+                        ↘ SetupFailed
+(任意状态) → Destroying
+```
+
+### 多项目/多工作区唯一标识
+
+- 工作区唯一键：`(project, workspace)` 二元组。
+- 不允许仅凭 `workspace` 名称作为全局缓存键（不同项目可能有同名工作区）。
+- `file_changed` 事件必须通过 `project`/`workspace` 字段路由到正确的缓存桶，
+  不允许仅凭工作区名称判断是否刷新当前界面。
+- `watch_subscribe` 订阅语义是"当前连接的单一活跃订阅"；切换工作区时必须先 `watch_unsubscribe` 再重新订阅。
+
 ## Evolution 读取补充（v7）
 
 Evolution 快照与循环历史结果不再暴露 `handoff` 字段。

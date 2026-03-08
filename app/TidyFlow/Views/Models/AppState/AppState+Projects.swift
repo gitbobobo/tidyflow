@@ -57,7 +57,8 @@ extension AppState {
         projectImportInFlight = false
         projectImportError = nil
 
-        // 创建默认工作空间（虚拟，指向项目根目录）
+        // 创建默认工作空间（虚拟，指向项目根目录）作为临时占位，
+        // 随后立即向 Core 请求权威工作区列表，收到响应后会覆盖此占位。
         let defaultWs = WorkspaceModel(
             name: "default",
             root: result.root,
@@ -79,6 +80,11 @@ extension AppState {
 
         // 自动选中默认工作空间
         selectWorkspace(projectId: newProject.id, workspaceName: defaultWs.name)
+
+        // 向 Core 请求权威工作区列表，保证工作区状态由 Core 统一输出，客户端不维持本地猜测。
+        if connectionState == .connected {
+            wsClient.requestListWorkspaces(project: result.name)
+        }
     }
 
     /// Handle workspace created result from WebSocket

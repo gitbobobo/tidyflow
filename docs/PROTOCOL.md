@@ -92,11 +92,43 @@
   - `workspace`
   - `path`
   - `branch`
-  - `workspace_status`
+  - `workspace_status`（见下方工作区生命周期状态说明）
   - `evolution_status`（无运行态记录时为 `not_started`）
   - `evolution_cycle_id`（无循环时为 `null`）
   - `title`（有循环且已生成标题时有值，否则为 `null`）
   - `failure_reason`（失败原因汇总，无失败时为 `null`；优先级：`terminal_error_message` > `rate_limit_error_message` > `terminal_reason_code`）
+
+## 项目与工作区生命周期
+
+### 工作区列表（`list_workspaces`）
+
+- 请求：`{ type: "list_workspaces", project: "<name>" }`
+- 响应：`{ type: "workspaces", project: "<name>", items: [...] }`
+- 每个 `items` 条目的字段：`name`、`root`、`branch`、`status`、`sidebar_status`
+- Core 在每个项目的工作区列表最前方注入一个虚拟 `default` 工作区（`status: "ready"`），
+  指向项目根目录，不存储在 Core 状态中，无需客户端本地生成。
+- 多项目场景下每个项目独立发送 `list_workspaces`，响应中的 `project` 字段是归属标识。
+
+### 工作区生命周期状态（`workspace_status`）
+
+| 状态值 | 含义 | 可操作性 |
+|--------|------|----------|
+| `ready` | 完全就绪 | 可使用 |
+| `creating` | git worktree 已创建，等待 setup | 不可使用 |
+| `initializing` | setup 脚本执行中 | 不可使用 |
+| `setup_failed` | setup 失败，需手动修复 | 有限操作 |
+| `destroying` | 标记删除中 | 不可使用 |
+
+`default` 虚拟工作区的 `workspace_status` 始终为 `ready`，不随项目状态变化。
+
+### 多项目/多工作区消费约束
+
+- 客户端**必须**通过 `(project, workspace)` 二元组唯一标识一个工作区，
+  不允许仅用 `workspace` 名称作为缓存键（同名工作区在不同项目下是相互独立的）。
+- `list_workspaces` 响应的 `project` 字段是权威归属；
+  收到工作区列表时，只更新与 `project` 对应的缓存桶，不得污染其他项目的工作区状态。
+- 文件树订阅（`watch_subscribe`/`watch_unsubscribe`）和文件变更事件（`file_changed`）
+  均携带 `project`/`workspace`，客户端必须用这两个字段路由到正确的缓存桶。
 
 ## WS 读取动作移除
 

@@ -1,10 +1,36 @@
 //! State persistence for projects and workspaces
+//!
+//! ## 工作区生命周期语义
+//!
+//! ### `default` 虚拟工作区
+//! 每个项目都有一个名为 `default` 的**虚拟工作区**，指向项目根目录，
+//! 状态始终为 `Ready`。该工作区不持久化到 `Project.workspaces` HashMap，
+//! 由 `list_workspaces` 和 `system_snapshot` 在查询时动态注入。
+//! 客户端不得假设 `default` 工作区需要由客户端本地生成，
+//! 所有工作区列表均由 Core 权威输出。
+//!
+//! ### 命名工作区生命周期状态（`WorkspaceStatus`）
+//! ```text
+//! Creating → Initializing → Ready
+//!                         ↘ SetupFailed
+//! (任意状态) → Destroying
+//! ```
+//! - `Creating`：git worktree 已创建，尚未执行 setup
+//! - `Initializing`：setup 脚本执行中
+//! - `Ready`：完全就绪，可以使用
+//! - `SetupFailed`：setup 失败，需要手动修复
+//! - `Destroying`：已标记删除，不应再接受新的操作
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
+
+/// 虚拟默认工作区名称。
+/// 每个项目都有一个不持久化的 `default` 工作区，指向项目根目录，状态始终为 `Ready`。
+/// Core 在 `list_workspaces` 与 `system_snapshot` 输出时动态注入，客户端不得本地重建该工作区。
+pub const DEFAULT_WORKSPACE_NAME: &str = "default";
 
 #[derive(Error, Debug)]
 pub enum StateError {

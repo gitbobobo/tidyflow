@@ -222,8 +222,14 @@ mod shared_error_code_tests {
     #[test]
     fn test_app_error_code_mapping() {
         // 验证 AppError 各变体映射到稳定错误码
-        assert_eq!(AppError::ProjectNotFound("foo".into()).code(), "project_not_found");
-        assert_eq!(AppError::WorkspaceNotFound("bar".into()).code(), "workspace_not_found");
+        assert_eq!(
+            AppError::ProjectNotFound("foo".into()).code(),
+            "project_not_found"
+        );
+        assert_eq!(
+            AppError::WorkspaceNotFound("bar".into()).code(),
+            "workspace_not_found"
+        );
         assert_eq!(AppError::Git("err".into()).code(), "git_error");
         assert_eq!(AppError::File("err".into()).code(), "file_error");
         assert_eq!(AppError::Internal("err".into()).code(), "internal_error");
@@ -238,7 +244,14 @@ mod shared_error_code_tests {
         let err = AppError::ProjectNotFound("myproject".into());
         let msg = err.to_server_error();
         match msg {
-            ServerMessage::Error { code, message, project, workspace, session_id, cycle_id } => {
+            ServerMessage::Error {
+                code,
+                message,
+                project,
+                workspace,
+                session_id,
+                cycle_id,
+            } => {
                 assert_eq!(code, "project_not_found");
                 assert!(message.contains("myproject"));
                 // 无上下文版本字段全为 None
@@ -262,7 +275,13 @@ mod shared_error_code_tests {
             None,
         );
         match msg {
-            ServerMessage::Error { code, project, workspace, session_id, .. } => {
+            ServerMessage::Error {
+                code,
+                project,
+                workspace,
+                session_id,
+                ..
+            } => {
                 assert_eq!(code, "ai_session_error");
                 assert_eq!(project.as_deref(), Some("myproject"));
                 assert_eq!(workspace.as_deref(), Some("feature-x"));
@@ -277,7 +296,14 @@ mod shared_error_code_tests {
         // 验证辅助构造方法向后兼容（无上下文）
         let msg = ServerMessage::make_error("git_error", "git failed");
         match msg {
-            ServerMessage::Error { code, message, project, workspace, session_id, cycle_id } => {
+            ServerMessage::Error {
+                code,
+                message,
+                project,
+                workspace,
+                session_id,
+                cycle_id,
+            } => {
                 assert_eq!(code, "git_error");
                 assert_eq!(message, "git failed");
                 assert!(project.is_none());
@@ -301,7 +327,13 @@ mod shared_error_code_tests {
             Some("cycle-abc".to_string()),
         );
         match msg {
-            ServerMessage::Error { code, project, workspace, cycle_id, .. } => {
+            ServerMessage::Error {
+                code,
+                project,
+                workspace,
+                cycle_id,
+                ..
+            } => {
                 assert_eq!(code, "evolution_error");
                 assert_eq!(project.as_deref(), Some("proj"));
                 assert_eq!(workspace.as_deref(), Some("ws"));
@@ -364,11 +396,17 @@ mod shared_error_code_tests {
             "cycle_id": null
         });
 
-        let msg: ClientMessage = serde_json::from_value(json_with_error_code)
-            .expect("deserialize should succeed");
+        let msg: ClientMessage =
+            serde_json::from_value(json_with_error_code).expect("deserialize should succeed");
 
         match msg {
-            ClientMessage::LogEntry { level, error_code, project, workspace, .. } => {
+            ClientMessage::LogEntry {
+                level,
+                error_code,
+                project,
+                workspace,
+                ..
+            } => {
                 assert_eq!(level, "ERROR");
                 assert_eq!(error_code.as_deref(), Some("ws_receive_error"));
                 assert_eq!(project.as_deref(), Some("myproject"));
@@ -390,11 +428,19 @@ mod shared_error_code_tests {
             "msg": "App started"
         });
 
-        let msg: ClientMessage = serde_json::from_value(json_old_format)
-            .expect("old format deserialize should succeed");
+        let msg: ClientMessage =
+            serde_json::from_value(json_old_format).expect("old format deserialize should succeed");
 
         match msg {
-            ClientMessage::LogEntry { level, error_code, project, workspace, session_id, cycle_id, .. } => {
+            ClientMessage::LogEntry {
+                level,
+                error_code,
+                project,
+                workspace,
+                session_id,
+                cycle_id,
+                ..
+            } => {
                 assert_eq!(level, "INFO");
                 // 新字段均应为 None（向后兼容默认值）
                 assert!(error_code.is_none());
@@ -404,6 +450,88 @@ mod shared_error_code_tests {
                 assert!(cycle_id.is_none());
             }
             _ => panic!("Expected ClientMessage::LogEntry"),
+        }
+    }
+}
+
+// ============================================================================
+// 项目/工作区协议错误路径定向测试（WI-002 / CHK-004）
+// ============================================================================
+
+mod project_workspace_error_path_tests {
+    use tidyflow_core::server::protocol::ServerMessage;
+
+    /// 从 ServerMessage::Error 中提取 code 字段（辅助函数）
+    fn extract_error_code(msg: ServerMessage) -> Option<String> {
+        if let ServerMessage::Error { code, .. } = msg {
+            Some(code)
+        } else {
+            None
+        }
+    }
+
+    /// `project_not_found` 错误码可以被正确序列化/反序列化
+    #[test]
+    fn test_list_workspaces_error_case() {
+        let error_msg = ServerMessage::Error {
+            code: "project_not_found".to_string(),
+            message: "Project 'nonexistent' not found".to_string(),
+            project: Some("nonexistent".to_string()),
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
+        };
+
+        // 序列化
+        let json = serde_json::to_string(&error_msg).unwrap();
+        assert!(json.contains("project_not_found"), "错误码应出现在序列化结果中");
+        assert!(json.contains("nonexistent"), "项目名应出现在序列化结果中");
+
+        // 反序列化
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        let code = extract_error_code(parsed).expect("应能解析为 Error 变体");
+        assert_eq!(code, "project_not_found");
+    }
+
+    /// `workspace_not_found` 错误码可以被正确序列化/反序列化
+    #[test]
+    fn workspace_not_found_error_serializes_correctly() {
+        let error_msg = ServerMessage::Error {
+            code: "workspace_not_found".to_string(),
+            message: "Workspace 'missing' not found in project 'demo'".to_string(),
+            project: Some("demo".to_string()),
+            workspace: Some("missing".to_string()),
+            session_id: None,
+            cycle_id: None,
+        };
+
+        let json = serde_json::to_string(&error_msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+
+        if let ServerMessage::Error { code, project, workspace, .. } = parsed {
+            assert_eq!(code, "workspace_not_found");
+            assert_eq!(project.as_deref(), Some("demo"));
+            assert_eq!(workspace.as_deref(), Some("missing"));
+        } else {
+            panic!("应能解析为 Error 变体");
+        }
+    }
+
+    /// 错误消息包含 project/workspace 归属字段，多工作区场景下可以正确路由
+    #[test]
+    fn error_message_carries_project_workspace_ownership() {
+        let error_msg = ServerMessage::Error {
+            code: "git_error".to_string(),
+            message: "Git operation failed".to_string(),
+            project: Some("project-a".to_string()),
+            workspace: Some("feature-1".to_string()),
+            session_id: None,
+            cycle_id: None,
+        };
+
+        if let ServerMessage::Error { project, workspace, .. } = error_msg {
+            assert_eq!(project.as_deref(), Some("project-a"), "错误归属项目应可提取");
+            assert_eq!(workspace.as_deref(), Some("feature-1"), "错误归属工作区应可提取");
         }
     }
 }

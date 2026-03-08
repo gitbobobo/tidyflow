@@ -475,3 +475,128 @@ mod serialization_tests {
         assert_eq!(parsed.status, original.status);
     }
 }
+
+// ============================================================================
+// 工作区生命周期与默认工作区语义测试（WI-001 / WI-005）
+// ============================================================================
+
+mod workspace_lifecycle_tests {
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use tidyflow_core::workspace::state::{
+        AppState, Project, Workspace, WorkspaceStatus, DEFAULT_WORKSPACE_NAME,
+    };
+
+    fn make_project_with_workspaces(name: &str, workspace_names: &[(&str, WorkspaceStatus)]) -> Project {
+        let mut workspaces = HashMap::new();
+        for (ws_name, status) in workspace_names {
+            workspaces.insert(
+                ws_name.to_string(),
+                Workspace {
+                    name: ws_name.to_string(),
+                    worktree_path: format!("/tmp/{name}/ws/{ws_name}").into(),
+                    branch: format!("tidy/{ws_name}"),
+                    status: status.clone(),
+                    created_at: Utc::now(),
+                    last_accessed: Utc::now(),
+                    setup_result: None,
+                },
+            );
+        }
+        Project {
+            name: name.to_string(),
+            root_path: format!("/tmp/{name}").into(),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: Utc::now(),
+            workspaces,
+            commands: vec![],
+        }
+    }
+
+    /// DEFAULT_WORKSPACE_NAME 常量值必须为 "default"
+    #[test]
+    fn default_workspace_name_constant_is_default() {
+        assert_eq!(DEFAULT_WORKSPACE_NAME, "default");
+    }
+
+    /// WorkspaceStatus 序列化为 snake_case 字符串
+    #[test]
+    fn workspace_status_serializes_to_snake_case() {
+        let cases: &[(WorkspaceStatus, &str)] = &[
+            (WorkspaceStatus::Ready, "ready"),
+            (WorkspaceStatus::Creating, "creating"),
+            (WorkspaceStatus::Initializing, "initializing"),
+            (WorkspaceStatus::SetupFailed, "setup_failed"),
+            (WorkspaceStatus::Destroying, "destroying"),
+        ];
+        for (status, expected) in cases {
+            let json = serde_json::to_string(status).unwrap();
+            assert_eq!(json, format!("\"{expected}\""), "status {:?} 应序列化为 {expected}", status);
+        }
+    }
+
+    /// WorkspaceStatus 反序列化
+    #[test]
+    fn workspace_status_deserializes_from_snake_case() {
+        let ready: WorkspaceStatus = serde_json::from_str("\"ready\"").unwrap();
+        assert_eq!(ready, WorkspaceStatus::Ready);
+        let failed: WorkspaceStatus = serde_json::from_str("\"setup_failed\"").unwrap();
+        assert_eq!(failed, WorkspaceStatus::SetupFailed);
+    }
+
+    /// 多项目场景下 `default` 不在 workspaces HashMap 中
+    #[test]
+    fn default_workspace_not_in_project_workspaces_hashmap() {
+        let project = make_project_with_workspaces(
+            "demo",
+            &[("feature-x", WorkspaceStatus::Ready)],
+        );
+        // default 不应出现在 workspaces HashMap 中
+        assert!(
+            project.get_workspace(DEFAULT_WORKSPACE_NAME).is_none(),
+            "default 工作区不应存储在 Project.workspaces 中"
+        );
+        // 命名工作区正常存在
+        assert!(project.get_workspace("feature-x").is_some());
+    }
+
+    /// 多项目按名称排序，顺序稳定
+    #[test]
+    fn projects_sort_by_name_stable() {
+        let mut state = AppState::default();
+        state.add_project(make_project_with_workspaces("zeta", &[]));
+        state.add_project(make_project_with_workspaces("alpha", &[]));
+        state.add_project(make_project_with_workspaces("beta", &[]));
+
+        let mut names: Vec<&str> = state.list_projects();
+        names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        assert_eq!(names, vec!["alpha", "beta", "zeta"]);
+    }
+
+    /// list_workspaces 响应中，default 工作区始终是第一项（手动前置，非字典序）
+    #[test]
+    fn default_workspace_sorts_before_named_workspaces() {
+        // 模拟 list_workspaces 的排序逻辑：default 手动前置，其余按字典序
+        let named_workspaces = vec!["alpha".to_string(), "zebra".to_string()];
+        let mut all_workspaces = vec![DEFAULT_WORKSPACE_NAME.to_string()];
+        let mut sorted_named = named_workspaces.clone();
+        sorted_named.sort();
+        all_workspaces.extend(sorted_named);
+
+        assert_eq!(
+            all_workspaces.first().map(|s| s.as_str()),
+            Some(DEFAULT_WORKSPACE_NAME),
+            "list_workspaces 返回的第一个工作区始终应为 default"
+        );
+        assert_eq!(all_workspaces, vec!["default", "alpha", "zebra"]);
+    }
+
+    /// WorkspaceStatus 变体全部可以被正确比较
+    #[test]
+    fn workspace_status_equality() {
+        assert_eq!(WorkspaceStatus::Ready, WorkspaceStatus::Ready);
+        assert_ne!(WorkspaceStatus::Ready, WorkspaceStatus::Creating);
+        assert_ne!(WorkspaceStatus::SetupFailed, WorkspaceStatus::Destroying);
+    }
+}

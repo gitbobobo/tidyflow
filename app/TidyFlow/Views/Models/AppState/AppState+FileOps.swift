@@ -249,10 +249,14 @@ extension AppState {
     }
 
     /// 获取目录文件列表
-    func fetchFileList(workspaceKey: String, path: String = ".") {
-        let projectName = selectedProjectName
-        let key = fileListCacheKey(project: projectName, workspace: workspaceKey, path: path)
-        
+    /// - Parameters:
+    ///   - project: 项目名称；必须与当前 `selectedProjectName` 语义一致。
+    ///              显式传入可避免异步回调中 `selectedProjectName` 已切换导致的缓存键错位。
+    ///   - workspaceKey: 工作区名称
+    ///   - path: 目录路径，默认为根目录 "."
+    func fetchFileList(project: String, workspaceKey: String, path: String = ".") {
+        let key = fileListCacheKey(project: project, workspace: workspaceKey, path: path)
+
         guard connectionState == .connected else {
             var cache = fileListCache[key] ?? FileListCache.empty()
             cache.error = "connection.disconnected".localized
@@ -268,7 +272,13 @@ extension AppState {
         fileListCache[key] = cache
 
         // 发送请求
-        wsClient.requestFileList(project: projectName, workspace: workspaceKey, path: path)
+        wsClient.requestFileList(project: project, workspace: workspaceKey, path: path)
+    }
+
+    /// 获取目录文件列表（便捷重载，隐式使用当前 `selectedProjectName`）。
+    /// 调用方须保证 `selectedProjectName` 在调用前已设置为目标项目，否则请使用显式 `project:` 重载。
+    func fetchFileList(workspaceKey: String, path: String = ".") {
+        fetchFileList(project: selectedProjectName, workspaceKey: workspaceKey, path: path)
     }
 
     /// 获取缓存的文件列表
@@ -280,7 +290,8 @@ extension AppState {
     /// 刷新当前工作空间的文件列表（包括根目录和所有展开的目录）
     func refreshFileList() {
         guard let ws = selectedWorkspaceKey else { return }
-        let prefix = "\(selectedProjectName):\(ws):"
+        let project = selectedProjectName
+        let prefix = WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: ws)
 
         // 收集所有展开的目录路径
         let expandedPaths = directoryExpandState
@@ -288,9 +299,9 @@ extension AppState {
             .map { String($0.key.dropFirst(prefix.count)) }
 
         // 刷新根目录和所有展开的目录
-        fetchFileList(workspaceKey: ws, path: ".")
+        fetchFileList(project: project, workspaceKey: ws, path: ".")
         for path in expandedPaths {
-            fetchFileList(workspaceKey: ws, path: path)
+            fetchFileList(project: project, workspaceKey: ws, path: path)
         }
     }
 
@@ -299,7 +310,7 @@ extension AppState {
         let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         let currentState = directoryExpandState[key] ?? false
         directoryExpandState[key] = !currentState
-        
+
         // 如果展开，且没有缓存或缓存已过期，则请求文件列表
         if !currentState {
             let cache = fileListCache[key]
@@ -314,8 +325,6 @@ extension AppState {
         let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         return directoryExpandState[key] ?? false
     }
-
-    // MARK: - v1.23: File Rename/Delete API
 
     /// 处理文件重命名结果
     func handleFileRenameResult(_ result: FileRenameResult) {
@@ -555,10 +564,11 @@ extension AppState {
     /// 处理文件复制结果
     func handleFileCopyResult(_ result: FileCopyResult) {
         if result.success {
-            // 刷新目标目录的文件列表
+            // 使用响应中的 project 字段，而非 selectedProjectName，
+            // 避免异步返回时项目已切换导致刷新错误项目的缓存。
             let destDir = (result.destPath as NSString).deletingLastPathComponent
             let refreshPath = destDir.isEmpty ? "." : destDir
-            fetchFileList(workspaceKey: result.workspace, path: refreshPath)
+            fetchFileList(project: result.project, workspaceKey: result.workspace, path: refreshPath)
         } else {
             TFLog.app.error("文件复制失败: \(result.message ?? "未知错误", privacy: .public)")
         }

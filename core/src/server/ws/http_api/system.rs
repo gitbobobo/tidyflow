@@ -6,6 +6,7 @@ use serde::Serialize;
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{ServerMessage, WorkspaceInfo, PROTOCOL_VERSION};
+use crate::workspace::state::DEFAULT_WORKSPACE_NAME;
 
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::server::ws) struct SystemSnapshotResponse {
@@ -110,7 +111,7 @@ async fn build_workspace_items(
         for project in state.projects.values() {
             let project_name = project.name.clone();
             let default_info = WorkspaceInfo {
-                name: "default".to_string(),
+                name: DEFAULT_WORKSPACE_NAME.to_string(),
                 root: project.root_path.to_string_lossy().to_string(),
                 branch: project.default_branch.clone(),
                 status: "ready".to_string(),

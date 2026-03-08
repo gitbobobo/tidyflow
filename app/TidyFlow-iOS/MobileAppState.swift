@@ -3786,7 +3786,9 @@ final class MobileAppState: ObservableObject {
         wsClient.onWorkspacesList = { [weak self] result in
             guard let self else { return }
             self.workspacesByProject[result.project] = result.items
-            if self.selectedProjectName == result.project || self.workspaces.isEmpty {
+            // 只在响应归属当前选中项目时更新便捷工作区列表，
+            // 避免其他项目的工作区列表回包污染当前上下文。
+            if self.selectedProjectName == result.project {
                 self.workspaces = result.items
             }
         }
