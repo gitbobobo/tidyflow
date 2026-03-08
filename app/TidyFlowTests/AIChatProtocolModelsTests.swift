@@ -586,142 +586,113 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(parsedWithoutTitle?.stages.first?.stage, "plan")
     }
 
-    func testAIProtocolPartInfoParsesToolCallExtendedFields() {
+    func testAIProtocolPartInfoParsesStructuredToolView() {
         let json: [String: Any] = [
             "id": "tool-1",
             "part_type": "tool",
             "tool_name": "bash",
             "tool_call_id": "call-1",
             "tool_kind": "terminal",
-            "tool_title": "执行测试",
-            "tool_raw_input": [
-                "command": "npm test"
-            ],
-            "tool_raw_output": [
-                "type": "terminal",
-                "output": "running"
-            ],
-            "tool_locations": [
-                [
-                    "path": "src/main.ts",
-                    "line": 12,
-                    "column": 4,
-                    "endLine": 12,
-                    "endColumn": 22,
-                    "label": "诊断"
+            "tool_view": [
+                "status": "running",
+                "display_title": "执行测试",
+                "status_text": "running",
+                "summary": "正在执行 npm test",
+                "header_command_summary": "npm test",
+                "duration_ms": 321.5,
+                "sections": [
+                    [
+                        "id": "terminal-output",
+                        "title": "output",
+                        "content": "running",
+                        "style": "terminal",
+                        "copyable": true,
+                        "collapsed_by_default": false
+                    ]
+                ],
+                "locations": [
+                    [
+                        "path": "src/main.ts",
+                        "line": 12,
+                        "column": 4,
+                        "end_line": 12,
+                        "end_column": 22,
+                        "label": "诊断"
+                    ]
                 ]
-            ],
-            "tool_state": [
-                "status": "in_progress"
             ]
         ]
 
         let part = AIProtocolPartInfo.from(json: json)
         XCTAssertNotNil(part)
         XCTAssertEqual(part?.toolKind, "terminal")
-        XCTAssertEqual(part?.toolTitle, "执行测试")
-        XCTAssertEqual((part?.toolRawInput as? [String: Any])?["command"] as? String, "npm test")
-        XCTAssertEqual((part?.toolRawOutput as? [String: Any])?["type"] as? String, "terminal")
-        XCTAssertEqual(part?.toolLocations?.count, 1)
-        XCTAssertEqual(part?.toolLocations?.first?.path, "src/main.ts")
-        XCTAssertEqual(part?.toolLocations?.first?.endLine, 12)
+        XCTAssertEqual(part?.toolView?.status, .running)
+        XCTAssertEqual(part?.toolView?.displayTitle, "执行测试")
+        XCTAssertEqual(part?.toolView?.summary, "正在执行 npm test")
+        XCTAssertEqual(part?.toolView?.headerCommandSummary, "npm test")
+        XCTAssertEqual(part?.toolView?.durationMs, 321.5)
+        XCTAssertEqual(part?.toolView?.sections.count, 1)
+        XCTAssertEqual(part?.toolView?.sections.first?.style, .terminal)
+        XCTAssertEqual(part?.toolView?.sections.first?.content, "running")
+        XCTAssertEqual(part?.toolView?.locations.count, 1)
+        XCTAssertEqual(part?.toolView?.locations.first?.path, "src/main.ts")
+        XCTAssertEqual(part?.toolView?.locations.first?.endLine, 12)
     }
 
-    func testAIToolInvocationStateNormalizesACPStatuses() {
-        let running = AIToolInvocationState.from(state: ["status": "in_progress"])
-        XCTAssertEqual(running?.status, .running)
+    func testAIToolViewQuestionParsesStructuredPromptAndAnswers() {
+        let question = AIToolViewQuestion.from(json: [
+            "request_id": "req-1",
+            "tool_message_id": "tool-msg-1",
+            "interactive": true,
+            "prompt_items": [
+                [
+                    "question": "是否继续？",
+                    "header": "确认",
+                    "multiple": false,
+                    "custom": true,
+                    "options": [
+                        [
+                            "option_id": "allow-once",
+                            "label": "继续",
+                            "description": "仅本次允许"
+                        ]
+                    ]
+                ]
+            ],
+            "answers": [
+                ["继续"]
+            ]
+        ])
 
-        let completed = AIToolInvocationState.from(state: ["status": "done"])
-        XCTAssertEqual(completed?.status, .completed)
-
-        let failed = AIToolInvocationState.from(state: ["status": "failed"])
-        XCTAssertEqual(failed?.status, .error)
-
-        let awaitingInput = AIToolInvocationState.from(state: ["status": "requires_input"])
-        XCTAssertEqual(awaitingInput?.status, .running)
+        XCTAssertNotNil(question)
+        XCTAssertEqual(question?.requestID, "req-1")
+        XCTAssertEqual(question?.toolMessageID, "tool-msg-1")
+        XCTAssertEqual(question?.interactive, true)
+        XCTAssertEqual(question?.promptItems.count, 1)
+        XCTAssertEqual(question?.promptItems.first?.question, "是否继续？")
+        XCTAssertEqual(question?.promptItems.first?.options.first?.optionID, "allow-once")
+        XCTAssertEqual(question?.answers?.first?.first, "继续")
     }
 
-    // MARK: - ACP JSON 字符串 input 解析（WI-002）
+    func testAIToolViewParsesLinkedSessionAndUnknownStatusFallback() {
+        let toolView = AIToolView.from(json: [
+            "status": "not-supported",
+            "display_title": "方向",
+            "status_text": "unknown",
+            "sections": [],
+            "locations": [],
+            "linked_session": [
+                "session_id": "session-1",
+                "agent_name": "DirectionAgent",
+                "description": "继续在子会话中执行"
+            ]
+        ])
 
-    /// Kimi 等 ACP 适配器以 JSON 字符串传递 input 时，AIToolInvocationState.from 应正确解析为字典。
-    func testAIToolInvocationStateFromParsesJSONStringInput() {
-        let jsonStringInput = #"{"command":"npm test","cwd":"/app"}"#
-        let state: [String: Any] = [
-            "status": "done",
-            "input": jsonStringInput
-        ]
-
-        let result = AIToolInvocationState.from(state: state)
-
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.status, .completed)
-        XCTAssertEqual(result?.input["command"] as? String, "npm test")
-        XCTAssertEqual(result?.input["cwd"] as? String, "/app")
-    }
-
-    /// 当 input 已是字典时，不应额外解析，应直接使用。
-    func testAIToolInvocationStateFromPreservesDictInput() {
-        let state: [String: Any] = [
-            "status": "running",
-            "input": ["path": "src/main.rs", "line": 42] as [String: Any]
-        ]
-
-        let result = AIToolInvocationState.from(state: state)
-
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.input["path"] as? String, "src/main.rs")
-        XCTAssertEqual(result?.input["line"] as? Int, 42)
-    }
-
-    /// 当 input 为非法 JSON 字符串时，应回退为空字典，不抛出异常。
-    func testAIToolInvocationStateFromFallsBackToEmptyDictForInvalidJSONStringInput() {
-        let state: [String: Any] = [
-            "status": "done",
-            "input": "not-a-json"
-        ]
-
-        let result = AIToolInvocationState.from(state: state)
-
-        XCTAssertNotNil(result)
-        XCTAssertTrue(result?.input.isEmpty ?? false, "非法 JSON 字符串 input 应回退为空字典")
-    }
-
-    /// input 缺失时应回退为空字典，其余字段正常解析。
-    func testAIToolInvocationStateFromHandlesMissingInput() {
-        let state: [String: Any] = [
-            "status": "error",
-            "output": "build failed"
-        ]
-
-        let result = AIToolInvocationState.from(state: state)
-
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.status, .error)
-        XCTAssertTrue(result?.input.isEmpty ?? false)
-        XCTAssertEqual(result?.output, "build failed")
-    }
-
-    /// 验证多项目/多工作区下，来自不同会话的工具调用 input 不会相互污染（各自独立解析）。
-    func testAIToolInvocationStateFromIsIsolatedAcrossProjects() {
-        let stateProject1: [String: Any] = [
-            "status": "done",
-            "input": #"{"project":"alpha","cmd":"build"}"#
-        ]
-        let stateProject2: [String: Any] = [
-            "status": "done",
-            "input": #"{"project":"beta","cmd":"test"}"#
-        ]
-
-        let result1 = AIToolInvocationState.from(state: stateProject1)
-        let result2 = AIToolInvocationState.from(state: stateProject2)
-
-        XCTAssertEqual(result1?.input["project"] as? String, "alpha")
-        XCTAssertEqual(result2?.input["project"] as? String, "beta")
-        XCTAssertNotEqual(
-            result1?.input["project"] as? String,
-            result2?.input["project"] as? String,
-            "不同项目的工具调用 input 应保持独立"
-        )
+        XCTAssertNotNil(toolView)
+        XCTAssertEqual(toolView?.status, .unknown)
+        XCTAssertEqual(toolView?.linkedSession?.sessionID, "session-1")
+        XCTAssertEqual(toolView?.linkedSession?.agentName, "DirectionAgent")
+        XCTAssertEqual(toolView?.linkedSession?.description, "继续在子会话中执行")
     }
 
     func testAIQuestionLocalCompletionFallbackSkipsFailedAndSelectsInProgress() {
@@ -735,7 +706,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
                         kind: .tool,
                         text: nil,
                         toolName: "question",
-                        toolState: ["status": "in_progress"]
+                        toolView: makeQuestionToolView(status: .running, requestId: "req-fallback")
                     )
                 ],
                 isStreaming: false
@@ -749,7 +720,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
                         kind: .tool,
                         text: nil,
                         toolName: "question",
-                        toolState: ["status": "failed"]
+                        toolView: makeQuestionToolView(status: .error, requestId: "req-fallback-failed")
                     )
                 ],
                 isStreaming: false
@@ -774,8 +745,9 @@ final class AIChatProtocolModelsTests: XCTestCase {
         )
 
         XCTAssertTrue(updated)
-        XCTAssertEqual(messages[0].parts[0].toolState?["status"] as? String, "completed")
-        XCTAssertEqual(messages[1].parts[0].toolState?["status"] as? String, "failed")
+        XCTAssertEqual(messages[0].parts[0].toolView?.status, .completed)
+        XCTAssertEqual(messages[0].parts[0].toolView?.question?.answers?.first?.first, "继续执行")
+        XCTAssertEqual(messages[1].parts[0].toolView?.status, .error)
     }
 
     func testAIChatPartNormalizationKeepsFieldsConsistent() {
@@ -792,179 +764,190 @@ final class AIChatProtocolModelsTests: XCTestCase {
             toolName: "edit",
             toolCallId: "call-x",
             toolKind: "diff",
-            toolTitle: "补丁",
-            toolRawInput: ["path": "a.txt"],
-            toolRawOutput: ["diff": "+x"],
-            toolLocations: [
-                AIProtocolToolCallLocationInfo(
-                    uri: nil,
-                    path: "a.txt",
-                    line: 3,
-                    column: 1,
-                    endLine: 4,
-                    endColumn: 2,
-                    label: "hunk"
-                )
-            ],
-            toolState: ["status": "running"],
-            toolPartMetadata: ["trace_id": "t1"]
+            toolView: AIToolView(
+                status: .running,
+                displayTitle: "补丁",
+                statusText: "running",
+                summary: "正在编辑 a.txt",
+                headerCommandSummary: nil,
+                durationMs: 18,
+                sections: [
+                    AIToolViewSection(
+                        id: "edit-diff",
+                        title: "diff",
+                        content: "+x",
+                        style: .diff,
+                        language: "diff",
+                        copyable: true,
+                        collapsedByDefault: false
+                    )
+                ],
+                locations: [
+                    AIToolViewLocation(
+                        uri: nil,
+                        path: "a.txt",
+                        line: 3,
+                        column: 1,
+                        endLine: 4,
+                        endColumn: 2,
+                        label: "hunk"
+                    )
+                ],
+                question: nil,
+                linkedSession: nil
+            )
         )
 
         let part = AIChatPartNormalization.makeChatPart(from: proto)
         XCTAssertEqual(part.kind, .tool)
         XCTAssertEqual(part.toolKind, "diff")
-        XCTAssertEqual(part.toolTitle, "补丁")
-        XCTAssertEqual((part.toolRawInput as? [String: Any])?["path"] as? String, "a.txt")
-        XCTAssertEqual((part.toolRawOutput as? [String: Any])?["diff"] as? String, "+x")
-        XCTAssertEqual(part.toolLocations?.first?.path, "a.txt")
-        XCTAssertEqual(part.toolLocations?.first?.endColumn, 2)
+        XCTAssertEqual(part.toolView?.displayTitle, "补丁")
+        XCTAssertEqual(part.toolView?.summary, "正在编辑 a.txt")
+        XCTAssertEqual(part.toolView?.sections.first?.content, "+x")
+        XCTAssertEqual(part.toolView?.locations.first?.path, "a.txt")
+        XCTAssertEqual(part.toolView?.locations.first?.endColumn, 2)
         XCTAssertEqual(part.source?["vendor"] as? String, "acp")
     }
 
-    func testToolCardViewBuildsMarkdownDiffTerminalAndLocationsSections() {
-        let markdownView = ToolCardView(
-            name: "markdown",
-            state: [
-                "status": "running",
-                "output": "# 标题",
-                "metadata": [
-                    "locations": [
-                        ["path": "doc.md", "line": 1]
-                    ]
-                ]
+    func testStructuredToolViewPreservesMarkdownDiffTerminalAndLocationsSections() {
+        let toolView = AIToolView(
+            status: .running,
+            displayTitle: "终端",
+            statusText: "running",
+            summary: "正在处理",
+            headerCommandSummary: "npm test",
+            durationMs: nil,
+            sections: [
+                AIToolViewSection(
+                    id: "markdown-output",
+                    title: "markdown",
+                    content: "# 标题",
+                    style: .markdown,
+                    language: nil,
+                    copyable: true,
+                    collapsedByDefault: false
+                ),
+                AIToolViewSection(
+                    id: "edit-diff",
+                    title: "diff",
+                    content: "@@ -1 +1 @@\n-old\n+new",
+                    style: .diff,
+                    language: "diff",
+                    copyable: true,
+                    collapsedByDefault: false
+                ),
+                AIToolViewSection(
+                    id: "terminal-output",
+                    title: "output",
+                    content: "npm test\nok",
+                    style: .terminal,
+                    language: "bash",
+                    copyable: true,
+                    collapsedByDefault: false
+                ),
+                AIToolViewSection(
+                    id: "terminal-progress",
+                    title: "progress",
+                    content: "50%",
+                    style: .text,
+                    language: nil,
+                    copyable: false,
+                    collapsedByDefault: true
+                )
             ],
-            callID: "c1",
-            partMetadata: nil
+            locations: [
+                AIToolViewLocation(
+                    uri: nil,
+                    path: "doc.md",
+                    line: 1,
+                    column: nil,
+                    endLine: nil,
+                    endColumn: nil,
+                    label: "标题"
+                )
+            ],
+            question: nil,
+            linkedSession: nil
         )
-        let markdownSections = markdownView.debugPresentationForTests().sections.map(\.id)
-        XCTAssertTrue(markdownSections.contains("markdown-output"))
-        XCTAssertTrue(markdownSections.contains("markdown-locations"))
 
-        let diffView = ToolCardView(
-            name: "diff",
-            state: [
-                "status": "running",
-                "output": "@@ -1 +1 @@\n-old\n+new"
-            ],
-            callID: "c2",
-            partMetadata: nil
-        )
-        let diffSections = diffView.debugPresentationForTests().sections.map(\.id)
-        XCTAssertTrue(diffSections.contains("edit-diff"))
-
-        let terminalView = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "running",
-                "output": "npm test\nok",
-                "metadata": [
-                    "progress_lines": ["50%"]
-                ]
-            ],
-            callID: "c3",
-            partMetadata: nil
-        )
-        let terminalSections = terminalView.debugPresentationForTests().sections.map(\.id)
-        XCTAssertTrue(terminalSections.contains("terminal-output"))
-        XCTAssertTrue(terminalSections.contains("terminal-progress"))
+        XCTAssertEqual(toolView.sections.map(\.id), ["markdown-output", "edit-diff", "terminal-output", "terminal-progress"])
+        XCTAssertEqual(toolView.sections[0].style, .markdown)
+        XCTAssertEqual(toolView.sections[1].style, .diff)
+        XCTAssertEqual(toolView.sections[2].style, .terminal)
+        XCTAssertEqual(toolView.locations.first?.path, "doc.md")
+        XCTAssertEqual(toolView.locations.first?.line, 1)
     }
 
-    func testTerminalCardTitleShowsCommandSummary() {
-        // 终端工具卡片标题行应显示工具名，命令摘要单独通过 headerCommandSummary 字段携带
-        let terminalWithCommand = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "completed",
-                "input": ["command": "ls -la"],
-                "output": "total 8\ndrwxr-xr-x  2 user group 64 Jan 1 00:00 ."
+    func testStructuredToolViewUsesCommandSummaryAndDisplayTitleFromProtocol() {
+        let toolView = AIToolView(
+            status: .completed,
+            displayTitle: "terminal",
+            statusText: "completed",
+            summary: nil,
+            headerCommandSummary: "ls -la",
+            durationMs: 1200,
+            sections: [
+                AIToolViewSection(
+                    id: "terminal-output",
+                    title: "output",
+                    content: "total 8",
+                    style: .terminal,
+                    language: "bash",
+                    copyable: true,
+                    collapsedByDefault: false
+                )
             ],
-            callID: "c-tc-1",
-            partMetadata: nil
+            locations: [],
+            question: nil,
+            linkedSession: nil
         )
-        let presentation = terminalWithCommand.debugPresentationForTests()
-        // 标题只保留工具名，不再将命令嵌入括号格式
-        XCTAssertEqual(presentation.displayTitle, "terminal", "标题应只包含工具名，命令摘要不嵌入标题字符串")
-        // 命令摘要通过独立字段承载，确保 UI 可分层渲染
-        XCTAssertEqual(presentation.headerCommandSummary, "ls -la", "命令摘要应通过 headerCommandSummary 字段携带")
+
+        XCTAssertEqual(toolView.displayTitle, "terminal")
+        XCTAssertEqual(toolView.headerCommandSummary, "ls -la")
+        XCTAssertEqual(toolView.sections.map(\.id), ["terminal-output"])
     }
 
-    func testTerminalCardBodyExcludesInputSectionWhenCommandInTitle() {
-        // 命令摘要已进标题后，正文不应再出现 terminal-input section
-        let terminalWithCommand = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "completed",
-                "input": ["command": "npm test"],
-                "output": "PASS all tests"
-            ],
-            callID: "c-tc-2",
-            partMetadata: nil
+    func testStructuredToolViewCarriesLinkedSessionAndQuestionPayload() {
+        let toolView = AIToolView(
+            status: .pending,
+            displayTitle: "方向",
+            statusText: "pending",
+            summary: "等待用户确认",
+            headerCommandSummary: nil,
+            durationMs: nil,
+            sections: [],
+            locations: [],
+            question: AIToolViewQuestion(
+                requestID: "req-structured",
+                toolMessageID: "tool-msg-9",
+                promptItems: [
+                    AIQuestionInfo(
+                        question: "是否继续？",
+                        header: "确认",
+                        options: [
+                            AIQuestionOptionInfo(optionID: "continue", label: "继续", description: "继续执行")
+                        ],
+                        multiple: false,
+                        custom: false
+                    )
+                ],
+                interactive: true,
+                answers: nil
+            ),
+            linkedSession: AIToolLinkedSession(
+                sessionID: "session-2",
+                agentName: "DirectionAgent",
+                description: "继续在子会话中执行"
+            )
         )
-        let sections = terminalWithCommand.debugPresentationForTests().sections.map(\.id)
-        XCTAssertFalse(sections.contains("terminal-input"), "命令已在标题展示时，正文不应重复渲染 terminal-input section")
-        XCTAssertTrue(sections.contains("terminal-output"), "执行输出仍应在正文展示")
+
+        XCTAssertEqual(toolView.question?.requestID, "req-structured")
+        XCTAssertEqual(toolView.question?.promptItems.first?.options.first?.optionID, "continue")
+        XCTAssertEqual(toolView.linkedSession?.sessionID, "session-2")
+        XCTAssertEqual(toolView.linkedSession?.agentName, "DirectionAgent")
     }
 
-    func testTerminalCardTitleFallsBackWhenNoCommand() {
-        // 无 command 字段时，终端卡片标题应回退到稳定的工具名或 invocation.title
-        let terminalNoCommand = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "running",
-                "input": ["env": "production"],
-                "output": ""
-            ],
-            callID: "c-tc-3",
-            partMetadata: nil
-        )
-        let presentation = terminalNoCommand.debugPresentationForTests()
-        XCTAssertFalse(presentation.displayTitle.isEmpty, "无命令时标题不应为空")
-        XCTAssertFalse(presentation.displayTitle.hasPrefix("terminal("), "无命令时标题不应包含括号命令格式")
-        // 无命令时 input section 应正常渲染（回退路径）
-        let sections = terminalNoCommand.debugPresentationForTests().sections.map(\.id)
-        XCTAssertTrue(sections.contains("terminal-input"), "无命令摘要时 input section 应保留在正文")
-    }
-
-    func testTerminalCardTitleUsesTooltitleWhenNoCommand() {
-        // 无 command 字段但有 toolTitle（via invocation.title）时，应展示 toolTitle
-        let terminalWithTitle = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "completed",
-                "title": "执行数据库迁移",
-                "input": ["env": "production"]
-            ],
-            callID: "c-tc-4",
-            toolTitle: "执行数据库迁移",
-            partMetadata: nil
-        )
-        let presentation = terminalWithTitle.debugPresentationForTests()
-        XCTAssertEqual(presentation.displayTitle, "执行数据库迁移", "无命令时应回退到 toolTitle")
-    }
-
-    func testTerminalCardCommandSummaryTruncatesLongCommand() {
-        // 超长命令应被截断后放入 headerCommandSummary，不应导致标题溢出
-        let longCmd = String(repeating: "a", count: 80)
-        let terminalLongCmd = ToolCardView(
-            name: "terminal",
-            state: [
-                "status": "running",
-                "input": ["command": longCmd]
-            ],
-            callID: "c-tc-5",
-            partMetadata: nil
-        )
-        let presentation = terminalLongCmd.debugPresentationForTests()
-        // 标题仍只显示工具名
-        XCTAssertEqual(presentation.displayTitle, "terminal", "长命令场景下标题仍只包含工具名")
-        // headerCommandSummary 携带截断后的命令
-        let commandSummary = presentation.headerCommandSummary
-        XCTAssertNotNil(commandSummary, "长命令应有 headerCommandSummary")
-        XCTAssertTrue(commandSummary?.hasSuffix("…") == true, "超长命令摘要应以省略号结尾")
-        XCTAssertLessThanOrEqual(commandSummary?.count ?? 0, 60, "命令摘要长度不应过长")
-    }
-
-    func testAISessionMessagesToChatMessagesMapsToolCallExtendedFields() {
+    func testAISessionMessagesToChatMessagesMapsStructuredToolView() {
         let payload = AISessionMessagesV2(
             projectName: "tidyflow",
             workspaceName: "default",
@@ -993,22 +976,38 @@ final class AIChatProtocolModelsTests: XCTestCase {
                             toolName: "bash",
                             toolCallId: "call-2",
                             toolKind: "terminal",
-                            toolTitle: "运行命令",
-                            toolRawInput: ["command": "ls"],
-                            toolRawOutput: ["output": "ok"],
-                            toolLocations: [
-                                AIProtocolToolCallLocationInfo(
-                                    uri: "file:///tmp/a",
-                                    path: nil,
-                                    line: 9,
-                                    column: 3,
-                                    endLine: nil,
-                                    endColumn: nil,
-                                    label: "ref"
-                                )
-                            ],
-                            toolState: ["status": "running"],
-                            toolPartMetadata: nil
+                            toolView: AIToolView(
+                                status: .running,
+                                displayTitle: "运行命令",
+                                statusText: "running",
+                                summary: "列出目录",
+                                headerCommandSummary: "ls",
+                                durationMs: nil,
+                                sections: [
+                                    AIToolViewSection(
+                                        id: "terminal-output",
+                                        title: "output",
+                                        content: "ok",
+                                        style: .terminal,
+                                        language: "bash",
+                                        copyable: true,
+                                        collapsedByDefault: false
+                                    )
+                                ],
+                                locations: [
+                                    AIToolViewLocation(
+                                        uri: "file:///tmp/a",
+                                        path: nil,
+                                        line: 9,
+                                        column: 3,
+                                        endLine: nil,
+                                        endColumn: nil,
+                                        label: "ref"
+                                    )
+                                ],
+                                question: nil,
+                                linkedSession: nil
+                            )
                         )
                     ]
                 )
@@ -1024,10 +1023,10 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(mapped.first?.parts.count, 1)
         let part = mapped.first?.parts.first
         XCTAssertEqual(part?.toolKind, "terminal")
-        XCTAssertEqual(part?.toolTitle, "运行命令")
-        XCTAssertEqual((part?.toolRawInput as? [String: Any])?["command"] as? String, "ls")
-        XCTAssertEqual(part?.toolLocations?.first?.uri, "file:///tmp/a")
-        XCTAssertEqual(part?.toolLocations?.first?.line, 9)
+        XCTAssertEqual(part?.toolView?.displayTitle, "运行命令")
+        XCTAssertEqual(part?.toolView?.headerCommandSummary, "ls")
+        XCTAssertEqual(part?.toolView?.locations.first?.uri, "file:///tmp/a")
+        XCTAssertEqual(part?.toolView?.locations.first?.line, 9)
     }
 
     func testAISessionMessagesParsesTruncatedFlag() {
@@ -1623,12 +1622,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
             synthetic: nil, ignored: nil, source: nil,
             toolName: "question",
             toolCallId: "call-1",
-            toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
-            toolState: [
-                "status": "completed",
-                "questions": [["id": "q1", "question": "Hello?", "default": "yes"]]
-            ],
-            toolPartMetadata: ["request_id": "req-1"]
+            toolKind: nil,
+            toolView: makeQuestionToolView(status: .completed, requestId: "req-1", question: "Hello?")
         )
         let message = AIProtocolMessageInfo(
             id: "m1", role: "assistant", createdAt: nil, agent: nil,
@@ -1646,12 +1641,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
             synthetic: nil, ignored: nil, source: nil,
             toolName: "question",
             toolCallId: "call-2",
-            toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
-            toolState: [
-                "status": "waiting",
-                "questions": [["id": "q2", "question": "Continue?", "default": "yes"]]
-            ],
-            toolPartMetadata: ["request_id": "req-2"]
+            toolKind: nil,
+            toolView: makeQuestionToolView(status: .pending, requestId: "req-2", question: "Continue?")
         )
         let message = AIProtocolMessageInfo(
             id: "m2", role: "assistant", createdAt: nil, agent: nil,
@@ -1671,9 +1662,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
                 text: nil, mime: nil, filename: nil, url: nil,
                 synthetic: nil, ignored: nil, source: nil,
                 toolName: "question", toolCallId: callId,
-                toolKind: nil, toolTitle: nil, toolRawInput: nil, toolRawOutput: nil, toolLocations: nil,
-                toolState: ["status": "waiting", "questions": [["id": "q1", "question": "Q?", "default": "yes"]]],
-                toolPartMetadata: ["request_id": "same-req-id"]
+                toolKind: nil,
+                toolView: makeQuestionToolView(status: .pending, requestId: "same-req-id", question: "Q?")
             )
         }
         let msg1 = AIProtocolMessageInfo(id: "m1", role: "assistant", createdAt: nil, agent: nil, modelProviderID: nil, modelID: nil, parts: [makePart(id: "p1", callId: "c1")])
@@ -1684,5 +1674,44 @@ final class AIChatProtocolModelsTests: XCTestCase {
 
     func testDefaultMessagesPageSizeIs50() {
         XCTAssertEqual(AISessionSemantics.defaultMessagesPageSize, 50)
+    }
+
+    private func makeQuestionToolView(
+        status: AIToolStatus,
+        requestId: String,
+        question: String = "Q?"
+    ) -> AIToolView {
+        AIToolView(
+            status: status,
+            displayTitle: "question",
+            statusText: status.rawValue,
+            summary: nil,
+            headerCommandSummary: nil,
+            durationMs: nil,
+            sections: [],
+            locations: [],
+            question: AIToolViewQuestion(
+                requestID: requestId,
+                toolMessageID: nil,
+                promptItems: [
+                    AIQuestionInfo(
+                        question: question,
+                        header: "确认",
+                        options: [
+                            AIQuestionOptionInfo(
+                                optionID: "yes",
+                                label: "yes",
+                                description: "继续"
+                            )
+                        ],
+                        multiple: false,
+                        custom: false
+                    )
+                ],
+                interactive: status != .completed && status != .error,
+                answers: nil
+            ),
+            linkedSession: nil
+        )
     }
 }

@@ -23,7 +23,8 @@ mod utils;
 pub use ai_state::AIState;
 pub(crate) use session_index_store::{AiSessionIndexPage, AiSessionIndexStore};
 pub(crate) use utils::{
-    apply_stream_snapshot_cache_op, build_ai_session_messages_update, ensure_agent,
+    apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
+    ensure_agent,
     infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
     mark_stream_snapshot_terminal, merge_session_selection_hint, normalize_ai_tool,
     normalize_part_for_wire, resolve_directory, seed_stream_snapshot, split_utf8_text_by_max_bytes,

@@ -83,7 +83,105 @@ pub struct SessionInfo {
     pub session_origin: AiSessionOrigin,
 }
 
-/// AI Part（对齐 OpenCode part，tool_state 透传 JSON）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolViewSectionStyle {
+    Text,
+    Code,
+    Diff,
+    Markdown,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolViewSection {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub style: ToolViewSectionStyle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub copyable: bool,
+    #[serde(default)]
+    pub collapsed_by_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolViewLocation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolViewQuestionOption {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option_id: Option<String>,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolViewQuestionPromptItem {
+    pub question: String,
+    pub header: String,
+    pub options: Vec<ToolViewQuestionOption>,
+    pub multiple: bool,
+    pub custom: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolViewQuestion {
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_message_id: Option<String>,
+    pub prompt_items: Vec<ToolViewQuestionPromptItem>,
+    pub interactive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolLinkedSession {
+    pub session_id: String,
+    pub agent_name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolView {
+    pub status: String,
+    pub display_title: String,
+    pub status_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header_command_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<f64>,
+    #[serde(default)]
+    pub sections: Vec<ToolViewSection>,
+    #[serde(default)]
+    pub locations: Vec<ToolViewLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<ToolViewQuestion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_session: Option<ToolLinkedSession>,
+}
+
+/// AI Part（对齐 OpenCode part，tool 展示改为结构化 tool_view）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartInfo {
     pub id: String,
@@ -111,41 +209,9 @@ pub struct PartInfo {
     /// ACP tool-calls kind（若为 tool）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_kind: Option<String>,
-    /// ACP tool-calls title（若为 tool）
+    /// 前端渲染所需的结构化工具卡片数据
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_title: Option<String>,
-    /// ACP tool-calls rawInput（若为 tool）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_raw_input: Option<serde_json::Value>,
-    /// ACP tool-calls rawOutput（若为 tool）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_raw_output: Option<serde_json::Value>,
-    /// ACP tool-calls locations（若为 tool）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_locations: Option<Vec<ToolCallLocationInfo>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_state: Option<serde_json::Value>,
-    /// OpenCode tool part metadata（若为 tool）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_part_metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallLocationInfo {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub line: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub column: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_line: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_column: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
+    pub tool_view: Option<ToolView>,
 }
 
 /// AI 历史消息（对齐 OpenCode message）
@@ -731,12 +797,7 @@ mod tests {
                     tool_name: None,
                     tool_call_id: None,
                     tool_kind: None,
-                    tool_title: None,
-                    tool_raw_input: None,
-                    tool_raw_output: None,
-                    tool_locations: None,
-                    tool_state: None,
-                    tool_part_metadata: None,
+                    tool_view: None,
                     mime: None,
                     filename: None,
                     url: None,
@@ -760,12 +821,7 @@ mod tests {
                         tool_name: Some("bash".to_string()),
                         tool_call_id: Some("call-1".to_string()),
                         tool_kind: None,
-                        tool_title: None,
-                        tool_raw_input: None,
-                        tool_raw_output: None,
-                        tool_locations: None,
-                        tool_state: None,
-                        tool_part_metadata: None,
+                        tool_view: None,
                         mime: None,
                         filename: None,
                         url: None,
@@ -780,12 +836,7 @@ mod tests {
                         tool_name: None,
                         tool_call_id: None,
                         tool_kind: None,
-                        tool_title: None,
-                        tool_raw_input: None,
-                        tool_raw_output: None,
-                        tool_locations: None,
-                        tool_state: None,
-                        tool_part_metadata: None,
+                        tool_view: None,
                         mime: None,
                         filename: None,
                         url: None,
@@ -870,12 +921,7 @@ mod tests {
                 tool_name: None,
                 tool_call_id: None,
                 tool_kind: None,
-                tool_title: None,
-                tool_raw_input: None,
-                tool_raw_output: None,
-                tool_locations: None,
-                tool_state: None,
-                tool_part_metadata: None,
+                tool_view: None,
                 mime: None,
                 filename: None,
                 url: None,

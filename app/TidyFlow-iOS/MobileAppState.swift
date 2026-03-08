@@ -2363,8 +2363,7 @@ final class MobileAppState: ObservableObject {
                                 id: UUID().uuidString,
                                 kind: .text,
                                 text: "暂不支持本地命令：/\(slashCommand.name)",
-                                toolName: nil,
-                                toolState: nil
+                                toolName: nil
                             )],
                             isStreaming: false
                         )

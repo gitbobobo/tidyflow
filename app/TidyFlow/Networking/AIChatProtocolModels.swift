@@ -415,12 +415,7 @@ struct AIProtocolPartInfo {
     let toolName: String?
     let toolCallId: String?
     let toolKind: String?
-    let toolTitle: String?
-    let toolRawInput: Any?
-    let toolRawOutput: Any?
-    let toolLocations: [AIProtocolToolCallLocationInfo]?
-    let toolState: [String: Any]?
-    let toolPartMetadata: [String: Any]?
+    let toolView: AIToolView?
 
     static func from(json: [String: Any]) -> AIProtocolPartInfo? {
         guard let id = json["id"] as? String,
@@ -435,13 +430,7 @@ struct AIProtocolPartInfo {
         let toolName = json["tool_name"] as? String
         let toolCallId = json["tool_call_id"] as? String
         let toolKind = parseOptionalString(json["tool_kind"])
-        let toolTitle = parseOptionalString(json["tool_title"])
-        let toolRawInput = json["tool_raw_input"]
-        let toolRawOutput = json["tool_raw_output"]
-        let toolLocations = (json["tool_locations"] as? [[String: Any]] ?? [])
-            .compactMap { AIProtocolToolCallLocationInfo.from(json: $0) }
-        let toolState = json["tool_state"] as? [String: Any]
-        let toolPartMetadata = json["tool_part_metadata"] as? [String: Any]
+        let toolView = AIToolView.from(json: json["tool_view"] as? [String: Any])
         return AIProtocolPartInfo(
             id: id,
             partType: partType,
@@ -455,17 +444,47 @@ struct AIProtocolPartInfo {
             toolName: toolName,
             toolCallId: toolCallId,
             toolKind: toolKind,
-            toolTitle: toolTitle,
-            toolRawInput: toolRawInput,
-            toolRawOutput: toolRawOutput,
-            toolLocations: toolLocations.isEmpty ? nil : toolLocations,
-            toolState: toolState,
-            toolPartMetadata: toolPartMetadata
+            toolView: toolView
         )
     }
 }
 
-struct AIProtocolToolCallLocationInfo {
+enum AIToolViewSectionStyle: String {
+    case text
+    case code
+    case diff
+    case markdown
+    case terminal
+}
+
+struct AIToolViewSection: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let content: String
+    let style: AIToolViewSectionStyle
+    let language: String?
+    let copyable: Bool
+    let collapsedByDefault: Bool
+
+    static func from(json: [String: Any]) -> AIToolViewSection? {
+        guard let id = parseOptionalString(json["id"]),
+              let title = parseOptionalString(json["title"]),
+              let content = json["content"] as? String,
+              let styleRaw = parseOptionalString(json["style"]),
+              let style = AIToolViewSectionStyle(rawValue: styleRaw) else { return nil }
+        return AIToolViewSection(
+            id: id,
+            title: title,
+            content: content,
+            style: style,
+            language: parseOptionalString(json["language"]),
+            copyable: parseBool(json["copyable"]) ?? true,
+            collapsedByDefault: parseBool(json["collapsed_by_default"]) ?? false
+        )
+    }
+}
+
+struct AIToolViewLocation: Equatable {
     let uri: String?
     let path: String?
     let line: Int?
@@ -474,7 +493,7 @@ struct AIProtocolToolCallLocationInfo {
     let endColumn: Int?
     let label: String?
 
-    static func from(json: [String: Any]) -> AIProtocolToolCallLocationInfo? {
+    static func from(json: [String: Any]) -> AIToolViewLocation? {
         let uri = parseOptionalString(json["uri"])
         let path = parseOptionalString(json["path"])
         let line = Int(parseInt64(json["line"]))
@@ -485,7 +504,7 @@ struct AIProtocolToolCallLocationInfo {
         if uri == nil && path == nil && line == 0 && column == 0 && endLine == 0 && endColumn == 0 && label == nil {
             return nil
         }
-        return AIProtocolToolCallLocationInfo(
+        return AIToolViewLocation(
             uri: uri,
             path: path,
             line: line == 0 ? nil : line,
@@ -493,6 +512,86 @@ struct AIProtocolToolCallLocationInfo {
             endLine: endLine == 0 ? nil : endLine,
             endColumn: endColumn == 0 ? nil : endColumn,
             label: label
+        )
+    }
+}
+
+struct AIToolViewQuestion: Equatable {
+    let requestID: String
+    let toolMessageID: String?
+    let promptItems: [AIQuestionInfo]
+    let interactive: Bool
+    let answers: [[String]]?
+
+    static func from(json: [String: Any]?) -> AIToolViewQuestion? {
+        guard let json,
+              let requestID = parseOptionalString(json["request_id"]) else { return nil }
+        let promptItems = parseArrayOfDictionaries(json["prompt_items"])
+            .compactMap { AIQuestionInfo.from(json: $0) }
+        guard !promptItems.isEmpty else { return nil }
+        let answers = (json["answers"] as? [Any])?.map { group -> [String] in
+            if let values = group as? [String] {
+                return values
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            }
+            if let values = group as? [Any] {
+                return values.compactMap { AIQuestionRequestInfo.stringValue($0) }
+            }
+            return []
+        }
+        return AIToolViewQuestion(
+            requestID: requestID,
+            toolMessageID: parseOptionalString(json["tool_message_id"]),
+            promptItems: promptItems,
+            interactive: parseBool(json["interactive"]) ?? false,
+            answers: answers
+        )
+    }
+}
+
+struct AIToolLinkedSession: Equatable {
+    let sessionID: String
+    let agentName: String
+    let description: String
+
+    static func from(json: [String: Any]?) -> AIToolLinkedSession? {
+        guard let json,
+              let sessionID = parseOptionalString(json["session_id"]),
+              let agentName = parseOptionalString(json["agent_name"]),
+              let description = parseOptionalString(json["description"]) else { return nil }
+        return AIToolLinkedSession(sessionID: sessionID, agentName: agentName, description: description)
+    }
+}
+
+struct AIToolView: Equatable {
+    let status: AIToolStatus
+    let displayTitle: String
+    let statusText: String
+    let summary: String?
+    let headerCommandSummary: String?
+    let durationMs: Double?
+    let sections: [AIToolViewSection]
+    let locations: [AIToolViewLocation]
+    let question: AIToolViewQuestion?
+    let linkedSession: AIToolLinkedSession?
+
+    static func from(json: [String: Any]?) -> AIToolView? {
+        guard let json,
+              let statusRaw = parseOptionalString(json["status"]),
+              let displayTitle = parseOptionalString(json["display_title"]),
+              let statusText = parseOptionalString(json["status_text"]) else { return nil }
+        return AIToolView(
+            status: AIToolStatus(rawValue: statusRaw) ?? .unknown,
+            displayTitle: displayTitle,
+            statusText: statusText,
+            summary: parseOptionalString(json["summary"]),
+            headerCommandSummary: parseOptionalString(json["header_command_summary"]),
+            durationMs: parseDouble(json["duration_ms"]),
+            sections: parseArrayOfDictionaries(json["sections"]).compactMap { AIToolViewSection.from(json: $0) },
+            locations: parseArrayOfDictionaries(json["locations"]).compactMap { AIToolViewLocation.from(json: $0) },
+            question: AIToolViewQuestion.from(json: json["question"] as? [String: Any]),
+            linkedSession: AIToolLinkedSession.from(json: json["linked_session"] as? [String: Any])
         )
     }
 }
@@ -586,7 +685,7 @@ struct AIChatPendingV2 {
     }
 }
 
-struct AIQuestionOptionInfo {
+struct AIQuestionOptionInfo: Equatable {
     let optionID: String?
     let label: String
     let description: String
@@ -599,7 +698,7 @@ struct AIQuestionOptionInfo {
     }
 }
 
-struct AIQuestionInfo {
+struct AIQuestionInfo: Equatable {
     let question: String
     let header: String
     let options: [AIQuestionOptionInfo]
@@ -670,6 +769,18 @@ struct AIQuestionRequestInfo {
 
                 return answer
             }
+        }
+    }
+
+    static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let value as String:
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
         }
     }
 }

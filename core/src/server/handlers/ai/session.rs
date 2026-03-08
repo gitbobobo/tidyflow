@@ -160,6 +160,59 @@ fn recompute_ai_session_page_meta_after_truncate(
     }
 }
 
+fn clamp_text_for_history(text: &str, limit: usize) -> String {
+    if limit == 0 || text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let head_count = limit.saturating_sub(180);
+    let tail_count = 160usize.min(limit / 6);
+    let head = text.chars().take(head_count).collect::<String>();
+    let tail = if tail_count > 0 {
+        text.chars()
+            .rev()
+            .take(tail_count)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+    format!(
+        "{}\n…（已为历史展示裁剪，原始长度 {} 字符）…\n{}",
+        head,
+        text.chars().count(),
+        tail
+    )
+}
+
+fn truncate_tool_view_sections_for_history(
+    message: &mut crate::server::protocol::ai::MessageInfo,
+) -> bool {
+    let mut changed = false;
+    for part in &mut message.parts {
+        let Some(tool_view) = part.tool_view.as_mut() else {
+            continue;
+        };
+        for section in &mut tool_view.sections {
+            let limit = match section.style {
+                crate::server::protocol::ai::ToolViewSectionStyle::Code
+                | crate::server::protocol::ai::ToolViewSectionStyle::Diff
+                | crate::server::protocol::ai::ToolViewSectionStyle::Terminal => 24_000,
+                crate::server::protocol::ai::ToolViewSectionStyle::Markdown
+                | crate::server::protocol::ai::ToolViewSectionStyle::Text => 8_000,
+            };
+            let clamped = clamp_text_for_history(&section.content, limit);
+            if clamped != section.content {
+                section.content = clamped;
+                section.collapsed_by_default = true;
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 pub(super) async fn handle_ai_read_via_http_required(
     msg: &ClientMessage,
     socket: &mut WebSocket,
@@ -406,6 +459,29 @@ pub(crate) async fn query_ai_session_messages(
         )?;
     }
     if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
+        let mut section_truncated = false;
+        for message in &mut messages {
+            section_truncated |= truncate_tool_view_sections_for_history(message);
+        }
+        if section_truncated {
+            truncated = true;
+            page.messages = messages.clone();
+            recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
+            payload_bytes = ai_session_messages_encoded_len(
+                project_name,
+                workspace_name,
+                &ai_tool,
+                session_id,
+                page.applied_before_message_id.clone(),
+                messages.clone(),
+                page.has_more,
+                page.next_before_message_id.clone(),
+                selection_hint.clone(),
+                Some(true),
+            )?;
+        }
+    }
+    if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
         truncated = true;
         messages.clear();
         page.messages.clear();
@@ -423,7 +499,7 @@ pub(crate) async fn query_ai_session_messages(
             Some(true),
         )?;
         warn!(
-            "AISessionMessages payload still exceeds limit after page truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, payload_bytes={}, limit_bytes={}",
+            "AISessionMessages payload still exceeds limit after section truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, payload_bytes={}, limit_bytes={}",
             project_name,
             workspace_name,
             ai_tool,
@@ -1368,6 +1444,72 @@ mod tests {
             Some("msg_002"),
             "翻页游标应指向当前页第一条消息"
         );
+    }
+
+    #[test]
+    fn truncate_tool_view_sections_for_history_preserves_card_shell() {
+        let mut message = crate::server::protocol::ai::MessageInfo {
+            id: "msg-1".to_string(),
+            role: "assistant".to_string(),
+            created_at: None,
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: vec![crate::server::protocol::ai::PartInfo {
+                id: "tool-1".to_string(),
+                part_type: "tool".to_string(),
+                text: None,
+                mime: None,
+                filename: None,
+                url: None,
+                synthetic: None,
+                ignored: None,
+                source: None,
+                tool_name: Some("bash".to_string()),
+                tool_call_id: Some("call-1".to_string()),
+                tool_kind: Some("terminal".to_string()),
+                tool_view: Some(crate::server::protocol::ai::ToolView {
+                    status: "running".to_string(),
+                    display_title: "执行测试".to_string(),
+                    status_text: "running".to_string(),
+                    summary: Some("正在执行".to_string()),
+                    header_command_summary: Some("npm test".to_string()),
+                    duration_ms: None,
+                    sections: vec![crate::server::protocol::ai::ToolViewSection {
+                        id: "terminal-output".to_string(),
+                        title: "output".to_string(),
+                        content: "x".repeat(40_000),
+                        style: crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
+                        language: None,
+                        copyable: true,
+                        collapsed_by_default: false,
+                    }],
+                    locations: vec![crate::server::protocol::ai::ToolViewLocation {
+                        uri: None,
+                        path: Some("src/main.ts".to_string()),
+                        line: Some(1),
+                        column: Some(1),
+                        end_line: None,
+                        end_column: None,
+                        label: Some("入口".to_string()),
+                    }],
+                    question: None,
+                    linked_session: None,
+                }),
+            }],
+        };
+
+        let changed = truncate_tool_view_sections_for_history(&mut message);
+        let tool_view = message.parts[0].tool_view.as_ref().expect("tool_view should exist");
+        let section = tool_view.sections.first().expect("section should exist");
+
+        assert!(changed);
+        assert_eq!(tool_view.display_title, "执行测试");
+        assert_eq!(tool_view.status, "running");
+        assert_eq!(tool_view.locations.len(), 1);
+        assert!(section.content.contains("已为历史展示裁剪"));
+        assert!(section.collapsed_by_default);
+        assert!(section.content.chars().count() < 40_000);
     }
 
     fn build_test_app_state() -> SharedAppState {

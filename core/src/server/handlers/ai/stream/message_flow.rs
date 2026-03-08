@@ -689,6 +689,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             None,
                                         )
                                         .await;
+                                        let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                         emit_ai_session_messages_update_with_ops(
                                             &output_tx,
                                             task_broadcast_tx,
@@ -699,7 +700,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             &ai_tool,
                                             &session_id,
                                             &snapshot,
-                                            Some(vec![op]),
+                                            Some(emit_ops),
                                             false,
                                         )
                                         .await;
@@ -716,6 +717,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             None,
                                         )
                                         .await;
+                                        let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                         emit_ai_session_messages_update_with_ops(
                                             &output_tx,
                                             task_broadcast_tx,
@@ -726,7 +728,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             &ai_tool,
                                             &session_id,
                                             &snapshot,
-                                            Some(vec![op]),
+                                            Some(emit_ops),
                                             false,
                                         )
                                         .await;
@@ -1464,6 +1466,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             None,
                                         )
                                         .await;
+                                        let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                         emit_ai_session_messages_update_with_ops(
                                             &output_tx,
                                             task_broadcast_tx,
@@ -1474,7 +1477,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             &ai_tool,
                                             &session_id,
                                             &snapshot,
-                                            Some(vec![op]),
+                                            Some(emit_ops),
                                             false,
                                         )
                                         .await;
@@ -1491,6 +1494,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             None,
                                         )
                                         .await;
+                                        let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                         emit_ai_session_messages_update_with_ops(
                                             &output_tx,
                                             task_broadcast_tx,
@@ -1501,7 +1505,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             &ai_tool,
                                             &session_id,
                                             &snapshot,
-                                            Some(vec![op]),
+                                            Some(emit_ops),
                                             false,
                                         )
                                         .await;

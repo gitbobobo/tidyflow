@@ -169,6 +169,28 @@ impl AiStreamSnapshot {
         self.touch_activity(true)
     }
 
+    pub(crate) fn part_clone(
+        &self,
+        message_id: &str,
+        part_id: &str,
+    ) -> Option<crate::server::protocol::ai::PartInfo> {
+        let message_idx = *self.message_index_by_id.get(message_id)?;
+        let part_idx = self
+            .part_index_by_id
+            .get(part_id)
+            .and_then(|(msg_idx, part_idx)| {
+                if *msg_idx == message_idx {
+                    Some(*part_idx)
+                } else {
+                    None
+                }
+            })?;
+        self.messages
+            .get(message_idx)
+            .and_then(|message| message.parts.get(part_idx))
+            .cloned()
+    }
+
     fn rebuild_indexes(&mut self) {
         self.message_index_by_id.clear();
         self.part_index_by_id.clear();
@@ -233,12 +255,18 @@ impl AiStreamSnapshot {
                 tool_name: None,
                 tool_call_id: None,
                 tool_kind: None,
-                tool_title: None,
-                tool_raw_input: None,
-                tool_raw_output: None,
-                tool_locations: None,
-                tool_state: None,
-                tool_part_metadata: None,
+                tool_view: Some(crate::server::protocol::ai::ToolView {
+                    status: "running".to_string(),
+                    display_title: "unknown".to_string(),
+                    status_text: "running".to_string(),
+                    summary: None,
+                    header_command_summary: None,
+                    duration_ms: None,
+                    sections: Vec::new(),
+                    locations: Vec::new(),
+                    question: None,
+                    linked_session: None,
+                }),
             });
         let part_idx = self.messages[msg_idx].parts.len().saturating_sub(1);
         self.part_index_by_id
@@ -251,45 +279,51 @@ impl AiStreamSnapshot {
         field: &str,
         delta: &str,
     ) {
-        if !matches!(part.tool_state, Some(serde_json::Value::Object(_))) {
-            part.tool_state = Some(serde_json::json!({}));
-        }
-        let Some(state) = part.tool_state.as_mut() else {
-            return;
-        };
-        let Some(state_obj) = state.as_object_mut() else {
-            return;
-        };
-
-        if field == "progress" {
-            let metadata = state_obj
-                .entry("metadata".to_string())
-                .or_insert_with(|| serde_json::json!({}));
-            if !metadata.is_object() {
-                *metadata = serde_json::json!({});
-            }
-            if let Some(meta_obj) = metadata.as_object_mut() {
-                let progress_lines = meta_obj
-                    .entry("progress_lines".to_string())
-                    .or_insert_with(|| serde_json::json!([]));
-                if !progress_lines.is_array() {
-                    *progress_lines = serde_json::json!([]);
-                }
-                if let Some(lines) = progress_lines.as_array_mut() {
-                    lines.push(serde_json::Value::String(delta.to_string()));
-                }
-            }
-            return;
-        }
-
-        let entry = state_obj
-            .entry(field.to_string())
-            .or_insert_with(|| serde_json::Value::String(String::new()));
-        if let Some(existing) = entry.as_str() {
-            *entry = serde_json::Value::String(format!("{}{}", existing, delta));
+        let tool_view = part.tool_view.get_or_insert_with(|| crate::server::protocol::ai::ToolView {
+            status: "running".to_string(),
+            display_title: "unknown".to_string(),
+            status_text: "running".to_string(),
+            summary: None,
+            header_command_summary: None,
+            duration_ms: None,
+            sections: Vec::new(),
+            locations: Vec::new(),
+            question: None,
+            linked_session: None,
+        });
+        let section_id = if field == "progress" {
+            "generic-progress"
         } else {
-            *entry = serde_json::Value::String(delta.to_string());
+            "generic-output"
+        };
+        let section_title = if field == "progress" { "progress" } else { "output" };
+        let style = if field == "progress" {
+            crate::server::protocol::ai::ToolViewSectionStyle::Text
+        } else {
+            crate::server::protocol::ai::ToolViewSectionStyle::Code
+        };
+
+        if let Some(section) = tool_view.sections.iter_mut().find(|section| section.id == section_id) {
+            if field == "progress" && !section.content.is_empty() {
+                section.content.push('\n');
+            }
+            section.content.push_str(delta);
+            return;
         }
+
+        tool_view.sections.push(crate::server::protocol::ai::ToolViewSection {
+            id: section_id.to_string(),
+            title: section_title.to_string(),
+            content: delta.to_string(),
+            style,
+            language: if field == "progress" {
+                None
+            } else {
+                Some("text".to_string())
+            },
+            copyable: true,
+            collapsed_by_default: false,
+        });
     }
 }
 
@@ -466,6 +500,29 @@ pub(crate) async fn apply_stream_snapshot_cache_op(
         .or_insert_with(|| AiStreamSnapshot::seeded(Vec::new(), None, true));
     snapshot.apply_cache_op(op, selection_hint);
     snapshot.clone()
+}
+
+pub(crate) fn emit_ops_for_cache_op(
+    snapshot: &AiStreamSnapshot,
+    op: &crate::server::protocol::ai::AiSessionCacheOpInfo,
+) -> Vec<crate::server::protocol::ai::AiSessionCacheOpInfo> {
+    match op {
+        crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+            message_id,
+            part_id,
+            part_type,
+            ..
+        } if part_type == "tool" => snapshot
+            .part_clone(message_id, part_id)
+            .map(|part| {
+                vec![crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated {
+                    message_id: message_id.clone(),
+                    part,
+                }]
+            })
+            .unwrap_or_else(|| vec![op.clone()]),
+        _ => vec![op.clone()],
+    }
 }
 
 pub(crate) async fn mark_stream_snapshot_terminal(
@@ -1088,12 +1145,6 @@ pub(crate) fn infer_selection_hint_from_messages(
             if let Some(source) = part.source.as_ref() {
                 candidates.push(source);
             }
-            if let Some(metadata) = part.tool_part_metadata.as_ref() {
-                candidates.push(metadata);
-            }
-            if let Some(state) = part.tool_state.as_ref() {
-                candidates.push(state);
-            }
             for candidate in candidates {
                 let hint = infer_hint_from_json(candidate);
                 if resolved.agent.is_none() {
@@ -1260,38 +1311,843 @@ pub(crate) fn status_to_info(
     }
 }
 
-/// 将 AiPart 转换为协议层 PartInfo，并对 tool 类型做兜底规范化：
-/// - 确保 tool_state 至少有 status 字段
-/// - 确保 tool_name 不为 None
-pub(crate) fn normalize_part_for_wire(
-    part: crate::ai::AiPart,
-) -> crate::server::protocol::ai::PartInfo {
-    let mut tool_name = part.tool_name;
-    let mut tool_state = part.tool_state;
-
-    if part.part_type == "tool" {
-        // 确保 tool_name 不为 None
-        if tool_name.as_deref().map_or(true, |n| n.is_empty()) {
-            tool_name = Some("unknown".to_string());
-        }
-        // 确保 tool_state 至少有 status 字段
-        match &mut tool_state {
-            Some(state) if state.is_object() => {
-                let obj = state.as_object_mut().unwrap();
-                if !obj.contains_key("status") {
-                    obj.insert("status".to_string(), serde_json::json!("completed"));
-                }
-            }
-            Some(_) | None => {
-                // tool_state 不是对象或为 None，包装为统一信封
-                let original = tool_state.take();
-                tool_state = Some(serde_json::json!({
-                    "status": "completed",
-                    "metadata": original,
-                }));
+fn normalized_status(raw: Option<&str>) -> &'static str {
+    let token = raw
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match token.as_str() {
+        "" => "unknown",
+        "pending" => "pending",
+        "awaiting_input" | "requires_input" | "in_progress" | "inprogress" => "running",
+        "running" | "progress" => "running",
+        "done" | "success" | "succeeded" | "completed" => "completed",
+        "failed" | "failure" | "rejected" | "cancelled" | "canceled" | "error" => "error",
+        other => {
+            if other.contains("progress") {
+                "running"
+            } else {
+                "unknown"
             }
         }
     }
+}
+
+fn tool_status_text(status: &str) -> String {
+    status.to_string()
+}
+
+fn json_string(value: &serde_json::Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn parse_input_map(value: Option<&serde_json::Value>) -> HashMap<String, serde_json::Value> {
+    match value {
+        Some(serde_json::Value::Object(map)) => map.clone().into_iter().collect(),
+        Some(serde_json::Value::String(text)) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .map(|map| map.into_iter().collect())
+            .unwrap_or_default(),
+        _ => HashMap::new(),
+    }
+}
+
+fn value_as_string(value: Option<&serde_json::Value>) -> Option<String> {
+    match value {
+        Some(serde_json::Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+        Some(serde_json::Value::Bool(value)) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn value_as_f64(value: Option<&serde_json::Value>) -> Option<f64> {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_f64(),
+        Some(serde_json::Value::String(text)) => text.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn format_json_map(map: &HashMap<String, serde_json::Value>) -> Option<String> {
+    if map.is_empty() {
+        None
+    } else {
+        Some(json_string(&serde_json::Value::Object(
+            map.clone().into_iter().collect(),
+        )))
+    }
+}
+
+fn tool_display_name(tool_id: &str) -> String {
+    if tool_id.trim().is_empty() {
+        "tool".to_string()
+    } else {
+        tool_id.to_string()
+    }
+}
+
+fn tool_section(
+    id: impl Into<String>,
+    title: impl Into<String>,
+    content: impl Into<String>,
+    style: crate::server::protocol::ai::ToolViewSectionStyle,
+    language: Option<&str>,
+) -> crate::server::protocol::ai::ToolViewSection {
+    crate::server::protocol::ai::ToolViewSection {
+        id: id.into(),
+        title: title.into(),
+        content: content.into(),
+        style,
+        language: language.map(|it| it.to_string()),
+        copyable: true,
+        collapsed_by_default: false,
+    }
+}
+
+fn progress_section(
+    metadata: Option<&serde_json::Map<String, serde_json::Value>>,
+    id_prefix: &str,
+) -> Option<crate::server::protocol::ai::ToolViewSection> {
+    let lines = metadata
+        .and_then(|m| m.get("progress_lines"))
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| value_as_string(Some(item)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(tool_section(
+        format!("{}-progress", id_prefix),
+        "progress",
+        lines.join("\n"),
+        crate::server::protocol::ai::ToolViewSectionStyle::Text,
+        None,
+    ))
+}
+
+fn terminal_command_summary(input: &HashMap<String, serde_json::Value>) -> Option<String> {
+    for key in ["command", "cmd", "script"] {
+        if let Some(command) = value_as_string(input.get(key)) {
+            if command.chars().count() > 60 {
+                return Some(format!(
+                    "{}…",
+                    command.chars().take(57).collect::<String>()
+                ));
+            }
+            return Some(command);
+        }
+    }
+    None
+}
+
+fn extract_acp_content_text(value: &serde_json::Value) -> Option<String> {
+    let items = value.as_array()?;
+    let mut parts: Vec<String> = Vec::new();
+    for item in items {
+        let obj = item.as_object()?;
+        if value_as_string(obj.get("type")).as_deref() != Some("content") {
+            continue;
+        }
+        let Some(content) = obj.get("content").and_then(|value| value.as_object()) else {
+            continue;
+        };
+        if value_as_string(content.get("type")).as_deref() != Some("text") {
+            continue;
+        }
+        if let Some(text) = value_as_string(content.get("text")) {
+            parts.push(text);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(""))
+    }
+}
+
+fn extract_session_id_recursive(
+    value: &serde_json::Value,
+    keys: &HashSet<&'static str>,
+) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (raw_key, nested) in map {
+                let key = raw_key
+                    .replace('-', "")
+                    .replace('_', "")
+                    .to_ascii_lowercase();
+                if keys.contains(key.as_str()) {
+                    if let Some(found) = value_as_string(Some(nested)) {
+                        return Some(found);
+                    }
+                }
+                if let Some(found) = extract_session_id_recursive(nested, keys) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|item| extract_session_id_recursive(item, keys)),
+        _ => None,
+    }
+}
+
+fn build_tool_question(
+    part: &crate::ai::AiPart,
+    state_obj: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<crate::server::protocol::ai::ToolViewQuestion> {
+    if !part.tool_name.as_deref()?.trim().eq_ignore_ascii_case("question") {
+        return None;
+    }
+    let questions_value = state_obj
+        .and_then(|obj| obj.get("input"))
+        .and_then(|value| value.as_object())
+        .and_then(|input| input.get("questions"))
+        .or_else(|| state_obj.and_then(|obj| obj.get("questions")))?;
+    let prompt_items = questions_value
+        .as_array()
+        .map(|items| {
+            items.iter()
+                .filter_map(|item| {
+                    let dict = item.as_object()?;
+                    let question = value_as_string(dict.get("question"))?;
+                    let header = value_as_string(dict.get("header")).unwrap_or_default();
+                    let options = dict
+                        .get("options")
+                        .and_then(|value| value.as_array())
+                        .map(|options| {
+                            options
+                                .iter()
+                                .filter_map(|option| {
+                                    let dict = option.as_object()?;
+                                    let label = value_as_string(dict.get("label"))?;
+                                    Some(crate::server::protocol::ai::ToolViewQuestionOption {
+                                        option_id: value_as_string(dict.get("option_id"))
+                                            .or_else(|| value_as_string(dict.get("optionId"))),
+                                        label,
+                                        description: value_as_string(dict.get("description"))
+                                            .unwrap_or_default(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Some(crate::server::protocol::ai::ToolViewQuestionPromptItem {
+                        question,
+                        header,
+                        options,
+                        multiple: dict
+                            .get("multiple")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(false),
+                        custom: dict
+                            .get("custom")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(true),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if prompt_items.is_empty() {
+        return None;
+    }
+
+    let request_id = state_obj
+        .and_then(|obj| obj.get("request_id"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| {
+            state_obj
+                .and_then(|obj| obj.get("metadata"))
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("request_id"))
+                .and_then(|value| value_as_string(Some(value)))
+        })
+        .or_else(|| {
+            part.tool_part_metadata
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("request_id"))
+                .and_then(|value| value_as_string(Some(value)))
+        })
+        .or_else(|| part.tool_call_id.clone())
+        .or_else(|| Some(part.id.clone()))?;
+    let tool_message_id = state_obj
+        .and_then(|obj| obj.get("metadata"))
+        .and_then(|value| value.as_object())
+        .and_then(|metadata| metadata.get("tool_message_id"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| {
+            part.tool_part_metadata
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("tool_message_id"))
+                .and_then(|value| value_as_string(Some(value)))
+        })
+        .or_else(|| Some(part.id.clone()));
+    let answers = state_obj
+        .and_then(|obj| obj.get("metadata"))
+        .and_then(|value| value.as_object())
+        .and_then(|metadata| metadata.get("answers"))
+        .and_then(|value| value.as_array())
+        .map(|groups| {
+            groups
+                .iter()
+                .map(|group| {
+                    group.as_array()
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(|value| value_as_string(Some(value)))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        });
+    let interactive = matches!(
+        normalized_status(
+            state_obj
+                .and_then(|obj| obj.get("status"))
+                .and_then(|value| value.as_str())
+        ),
+        "pending" | "running" | "unknown"
+    );
+    Some(crate::server::protocol::ai::ToolViewQuestion {
+        request_id,
+        tool_message_id,
+        prompt_items,
+        interactive,
+        answers,
+    })
+}
+
+fn build_tool_linked_session(
+    tool_id: &str,
+    input: &HashMap<String, serde_json::Value>,
+    metadata: Option<&serde_json::Map<String, serde_json::Value>>,
+    part_metadata: Option<&serde_json::Map<String, serde_json::Value>>,
+    output: Option<&str>,
+) -> Option<crate::server::protocol::ai::ToolLinkedSession> {
+    if tool_id != "task" && tool_id != "subagent_result" {
+        return None;
+    }
+    let keys = HashSet::from([
+        "sessionid",
+        "session_id",
+        "threadid",
+        "thread_id",
+        "conversationid",
+        "conversation_id",
+        "childsessionid",
+        "child_session_id",
+        "subsessionid",
+        "sub_session_id",
+        "subagentsessionid",
+        "subagent_session_id",
+        "agentsessionid",
+        "agent_session_id",
+    ]);
+    let session_id = extract_session_id_recursive(
+        &serde_json::Value::Object(input.clone().into_iter().collect()),
+        &keys,
+    )
+    .or_else(|| {
+        metadata.and_then(|map| {
+            extract_session_id_recursive(&serde_json::Value::Object(map.clone()), &keys)
+        })
+    })
+    .or_else(|| {
+        part_metadata.and_then(|map| {
+            extract_session_id_recursive(&serde_json::Value::Object(map.clone()), &keys)
+        })
+    })?;
+    let agent_name = metadata
+        .and_then(|map| map.get("agent"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| part_metadata.and_then(|map| map.get("agent")).and_then(|value| value_as_string(Some(value))))
+        .or_else(|| input.get("agent").and_then(|value| value_as_string(Some(value))))
+        .or_else(|| input.get("subagent_type").and_then(|value| value_as_string(Some(value))))
+        .or_else(|| input.get("subagent").and_then(|value| value_as_string(Some(value))))
+        .or_else(|| {
+            output.and_then(|text| {
+                text.lines().find_map(|line| {
+                    let trimmed = line.trim();
+                    trimmed
+                        .strip_prefix("Agent:")
+                        .or_else(|| trimmed.strip_prefix("agent:"))
+                        .map(|token| token.trim().to_string())
+                        .filter(|token| !token.is_empty())
+                })
+            })
+        })
+        .unwrap_or_else(|| "未知代理".to_string());
+    let description = input
+        .get("description")
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| metadata.and_then(|map| map.get("description")).and_then(|value| value_as_string(Some(value))))
+        .or_else(|| part_metadata.and_then(|map| map.get("description")).and_then(|value| value_as_string(Some(value))))
+        .unwrap_or_else(|| "子会话".to_string());
+    Some(crate::server::protocol::ai::ToolLinkedSession {
+        session_id,
+        agent_name,
+        description,
+    })
+}
+
+fn build_tool_locations(
+    items: Option<Vec<crate::ai::AiToolCallLocation>>,
+) -> Vec<crate::server::protocol::ai::ToolViewLocation> {
+    items
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| crate::server::protocol::ai::ToolViewLocation {
+            uri: item.uri,
+            path: item.path,
+            line: item.line,
+            column: item.column,
+            end_line: item.end_line,
+            end_column: item.end_column,
+            label: item.label,
+        })
+        .collect()
+}
+
+fn build_tool_summary(
+    tool_id: &str,
+    input: &HashMap<String, serde_json::Value>,
+    metadata: Option<&serde_json::Map<String, serde_json::Value>>,
+    output: Option<&str>,
+) -> Option<String> {
+    match tool_id {
+        "list" | "codesearch" | "webfetch" | "websearch" => input
+            .get("query")
+            .and_then(|value| value_as_string(Some(value)))
+            .or_else(|| input.get("pattern").and_then(|value| value_as_string(Some(value))))
+            .or_else(|| input.get("url").and_then(|value| value_as_string(Some(value))))
+            .or_else(|| input.get("path").and_then(|value| value_as_string(Some(value)))),
+        "grep" => metadata
+            .and_then(|map| map.get("matches"))
+            .and_then(|value| value_as_string(Some(value)))
+            .map(|count| format!("Found {} match(es)", count))
+            .or_else(|| output.and_then(|text| text.lines().next().map(|line| line.trim().to_string()))),
+        "glob" => metadata
+            .and_then(|map| map.get("files"))
+            .and_then(|value| value_as_string(Some(value)))
+            .map(|count| format!("Found {} file(s)", count))
+            .or_else(|| output.and_then(|text| text.lines().next().map(|line| line.trim().to_string()))),
+        _ => None,
+    }
+}
+
+fn format_todo_summary(items: &[serde_json::Map<String, serde_json::Value>]) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+    let total = items.len();
+    let completed = items
+        .iter()
+        .filter(|item| {
+            value_as_string(item.get("status"))
+                .map(|status| status.eq_ignore_ascii_case("completed"))
+                .unwrap_or(false)
+        })
+        .count();
+    let running = items
+        .iter()
+        .filter(|item| {
+            value_as_string(item.get("status"))
+                .map(|status| status.eq_ignore_ascii_case("in_progress"))
+                .unwrap_or(false)
+        })
+        .count();
+    let pending = items
+        .iter()
+        .filter(|item| {
+            value_as_string(item.get("status"))
+                .map(|status| status.eq_ignore_ascii_case("pending"))
+                .unwrap_or(false)
+        })
+        .count();
+    let mut parts = vec![format!("{} 项任务", total)];
+    if completed > 0 {
+        parts.push(format!("已完成 {}", completed));
+    }
+    if running > 0 {
+        parts.push(format!("进行中 {}", running));
+    }
+    if pending > 0 {
+        parts.push(format!("待处理 {}", pending));
+    }
+    Some(parts.join(" · "))
+}
+
+fn build_tool_sections(
+    tool_id: &str,
+    input: &HashMap<String, serde_json::Value>,
+    raw: Option<&str>,
+    output: Option<&str>,
+    error: Option<&str>,
+    metadata: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> (Vec<crate::server::protocol::ai::ToolViewSection>, Option<String>) {
+    let mut sections = Vec::new();
+    let mut summary = build_tool_summary(tool_id, input, metadata, output);
+
+    let add_json_section = |sections: &mut Vec<crate::server::protocol::ai::ToolViewSection>,
+                            id: &str,
+                            title: &str,
+                            value: &HashMap<String, serde_json::Value>| {
+        if let Some(text) = format_json_map(value) {
+            sections.push(tool_section(
+                id,
+                title,
+                text,
+                crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                Some("json"),
+            ));
+        }
+    };
+
+    match tool_id {
+        "read" | "subagent_result" | "websearch" | "contextcompaction" | "context_compaction" => {}
+        "edit" | "write" | "apply_patch" | "multiedit" => {
+            if let Some(diff) = metadata
+                .and_then(|map| map.get("diff"))
+                .and_then(|value| value_as_string(Some(value)))
+            {
+                sections.push(tool_section(
+                    "edit-diff",
+                    "diff",
+                    diff,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Diff,
+                    Some("diff"),
+                ));
+            }
+            if sections.is_empty() && !input.is_empty() {
+                add_json_section(&mut sections, "edit-input", "input", input);
+            }
+            if let Some(diagnostics) = metadata
+                .and_then(|map| map.get("diagnostics"))
+                .map(json_string)
+            {
+                sections.push(tool_section(
+                    "edit-diagnostics",
+                    "diagnostics",
+                    diagnostics,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("json"),
+                ));
+            }
+        }
+        "bash" => {
+            if let Some(command) = input
+                .get("command")
+                .or_else(|| input.get("cmd"))
+                .or_else(|| input.get("script"))
+                .and_then(|value| value_as_string(Some(value)))
+            {
+                sections.push(tool_section(
+                    "bash-command",
+                    "command",
+                    command,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("bash"),
+                ));
+            }
+            let mut remaining = input.clone();
+            remaining.remove("command");
+            remaining.remove("cmd");
+            remaining.remove("script");
+            remaining.remove("description");
+            if !remaining.is_empty() {
+                add_json_section(&mut sections, "bash-input", "input", &remaining);
+            }
+            if let Some(progress) = progress_section(metadata, "bash") {
+                sections.push(progress);
+            }
+            if let Some(output) = output {
+                sections.push(tool_section(
+                    "bash-output",
+                    "output",
+                    output,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("text"),
+                ));
+            }
+        }
+        "terminal" => {
+            if terminal_command_summary(input).is_none() && !input.is_empty() {
+                add_json_section(&mut sections, "terminal-input", "input", input);
+            }
+            if let Some(progress) = progress_section(metadata, "terminal") {
+                sections.push(progress);
+            }
+            if let Some(output) = output {
+                sections.push(tool_section(
+                    "terminal-output",
+                    "output",
+                    output,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
+                    Some("text"),
+                ));
+            }
+            if let Some(raw) = raw {
+                sections.push(tool_section(
+                    "terminal-raw",
+                    "raw",
+                    raw,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
+                    Some("text"),
+                ));
+            }
+        }
+        "markdown" | "md" => {
+            if let Some(output) = output {
+                sections.push(tool_section(
+                    "markdown-output",
+                    "markdown",
+                    output,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Markdown,
+                    None,
+                ));
+            } else if let Some(raw) = raw {
+                sections.push(tool_section(
+                    "markdown-raw",
+                    "raw",
+                    raw,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("text"),
+                ));
+            }
+        }
+        "diff" => {
+            if let Some(output) = output {
+                sections.push(tool_section(
+                    "diff-output",
+                    "diff",
+                    output,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Diff,
+                    Some("diff"),
+                ));
+            } else if let Some(raw) = raw {
+                sections.push(tool_section(
+                    "diff-raw",
+                    "raw",
+                    raw,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("text"),
+                ));
+            }
+        }
+        "question" => {
+            if let Some(error) = error {
+                sections.push(tool_section(
+                    "question-error",
+                    "error",
+                    error,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Text,
+                    None,
+                ));
+            }
+        }
+        "todowrite" | "todoread" => {
+            let todo_items = metadata
+                .and_then(|map| map.get("todos").or_else(|| map.get("items")).or_else(|| map.get("tasks")))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items.iter()
+                        .filter_map(|item| item.as_object().cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !todo_items.is_empty() {
+                let lines = todo_items
+                    .iter()
+                    .map(|item| {
+                        let content = value_as_string(item.get("content"))
+                            .or_else(|| value_as_string(item.get("title")))
+                            .unwrap_or_else(|| "未命名任务".to_string());
+                        let status = value_as_string(item.get("status")).unwrap_or_else(|| "pending".to_string());
+                        format!("[{}] {}", status, content)
+                    })
+                    .collect::<Vec<_>>();
+                sections.push(tool_section(
+                    "todo-items",
+                    "todos",
+                    lines.join("\n"),
+                    crate::server::protocol::ai::ToolViewSectionStyle::Text,
+                    None,
+                ));
+                summary = format_todo_summary(&todo_items).or(summary);
+            } else {
+                sections.push(tool_section(
+                    "todo-empty",
+                    "todos",
+                    "暂无任务",
+                    crate::server::protocol::ai::ToolViewSectionStyle::Text,
+                    None,
+                ));
+            }
+        }
+        _ => {
+            if !input.is_empty() {
+                add_json_section(&mut sections, "generic-input", "input", input);
+            }
+            if let Some(raw) = raw {
+                sections.push(tool_section(
+                    "generic-raw",
+                    "raw",
+                    raw,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("text"),
+                ));
+            }
+            if let Some(progress) = progress_section(metadata, "generic") {
+                sections.push(progress);
+            }
+            if let Some(output) = output {
+                sections.push(tool_section(
+                    "generic-output",
+                    "output",
+                    output,
+                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                    Some("text"),
+                ));
+            }
+        }
+    }
+
+    if let Some(error) = error {
+        sections.push(tool_section(
+            format!("{}-error", tool_id),
+            "error",
+            error,
+            crate::server::protocol::ai::ToolViewSectionStyle::Text,
+            None,
+        ));
+    }
+
+    (sections, summary)
+}
+
+fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::ai::ToolView> {
+    if part.part_type != "tool" {
+        return None;
+    }
+    let tool_id = part
+        .tool_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("unknown")
+        .to_ascii_lowercase();
+    let state_obj = part.tool_state.as_ref().and_then(|value| value.as_object());
+    let input = parse_input_map(state_obj.and_then(|obj| obj.get("input")));
+    let metadata = state_obj
+        .and_then(|obj| obj.get("metadata"))
+        .and_then(|value| value.as_object());
+    let output = state_obj
+        .and_then(|obj| obj.get("output"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| part.tool_raw_output.as_ref().and_then(extract_acp_content_text))
+        .or_else(|| part.tool_raw_output.as_ref().map(json_string));
+    let raw = state_obj
+        .and_then(|obj| obj.get("raw"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| part.tool_raw_output.as_ref().map(json_string));
+    let title = state_obj
+        .and_then(|obj| obj.get("title"))
+        .and_then(|value| value_as_string(Some(value)))
+        .or_else(|| part.tool_title.clone());
+    let error = state_obj
+        .and_then(|obj| obj.get("error"))
+        .and_then(|value| value_as_string(Some(value)));
+    let status = normalized_status(
+        state_obj
+            .and_then(|obj| obj.get("status"))
+            .and_then(|value| value.as_str()),
+    );
+    let duration_ms = state_obj
+        .and_then(|obj| obj.get("time"))
+        .and_then(|value| value.as_object())
+        .and_then(|time| {
+            let start = value_as_f64(time.get("start"))?;
+            let end = value_as_f64(time.get("end"))?;
+            Some((end - start).max(0.0))
+        });
+    let question = build_tool_question(part, state_obj);
+    let part_metadata = part.tool_part_metadata.as_ref().and_then(|value| value.as_object());
+    let linked_session =
+        build_tool_linked_session(&tool_id, &input, metadata, part_metadata, output.as_deref());
+    let locations = build_tool_locations(part.tool_locations.clone());
+    let (sections, summary) = build_tool_sections(
+        &tool_id,
+        &input,
+        raw.as_deref(),
+        output.as_deref(),
+        error.as_deref(),
+        metadata,
+    );
+    let header_command_summary = if matches!(tool_id.as_str(), "terminal" | "bash") {
+        terminal_command_summary(&input)
+    } else {
+        None
+    };
+    let display_title = title.unwrap_or_else(|| {
+        if tool_id == "grep" {
+            input.get("pattern")
+                .and_then(|value| value_as_string(Some(value)))
+                .map(|pattern| format!("grep({})", pattern))
+                .unwrap_or_else(|| tool_display_name(&tool_id))
+        } else if tool_id == "websearch" {
+            input.get("query")
+                .and_then(|value| value_as_string(Some(value)))
+                .map(|query| format!("websearch({})", query))
+                .unwrap_or_else(|| tool_display_name(&tool_id))
+        } else {
+            tool_display_name(&tool_id)
+        }
+    });
+
+    Some(crate::server::protocol::ai::ToolView {
+        status: status.to_string(),
+        display_title,
+        status_text: tool_status_text(status),
+        summary,
+        header_command_summary,
+        duration_ms,
+        sections,
+        locations,
+        question,
+        linked_session,
+    })
+}
+
+/// 将 AiPart 转换为协议层 PartInfo，并为 tool 类型生成结构化 tool_view。
+pub(crate) fn normalize_part_for_wire(
+    part: crate::ai::AiPart,
+) -> crate::server::protocol::ai::PartInfo {
+    let mut tool_name = part.tool_name.clone();
+    if part.part_type == "tool" && tool_name.as_deref().map_or(true, |name| name.trim().is_empty()) {
+        tool_name = Some("unknown".to_string());
+    }
+    let tool_view = build_tool_view(&part);
 
     crate::server::protocol::ai::PartInfo {
         id: part.id,
@@ -1306,25 +2162,7 @@ pub(crate) fn normalize_part_for_wire(
         tool_name,
         tool_call_id: part.tool_call_id,
         tool_kind: part.tool_kind,
-        tool_title: part.tool_title,
-        tool_raw_input: part.tool_raw_input,
-        tool_raw_output: part.tool_raw_output,
-        tool_locations: part.tool_locations.map(|items| {
-            items
-                .into_iter()
-                .map(|item| crate::server::protocol::ai::ToolCallLocationInfo {
-                    uri: item.uri,
-                    path: item.path,
-                    line: item.line,
-                    column: item.column,
-                    end_line: item.end_line,
-                    end_column: item.end_column,
-                    label: item.label,
-                })
-                .collect::<Vec<_>>()
-        }),
-        tool_state,
-        tool_part_metadata: part.tool_part_metadata,
+        tool_view,
     }
 }
 
@@ -1455,7 +2293,8 @@ pub(crate) fn normalize_ai_audio_parts(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_ai_session_messages_update, infer_selection_hint_from_messages, normalize_ai_tool,
+        build_ai_session_messages_update, emit_ops_for_cache_op,
+        infer_selection_hint_from_messages, normalize_ai_tool, normalize_part_for_wire,
         should_broadcast_stream_message, should_cleanup_stream_snapshot, AiStreamSnapshot,
         AI_STREAM_SNAPSHOT_STALE_TTL_MS, AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS,
         MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES,
@@ -1517,12 +2356,7 @@ mod tests {
                 tool_name: None,
                 tool_call_id: None,
                 tool_kind: None,
-                tool_title: None,
-                tool_raw_input: None,
-                tool_raw_output: None,
-                tool_locations: None,
-                tool_state: None,
-                tool_part_metadata: None,
+                tool_view: None,
             }],
         }];
 
@@ -1673,6 +2507,88 @@ mod tests {
                 assert!(messages.is_none());
             }
             other => panic!("unexpected message variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn normalize_part_for_wire_builds_structured_tool_view() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-1".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("bash".to_string()),
+            tool_call_id: Some("call-1".to_string()),
+            tool_kind: Some("terminal".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "in_progress",
+                "title": "执行测试",
+                "input": {
+                    "command": "npm test"
+                },
+                "output": "running"
+            })),
+            tool_locations: Some(vec![crate::ai::AiToolCallLocation {
+                uri: None,
+                path: Some("src/main.ts".to_string()),
+                line: Some(12),
+                column: Some(4),
+                end_line: Some(12),
+                end_column: Some(22),
+                label: Some("诊断".to_string()),
+            }]),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(part.tool_kind.as_deref(), Some("terminal"));
+        assert_eq!(tool_view.status, "running");
+        assert_eq!(tool_view.display_title, "执行测试");
+        assert_eq!(tool_view.header_command_summary.as_deref(), Some("npm test"));
+        assert_eq!(tool_view.locations.len(), 1);
+        assert_eq!(tool_view.locations[0].path.as_deref(), Some("src/main.ts"));
+        assert!(tool_view
+            .sections
+            .iter()
+            .any(|section| section.id == "bash-output" && section.content.contains("running")));
+    }
+
+    #[test]
+    fn emit_ops_for_cache_op_upgrades_tool_delta_to_part_updated_snapshot() {
+        let mut snapshot = AiStreamSnapshot::seeded(
+            vec![crate::server::protocol::ai::MessageInfo {
+                id: "m1".to_string(),
+                role: "assistant".to_string(),
+                created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![],
+            }],
+            None,
+            true,
+        );
+        let op = crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+            message_id: "m1".to_string(),
+            part_id: "tool-1".to_string(),
+            part_type: "tool".to_string(),
+            field: "output".to_string(),
+            delta: "hello".to_string(),
+        };
+
+        snapshot.apply_cache_op(&op, None);
+        let emitted = emit_ops_for_cache_op(&snapshot, &op);
+
+        assert_eq!(emitted.len(), 1);
+        match &emitted[0] {
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part } => {
+                assert_eq!(message_id, "m1");
+                let tool_view = part.tool_view.as_ref().expect("tool_view should exist");
+                assert_eq!(tool_view.status, "running");
+                assert!(tool_view
+                    .sections
+                    .iter()
+                    .any(|section| section.id == "generic-output" && section.content == "hello"));
+            }
+            other => panic!("unexpected emitted op: {:?}", other),
         }
     }
 }

@@ -200,12 +200,7 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
             toolName: nil,
             toolCallId: nil,
             toolKind: nil,
-            toolTitle: nil,
-            toolRawInput: nil,
-            toolRawOutput: nil,
-            toolLocations: nil,
-            toolState: nil,
-            toolPartMetadata: nil
+            toolView: nil
         )
     }
 }

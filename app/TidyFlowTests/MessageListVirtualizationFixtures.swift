@@ -93,7 +93,7 @@ enum MessageListVirtualizationFixtures {
                 // 工具消息：一个 text part + 一个 tool part
                 parts = [
                     AIChatPart(id: "p-\(i)-0", kind: .text, text: "正在调用工具…"),
-                    AIChatPart(id: "p-\(i)-1", kind: .tool, text: nil, toolName: "bash", toolState: nil)
+                    AIChatPart(id: "p-\(i)-1", kind: .tool, text: nil, toolName: "bash")
                 ]
             } else if streaming {
                 parts = [AIChatPart(id: "p-\(i)-0", kind: .text, text: "正在生成…")]

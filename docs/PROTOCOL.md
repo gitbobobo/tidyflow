@@ -335,48 +335,53 @@
   - 以 ACP 官方 `tool-calls` 页面与 schema 为准（实现时采用同版本字段名与语义）。
 - Core 解析策略：
   - `session/update`（流式）与 `session/load`（历史）共用同一组 normalized parser。
-  - 支持 `tool_call` 首帧与 `tool_call_update` 增量，未知字段保留到 `tool_part_metadata`。
+  - 支持 `tool_call` 首帧与 `tool_call_update` 增量，但对外协议不再透传原始 JSON。
   - 历史消息回放时，同一 `tool_call_id` 的多次更新（如 `running -> completed`）通过 `upsert_tool_part_in_history_messages` 原地更新，避免在历史消息列表中产生重复工具卡片。
   - 状态兼容归一化：
     - 交互态：`pending/running/awaiting_input/requires_input/in_progress`
     - 完成态：`completed/done/success`
     - 失败态：`error/failed/rejected/cancelled/canceled`
-  - 支持 `content.type`：
-    - `markdown` / `diff` / `terminal`（其余类型保留原始 JSON 并走通用渲染）。
-- 双轨兼容（锁定）：
-  - 规范字段优先：`tool_kind/tool_title/tool_raw_input/tool_raw_output/tool_locations`
-  - 兼容镜像：继续写入 `tool_state.input/raw/output` 与 `tool_state.metadata.locations`
-- `input` 字段格式兼容：
-  - 部分 ACP 适配器（如 Kimi）以 JSON 字符串形式传递 `tool_state.input` 而非字典。
-  - Swift 客户端 `AIToolInvocationState.from` 先尝试直接解析为 `[String: Any]`；若为字符串，再尝试 `JSONSerialization`；均失败时回退为空字典，不中断渲染。
+  - `content.type` 统一收敛为结构化 `tool_view.sections[].style`：
+    - `text` / `code` / `diff` / `markdown` / `terminal`
+- 对外协议约束：
+  - `PartInfo` 保留 `tool_name/tool_call_id/tool_kind` 作为工具身份字段。
+  - `PartInfo.tool_view` 是前端渲染工具卡片的唯一数据源。
+  - 不再传递 `tool_title/tool_raw_input/tool_raw_output/tool_locations/tool_state/tool_part_metadata`。
+  - `PartInfo.source` 仅作为来源信息透传，不承担工具卡片渲染职责。
+- 历史与实时统一：
+  - `ai_session_messages` 返回完整 `tool_view`。
+  - `ai_session_messages_update` 中，tool part 的对外更新统一以 `PartUpdated` 发送当前完整 `tool_view` 快照；文本/推理 part 仍可使用 `PartDelta`。
+- 大 payload 策略：
+  - `ai_session_messages.truncated=true` 表示本次历史响应为展示目的裁剪过 `tool_view.sections[].content`。
+  - 历史读取只裁剪 section 内容，保留 `display_title/status/question/linked_session/locations` 与消息骨架，避免最近页退化为空白。
 - 客户端 part_id 去重：
   - `replaceMessagesFromSessionCache` 在每条消息内按 `part_id` 去重（保留最后一次，即最完整状态），防止 Core 历史回放中多次工具状态更新产生重复工具卡片。
   - 去重仅在消息内部发生，跨消息的同名 `part_id` 相互独立。
 
-### 字段映射（规范 -> Core -> App）
+### `tool_view` 字段映射（Core -> App）
 
-| ACP 规范字段 | Core 内部模型 | Core->App 协议 | App 模型/渲染 |
-| --- | --- | --- | --- |
-| `toolCallId` / `id` | `AiPart.tool_call_id` | `PartInfo.tool_call_id` | `AIProtocolPartInfo.toolCallId` -> `AIChatPart.toolCallId` |
-| `kind` | `AiPart.tool_kind` | `PartInfo.tool_kind` | `AIProtocolPartInfo.toolKind` -> `AIChatPart.toolKind` |
-| `title` | `AiPart.tool_title` | `PartInfo.tool_title` | `AIProtocolPartInfo.toolTitle` -> `AIChatPart.toolTitle` |
-| `rawInput` | `AiPart.tool_raw_input` | `PartInfo.tool_raw_input` | `AIProtocolPartInfo.toolRawInput` -> `AIChatPart.toolRawInput` |
-| `rawOutput` | `AiPart.tool_raw_output` | `PartInfo.tool_raw_output` | `AIProtocolPartInfo.toolRawOutput` -> `AIChatPart.toolRawOutput` |
-| `locations[]` | `AiPart.tool_locations(Vec<AiToolCallLocation>)` | `PartInfo.tool_locations(Vec<ToolCallLocationInfo>)` | `AIProtocolPartInfo.toolLocations` -> `AIChatPart.toolLocations` |
-| `status/state` | `AiPart.tool_state.status`（归一化） | `PartInfo.tool_state.status` | `AIToolInvocationState.from` 归一化并驱动 `ToolCardView` 状态 |
-| `content(type=markdown)` | `tool_state.output/raw` | `tool_state` + `tool_raw_output` | `ToolCardView(markdown)` |
-| `content(type=diff)` | `tool_state.output/raw` | `tool_state` + `tool_raw_output` | `ToolCardView(diff)` |
-| `content(type=terminal)` | `tool_state.output/progress` | `tool_state` + `tool_raw_output` | `ToolCardView(terminal)` |
+| `tool_view` 字段 | 协议含义 | App 模型/渲染 |
+| --- | --- | --- |
+| `status` | 统一状态：`pending/running/completed/error/unknown` | `AIToolView.status` |
+| `display_title` | 卡片标题 | `AIToolView.displayTitle` |
+| `status_text` | 状态文案 | `AIToolView.statusText` |
+| `summary` | 头部摘要 | `AIToolView.summary` |
+| `header_command_summary` | 终端命令摘要 | `AIToolView.headerCommandSummary` |
+| `duration_ms` | 持续时长 | `AIToolView.durationMs` |
+| `sections[]` | 主体展示区块 | `AIToolView.sections` -> `ToolCardView` |
+| `locations[]` | 文件定位信息 | `AIToolView.locations` -> `ToolCardView` |
+| `question` | 交互问题结构 | `AIToolView.question` / `AIQuestionRequestInfo` |
+| `linked_session` | 关联子会话 | `AIToolView.linkedSession` |
 
 ### 权限请求与 Question
 
 - 入站：
-  - `session/request_permission` 解析 `toolCall.kind/title/rawInput` 并构建 `question`。
+  - `session/request_permission` 在 Core 内部解析后直接映射到 `tool_view.question`。
 - 回答：
   - `selected`：`respond_to_permission_request`
   - `cancelled`：`reject_permission_request`
 - 回填关联：
-  - `request_id` 与 `tool_call_id/tool_message_id` 通过 question payload 透传，供 UI 精确匹配。
+  - `request_id` 与 `tool_call_id/tool_message_id` 通过结构化 `tool_view.question` 透传，供 UI 精确匹配。
 - 缺失 `optionId`：
   - 沿用回退顺序：按答案 label 匹配 -> `allow-once` -> 第一项，并记录告警日志。
 

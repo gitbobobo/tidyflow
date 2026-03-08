@@ -42,7 +42,7 @@ enum AISessionSemantics {
 
     /// 从消息列表推导 selection hint。
     /// 优先从最新的 user 消息顶层字段提取，再从任意最新消息提取，
-    /// 最后回退到 part 级别的 source / metadata / toolState 字段提取。
+    /// 最后回退到 part 级别的 source 字段提取。
     static func inferSelectionHintFromMessages(_ messages: [AIProtocolMessageInfo]) -> AISessionSelectionHint? {
         // 优先从 user 消息的顶层字段推导
         for message in messages.reversed() where message.role.caseInsensitiveCompare("user") == .orderedSame {
@@ -79,13 +79,13 @@ enum AISessionSemantics {
         return nil
     }
 
-    /// 从单个消息 part 的 source / toolPartMetadata / toolState 推导 selection hint。
+    /// 从单个消息 part 的 source 推导 selection hint。
     static func inferSelectionHintFromPart(_ part: AIProtocolPartInfo) -> AISessionSelectionHint? {
         var resolvedAgent: String?
         var resolvedProvider: String?
         var resolvedModel: String?
 
-        let sources: [[String: Any]] = [part.source, part.toolPartMetadata, part.toolState].compactMap { $0 }
+        let sources: [[String: Any]] = [part.source].compactMap { $0 }
         for source in sources {
             if resolvedAgent == nil {
                 resolvedAgent = findSelectionHintValue(
@@ -136,43 +136,25 @@ enum AISessionSemantics {
                 guard part.partType == "tool" else { continue }
                 let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 guard toolName == "question" else { continue }
-                guard let stateDict = part.toolState else { continue }
-
-                let status = ((stateDict["status"] as? String) ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if status == "completed" || status == "error" || status == "failed" || status == "done" {
+                guard let question = part.toolView?.question else { continue }
+                let status = part.toolView?.status ?? .unknown
+                if status == .completed || status == .error {
                     continue
                 }
-
-                let input = stateDict["input"] as? [String: Any]
-                let questionsValue = input?["questions"] ?? stateDict["questions"]
-                let questions = parseQuestionInfos(from: questionsValue)
+                let questions = question.promptItems
                 guard !questions.isEmpty else { continue }
 
-                let metadata = part.toolPartMetadata ?? [:]
-                let requestId =
-                    stringValue(metadata["request_id"]) ??
-                    stringValue(metadata["requestId"]) ??
-                    stringValue(stateDict["request_id"]) ??
-                    stringValue(stateDict["requestId"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["request_id"]) ??
-                    stringValue((stateDict["metadata"] as? [String: Any])?["requestId"]) ??
-                    part.toolCallId
-                guard let requestId, !requestId.isEmpty else { continue }
+                let requestId = question.requestID.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !requestId.isEmpty else { continue }
                 guard !seenRequestIDs.contains(requestId) else { continue }
                 seenRequestIDs.insert(requestId)
-
-                let toolMessageId =
-                    stringValue(metadata["tool_message_id"]) ??
-                    stringValue(metadata["toolMessageId"]) ??
-                    part.id
 
                 requests.append(
                     AIQuestionRequestInfo(
                         id: requestId,
                         sessionId: sessionId,
                         questions: questions,
-                        toolMessageId: toolMessageId,
+                        toolMessageId: question.toolMessageID ?? part.id,
                         toolCallId: part.toolCallId
                     )
                 )

@@ -5,26 +5,6 @@ import AppKit
 import UIKit
 #endif
 
-private func isInteractiveQuestionToolState(_ state: [String: Any]) -> Bool {
-    if let metadata = state["metadata"] as? [String: Any], metadata["answers"] != nil {
-        return false
-    }
-
-    let status = (state["status"] as? String)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased() ?? ""
-    if status.isEmpty {
-        // 兼容旧数据：缺失状态时保守视为可交互
-        return true
-    }
-    switch status {
-    case "pending", "running", "unknown", "awaiting_input", "requires_input", "in_progress":
-        return true
-    default:
-        return false
-    }
-}
-
 struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
     let messages: [AIChatMessage]
@@ -454,13 +434,8 @@ struct MessageListView: View {
     }
 
     private func questionRequestIdFromPart(_ part: AIChatPart) -> String? {
-        let raw = (part.toolPartMetadata?["request_id"] as? String) ??
-            (part.toolPartMetadata?["requestId"] as? String) ??
-            (part.toolState?["request_id"] as? String) ??
-            (part.toolState?["requestId"] as? String) ??
-            ((part.toolState?["metadata"] as? [String: Any])?["request_id"] as? String) ??
-            ((part.toolState?["metadata"] as? [String: Any])?["requestId"] as? String)
-        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = part.toolView?.question?.requestID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
@@ -472,81 +447,22 @@ struct MessageListView: View {
         guard part.kind == .tool else { return nil }
         let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard toolName == "question" else { return nil }
-        guard let state = part.toolState else { return nil }
-        guard isInteractiveQuestionToolState(state) else { return nil }
-
-        let input = state["input"] as? [String: Any]
-        let questionsValue = input?["questions"] ?? state["questions"]
-        let questions = parseFallbackQuestionInfos(from: questionsValue)
+        guard let question = part.toolView?.question, question.interactive else { return nil }
+        let questions = question.promptItems
         guard !questions.isEmpty else { return nil }
 
-        let requestId =
-            questionRequestIdFromPart(part) ??
-            part.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines) ??
-            part.id
+        let trimmedRequestId = question.requestID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestId = trimmedRequestId.isEmpty
+            ? (part.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? part.id)
+            : trimmedRequestId
         guard !requestId.isEmpty else { return nil }
-
-        let toolMessageId =
-            ((part.toolPartMetadata?["tool_message_id"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines))
 
         return AIQuestionRequestInfo(
             id: requestId,
             sessionId: sessionId,
             questions: questions,
-            toolMessageId: (toolMessageId?.isEmpty == false) ? toolMessageId : (message.messageId ?? part.id),
+            toolMessageId: question.toolMessageID ?? message.messageId ?? part.id,
             toolCallId: part.toolCallId
-        )
-    }
-
-    private func parseFallbackQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
-        if let items = value as? [[String: Any]] {
-            return items.compactMap { parseFallbackQuestionInfo(from: $0) }
-        }
-        if let items = value as? [Any] {
-            return items.compactMap { item in
-                guard let dict = item as? [String: Any] else { return nil }
-                return parseFallbackQuestionInfo(from: dict)
-            }
-        }
-        if let dict = value as? [String: Any], let nested = dict["questions"] {
-            return parseFallbackQuestionInfos(from: nested)
-        }
-        return []
-    }
-
-    private func parseFallbackQuestionInfo(from dict: [String: Any]) -> AIQuestionInfo? {
-        let question = (dict["question"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !question.isEmpty else { return nil }
-        let header = (dict["header"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let optionItems: [[String: Any]] = dict["options"] as? [[String: Any]] ?? []
-        let options: [AIQuestionOptionInfo] = optionItems.compactMap { option -> AIQuestionOptionInfo? in
-            guard let label = (option["label"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !label.isEmpty else { return nil }
-            let description = ((option["description"] as? String) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let optionID =
-                (option["option_id"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ??
-                (option["optionId"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return AIQuestionOptionInfo(
-                optionID: optionID?.isEmpty == false ? optionID : nil,
-                label: label,
-                description: description
-            )
-        }
-        let multiple = (dict["multiple"] as? Bool) ?? false
-        let custom = (dict["custom"] as? Bool) ?? ((dict["isOther"] as? Bool) ?? true)
-        return AIQuestionInfo(
-            question: question,
-            header: header,
-            options: options,
-            multiple: multiple,
-            custom: custom
         )
     }
 }
@@ -731,15 +647,9 @@ private struct MessageBubble: View, Equatable {
             ) ?? fallbackQuestionRequest(message: message, part: part, sessionId: sessionId)
             ToolCardView(
                 name: part.toolName ?? "unknown",
-                state: part.toolState,
                 callID: part.toolCallId,
-                toolKind: part.toolKind,
-                toolTitle: part.toolTitle,
-                toolRawInput: part.toolRawInput,
-                toolRawOutput: part.toolRawOutput,
-                toolLocations: part.toolLocations,
-                partMetadata: part.toolPartMetadata,
-                pendingQuestion: pendingQuestion,
+                toolView: part.toolView,
+                questionRequest: pendingQuestion,
                 onQuestionReply: pendingQuestion == nil ? nil : { answers in
                     guard let pendingQuestion else { return }
                     onQuestionReply(pendingQuestion, answers)
@@ -755,12 +665,7 @@ private struct MessageBubble: View, Equatable {
     }
 
     private func questionRequestId(from part: AIChatPart) -> String? {
-        let direct = (part.toolPartMetadata?["request_id"] as? String) ??
-            (part.toolPartMetadata?["requestId"] as? String) ??
-            (part.toolState?["request_id"] as? String) ??
-            (part.toolState?["requestId"] as? String) ??
-            ((part.toolState?["metadata"] as? [String: Any])?["request_id"] as? String) ??
-            ((part.toolState?["metadata"] as? [String: Any])?["requestId"] as? String)
+        let direct = part.toolView?.question?.requestID
         let trimmed = direct?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
@@ -773,12 +678,8 @@ private struct MessageBubble: View, Equatable {
         guard part.kind == .tool else { return nil }
         let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard toolName == "question" else { return nil }
-        guard let state = part.toolState else { return nil }
-        guard isInteractiveQuestionToolState(state) else { return nil }
-
-        let input = state["input"] as? [String: Any]
-        let questionsValue = input?["questions"] ?? state["questions"]
-        let questions = parseQuestionInfos(from: questionsValue)
+        guard let question = part.toolView?.question, question.interactive else { return nil }
+        let questions = question.promptItems
         guard !questions.isEmpty else { return nil }
 
         let requestId =
@@ -787,67 +688,12 @@ private struct MessageBubble: View, Equatable {
             part.id
         guard !requestId.isEmpty else { return nil }
 
-        let toolMessageId =
-            ((part.toolPartMetadata?["tool_message_id"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines))
-
         return AIQuestionRequestInfo(
             id: requestId,
             sessionId: sessionId,
             questions: questions,
-            toolMessageId: (toolMessageId?.isEmpty == false) ? toolMessageId : (message.messageId ?? part.id),
+            toolMessageId: question.toolMessageID ?? message.messageId ?? part.id,
             toolCallId: part.toolCallId
-        )
-    }
-
-    private func parseQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
-        if let items = value as? [[String: Any]] {
-            return items.compactMap { parseQuestionInfo(from: $0) }
-        }
-        if let items = value as? [Any] {
-            return items.compactMap { item in
-                guard let dict = item as? [String: Any] else { return nil }
-                return parseQuestionInfo(from: dict)
-            }
-        }
-        if let dict = value as? [String: Any], let nested = dict["questions"] {
-            return parseQuestionInfos(from: nested)
-        }
-        return []
-    }
-
-    private func parseQuestionInfo(from dict: [String: Any]) -> AIQuestionInfo? {
-        let question = (dict["question"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !question.isEmpty else { return nil }
-        let header = (dict["header"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let optionItems: [[String: Any]] = dict["options"] as? [[String: Any]] ?? []
-        let options: [AIQuestionOptionInfo] = optionItems.compactMap { option -> AIQuestionOptionInfo? in
-            guard let label = (option["label"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !label.isEmpty else { return nil }
-            let description = ((option["description"] as? String) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let optionID =
-                (option["option_id"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ??
-                (option["optionId"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return AIQuestionOptionInfo(
-                optionID: optionID?.isEmpty == false ? optionID : nil,
-                label: label,
-                description: description
-            )
-        }
-        let multiple = (dict["multiple"] as? Bool) ?? false
-        let custom = (dict["custom"] as? Bool) ?? ((dict["isOther"] as? Bool) ?? true)
-        return AIQuestionInfo(
-            question: question,
-            header: header,
-            options: options,
-            multiple: multiple,
-            custom: custom
         )
     }
 

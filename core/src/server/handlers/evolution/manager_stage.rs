@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::{
-    apply_stream_snapshot_cache_op, build_ai_session_messages_update, ensure_agent,
+    apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
+    ensure_agent,
     infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
     mark_stream_snapshot_terminal, merge_session_selection_hint, normalize_part_for_wire,
     record_session_index_created, resolve_directory, seed_stream_snapshot,
@@ -4923,6 +4924,7 @@ impl EvolutionManager {
                                     None,
                                 )
                                 .await;
+                                let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                 self.broadcast(
                                     ctx,
                                     build_ai_session_messages_update(
@@ -4931,7 +4933,7 @@ impl EvolutionManager {
                                         ai_tool,
                                         session_id,
                                         &snapshot,
-                                        Some(vec![op]),
+                                        Some(emit_ops),
                                         false,
                                     ),
                                 )
@@ -4964,6 +4966,7 @@ impl EvolutionManager {
                                     None,
                                 )
                                 .await;
+                                let emit_ops = emit_ops_for_cache_op(&snapshot, &op);
                                 self.broadcast(
                                     ctx,
                                     build_ai_session_messages_update(
@@ -4972,7 +4975,7 @@ impl EvolutionManager {
                                         ai_tool,
                                         session_id,
                                         &snapshot,
-                                        Some(vec![op]),
+                                        Some(emit_ops),
                                         false,
                                     ),
                                 )

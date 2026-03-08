@@ -1145,8 +1145,7 @@ struct AITabView: View {
                         id: UUID().uuidString,
                         kind: .text,
                         text: "当前模型不支持图片输入，请切换支持图片的模型后再发送。",
-                        toolName: nil,
-                        toolState: nil
+                        toolName: nil
                     )],
                     isStreaming: false
                 )
@@ -1179,8 +1178,7 @@ struct AITabView: View {
                                 id: UUID().uuidString,
                                 kind: .text,
                                 text: "暂不支持本地命令：/\(slashCommand.name)",
-                                toolName: nil,
-                                toolState: nil
+                                toolName: nil
                             )],
                             isStreaming: false
                         )

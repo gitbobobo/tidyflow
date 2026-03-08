@@ -111,16 +111,6 @@ enum AIChatPartKind: String {
     case compaction
 }
 
-struct AIChatToolCallLocation: Equatable {
-    var uri: String?
-    var path: String?
-    var line: Int?
-    var column: Int?
-    var endLine: Int?
-    var endColumn: Int?
-    var label: String?
-}
-
 struct AIChatPart: Identifiable {
     let id: String
     var kind: AIChatPartKind
@@ -132,33 +122,12 @@ struct AIChatPart: Identifiable {
     var ignored: Bool? = nil
     var source: [String: Any]? = nil
     var toolName: String?
-    var toolState: [String: Any]?
     var toolCallId: String? = nil
     var toolKind: String? = nil
-    var toolTitle: String? = nil
-    var toolRawInput: Any? = nil
-    var toolRawOutput: Any? = nil
-    var toolLocations: [AIChatToolCallLocation]? = nil
-    var toolPartMetadata: [String: Any]? = nil
+    var toolView: AIToolView? = nil
 }
 
 enum AIChatPartNormalization {
-    private static func mapToolLocations(
-        _ locations: [AIProtocolToolCallLocationInfo]?
-    ) -> [AIChatToolCallLocation]? {
-        locations?.map { item in
-            AIChatToolCallLocation(
-                uri: item.uri,
-                path: item.path,
-                line: item.line,
-                column: item.column,
-                endLine: item.endLine,
-                endColumn: item.endColumn,
-                label: item.label
-            )
-        }
-    }
-
     static func normalizedKind(from partType: String) -> AIChatPartKind {
         AIChatPartKind(rawValue: partType) ?? .text
     }
@@ -173,14 +142,9 @@ enum AIChatPartNormalization {
         part.ignored = protocolPart.ignored
         part.source = protocolPart.source
         part.toolName = protocolPart.toolName
-        part.toolState = protocolPart.toolState
         part.toolCallId = protocolPart.toolCallId
         part.toolKind = protocolPart.toolKind
-        part.toolTitle = protocolPart.toolTitle
-        part.toolRawInput = protocolPart.toolRawInput
-        part.toolRawOutput = protocolPart.toolRawOutput
-        part.toolLocations = mapToolLocations(protocolPart.toolLocations)
-        part.toolPartMetadata = protocolPart.toolPartMetadata
+        part.toolView = protocolPart.toolView
     }
 
     static func makeChatPart(from protocolPart: AIProtocolPartInfo) -> AIChatPart {
@@ -195,14 +159,9 @@ enum AIChatPartNormalization {
             ignored: protocolPart.ignored,
             source: protocolPart.source,
             toolName: protocolPart.toolName,
-            toolState: protocolPart.toolState,
             toolCallId: protocolPart.toolCallId,
             toolKind: protocolPart.toolKind,
-            toolTitle: protocolPart.toolTitle,
-            toolRawInput: protocolPart.toolRawInput,
-            toolRawOutput: protocolPart.toolRawOutput,
-            toolLocations: mapToolLocations(protocolPart.toolLocations),
-            toolPartMetadata: protocolPart.toolPartMetadata
+            toolView: protocolPart.toolView
         )
     }
 }
@@ -255,9 +214,7 @@ enum AIPlanImplementationQuestion {
         }
         for message in messages {
             for part in message.parts where part.kind == .tool {
-                let partRequestID =
-                    (part.toolPartMetadata?["request_id"] as? String) ??
-                    ((part.toolState?["metadata"] as? [String: Any])?["request_id"] as? String)
+                let partRequestID = part.toolView?.question?.requestID
                 if partRequestID == requestID {
                     return true
                 }
@@ -300,29 +257,35 @@ enum AIPlanImplementationQuestion {
     static func buildQuestionMessage(request: AIQuestionRequestInfo, planPartID: String) -> AIChatMessage {
         let messageID = request.toolMessageId ?? "codex-plan-action-msg-\(request.sessionId)-\(planPartID)"
         let callID = request.toolCallId ?? "codex-plan-action-call-\(request.sessionId)-\(planPartID)"
-        let toolState: [String: Any] = [
-            "status": "pending",
-            "input": [
-                "questions": [
-                    [
-                        "question": "实现这个计划？",
-                        "header": "计划已就绪",
-                        "options": [
-                            ["label": yesOption, "description": "切换到 Default 模式并开始编码"],
-                            ["label": noOption, "description": "继续完善计划，不开始实现"],
+        let toolView = AIToolView(
+            status: .pending,
+            displayTitle: "question",
+            statusText: "pending",
+            summary: nil,
+            headerCommandSummary: nil,
+            durationMs: nil,
+            sections: [],
+            locations: [],
+            question: AIToolViewQuestion(
+                requestID: request.id,
+                toolMessageID: messageID,
+                promptItems: [
+                    AIQuestionInfo(
+                        question: "实现这个计划？",
+                        header: "计划已就绪",
+                        options: [
+                            AIQuestionOptionInfo(optionID: nil, label: yesOption, description: "切换到 Default 模式并开始编码"),
+                            AIQuestionOptionInfo(optionID: nil, label: noOption, description: "继续完善计划，不开始实现"),
                         ],
-                        "multiple": false,
-                        "custom": false,
-                    ],
+                        multiple: false,
+                        custom: false
+                    ),
                 ],
-            ],
-            "metadata": [
-                "request_id": request.id,
-                "tool_message_id": messageID,
-                "source": "codex_plan_implementation",
-                "plan_part_id": planPartID,
-            ],
-        ]
+                interactive: true,
+                answers: nil
+            ),
+            linkedSession: nil
+        )
         let part = AIChatPart(
             id: "codex-plan-action-part-\(request.sessionId)-\(planPartID)",
             kind: .tool,
@@ -334,14 +297,8 @@ enum AIPlanImplementationQuestion {
             ignored: nil,
             source: ["vendor": "tidyflow", "type": "plan_implementation_question"],
             toolName: "question",
-            toolState: toolState,
             toolCallId: callID,
-            toolPartMetadata: [
-                "request_id": request.id,
-                "tool_message_id": messageID,
-                "source": "codex_plan_implementation",
-                "plan_part_id": planPartID,
-            ]
+            toolView: toolView
         )
         return AIChatMessage(
             messageId: messageID,
@@ -400,30 +357,12 @@ enum AIQuestionPartMatcher {
         if candidateIDs.contains(part.id) {
             return true
         }
-
-        if let metadata = part.toolPartMetadata {
-            if let requestId = normalizedString(metadata["request_id"]) ?? normalizedString(metadata["requestId"]),
-               candidateIDs.contains(requestId) {
-                return true
-            }
-            if let toolCallId = normalizedString(metadata["tool_call_id"]) ?? normalizedString(metadata["toolCallId"]),
-               candidateIDs.contains(toolCallId) {
-                return true
-            }
-            if let toolMessageId = normalizedString(metadata["tool_message_id"]) ?? normalizedString(metadata["toolMessageId"]),
-               candidateIDs.contains(toolMessageId) {
-                return true
-            }
-        }
-
-        guard let toolState = part.toolState else { return false }
-        if let requestId = normalizedString(toolState["request_id"]) ?? normalizedString(toolState["requestId"]),
-           candidateIDs.contains(requestId) {
+        guard let question = part.toolView?.question else { return false }
+        if candidateIDs.contains(question.requestID) {
             return true
         }
-        if let metadata = toolState["metadata"] as? [String: Any],
-           let requestId = normalizedString(metadata["request_id"]) ?? normalizedString(metadata["requestId"]),
-           candidateIDs.contains(requestId) {
+        if let toolMessageId = normalizedString(question.toolMessageID),
+           candidateIDs.contains(toolMessageId) {
             return true
         }
         return false
@@ -448,16 +387,28 @@ enum AIQuestionCompletionUpdater {
         requestId: String,
         answers: [[String]]?
     ) {
-        var toolState = part.toolState ?? [:]
-        toolState["status"] = "completed"
-
-        var metadata = toolState["metadata"] as? [String: Any] ?? [:]
-        metadata["request_id"] = requestId
-        if let answers {
-            metadata["answers"] = answers
-        }
-        toolState["metadata"] = metadata
-        part.toolState = toolState
+        guard var toolView = part.toolView else { return }
+        toolView = AIToolView(
+            status: .completed,
+            displayTitle: toolView.displayTitle,
+            statusText: toolView.statusText,
+            summary: toolView.summary,
+            headerCommandSummary: toolView.headerCommandSummary,
+            durationMs: toolView.durationMs,
+            sections: toolView.sections,
+            locations: toolView.locations,
+            question: toolView.question.map {
+                AIToolViewQuestion(
+                    requestID: requestId,
+                    toolMessageID: $0.toolMessageID,
+                    promptItems: $0.promptItems,
+                    interactive: false,
+                    answers: answers
+                )
+            },
+            linkedSession: toolView.linkedSession
+        )
+        part.toolView = toolView
     }
 }
 
@@ -520,15 +471,8 @@ enum AIQuestionLocalCompletion {
     }
 
     private static func questionPartIsInteractive(_ part: AIChatPart) -> Bool {
-        let rawStatus = (part.toolState?["status"] as? String) ?? ""
-        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return status.isEmpty
-            || status == "pending"
-            || status == "running"
-            || status == "unknown"
-            || status == "awaiting_input"
-            || status == "requires_input"
-            || status == "in_progress"
+        guard let toolView = part.toolView else { return false }
+        return toolView.status == .pending || toolView.status == .running || toolView.status == .unknown
     }
 }
 
@@ -546,101 +490,6 @@ enum AIToolStatus: String {
         case .completed: return "completed"
         case .error: return "error"
         case .unknown: return "unknown"
-        }
-    }
-}
-
-struct AIToolInvocationState {
-    let status: AIToolStatus
-    let input: [String: Any]
-    let raw: String?
-    let title: String?
-    let output: String?
-    let error: String?
-    let metadata: [String: Any]?
-    let timeStart: Double?
-    let timeEnd: Double?
-    let attachments: [[String: Any]]?
-
-    static func from(state: [String: Any]?) -> AIToolInvocationState? {
-        guard let state else { return nil }
-        let statusRaw = (state["status"] as? String ?? "").lowercased()
-        let statusToken = normalizeStatus(statusRaw)
-        let status = AIToolStatus(rawValue: statusToken) ?? .unknown
-        // ACP 适配器可能将 input 存为 JSON 字符串（如 Kimi 格式），尝试解析为字典。
-        let inputValue = state["input"]
-        let input: [String: Any]
-        if let inputDict = inputValue as? [String: Any] {
-            input = inputDict
-        } else if let inputStr = inputValue as? String,
-                  let data = inputStr.data(using: .utf8),
-                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            input = parsed
-        } else {
-            input = [:]
-        }
-        let raw = state["raw"] as? String
-        let title = state["title"] as? String
-        let output = state["output"] as? String
-        let error = state["error"] as? String
-        let metadata = state["metadata"] as? [String: Any]
-        let time = state["time"] as? [String: Any] ?? [:]
-        let attachments = state["attachments"] as? [[String: Any]]
-
-        return AIToolInvocationState(
-            status: status,
-            input: input,
-            raw: raw,
-            title: title,
-            output: output,
-            error: error,
-            metadata: metadata,
-            timeStart: Self.parseDouble(time["start"]),
-            timeEnd: Self.parseDouble(time["end"]),
-            attachments: attachments
-        )
-    }
-
-    private static func normalizeStatus(_ raw: String) -> String {
-        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if token == "in_progress" || token == "inprogress" || token.contains("progress") {
-            return "running"
-        }
-        if token == "done" || token == "success" || token == "succeeded" {
-            return "completed"
-        }
-        if token == "failed" || token == "rejected" || token == "cancelled" || token == "canceled" {
-            return "error"
-        }
-        if token == "awaiting_input" || token == "requires_input" {
-            return "running"
-        }
-        return token
-    }
-
-    var durationMs: Double? {
-        guard let start = timeStart, let end = timeEnd else { return nil }
-        return max(0, end - start)
-    }
-
-    private static func parseDouble(_ value: Any?) -> Double? {
-        switch value {
-        case let v as Double:
-            return v
-        case let v as Float:
-            return Double(v)
-        case let v as Int:
-            return Double(v)
-        case let v as Int64:
-            return Double(v)
-        case let v as UInt:
-            return Double(v)
-        case let v as NSNumber:
-            return v.doubleValue
-        case let v as String:
-            return Double(v)
-        default:
-            return nil
         }
     }
 }
@@ -1132,8 +981,7 @@ final class AIChatStore: ObservableObject {
                     id: UUID().uuidString,
                     kind: .text,
                     text: text,
-                    toolName: nil,
-                    toolState: nil
+                    toolName: nil
                 )
             )
         }
@@ -1150,8 +998,7 @@ final class AIChatStore: ObservableObject {
                     synthetic: nil,
                     ignored: nil,
                     source: nil,
-                    toolName: nil,
-                    toolState: nil
+                    toolName: nil
                 )
             )
         }
@@ -1576,7 +1423,7 @@ final class AIChatStore: ObservableObject {
         messages.append(
             AIChatMessage(
                 role: .assistant,
-                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "⚠️ \(error)", toolName: nil, toolState: nil)],
+                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "⚠️ \(error)", toolName: nil)],
                 isStreaming: false
             )
         )
@@ -1655,9 +1502,7 @@ final class AIChatStore: ObservableObject {
 
     private func isRunningToolPart(_ part: AIChatPart) -> Bool {
         guard part.kind == .tool else { return false }
-        guard let rawStatus = part.toolState?["status"] as? String else { return false }
-        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return status == "pending" || status == "running"
+        return part.toolView?.status == .pending || part.toolView?.status == .running
     }
 
     private func runningToolPartCount(in message: AIChatMessage) -> Int {
@@ -1913,19 +1758,43 @@ final class AIChatStore: ObservableObject {
             if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
-                var toolState = part.toolState ?? [:]
-                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
-                var lines = (metadata["progress_lines"] as? [String]) ?? []
-                lines.append(delta)
-                if lines.count > 300 {
-                    lines.removeFirst(lines.count - 300)
+                var sections = part.toolView?.sections ?? []
+                if let index = sections.firstIndex(where: { $0.id == "generic-progress" }) {
+                    let current = sections[index].content
+                    sections[index] = AIToolViewSection(
+                        id: "generic-progress",
+                        title: "progress",
+                        content: current.isEmpty ? delta : current + "\n" + delta,
+                        style: .text,
+                        language: nil,
+                        copyable: true,
+                        collapsedByDefault: false
+                    )
+                } else {
+                    sections.append(
+                        AIToolViewSection(
+                            id: "generic-progress",
+                            title: "progress",
+                            content: delta,
+                            style: .text,
+                            language: nil,
+                            copyable: true,
+                            collapsedByDefault: false
+                        )
+                    )
                 }
-                metadata["progress_lines"] = lines
-                toolState["metadata"] = metadata
-                if toolState["status"] == nil {
-                    toolState["status"] = "running"
-                }
-                part.toolState = toolState
+                part.toolView = AIToolView(
+                    status: .running,
+                    displayTitle: part.toolView?.displayTitle ?? (part.toolName ?? "unknown"),
+                    statusText: part.toolView?.statusText ?? "running",
+                    summary: part.toolView?.summary,
+                    headerCommandSummary: part.toolView?.headerCommandSummary,
+                    durationMs: part.toolView?.durationMs,
+                    sections: sections,
+                    locations: part.toolView?.locations ?? [],
+                    question: part.toolView?.question,
+                    linkedSession: part.toolView?.linkedSession
+                )
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
                 updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
@@ -1944,14 +1813,29 @@ final class AIChatStore: ObservableObject {
                 ignored: nil,
                 source: nil,
                 toolName: "unknown",
-                toolState: [
-                    "status": "running",
-                    "metadata": [
-                        "progress_lines": [delta],
-                    ],
-                ],
                 toolCallId: nil,
-                toolPartMetadata: nil
+                toolView: AIToolView(
+                    status: .running,
+                    displayTitle: "unknown",
+                    statusText: "running",
+                    summary: nil,
+                    headerCommandSummary: nil,
+                    durationMs: nil,
+                    sections: [
+                        AIToolViewSection(
+                            id: "generic-progress",
+                            title: "progress",
+                            content: delta,
+                            style: .text,
+                            language: nil,
+                            copyable: true,
+                            collapsedByDefault: false
+                        ),
+                    ],
+                    locations: [],
+                    question: nil,
+                    linkedSession: nil
+                )
             )
             messages[msgIdx].parts.append(p)
             let partIdx = messages[msgIdx].parts.count - 1
@@ -1965,13 +1849,43 @@ final class AIChatStore: ObservableObject {
             if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
-                var toolState = part.toolState ?? [:]
-                let currentOutput = (toolState["output"] as? String) ?? ""
-                toolState["output"] = currentOutput + delta
-                if toolState["status"] == nil {
-                    toolState["status"] = "running"
+                var sections = part.toolView?.sections ?? []
+                if let index = sections.firstIndex(where: { $0.id == "generic-output" }) {
+                    let current = sections[index].content
+                    sections[index] = AIToolViewSection(
+                        id: "generic-output",
+                        title: "output",
+                        content: current + delta,
+                        style: .code,
+                        language: "text",
+                        copyable: true,
+                        collapsedByDefault: false
+                    )
+                } else {
+                    sections.append(
+                        AIToolViewSection(
+                            id: "generic-output",
+                            title: "output",
+                            content: delta,
+                            style: .code,
+                            language: "text",
+                            copyable: true,
+                            collapsedByDefault: false
+                        )
+                    )
                 }
-                part.toolState = toolState
+                part.toolView = AIToolView(
+                    status: .running,
+                    displayTitle: part.toolView?.displayTitle ?? (part.toolName ?? "unknown"),
+                    statusText: part.toolView?.statusText ?? "running",
+                    summary: part.toolView?.summary,
+                    headerCommandSummary: part.toolView?.headerCommandSummary,
+                    durationMs: part.toolView?.durationMs,
+                    sections: sections,
+                    locations: part.toolView?.locations ?? [],
+                    question: part.toolView?.question,
+                    linkedSession: part.toolView?.linkedSession
+                )
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
                 updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
@@ -1990,12 +1904,29 @@ final class AIChatStore: ObservableObject {
                 ignored: nil,
                 source: nil,
                 toolName: "unknown",
-                toolState: [
-                    "status": "running",
-                    "output": delta,
-                ],
                 toolCallId: nil,
-                toolPartMetadata: nil
+                toolView: AIToolView(
+                    status: .running,
+                    displayTitle: "unknown",
+                    statusText: "running",
+                    summary: nil,
+                    headerCommandSummary: nil,
+                    durationMs: nil,
+                    sections: [
+                        AIToolViewSection(
+                            id: "generic-output",
+                            title: "output",
+                            content: delta,
+                            style: .code,
+                            language: "text",
+                            copyable: true,
+                            collapsedByDefault: false
+                        ),
+                    ],
+                    locations: [],
+                    question: nil,
+                    linkedSession: nil
+                )
             )
             messages[msgIdx].parts.append(p)
             let partIdx = messages[msgIdx].parts.count - 1
@@ -2020,7 +1951,7 @@ final class AIChatStore: ObservableObject {
         }
 
         let kind = AIChatPartKind(rawValue: normalizedPartType) ?? .text
-        let p = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
+        let p = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil)
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[partId] = (msgIdx, partIdx)

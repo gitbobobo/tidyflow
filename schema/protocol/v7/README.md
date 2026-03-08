@@ -34,24 +34,39 @@ Plan / Verify 相关产物中的工作项归属字段统一使用 `implementatio
 
 ## ACP `tool-calls` 对齐说明（v7）
 
-为对齐 ACP `tool-calls`，AI part 协议已扩展以下字段（均为可选）：
+为对齐 ACP `tool-calls`，AI part 协议在 v7 收敛为“前端渲染导向”的结构化 `tool_view`。
 
+`PartInfo` 对外只保留以下工具身份字段：
+
+- `tool_name`
+- `tool_call_id`
 - `tool_kind`
-- `tool_title`
-- `tool_raw_input`
-- `tool_raw_output`
-- `tool_locations`（数组项：`uri/path/line/column/end_line/end_column/label`）
 
-同时保留兼容字段：
+`PartInfo.tool_view` 作为唯一工具卡片渲染载荷，字段如下：
 
-- `tool_state`（含 `input/raw/output/status/metadata.locations`）
-- `tool_part_metadata`（透传未知字段，避免信息丢失）
+- `status`
+- `display_title`
+- `status_text`
+- `summary`
+- `header_command_summary`
+- `duration_ms`
+- `sections[]`
+- `locations[]`
+- `question`
+- `linked_session`
+
+其中：
+
+- `sections[]` 项包含 `id/title/content/style/language/copyable/collapsed_by_default`
+- `locations[]` 项包含 `uri/path/line/column/end_line/end_column/label`
+- `question` 包含 `request_id/tool_message_id/prompt_items/interactive/answers`
+- `linked_session` 包含 `session_id/agent_name/description`
 
 实现约束：
 
-1. 新字段与兼容字段必须在同一个转换点双写，禁止多处拼装导致漂移。
+1. `tool_view` 必须由 Core 在单一转换点生成，禁止客户端基于原始 JSON 二次推导。
 2. 历史加载（`session/load`）与流式（`session/update`）必须复用同一解析逻辑。
-3. macOS/iOS 端统一读取上述字段，优先使用新字段，旧字段回退。
+3. macOS/iOS 端统一只读取 `tool_view`，不依赖 `tool_state/raw_input/raw_output/metadata` 回退。
 
 ## 历史消息工具卡片合并语义（v7 补充）
 
@@ -62,15 +77,18 @@ Core `upsert_tool_part_in_history_messages` 在加载历史时原地更新已存
 - 保留最后一次（最完整状态）
 - 仅在消息内部去重，跨消息的同名 `part_id` 相互独立
 
-## `tool_state.input` 格式兼容（v7 补充）
+## 历史读取裁剪语义（v7 补充）
 
-部分 ACP 适配器（如 Kimi）将 `tool_state.input` 以 JSON 字符串形式传输，而非字典对象。
-客户端 `AIToolInvocationState.from` 解析顺序：
-1. 若 `input` 已是 `[String: Any]`，直接使用。
-2. 若 `input` 为 `String`，尝试 `JSONSerialization` 解析为字典。
-3. 均失败时回退为空字典 `{}`，不中断渲染流程。
+当 `ai_session_messages` 的历史页过大时，Core 只允许裁剪 `tool_view.sections[].content`，并在响应顶层返回 `truncated=true`。
+该裁剪不会删除最近消息本身，也不会删除 `display_title/status/question/linked_session/locations` 等工具卡片骨架字段。
 
-此行为在 `AIChatProtocolModelsTests.testAIToolInvocationStateFromParsesJSONStringInput` 中有回归覆盖。
+## 流式更新语义（v7 补充）
+
+`ai_session_messages_update` 中：
+
+1. 文本/推理 part 仍可使用 `PartDelta`。
+2. tool part 的对外更新统一发送 `PartUpdated`，其中包含当前完整 `tool_view` 快照。
+3. 客户端不得再根据原始 provider JSON 或 metadata 拼装工具卡片。
 
 ## AI 会话列表读取（v7 补充）
 
