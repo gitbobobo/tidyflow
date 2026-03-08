@@ -388,6 +388,9 @@ final class MobileAppState: ObservableObject {
     private var _evolutionHandlerAdapter: MobileAppStateEvolutionMessageHandlerAdapter?
     private var _evidenceHandlerAdapter: MobileAppStateEvidenceMessageHandlerAdapter?
     private var _errorHandlerAdapter: MobileAppStateErrorMessageHandlerAdapter?
+    /// 工作区缓存可观测性指标（Core 权威输出，按 "project:workspace" 隔离）
+    /// 由 onSystemSnapshot 回调更新，macOS 与 iOS 语义对齐，不在客户端本地推导。
+    private(set) var workspaceCacheMetrics: SystemSnapshotCacheMetrics = SystemSnapshotCacheMetrics(index: [:])
     /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
     private var aiPendingSendRequest: (
         projectName: String,
@@ -3808,6 +3811,7 @@ final class MobileAppState: ObservableObject {
                 self.errorMessage = ""
                 self.refreshProjectTree()
                 self.wsClient.requestEvoSnapshot()
+                self.wsClient.requestSystemSnapshot()
                 // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
                 self.reattachTerminalIfNeeded()
                 // 重连后恢复 AI 会话数据（流式输出可能中断，需重新拉取）
@@ -3884,6 +3888,11 @@ final class MobileAppState: ObservableObject {
         wsClient.evolutionMessageHandler = evolutionHandler
         wsClient.evidenceMessageHandler = evidenceHandler
         wsClient.errorMessageHandler = errorHandler
+
+        // 工作区缓存可观测性快照：更新 Core 权威指标（语义与 macOS 对齐）
+        wsClient.onSystemSnapshot = { [weak self] metrics in
+            self?.workspaceCacheMetrics = metrics
+        }
     }
 
     private func resolveDefaultAgentName() -> String {

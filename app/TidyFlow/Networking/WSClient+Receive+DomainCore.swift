@@ -7,6 +7,11 @@ extension WSClient {
         switch action {
         case "hello", "pong":
             return true
+        case "system_snapshot":
+            // 工作区缓存可观测性快照（/api/v1/system/snapshot 的 HTTP 响应）
+            let metrics = SystemSnapshotCacheMetrics.from(json: json["cache_metrics"])
+            onSystemSnapshot?(metrics)
+            return true
         default:
             return false
         }

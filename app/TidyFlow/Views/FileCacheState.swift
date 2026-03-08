@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import TidyFlowShared
 
 /// 独立的文件缓存状态对象
 /// 从 AppState 拆分出来，避免文件高频更新（文件监控事件、目录展开/折叠）触发全局视图刷新
@@ -16,6 +17,31 @@ class FileCacheState: ObservableObject {
 
     /// 目录展开状态 (key: "project:workspace:path" -> isExpanded)
     @Published var directoryExpandState: [String: Bool] = [:]
+
+    // MARK: - 缓存可观测性指标（Core 权威输出，按 "project:workspace" 隔离）
+
+    /// 从 Core system_snapshot 获取的文件缓存指标快照
+    /// key: "project:workspace"；值由 Core 计算，客户端只消费
+    private(set) var cacheMetricsIndex: [String: WorkspaceCacheMetricsModel] = [:]
+
+    /// 更新指定工作区的缓存指标（由 AppState 在收到 system_snapshot 后调用）
+    /// - Parameters:
+    ///   - metrics: Core 权威输出的 system_snapshot cache_metrics
+    func updateCacheMetrics(_ metrics: SystemSnapshotCacheMetrics) {
+        cacheMetricsIndex = metrics.index
+    }
+
+    /// 按 (project, workspace) 查询文件缓存指标（不存在则返回空指标）
+    func fileCacheMetrics(project: String, workspace: String) -> FileCacheMetricsModel {
+        let key = "\(project):\(workspace)"
+        return cacheMetricsIndex[key]?.fileCache ?? .empty()
+    }
+
+    /// 按 (project, workspace) 查询该工作区是否超出预算（Core 权威判定）
+    func isBudgetExceeded(project: String, workspace: String) -> Bool {
+        let key = "\(project):\(workspace)"
+        return cacheMetricsIndex[key]?.budgetExceeded ?? false
+    }
 
     // MARK: - 资源管理：按工作区边界淘汰缓存
 

@@ -23,6 +23,7 @@ extension AppState {
                 self?.wsClient.requestGetClientSettings()
                 self?.reloadAISessionDataAfterReconnect()
                 self?.wsClient.requestEvoSnapshot()
+                self?.wsClient.requestSystemSnapshot()
                 // 重连后尝试附着已有终端会话
                 self?.requestTerminalReattach()
             } else if let phase = ConnectionPhase.evaluateDisconnect(
@@ -67,6 +68,14 @@ extension AppState {
         wsClient.evidenceMessageHandler = evidenceHandler
         wsClient.evolutionMessageHandler = evolutionHandler
         wsClient.errorMessageHandler = errorHandler
+
+        // 工作区缓存可观测性快照：更新 FileCacheState 和 GitCacheState 的 Core 权威指标
+        wsClient.onSystemSnapshot = { [weak self] metrics in
+            DispatchQueue.main.async {
+                self?.fileCache.updateCacheMetrics(metrics)
+                self?.gitCache.updateCacheMetrics(metrics)
+            }
+        }
 
         // Connect to the dynamic port
         wsClient.connect(port: port)

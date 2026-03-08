@@ -1727,4 +1727,14 @@ extension WSClient {
             "request_id": requestId
         ])
     }
+
+    /// 请求工作区缓存可观测性快照（HTTP /api/v1/system/snapshot）
+    /// 响应中的 `cache_metrics` 字段包含所有工作区的缓存指标，由 Core 权威计算。
+    func requestSystemSnapshot() {
+        requestReadViaHTTP(
+            domain: "system",
+            path: "/api/v1/system/snapshot",
+            fallbackAction: "system_snapshot"
+        )
+    }
 }

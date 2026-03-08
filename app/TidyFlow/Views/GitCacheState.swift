@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import TidyFlowShared
 
 /// 独立的 Git 缓存状态对象
 /// 从 AppState 拆分出来，避免 Git 高频更新触发全局视图刷新
@@ -53,6 +54,23 @@ class GitCacheState: ObservableObject {
 
     // Git 状态索引缓存（资源管理器用，workspace key -> GitStatusIndex）
     var gitStatusIndexCache: [String: GitStatusIndex] = [:]
+
+    // MARK: - 缓存可观测性指标（Core 权威输出，按 "project:workspace" 隔离）
+
+    /// 从 Core system_snapshot 获取的 Git 缓存指标快照
+    /// key: "project:workspace"；值由 Core 计算，客户端只消费
+    private(set) var cacheMetricsIndex: [String: WorkspaceCacheMetricsModel] = [:]
+
+    /// 更新 Git 缓存指标（由 AppState 在收到 system_snapshot 后调用）
+    func updateCacheMetrics(_ metrics: SystemSnapshotCacheMetrics) {
+        cacheMetricsIndex = metrics.index
+    }
+
+    /// 按 (project, workspace) 查询 Git 缓存指标（不存在则返回空指标）
+    func gitCacheMetrics(project: String, workspace: String) -> GitCacheMetricsModel {
+        let key = "\(project):\(workspace)"
+        return cacheMetricsIndex[key]?.gitCache ?? .empty()
+    }
 
     // MARK: - 由 AppState 注入的依赖
 

@@ -204,6 +204,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
 		MDL00031B /* WorkspaceKeySemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011B /* WorkspaceKeySemantics.swift */; };
 		WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WKS10011 /* WorkspaceKeySemanticsTests.swift */; };
+		WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */; };
 /* End PBXBuildFile section */
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
@@ -461,6 +462,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		UX100015 /* ProjectCommandsMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsMenuView.swift; sourceTree = "<group>"; };
 		MDL00011B /* WorkspaceKeySemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemantics.swift; sourceTree = "<group>"; };
 		WKS10011 /* WorkspaceKeySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemanticsTests.swift; sourceTree = "<group>"; };
+		WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCacheMetricsSemanticsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -710,6 +712,7 @@ TSLT011 /* TerminalSessionSemanticLayerTests.swift */,
 TSST013 /* TerminalSessionStoreTests.swift */,
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
+				WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				SHR0100A /* SharedProtocolModelsTests.swift */,
 				SHR0100B /* SharedNetworkAbstractionTests.swift */,
@@ -1202,6 +1205,7 @@ TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */,
 TSST003 /* TerminalSessionStoreTests.swift in Sources */,
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
+				WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				SHR03002 /* SharedProtocolModelsTests.swift in Sources */,
 				SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */,
