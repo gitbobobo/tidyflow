@@ -338,6 +338,9 @@ final class MobileAppState: ObservableObject {
     @Published var currentTermId: String = ""
     @Published var terminalCols: Int = 80
     @Published var terminalRows: Int = 24
+    /// 每个工作区的终端 AI 状态（六态），key 为 "project:workspace"。
+    /// 与 macOS 共用 TerminalSessionSemantics 映射逻辑，保持双端语义一致。
+    @Published var terminalAIStatusByWorkspaceKey: [String: TerminalAIStatus] = [:]
     /// 待创建终端的项目/工作空间（等终端视图 ready 后再真正创建）
     private var pendingTermProject: String = ""
     private var pendingTermWorkspace: String = ""
@@ -3576,6 +3579,53 @@ final class MobileAppState: ObservableObject {
         aiSessionStatusesByTool[aiTool] = dict
     }
 
+    // MARK: - 终端 AI 状态（WI-002 iOS 端同步链路）
+
+    /// 查询指定工作区的终端 AI 状态（六态）。
+    /// iOS 端以工作区粒度（非 tab 粒度）存储，与 macOS 共享同一语义枚举。
+    func terminalAIStatus(projectName: String, workspaceName: String) -> TerminalAIStatus {
+        let key = "\(projectName):\(workspaceName)"
+        return terminalAIStatusByWorkspaceKey[key] ?? .idle
+    }
+
+    /// 将 AI 会话状态更新到对应工作区的终端 AI 状态存储。
+    /// 使用共享语义层 TerminalSessionSemantics 映射，保证 macOS 与 iOS 语义一致。
+    private func syncAIStatusToWorkspace(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        status: String,
+        errorMessage: String?,
+        toolName: String?
+    ) {
+        let key = "\(projectName):\(workspaceName)"
+        let mapped = TerminalSessionSemantics.terminalAIStatus(
+            from: status,
+            errorMessage: errorMessage,
+            toolName: toolName,
+            aiToolDisplayName: aiTool.displayName
+        )
+        terminalAIStatusByWorkspaceKey[key] = mapped
+    }
+
+    /// AIChatDone 兜底状态推导，与 macOS 保持相同逻辑。
+    private func fallbackSessionStatusForChatDone(stopReason: String?) -> String {
+        let reason = (stopReason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if reason.isEmpty { return "success" }
+        if reason.contains("cancel") || reason.contains("abort") || reason.contains("interrupt") {
+            return "cancelled"
+        }
+        if reason.contains("awaiting_input") ||
+            reason.contains("requires_input") ||
+            reason.contains("need_input") {
+            return "awaiting_input"
+        }
+        if reason.contains("error") || reason.contains("fail") { return "failure" }
+        return "success"
+    }
+
     // MARK: - 终端视图绑定
 
     /// 绑定 SwiftTerm 输出目标
@@ -3797,6 +3847,8 @@ final class MobileAppState: ObservableObject {
         terminalSink = nil
         lastRenderedTermId = ""
         setCtrlArmed(false)
+        // WI-002：断连时清除工作区终端 AI 状态，防止重连后展示过期状态
+        terminalAIStatusByWorkspaceKey.removeAll()
     }
 
     // MARK: - WS 回调
@@ -4602,6 +4654,15 @@ extension MobileAppState {
             errorMessage: ev.status.errorMessage,
             contextRemainingPercent: ev.status.contextRemainingPercent
         )
+        // WI-002：iOS 端终端 AI 状态同步（工作区粒度）
+        syncAIStatusToWorkspace(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            toolName: ev.status.toolName
+        )
         if aiActiveProject == ev.projectName,
            aiActiveWorkspace == ev.workspaceName,
            aiChatTool == ev.aiTool,
@@ -4625,6 +4686,15 @@ extension MobileAppState {
             errorMessage: ev.status.errorMessage,
             contextRemainingPercent: ev.status.contextRemainingPercent
         )
+        // WI-002：iOS 端终端 AI 状态同步（工作区粒度）
+        syncAIStatusToWorkspace(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            toolName: ev.status.toolName
+        )
         if aiActiveProject == ev.projectName,
            aiActiveWorkspace == ev.workspaceName,
            aiChatTool == ev.aiTool,
@@ -4640,6 +4710,16 @@ extension MobileAppState {
 
     func handleAIChatDone(_ ev: AIChatDoneV2) {
         consumeSubAgentViewerDoneIfNeeded(ev)
+        // WI-002：done 兜底收敛落到工作区终端 AI 状态，不受当前选中工作区限制
+        let fallbackStatus = fallbackSessionStatusForChatDone(stopReason: ev.stopReason)
+        syncAIStatusToWorkspace(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: fallbackStatus,
+            errorMessage: nil,
+            toolName: nil
+        )
         guard aiActiveProject == ev.projectName,
               aiActiveWorkspace == ev.workspaceName,
               aiChatTool == ev.aiTool else { return }
@@ -4655,6 +4735,15 @@ extension MobileAppState {
 
     func handleAIChatError(_ ev: AIChatErrorV2) {
         consumeSubAgentViewerErrorIfNeeded(ev)
+        // WI-002：error 兜底收敛落到工作区终端 AI 状态，不受当前选中工作区限制
+        syncAIStatusToWorkspace(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: "failure",
+            errorMessage: ev.error,
+            toolName: nil
+        )
         guard aiActiveProject == ev.projectName,
               aiActiveWorkspace == ev.workspaceName,
               aiChatTool == ev.aiTool else { return }

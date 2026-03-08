@@ -95,6 +95,15 @@ struct WorkspaceDetailView: View {
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
+                                // 工作区级终端 AI 状态（非空闲时展示，语义与 macOS TabItemView 一致）
+                                let termAIStatus = appState.terminalAIStatus(projectName: project, workspaceName: workspace)
+                                if termAIStatus.isVisible {
+                                    Spacer()
+                                    Image(systemName: termAIStatus.iconName)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(termAIStatus.color)
+                                        .accessibilityLabel(termAIStatus.hint)
+                                }
                             }
                             .padding(.vertical, 2)
                         }

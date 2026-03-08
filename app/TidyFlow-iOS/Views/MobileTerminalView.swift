@@ -37,6 +37,19 @@ struct MobileTerminalView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            // 终端视图内 AI 状态指示器，非空闲时在导航栏右侧显示
+            ToolbarItem(placement: .navigationBarTrailing) {
+                let aiStatus = appState.terminalAIStatus(projectName: project, workspaceName: workspace)
+                if aiStatus.isVisible {
+                    Label(aiStatus.hint, systemImage: aiStatus.iconName)
+                        .labelStyle(.iconOnly)
+                        .foregroundColor(aiStatus.color)
+                        .font(.system(size: 14, weight: .semibold))
+                        .accessibilityLabel(aiStatus.hint)
+                }
+            }
+        }
         .onAppear {
             appState.selectWorkspaceContext(project: project, workspace: workspace)
             if let termId {
