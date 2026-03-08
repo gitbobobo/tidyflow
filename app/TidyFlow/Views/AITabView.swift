@@ -154,10 +154,8 @@ struct AITabView: View {
         }
         .onChange(of: appState.sessionPanelAction) { _, action in
             guard let action else { return }
-            if case .renameSession(let session, let newTitle) = action {
-                renameSession(session, newTitle: newTitle)
-                appState.sessionPanelAction = nil
-            }
+            handleSessionPanelAction(action)
+            appState.sessionPanelAction = nil
         }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
@@ -316,6 +314,19 @@ struct AITabView: View {
             return
         }
         aiChatHintMessage = message
+    }
+
+    private func handleSessionPanelAction(_ action: AppState.SessionPanelAction) {
+        switch action {
+        case .loadSession(let session):
+            loadSession(session)
+        case .deleteSession(let session):
+            deleteSession(session)
+        case .createNewSession:
+            createNewSession()
+        case .renameSession(let session, let newTitle):
+            renameSession(session, newTitle: newTitle)
+        }
     }
 
     private var toolbar: some View {

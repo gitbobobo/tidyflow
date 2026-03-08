@@ -953,7 +953,8 @@ struct EvolutionPipelineView: View {
             totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
             terminalReasonCode: item.terminalReasonCode,
             terminalErrorMessage: item.terminalErrorMessage,
-            timelineEntries: entries
+            timelineEntries: entries,
+            allowsChatNavigation: false
         )
     }
 
@@ -970,7 +971,8 @@ struct EvolutionPipelineView: View {
             totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
             terminalReasonCode: cycle.terminalReasonCode,
             terminalErrorMessage: cycle.terminalErrorMessage,
-            timelineEntries: entries
+            timelineEntries: entries,
+            allowsChatNavigation: true
         )
     }
 
@@ -997,9 +999,11 @@ struct EvolutionPipelineView: View {
                     stage: execution.stage,
                     agent: execution.agent,
                     aiToolName: execution.aiTool,
+                    aiToolRawValue: trimmedNonEmptyText(execution.aiTool),
                     status: execution.status,
                     startedAt: trimmedNonEmptyText(execution.startedAt),
-                    durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 }
+                    durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 },
+                    sessionID: execution.sessionID
                 )
             }
         if !executionEntries.isEmpty {
@@ -1012,9 +1016,11 @@ struct EvolutionPipelineView: View {
                 stage: agent.stage,
                 agent: agent.agent,
                 aiToolName: findProfile(for: normalizedStageKey(agent.stage))?.aiTool.displayName ?? "",
+                aiToolRawValue: findProfile(for: normalizedStageKey(agent.stage))?.aiTool.rawValue,
                 status: agent.status,
                 startedAt: trimmedNonEmptyText(agent.startedAt),
-                durationSeconds: agent.durationMs.map { TimeInterval($0) / 1000.0 }
+                durationSeconds: agent.durationMs.map { TimeInterval($0) / 1000.0 },
+                sessionID: nil
             )
         }
     }
@@ -1027,9 +1033,11 @@ struct EvolutionPipelineView: View {
                     stage: entry.stage,
                     agent: entry.agent,
                     aiToolName: entry.aiToolName,
+                    aiToolRawValue: entry.aiToolRawValue,
                     status: entry.status ?? "",
                     startedAt: entry.startedAt,
-                    durationSeconds: entry.durationSeconds > 0 ? entry.durationSeconds : nil
+                    durationSeconds: entry.durationSeconds > 0 ? entry.durationSeconds : nil,
+                    sessionID: entry.sessionID
                 )
             }
         }
@@ -1039,9 +1047,11 @@ struct EvolutionPipelineView: View {
                 stage: stage,
                 agent: "",
                 aiToolName: "",
+                aiToolRawValue: nil,
                 status: "",
                 startedAt: nil,
-                durationSeconds: nil
+                durationSeconds: nil,
+                sessionID: nil
             )
         }
     }
@@ -1112,7 +1122,7 @@ struct EvolutionPipelineView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(payload.timelineEntries) { entry in
-                                cycleTimelineRow(entry)
+                                cycleTimelineRow(entry, payload: payload)
                             }
                         }
                     }
@@ -1131,8 +1141,11 @@ struct EvolutionPipelineView: View {
         .frame(minWidth: 620, minHeight: 460)
     }
 
-    private func cycleTimelineRow(_ entry: PipelineCycleTimelineEntry) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+    private func cycleTimelineRow(_ entry: PipelineCycleTimelineEntry, payload: PipelineCycleDetailPayload) -> some View {
+        let canOpenChat = payload.allowsChatNavigation &&
+            trimmedNonEmptyText(entry.sessionID) != nil &&
+            entry.aiToolRawValue.flatMap(AIChatTool.init(rawValue:)) != nil
+        return HStack(alignment: .top, spacing: 10) {
             Image(systemName: stageIconName(entry.stage))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(stageColor(entry.stage))
@@ -1159,6 +1172,11 @@ struct EvolutionPipelineView: View {
                 .foregroundColor(.secondary)
             }
             Spacer(minLength: 0)
+            if canOpenChat {
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1170,6 +1188,11 @@ struct EvolutionPipelineView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(stageColor(entry.stage).opacity(0.2), lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            guard canOpenChat else { return }
+            openHistorySessionFromDetail(entry: entry, cycleID: payload.cycleID)
+        }
     }
 
     private func detailMetaBadge(icon: String, label: String, value: String) -> some View {
@@ -1869,6 +1892,8 @@ struct EvolutionPipelineView: View {
                             stage: normalizedStageKey(execution.stage),
                             agent: execution.agent,
                             aiToolName: execution.aiTool,
+                            aiToolRawValue: trimmedNonEmptyText(execution.aiTool),
+                            sessionID: execution.sessionID,
                             startedAt: trimmedNonEmptyText(execution.startedAt),
                             status: execution.status,
                             durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
@@ -1883,6 +1908,7 @@ struct EvolutionPipelineView: View {
                         stage: normalizedStageKey(stage.stage),
                         agent: stage.agent,
                         aiToolName: stage.aiTool,
+                        aiToolRawValue: trimmedNonEmptyText(stage.aiTool),
                         status: stage.status,
                         durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
                     )
@@ -1913,6 +1939,35 @@ struct EvolutionPipelineView: View {
         )
         // macOS 端不再弹出 sheet，handleEvolutionStageChatOpened 会直接
         // 将会话加载到主聊天区，由左侧侧边栏高亮显示
+    }
+
+    private func openHistorySessionFromDetail(entry: PipelineCycleTimelineEntry, cycleID: String) {
+        guard let workspace,
+              let sessionID = trimmedNonEmptyText(entry.sessionID),
+              let aiToolRawValue = entry.aiToolRawValue,
+              let aiTool = AIChatTool(rawValue: aiToolRawValue) else { return }
+
+        let cached = appState.cachedAISession(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            sessionId: sessionID
+        )
+        let fallbackTitle = trimmedNonEmptyText(entry.agent)
+            ?? trimmedNonEmptyText(entry.stage)
+            ?? cycleID
+        let session = AISessionInfo(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            id: sessionID,
+            title: cached?.title ?? "\(fallbackTitle) · \(cycleID)",
+            updatedAt: cached?.updatedAt ?? 0,
+            origin: .evolutionSystem
+        )
+        appState.upsertAISession(session, for: aiTool)
+        selectedCycleDetail = nil
+        appState.sessionPanelAction = .loadSession(session)
     }
 
     private func canOpenStageChat(stage: String, status: String) -> Bool {
@@ -2445,6 +2500,8 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
     let stage: String
     let agent: String
     let aiToolName: String
+    let aiToolRawValue: String?
+    let sessionID: String?
     /// 阶段开始时间（RFC3339）
     let startedAt: String?
     /// 阶段状态（运行中/已完成等）
@@ -2457,6 +2514,8 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
         stage: String,
         agent: String,
         aiToolName: String = "",
+        aiToolRawValue: String? = nil,
+        sessionID: String? = nil,
         startedAt: String? = nil,
         status: String? = nil,
         durationSeconds: TimeInterval
@@ -2465,6 +2524,8 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
         self.stage = stage
         self.agent = agent
         self.aiToolName = aiToolName
+        self.aiToolRawValue = aiToolRawValue
+        self.sessionID = sessionID
         self.startedAt = startedAt
         self.status = status
         self.durationSeconds = durationSeconds
@@ -2486,9 +2547,11 @@ struct PipelineCycleTimelineEntry: Identifiable, Equatable {
     let stage: String
     let agent: String
     let aiToolName: String
+    let aiToolRawValue: String?
     let status: String
     let startedAt: String?
     let durationSeconds: TimeInterval?
+    let sessionID: String?
 
     var startedAtDate: Date? {
         guard let startedAt else { return nil }
@@ -2520,6 +2583,7 @@ struct PipelineCycleDetailPayload: Identifiable, Equatable {
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let timelineEntries: [PipelineCycleTimelineEntry]
+    let allowsChatNavigation: Bool
 }
 
 struct PipelineCycleHistory: Identifiable, Equatable {

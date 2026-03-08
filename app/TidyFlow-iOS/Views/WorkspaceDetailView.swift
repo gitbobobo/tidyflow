@@ -2465,6 +2465,7 @@ struct MobileEvolutionView: View {
         let startedAt: String?
         let status: String
         let durationMs: UInt64?
+        let sessionID: String?
     }
 
     private struct MobileCycleDetailPayload: Identifiable {
@@ -2478,6 +2479,7 @@ struct MobileEvolutionView: View {
         let terminalReasonCode: String?
         let terminalErrorMessage: String?
         let timelineEntries: [MobileCycleDetailTimelineEntry]
+        let allowsChatNavigation: Bool
     }
 
     private func mobileCycleBarEntries(_ cycle: EvolutionCycleHistoryItemV2) -> [MobileCycleBarEntry] {
@@ -2627,7 +2629,8 @@ struct MobileEvolutionView: View {
                         aiTool: execution.aiTool,
                         startedAt: trimmedNonEmptyText(execution.startedAt),
                         status: execution.status,
-                        durationMs: execution.durationMs
+                        durationMs: execution.durationMs,
+                        sessionID: execution.sessionID
                     )
                 }
             if !executionEntries.isEmpty {
@@ -2641,7 +2644,8 @@ struct MobileEvolutionView: View {
                     aiTool: stage.aiTool,
                     startedAt: nil,
                     status: stage.status,
-                    durationMs: stage.durationMs
+                    durationMs: stage.durationMs,
+                    sessionID: nil
                 )
             }
         }()
@@ -2670,7 +2674,8 @@ struct MobileEvolutionView: View {
             totalDurationText: totalDurationMs > 0 ? mobileStageDuration(TimeInterval(totalDurationMs) / 1000.0) : nil,
             terminalReasonCode: cycle.terminalReasonCode,
             terminalErrorMessage: cycle.terminalErrorMessage,
-            timelineEntries: timelineEntries
+            timelineEntries: timelineEntries,
+            allowsChatNavigation: true
         )
     }
 
@@ -2729,7 +2734,7 @@ struct MobileEvolutionView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(detail.timelineEntries) { entry in
-                                mobileCycleDetailTimelineRow(entry)
+                                mobileCycleDetailTimelineRow(entry, detail: detail)
                             }
                         }
                     }
@@ -2748,8 +2753,11 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private func mobileCycleDetailTimelineRow(_ entry: MobileCycleDetailTimelineEntry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func mobileCycleDetailTimelineRow(_ entry: MobileCycleDetailTimelineEntry, detail: MobileCycleDetailPayload) -> some View {
+        let canOpenChat = detail.allowsChatNavigation &&
+            trimmedNonEmptyText(entry.sessionID) != nil &&
+            AIChatTool(rawValue: entry.aiTool) != nil
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle()
                     .fill(mobileStageColor(entry.stage))
@@ -2761,6 +2769,12 @@ struct MobileEvolutionView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if canOpenChat {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
                 }
             }
             HStack(spacing: 10) {
@@ -2781,6 +2795,41 @@ struct MobileEvolutionView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(mobileStageColor(entry.stage).opacity(0.2), lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            guard canOpenChat else { return }
+            openHistorySessionFromCycleDetail(entry: entry, cycleID: detail.cycleID)
+        }
+    }
+
+    private func openHistorySessionFromCycleDetail(entry: MobileCycleDetailTimelineEntry, cycleID: String) {
+        guard let sessionID = trimmedNonEmptyText(entry.sessionID),
+              let aiTool = AIChatTool(rawValue: entry.aiTool) else { return }
+
+        let cached = appState.cachedAISession(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            sessionId: sessionID
+        )
+        let fallbackTitle = trimmedNonEmptyText(entry.agent)
+            ?? trimmedNonEmptyText(entry.stage)
+            ?? cycleID
+        let session = AISessionInfo(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            id: sessionID,
+            title: cached?.title ?? "\(fallbackTitle) · \(cycleID)",
+            updatedAt: cached?.updatedAt ?? 0,
+            origin: .evolutionSystem
+        )
+
+        selectedCycleDetail = nil
+        appState.openAIChat(project: project, workspace: workspace)
+        appState.upsertAISession(session, for: aiTool)
+        appState.loadAISession(session)
+        appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
     }
 
     private func mobileTimelineStartTimeText(_ startedAt: String?) -> String {
