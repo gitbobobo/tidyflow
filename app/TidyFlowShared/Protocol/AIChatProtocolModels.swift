@@ -2868,3 +2868,173 @@ public struct AIProjectContextSummary {
         self.contextText = contextText
     }
 }
+
+// MARK: - 工作区缓存可观测性协议模型（v1.40+）
+
+/// 文件索引缓存指标快照，由 Core system_snapshot 权威输出
+public struct FileCacheMetricsModel {
+    public let hitCount: UInt64
+    public let missCount: UInt64
+    public let rebuildCount: UInt64
+    public let incrementalUpdateCount: UInt64
+    public let evictionCount: UInt64
+    public let itemCount: UInt64
+    public let lastEvictionReason: String?
+
+    public static func from(json: [String: Any]) -> FileCacheMetricsModel {
+        FileCacheMetricsModel(
+            hitCount: (json["hit_count"] as? UInt64) ?? UInt64(json["hit_count"] as? Int ?? 0),
+            missCount: (json["miss_count"] as? UInt64) ?? UInt64(json["miss_count"] as? Int ?? 0),
+            rebuildCount: (json["rebuild_count"] as? UInt64) ?? UInt64(json["rebuild_count"] as? Int ?? 0),
+            incrementalUpdateCount: (json["incremental_update_count"] as? UInt64) ?? UInt64(json["incremental_update_count"] as? Int ?? 0),
+            evictionCount: (json["eviction_count"] as? UInt64) ?? UInt64(json["eviction_count"] as? Int ?? 0),
+            itemCount: (json["item_count"] as? UInt64) ?? UInt64(json["item_count"] as? Int ?? 0),
+            lastEvictionReason: json["last_eviction_reason"] as? String
+        )
+    }
+
+    public static func empty() -> FileCacheMetricsModel {
+        FileCacheMetricsModel(
+            hitCount: 0, missCount: 0, rebuildCount: 0,
+            incrementalUpdateCount: 0, evictionCount: 0, itemCount: 0,
+            lastEvictionReason: nil
+        )
+    }
+
+    public init(
+        hitCount: UInt64, missCount: UInt64, rebuildCount: UInt64,
+        incrementalUpdateCount: UInt64, evictionCount: UInt64, itemCount: UInt64,
+        lastEvictionReason: String?
+    ) {
+        self.hitCount = hitCount
+        self.missCount = missCount
+        self.rebuildCount = rebuildCount
+        self.incrementalUpdateCount = incrementalUpdateCount
+        self.evictionCount = evictionCount
+        self.itemCount = itemCount
+        self.lastEvictionReason = lastEvictionReason
+    }
+}
+
+/// Git 状态缓存指标快照，由 Core system_snapshot 权威输出
+public struct GitCacheMetricsModel {
+    public let hitCount: UInt64
+    public let missCount: UInt64
+    public let rebuildCount: UInt64
+    public let evictionCount: UInt64
+    public let itemCount: UInt64
+    public let lastEvictionReason: String?
+
+    public static func from(json: [String: Any]) -> GitCacheMetricsModel {
+        GitCacheMetricsModel(
+            hitCount: (json["hit_count"] as? UInt64) ?? UInt64(json["hit_count"] as? Int ?? 0),
+            missCount: (json["miss_count"] as? UInt64) ?? UInt64(json["miss_count"] as? Int ?? 0),
+            rebuildCount: (json["rebuild_count"] as? UInt64) ?? UInt64(json["rebuild_count"] as? Int ?? 0),
+            evictionCount: (json["eviction_count"] as? UInt64) ?? UInt64(json["eviction_count"] as? Int ?? 0),
+            itemCount: (json["item_count"] as? UInt64) ?? UInt64(json["item_count"] as? Int ?? 0),
+            lastEvictionReason: json["last_eviction_reason"] as? String
+        )
+    }
+
+    public static func empty() -> GitCacheMetricsModel {
+        GitCacheMetricsModel(
+            hitCount: 0, missCount: 0, rebuildCount: 0,
+            evictionCount: 0, itemCount: 0,
+            lastEvictionReason: nil
+        )
+    }
+
+    public init(
+        hitCount: UInt64, missCount: UInt64, rebuildCount: UInt64,
+        evictionCount: UInt64, itemCount: UInt64,
+        lastEvictionReason: String?
+    ) {
+        self.hitCount = hitCount
+        self.missCount = missCount
+        self.rebuildCount = rebuildCount
+        self.evictionCount = evictionCount
+        self.itemCount = itemCount
+        self.lastEvictionReason = lastEvictionReason
+    }
+}
+
+/// 工作区级缓存可观测性快照，以 `(project, workspace)` 为唯一键
+///
+/// 所有字段由 Core 权威计算，客户端只消费。`budgetExceeded` 和 `lastEvictionReason`
+/// 不得由客户端本地重新计算。
+public struct WorkspaceCacheMetricsModel {
+    /// 全局键："project:workspace"
+    public let globalKey: String
+    public let project: String
+    public let workspace: String
+    public let fileCache: FileCacheMetricsModel
+    public let gitCache: GitCacheMetricsModel
+    /// Core 计算的预算超限标志
+    public let budgetExceeded: Bool
+    /// 最近淘汰原因（文件或 Git 缓存中最新发生的）
+    public let lastEvictionReason: String?
+
+    public static func from(json: [String: Any]) -> WorkspaceCacheMetricsModel? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        let fileJson = json["file_cache"] as? [String: Any] ?? [:]
+        let gitJson = json["git_cache"] as? [String: Any] ?? [:]
+        return WorkspaceCacheMetricsModel(
+            project: project,
+            workspace: workspace,
+            fileCache: FileCacheMetricsModel.from(json: fileJson),
+            gitCache: GitCacheMetricsModel.from(json: gitJson),
+            budgetExceeded: (json["budget_exceeded"] as? Bool) ?? false,
+            lastEvictionReason: json["last_eviction_reason"] as? String
+        )
+    }
+
+    public init(
+        project: String, workspace: String,
+        fileCache: FileCacheMetricsModel, gitCache: GitCacheMetricsModel,
+        budgetExceeded: Bool, lastEvictionReason: String?
+    ) {
+        self.project = project
+        self.workspace = workspace
+        self.globalKey = "\(project):\(workspace)"
+        self.fileCache = fileCache
+        self.gitCache = gitCache
+        self.budgetExceeded = budgetExceeded
+        self.lastEvictionReason = lastEvictionReason
+    }
+}
+
+/// system_snapshot HTTP 响应中的 cache_metrics 数组解析助手
+public struct SystemSnapshotCacheMetrics {
+    /// 以 "project:workspace" 为键的指标字典
+    public let index: [String: WorkspaceCacheMetricsModel]
+
+    public static func from(json: Any?) -> SystemSnapshotCacheMetrics {
+        guard let arr = json as? [[String: Any]] else {
+            return SystemSnapshotCacheMetrics(index: [:])
+        }
+        var idx: [String: WorkspaceCacheMetricsModel] = [:]
+        for item in arr {
+            if let model = WorkspaceCacheMetricsModel.from(json: item) {
+                idx[model.globalKey] = model
+            }
+        }
+        return SystemSnapshotCacheMetrics(index: idx)
+    }
+
+    /// 按 (project, workspace) 查询缓存指标，不存在则返回空指标
+    public func metrics(project: String, workspace: String) -> WorkspaceCacheMetricsModel {
+        let key = "\(project):\(workspace)"
+        return index[key] ?? WorkspaceCacheMetricsModel(
+            project: project, workspace: workspace,
+            fileCache: .empty(), gitCache: .empty(),
+            budgetExceeded: false, lastEvictionReason: nil
+        )
+    }
+
+    public init(index: [String: WorkspaceCacheMetricsModel]) {
+        self.index = index
+    }
+}

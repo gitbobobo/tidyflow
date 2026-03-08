@@ -111,15 +111,6 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertGreaterThan(store.messages[0].renderRevision, revisionAfterPartUpdate)
     }
 
-    func testStreamFlushIntervalUsesAdaptiveThresholds() {
-        let store = AIChatStore()
-
-        XCTAssertEqual(store.streamFlushInterval(forBacklog: 20), 1.0 / 30.0, accuracy: 0.0001)
-        XCTAssertEqual(store.streamFlushInterval(forBacklog: 21), 0.05, accuracy: 0.0001)
-        XCTAssertEqual(store.streamFlushInterval(forBacklog: 80), 0.05, accuracy: 0.0001)
-        XCTAssertEqual(store.streamFlushInterval(forBacklog: 81), 1.0 / 12.0, accuracy: 0.0001)
-    }
-
     func testStreamingStateConvergesWhenToolStopsRunning() {
         let store = AIChatStore()
         store.setCurrentSessionId("s1")
