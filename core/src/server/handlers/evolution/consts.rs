@@ -34,7 +34,7 @@ impl ImplementationStageKind {
     }
 }
 
-pub(super) const STAGES: [&str; 4] = ["direction", "plan", "verify", "auto_commit"];
+pub(super) const STAGES: [&str; 3] = ["direction", "plan", "auto_commit"];
 
 pub(super) const PROFILE_STAGES: [&str; 7] = [
     "direction",
@@ -94,12 +94,27 @@ pub(super) fn parse_reimplement_stage_instance(stage: &str) -> Option<u32> {
     (index > 0).then_some(index)
 }
 
+pub(super) fn parse_verify_stage_instance(stage: &str) -> Option<u32> {
+    let mut parts = stage.trim().split('.');
+    let prefix = parts.next()?;
+    let index = parts.next()?;
+    if prefix != "verify" || parts.next().is_some() {
+        return None;
+    }
+    let index = index.parse::<u32>().ok()?;
+    (index > 0).then_some(index)
+}
+
 pub(super) fn implement_stage_name(kind: ImplementationStageKind, index: u32) -> String {
     format!("implement.{}.{}", kind.as_str(), index)
 }
 
 pub(super) fn reimplement_stage_name(index: u32) -> String {
     format!("reimplement.{}", index)
+}
+
+pub(super) fn verify_stage_name(index: u32) -> String {
+    format!("verify.{}", index)
 }
 
 fn kind_sort_rank(kind: ImplementationStageKind) -> u8 {
@@ -115,7 +130,6 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
         match stage.trim() {
             "direction" => (0, 0, 0, String::new()),
             "plan" => (1, 0, 0, String::new()),
-            "verify" => (4, 0, 0, String::new()),
             "auto_commit" => (5, 0, 0, String::new()),
             other => {
                 if let Some((kind, index)) = parse_implement_stage_instance(other) {
@@ -123,6 +137,9 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
                 }
                 if let Some(index) = parse_reimplement_stage_instance(other) {
                     return (3, index, 0, String::new());
+                }
+                if let Some(index) = parse_verify_stage_instance(other) {
+                    return (4, index, 0, String::new());
                 }
                 (6, 0, 0, other.to_string())
             }
@@ -148,6 +165,9 @@ pub(super) fn stage_profile_stage(stage: &str) -> Option<String> {
         };
         return Some(kind.profile_stage().to_string());
     }
+    if parse_verify_stage_instance(normalized).is_some() {
+        return Some("verify".to_string());
+    }
     None
 }
 
@@ -155,7 +175,6 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
     match stage.trim() {
         "direction" => Some("direction.jsonc".to_string()),
         "plan" => Some("plan.jsonc".to_string()),
-        "verify" => Some("verify.jsonc".to_string()),
         "auto_commit" => Some("auto_commit.jsonc".to_string()),
         "implement_general" => Some("implement_general.jsonc".to_string()),
         "implement_visual" => Some("implement_visual.jsonc".to_string()),
@@ -166,6 +185,9 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
             }
             if let Some(index) = parse_reimplement_stage_instance(other) {
                 return Some(format!("reimplement.{}.jsonc", index));
+            }
+            if let Some(index) = parse_verify_stage_instance(other) {
+                return Some(format!("verify.{}.jsonc", index));
             }
             None
         }

@@ -2545,22 +2545,11 @@ struct EvolutionTabView: View {
     }
 
     private func normalizedStageKey(_ stage: String) -> String {
-        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized.hasPrefix("implement.general.") { return "implement_general" }
-        if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
-        if normalized.hasPrefix("reimplement.") {
-            let parts = normalized.split(separator: ".")
-            if parts.count == 2, let index = Int(parts[1]) {
-                return index <= 2 ? "implement_general" : "implement_advanced"
-            }
-            return "implement_general"
-        }
-        if normalized == "implement" { return "implement_general" }
-        return normalized
+        EvolutionStageSemantics.profileStageKey(for: stage)
     }
 
     private func profileStageKey(for stage: String) -> String {
-        normalizedStageKey(stage)
+        EvolutionStageSemantics.profileStageKey(for: stage)
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {
@@ -2611,72 +2600,11 @@ struct EvolutionTabView: View {
     }
 
     private func stageSortOrder(_ stage: String) -> (Int, Int, Int, String) {
-        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == "direction" { return (0, 0, 0, "") }
-        if normalized == "plan" { return (1, 0, 0, "") }
-        if normalized == "verify" { return (4, 0, 0, "") }
-        if normalized == "auto_commit" { return (5, 0, 0, "") }
-        if normalized.hasPrefix("implement.") {
-            let parts = normalized.split(separator: ".")
-            if parts.count == 3, let index = Int(parts[2]) {
-                let kindRank = parts[1] == "general" ? 0 : 1
-                return (2, index, kindRank, "")
-            }
-        }
-        if normalized.hasPrefix("reimplement.") {
-            let parts = normalized.split(separator: ".")
-            if parts.count == 2, let index = Int(parts[1]) {
-                return (3, index, 0, "")
-            }
-        }
-        switch normalized {
-        case "implement_general", "implement":
-            return (2, 1, 0, "")
-        case "implement_visual":
-            return (2, 1, 1, "")
-        case "implement_advanced":
-            return (3, 1, 0, "")
-        default:
-            return (6, 0, 0, normalized)
-        }
+        EvolutionStageSemantics.stageSortOrder(stage)
     }
 
     private func stageDisplayName(_ stage: String) -> String {
-        let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
-        let normalized = trimmed.lowercased()
-        if normalized.hasPrefix("implement.general.") {
-            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
-            return "Implement General #\(index)"
-        }
-        if normalized.hasPrefix("implement.visual.") {
-            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
-            return "Implement Visual #\(index)"
-        }
-        if normalized.hasPrefix("reimplement.") {
-            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
-            return "Reimplement #\(index)"
-        }
-        switch normalized {
-        case "direction":
-            return "evolution.stage.direction".localized
-        case "plan":
-            return "evolution.stage.plan".localized
-        case "implement_general":
-            return "evolution.stage.implementGeneral".localized
-        case "implement_visual":
-            return "evolution.stage.implementVisual".localized
-        case "implement_advanced":
-            return "evolution.stage.implementAdvanced".localized
-        case "implement":
-            return "evolution.stage.implementGeneral".localized
-        case "verify":
-            return "evolution.stage.verify".localized
-        case "auto_commit":
-            return "evolution.stage.autoCommit".localized
-        default:
-            return trimmed
-        }
+        EvolutionStageSemantics.displayName(for: stage)
     }
 
     private func localizedSchedulerActivationDisplay(_ status: String) -> String {
@@ -2740,30 +2668,7 @@ struct EvolutionTabView: View {
     }
 
     private func stageIconName(_ stage: String) -> String {
-        let normalized = stage.lowercased()
-        if normalized.hasPrefix("implement.general.") { return "hammer" }
-        if normalized.hasPrefix("implement.visual.") { return "paintbrush" }
-        if normalized.hasPrefix("reimplement.") { return "wrench.and.screwdriver" }
-        switch normalized {
-        case "direction":
-            return "arrow.triangle.branch"
-        case "plan":
-            return "map"
-        case "implement_general", "implement":
-            return "hammer"
-        case "implement_visual":
-            return "paintbrush"
-        case "implement_advanced":
-            return "wand.and.stars"
-        case "code":
-            return "chevron.left.forwardslash.chevron.right"
-        case "verify":
-            return "checkmark.seal"
-        case "auto_commit":
-            return "sparkles"
-        default:
-            return "person.crop.square"
-        }
+        EvolutionStageSemantics.iconName(for: stage)
     }
 
     private func openStageChat(stage: String) {

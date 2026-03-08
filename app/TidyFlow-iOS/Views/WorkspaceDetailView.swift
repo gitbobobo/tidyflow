@@ -1379,17 +1379,6 @@ struct MobileEvolutionView: View {
     private var primaryControlButtonTint: Color {
         primaryControlShowsStop ? .red : .green
     }
-    private let evolutionStageOrder: [String] = [
-        "direction",
-        "plan",
-        "implement_general",
-        "implement_visual",
-        "implement_advanced",
-        "verify",
-        "judge",
-        "auto_commit",
-    ]
-
     var body: some View {
         List {
             Section("evolution.page.scheduler.section".localized) {
@@ -1992,11 +1981,7 @@ struct MobileEvolutionView: View {
     }
 
     private func normalizedStageKey(_ stage: String) -> String {
-        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == "implement" {
-            return "implement_general"
-        }
-        return normalized
+        EvolutionStageSemantics.profileStageKey(for: stage)
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {
@@ -2023,12 +2008,8 @@ struct MobileEvolutionView: View {
         return true
     }
 
-    private func stageOrder(for stage: String) -> Int {
-        let normalized = normalizedStageKey(stage)
-        if let index = evolutionStageOrder.firstIndex(of: normalized) {
-            return index
-        }
-        return evolutionStageOrder.count
+    private func stageSortOrder(_ stage: String) -> (Int, Int, Int, String) {
+        EvolutionStageSemantics.stageSortOrder(stage)
     }
 
     private func runtimeOnlyAgents() -> [EvolutionAgentInfoV2] {
@@ -2037,8 +2018,8 @@ struct MobileEvolutionView: View {
         return item.agents
             .filter { !configuredStages.contains(normalizedStageKey($0.stage)) }
             .sorted { lhs, rhs in
-                let leftOrder = stageOrder(for: lhs.stage)
-                let rightOrder = stageOrder(for: rhs.stage)
+                let leftOrder = stageSortOrder(lhs.stage)
+                let rightOrder = stageSortOrder(rhs.stage)
                 if leftOrder != rightOrder {
                     return leftOrder < rightOrder
                 }
@@ -2414,30 +2395,7 @@ struct MobileEvolutionView: View {
     }
 
     private func stageDisplayName(_ stage: String) -> String {
-        let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
-        switch trimmed.lowercased() {
-        case "direction":
-            return "evolution.stage.direction".localized
-        case "plan":
-            return "evolution.stage.plan".localized
-        case "implement_general":
-            return "evolution.stage.implementGeneral".localized
-        case "implement_visual":
-            return "evolution.stage.implementVisual".localized
-        case "implement_advanced":
-            return "evolution.stage.implementAdvanced".localized
-        case "implement":
-            return "evolution.stage.implementGeneral".localized
-        case "verify":
-            return "evolution.stage.verify".localized
-        case "judge":
-            return "evolution.stage.judge".localized
-        case "auto_commit":
-            return "evolution.stage.autoCommit".localized
-        default:
-            return trimmed
-        }
+        EvolutionStageSemantics.displayName(for: stage)
     }
 
     // MARK: - 历史循环紧凑条形

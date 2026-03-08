@@ -62,7 +62,7 @@ pub const STAGE_REIMPLEMENT_PROMPT: &str = r####"
 3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；不得删除结构、不得新增未声明字段。
 
 阶段任务：
-1. 优先阅读 `verify.jsonc` 的裁决结果，再以系统注入的 `REPAIR_ITEMS_TO_COMPLETE` 作为唯一修复清单，并按依赖顺序执行。
+1. 优先阅读上一轮验证阶段实例对应的 JSONC 产物裁决结果，再以系统注入的 `REPAIR_ITEMS_TO_COMPLETE` 作为唯一修复清单，并按依赖顺序执行。
 2. 完成整改并按 repair item 回填证据与检查结果。
 3. `quick_checks` 必须输出数组。
 
@@ -77,7 +77,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 1. 全程自主执行，禁止提问。
 2. 禁止修改业务实现代码；只允许更新验证/裁决相关产物字段。
 3. JSONC 模板中的字段级注释、注释示例对象就是最终契约；必须按注释回填，不得删结构或补臆造字段。
-4. 所有验证与裁决结果统一写入 `verify.jsonc`。
+4. 所有验证与裁决结果统一写入当前验证阶段实例对应的 JSONC 产物。
 
 阶段任务：
 1. 开始验证前必须先阅读 `plan.md` 获取叙述性上下文，再以 `plan.jsonc` 的 `verification_plan` 与 `work_items` 作为精确裁决依据。
@@ -89,7 +89,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 7. 当 `VERIFY_ITERATION>0` 时，新的 `repair_plan` 必须覆盖本轮仍未通过的验收标准，并对上一轮 repair item 的未完成问题给出延续修复编排。
 
 必须更新：
-- `verify.jsonc`
+- 当前验证阶段实例对应的 JSONC 产物
 "####;
 
 pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"

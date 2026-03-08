@@ -17,6 +17,7 @@ use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
     BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT, STAGES,
 };
+use super::consts::compare_runtime_stage_names;
 
 fn initial_global_loop_round() -> u32 {
     1
@@ -108,9 +109,12 @@ fn parse_cycle_stage_history_entries(
         return Vec::new();
     };
 
+    let mut stage_names: Vec<String> = stage_runtime.keys().cloned().collect();
+    stage_names.sort_by(|left, right| compare_runtime_stage_names(left, right));
+
     let mut stages = Vec::new();
-    for stage in STAGES {
-        let Some(runtime) = stage_runtime.get(stage).and_then(|value| value.as_object()) else {
+    for stage in stage_names {
+        let Some(runtime) = stage_runtime.get(&stage).and_then(|value| value.as_object()) else {
             continue;
         };
         let status =
@@ -125,8 +129,8 @@ fn parse_cycle_stage_history_entries(
             .and_then(|timing| timing.get("duration_ms"))
             .and_then(|value| value.as_u64());
         stages.push(EvolutionCycleStageHistoryEntry {
-            stage: (*stage).to_string(),
-            agent: agent_name(stage).to_string(),
+            stage: stage.clone(),
+            agent: agent_name(&stage).to_string(),
             ai_tool,
             status,
             duration_ms,
@@ -137,9 +141,11 @@ fn parse_cycle_stage_history_entries(
 
 fn extract_terminal_error_from_stage_runtime(cycle_json: &serde_json::Value) -> Option<String> {
     let stage_runtime = cycle_json.get("stage_runtime")?.as_object()?;
-    for stage in STAGES {
+    let mut stage_names: Vec<String> = stage_runtime.keys().cloned().collect();
+    stage_names.sort_by(|left, right| compare_runtime_stage_names(left, right));
+    for stage in stage_names {
         let message = stage_runtime
-            .get(stage)
+            .get(&stage)
             .and_then(|value| value.get("error"))
             .and_then(|value| value.get("message"))
             .and_then(|value| value.as_str())
@@ -979,20 +985,20 @@ mod tests {
             "created_at": "2026-03-01T00:00:00Z",
             "updated_at": "2026-03-01T00:10:00Z",
             "stage_runtime": {
-                "verify": {
+                "verify.1": {
                     "status": "failed",
                     "ai_tool": "codex",
                     "timing": {
                         "duration_ms": 3210
                     },
                     "error": {
-                        "message": "verify.jsonc 缺少 adjudication.overall_result"
+                        "message": "verify.1.jsonc 缺少 adjudication.overall_result"
                     }
                 }
             },
             "executions": [
                 {
-                    "stage": "verify",
+                    "stage": "verify.1",
                     "agent": "VerifyAgent",
                     "ai_tool": "codex",
                     "session_id": "sess-1",
@@ -1009,7 +1015,7 @@ mod tests {
         assert_eq!(item.title.as_deref(), Some("结构化历史标题"));
         assert_eq!(
             item.terminal_error_message.as_deref(),
-            Some("verify.jsonc 缺少 adjudication.overall_result")
+            Some("verify.1.jsonc 缺少 adjudication.overall_result")
         );
         assert_eq!(item.executions.len(), 1);
         assert_eq!(item.stages.len(), 1);

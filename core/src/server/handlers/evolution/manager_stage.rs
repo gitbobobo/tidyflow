@@ -23,8 +23,9 @@ use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::consts::{
     implement_stage_name, parse_implement_stage_instance, parse_reimplement_stage_instance,
-    reimplement_stage_name, stage_artifact_file, ImplementationStageKind,
-    IMPLEMENTATION_STAGE_KINDS, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+    parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file,
+    verify_stage_name, ImplementationStageKind, IMPLEMENTATION_STAGE_KINDS,
+    STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
 };
 use super::profile::profile_for_stage;
 use super::utils::{
@@ -394,6 +395,27 @@ fn is_runtime_implement_stage(stage: &str) -> bool {
 
 fn is_runtime_reimplement_stage(stage: &str) -> bool {
     parse_reimplement_stage_instance(stage).is_some()
+}
+
+fn is_runtime_verify_stage(stage: &str) -> bool {
+    parse_verify_stage_instance(stage).is_some()
+}
+
+fn verify_stage_name_for_iteration(verify_iteration: u32) -> String {
+    verify_stage_name(verify_iteration + 1)
+}
+
+fn verify_artifact_file_for_stage(stage: &str) -> Result<String, String> {
+    if is_runtime_verify_stage(stage) {
+        return stage_artifact_file(stage).ok_or_else(|| format!("未知 verify stage: {}", stage));
+    }
+    Err(format!("stage 不是 verify 实例: {}", stage))
+}
+
+#[cfg(test)]
+fn verify_artifact_file_for_iteration(verify_iteration: u32) -> String {
+    stage_artifact_file(&verify_stage_name_for_iteration(verify_iteration))
+        .expect("verify instance should always map to artifact file")
 }
 
 fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
@@ -1380,7 +1402,12 @@ fn read_assigned_repair_plan(cycle_dir: &Path, stage: &str) -> Result<VerifyRepa
                 .map_err(|e| format!("解析 {} 的 assigned_repair_plan 失败: {}", stage, e));
         }
     }
-    let verify = read_json_file(cycle_dir, "verify.jsonc")?;
+    let verify_stage = parse_reimplement_stage_instance(stage)
+        .map(verify_stage_name)
+        .ok_or_else(|| format!("{} 不是 reimplement 实例，无法定位对应 verify 产物", stage))?;
+    let verify_file = stage_artifact_file(&verify_stage)
+        .ok_or_else(|| format!("未知 verify stage: {}", verify_stage))?;
+    let verify = read_json_file(cycle_dir, &verify_file)?;
     if let Some(repair_plan) = extract_verify_repair_plan(&verify) {
         return Ok(repair_plan);
     }
@@ -1827,6 +1854,7 @@ fn reimplement_stage_template(
 }
 
 fn verify_stage_template(
+    stage: &str,
     cycle_id: &str,
     verify_iteration: u32,
     verify_iteration_limit: u32,
@@ -1835,8 +1863,8 @@ fn verify_stage_template(
         r#"{
   // Verify 阶段模板：统一写入验证结果与裁决结果
   "$schema_version": "2.0",
-  // 固定阶段名，不可修改
-  "stage": "verify",
+  // 当前验证阶段实例名，不可修改
+  "stage": "__STAGE__",
   // 当前循环 ID，必须与 cycle.jsonc 保持一致
   "cycle_id": "__CYCLE_ID__",
   // 阶段状态；完成后写 done/failed/blocked
@@ -1923,6 +1951,7 @@ fn verify_stage_template(
 }
 "#,
         &[
+            ("__STAGE__", stage.to_string()),
             ("__CYCLE_ID__", cycle_id.to_string()),
             ("__VERIFY_ITERATION__", verify_iteration.to_string()),
             (
@@ -2211,7 +2240,7 @@ impl EvolutionManager {
             });
         }
 
-        match Self::map_failed_agents_from_results(cycle_dir, &tables)? {
+        match Self::map_failed_agents_from_results(cycle_dir, verify_iteration, &tables)? {
             Some(mut kinds) => {
                 let mut ordered = IMPLEMENTATION_STAGE_KINDS
                     .iter()
@@ -2448,34 +2477,29 @@ impl EvolutionManager {
     }
 
     fn validate_verify_artifact(
+        stage: &str,
         cycle_dir: &Path,
         verify_iteration: u32,
         _backlog_contract_version: u32,
         validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), ArtifactValidationError> {
-        let verify_value = read_json_file(cycle_dir, "verify.jsonc")
+        let file_name = verify_artifact_file_for_stage(stage)
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let verify_value = read_json_file(cycle_dir, &file_name)
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let plan_value = read_json_file(cycle_dir, "plan.jsonc")
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
         report.capture(ensure_schema_version(
-            "verify.jsonc",
+            &file_name,
             &verify_value,
             STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
         ));
-        report.capture(ensure_stage_field_matches(
-            "verify.jsonc",
-            &verify_value,
-            "verify",
-        ));
+        report.capture(ensure_stage_field_matches(&file_name, &verify_value, stage));
         if let Some(ctx) = validation_ctx {
-            report.capture(ensure_cycle_id_matches(
-                "verify.jsonc",
-                &verify_value,
-                &ctx.cycle_id,
-            ));
+            report.capture(ensure_cycle_id_matches(&file_name, &verify_value, &ctx.cycle_id));
             report.capture(ensure_artifact_freshness(
-                "verify.jsonc",
+                &file_name,
                 &verify_value,
                 ctx.stage_started_at,
             ));
@@ -2487,17 +2511,18 @@ impl EvolutionManager {
             .map(|v| v as u32);
         match verify_file_iteration {
             Some(file_iteration) if file_iteration != verify_iteration => report.push(format!(
-                "verify.jsonc.verify_iteration 不匹配: {} != {}",
+                "{}.verify_iteration 不匹配: {} != {}",
+                file_name,
                 file_iteration, verify_iteration
             )),
             Some(_) => {}
-            None => report.push("verify.jsonc 缺少 verify_iteration"),
+            None => report.push(format!("{} 缺少 verify_iteration", file_name)),
         }
 
         match verify_value.get("verify_iteration_limit").and_then(|v| v.as_u64()) {
-            Some(0) => report.push("verify.jsonc.verify_iteration_limit 必须大于 0"),
+            Some(0) => report.push(format!("{}.verify_iteration_limit 必须大于 0", file_name)),
             Some(_) => {}
-            None => report.push("verify.jsonc 缺少 verify_iteration_limit"),
+            None => report.push(format!("{} 缺少 verify_iteration_limit", file_name)),
         }
 
         let expected_criteria: HashSet<String> = plan_value
@@ -2540,7 +2565,7 @@ impl EvolutionManager {
             .pointer("/acceptance_evaluation")
             .and_then(|v| v.as_array());
         if acceptance_items.is_none() {
-            report.push("verify.jsonc 缺少 acceptance_evaluation");
+            report.push(format!("{} 缺少 acceptance_evaluation", file_name));
         }
 
         let mut actual_criteria = HashSet::new();
@@ -2581,10 +2606,10 @@ impl EvolutionManager {
         match verification_overall_result.as_deref() {
             Some("pass" | "fail") => {}
             Some(result) => report.push(format!(
-                "verify.jsonc.verification_overall.result 非法: {}",
-                result
+                "{}.verification_overall.result 非法: {}",
+                file_name, result
             )),
-            None => report.push("verify.jsonc 缺少 verification_overall.result"),
+            None => report.push(format!("{} 缺少 verification_overall.result", file_name)),
         }
         if !failing_criteria.is_empty() && verification_overall_result.as_deref() == Some("pass") {
             report.push(
@@ -2596,7 +2621,7 @@ impl EvolutionManager {
             .pointer("/adjudication/criteria_judgement")
             .and_then(|v| v.as_array());
         if criteria_judgement.is_none() {
-            report.push("verify.jsonc 缺少 adjudication.criteria_judgement");
+            report.push(format!("{} 缺少 adjudication.criteria_judgement", file_name));
         }
         let mut judgement_criteria = HashSet::new();
         if let Some(criteria_judgement) = criteria_judgement {
@@ -2642,16 +2667,17 @@ impl EvolutionManager {
             .map(|v| v.trim().to_ascii_lowercase());
         match adjudication_result.as_deref() {
             Some("pass" | "fail") => {}
-            Some(_) => {
-                report.push("verify.jsonc.adjudication.overall_result.result 必须是 pass 或 fail")
-            }
-            None => report.push("verify.jsonc 缺少 adjudication.overall_result.result"),
+            Some(_) => report.push(format!(
+                "{}.adjudication.overall_result.result 必须是 pass 或 fail",
+                file_name
+            )),
+            None => report.push(format!("{} 缺少 adjudication.overall_result.result", file_name)),
         }
 
         let repair_plan = match extract_verify_repair_plan(&verify_value) {
             Some(repair_plan) => repair_plan,
             None => {
-                report.push("verify.jsonc 缺少 adjudication.repair_plan");
+                report.push(format!("{} 缺少 adjudication.repair_plan", file_name));
                 VerifyRepairPlan::default()
             }
         };
@@ -2761,8 +2787,8 @@ impl EvolutionManager {
                             .unwrap_or(false)
                         {
                             report.push(format!(
-                                "verify.jsonc.carryover_verification.summary.{} 必须是数字",
-                                key
+                                "{}.carryover_verification.summary.{} 必须是数字",
+                                file_name, key
                             ));
                         }
                     }
@@ -2788,7 +2814,10 @@ impl EvolutionManager {
                     }
                 }
                 None => report
-                    .push("verify.jsonc 缺少 carryover_verification.summary（重实现轮必须提供）"),
+                    .push(format!(
+                        "{} 缺少 carryover_verification.summary（重实现轮必须提供）",
+                        file_name
+                    )),
             }
 
             match carry_items {
@@ -2819,7 +2848,10 @@ impl EvolutionManager {
                     }
                 }
                 None => report
-                    .push("verify.jsonc 缺少 carryover_verification.items（重实现轮必须提供）"),
+                    .push(format!(
+                        "{} 缺少 carryover_verification.items（重实现轮必须提供）",
+                        file_name
+                    )),
             }
         }
 
@@ -2927,13 +2959,14 @@ impl EvolutionManager {
         match stage {
             "direction" => Self::validate_direction_artifact(cycle_dir, validation_ctx),
             "plan" => Self::validate_plan_artifact(cycle_dir, validation_ctx),
-            "verify" => Self::validate_verify_artifact(
+            "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
+            _ if is_runtime_verify_stage(stage) => Self::validate_verify_artifact(
+                stage,
                 cycle_dir,
                 verify_iteration,
                 backlog_contract_version,
                 validation_ctx,
             ),
-            "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
             _ if is_runtime_implement_stage(stage) => {
                 Self::validate_implement_artifact(
                     stage,
@@ -3111,9 +3144,11 @@ impl EvolutionManager {
     #[cfg(test)]
     fn map_failed_agents_from_results(
         cycle_dir: &Path,
+        verify_iteration: u32,
         tables: &PlanRoutingTables,
     ) -> Result<Option<HashSet<ImplementationStageKind>>, String> {
-        let verify = read_json_file(cycle_dir, "verify.jsonc")?;
+        let verify_file = verify_artifact_file_for_iteration(verify_iteration);
+        let verify = read_json_file(cycle_dir, &verify_file)?;
 
         let mut failed_criteria_ids: Vec<String> = Vec::new();
         if let Some(items) = verify
@@ -3236,7 +3271,6 @@ impl EvolutionManager {
                 cycle_dir.join("plan.jsonc"),
                 cycle_dir.join(PLAN_MARKDOWN_FILE),
             ],
-            "verify" => vec![cycle_dir.join("verify.jsonc")],
             "auto_commit" => vec![cycle_dir.join("auto_commit.jsonc")],
             other => stage_artifact_file(other)
                 .map(|file_name| vec![cycle_dir.join(file_name)])
@@ -3314,10 +3348,17 @@ impl EvolutionManager {
                     &plan_markdown_template(&cycle_id),
                 )?;
             }
-            "verify" => {
+            _ if is_runtime_verify_stage(stage) => {
+                let artifact_file =
+                    stage_artifact_file(stage).ok_or_else(|| format!("未知验证阶段: {}", stage))?;
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join("verify.jsonc"),
-                    &verify_stage_template(&cycle_id, verify_iteration, verify_iteration_limit),
+                    &cycle_dir.join(artifact_file),
+                    &verify_stage_template(
+                        stage,
+                        &cycle_id,
+                        verify_iteration,
+                        verify_iteration_limit,
+                    ),
                 )?;
             }
             "auto_commit" => {
@@ -3641,7 +3682,8 @@ impl EvolutionManager {
     }
 
     fn supports_validation_reminder(stage: &str) -> bool {
-        matches!(stage, "direction" | "plan" | "verify" | "auto_commit")
+        matches!(stage, "direction" | "plan" | "auto_commit")
+            || is_runtime_verify_stage(stage)
             || is_runtime_implement_stage(stage)
             || is_runtime_reimplement_stage(stage)
     }
@@ -3661,11 +3703,21 @@ impl EvolutionManager {
         match normalized_stage.as_str() {
             "direction" => "direction.jsonc / cycle.jsonc".to_string(),
             "plan" => "plan.jsonc / plan.md / direction.jsonc".to_string(),
-            "verify" => "verify.jsonc / plan.jsonc / plan.md".to_string(),
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
+                if is_runtime_verify_stage(stage) {
+                    if let Some(file_name) = stage_artifact_file(stage) {
+                        return format!("{} / plan.jsonc / plan.md", file_name);
+                    }
+                }
                 if let Some(file_name) = stage_artifact_file(stage) {
-                    return format!("{} / plan.jsonc / plan.md / verify.jsonc", file_name);
+                    let mut files = vec![file_name, "plan.jsonc".to_string(), "plan.md".to_string()];
+                    if is_runtime_implement_stage(stage) {
+                        files.push("对应 verify.<n>.jsonc".to_string());
+                    } else if is_runtime_reimplement_stage(stage) {
+                        files.push("对应 verify.<n>.jsonc".to_string());
+                    }
+                    return files.join(" / ");
                 }
                 let stage_name = if normalized_stage.is_empty() {
                     "unknown".to_string()
@@ -3679,7 +3731,6 @@ impl EvolutionManager {
 
     fn build_validation_fix_hint(stage: &str, error_message: &str) -> String {
         let normalized_error_message = error_message.trim();
-        let normalized_stage = stage.trim().to_ascii_lowercase();
         let expected_stage_kind =
             implementation_stage_kind_for_stage(stage).map(|kind| kind.as_str().to_string());
         let _expected_selector_text = match stage.trim().to_ascii_lowercase().as_str() {
@@ -3691,14 +3742,14 @@ impl EvolutionManager {
         let is_execution_stage =
             expected_stage_kind.is_some() || is_runtime_reimplement_stage(stage);
 
-        if normalized_stage == "verify"
+        if is_runtime_verify_stage(stage)
             && normalized_error_message.contains("carryover_verification.items")
             && normalized_error_message.contains("缺少 repair_item")
         {
             return "carryover_verification.items[*].id 或 item_id 必须与上一轮 repair_plan.repair_items[*].repair_item_id 一一对应。".to_string();
         }
 
-        if normalized_stage == "verify"
+        if is_runtime_verify_stage(stage)
             && normalized_error_message.contains("carryover_verification.items[")
             && (normalized_error_message.contains("缺少有效 id")
                 || normalized_error_message.contains("缺少 id"))
@@ -3706,7 +3757,7 @@ impl EvolutionManager {
             return "carryover_verification.items[*] 必须填写 id 或 item_id，且该值必须直接复用上一轮 repair_plan 中的 repair_item_id。".to_string();
         }
 
-        if normalized_stage == "verify"
+        if is_runtime_verify_stage(stage)
             && normalized_error_message.contains("carryover_verification.summary.total")
             && normalized_error_message.contains("上一轮 repair_item 数量不一致")
         {
@@ -3718,7 +3769,7 @@ impl EvolutionManager {
                 .to_string();
         }
 
-        if normalized_stage == "verify"
+        if is_runtime_verify_stage(stage)
             && normalized_error_message.contains("adjudication.repair_plan")
             && normalized_error_message.contains("未覆盖 verify 未通过项")
         {
@@ -4370,22 +4421,23 @@ impl EvolutionManager {
         stage: &str,
         cycle_dir: &Path,
     ) -> Result<Option<bool>, ArtifactValidationError> {
-        match stage {
-            // 阶段特有结果提取必须建立在统一产物校验已经通过的前提上，
-            // 避免某个阶段提前读产物并绕过 reminder 重试链路。
-            "verify" => {
-                let json = read_json_file(cycle_dir, "verify.jsonc")
-                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
-                let verify_pass = parse_adjudication_result_from_json(&json).ok_or_else(|| {
-                    ArtifactValidationError::new(
-                        "artifact_contract_violation",
-                        "verify.jsonc 缺少 adjudication.overall_result.result（必须是 pass 或 fail）",
-                    )
-                })?;
-                Ok(Some(verify_pass))
-            }
-            _ => Ok(None),
+        if is_runtime_verify_stage(stage) {
+            let file_name = verify_artifact_file_for_stage(stage)
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let json = read_json_file(cycle_dir, &file_name)
+                .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let verify_pass = parse_adjudication_result_from_json(&json).ok_or_else(|| {
+                ArtifactValidationError::new(
+                    "artifact_contract_violation",
+                    format!(
+                        "{} 缺少 adjudication.overall_result.result（必须是 pass 或 fail）",
+                        file_name
+                    ),
+                )
+            })?;
+            return Ok(Some(verify_pass));
         }
+        Ok(None)
     }
 
     async fn validate_stage_outputs(
@@ -4865,7 +4917,7 @@ impl EvolutionManager {
             stage,
             "done",
             None,
-            if stage == "verify" {
+            if is_runtime_verify_stage(stage) {
                 Some(verify_pass)
             } else {
                 None
@@ -5122,7 +5174,7 @@ impl EvolutionManager {
                 key, stage, verify_pass
             );
         }
-        if stage == "verify" {
+        if is_runtime_verify_stage(stage) {
             let Some(cycle_id) = cycle_for_validation.clone() else {
                 warn!(
                     "evolution after_stage_success verify adjudication validation skipped: missing cycle_id: key={}, stage={}",
@@ -5141,7 +5193,7 @@ impl EvolutionManager {
         let mut auto_next_cycle = false;
         let mut auto_loop_gate: Option<(String, String, String, String)> = None;
         let mut should_start_next_round_after_auto_commit = false;
-        let next_repair_plan = if stage == "verify" && !verify_pass {
+        let next_repair_plan = if is_runtime_verify_stage(stage) && !verify_pass {
             let Some(cycle_id) = cycle_for_validation.as_ref() else {
                 self.mark_failed_with_code(
                     key,
@@ -5167,7 +5219,15 @@ impl EvolutionManager {
                     return false;
                 }
             };
-            let verify_json = match read_json_file(&cycle_dir, "verify.jsonc") {
+            let verify_file = match verify_artifact_file_for_stage(stage) {
+                Ok(file) => file,
+                Err(err) => {
+                    self.mark_failed_with_code(key, "evo_repair_plan_missing", &err, ctx)
+                        .await;
+                    return false;
+                }
+            };
+            let verify_json = match read_json_file(&cycle_dir, &verify_file) {
                 Ok(value) => value,
                 Err(err) => {
                     self.mark_failed_with_code(key, "evo_repair_plan_missing", &err, ctx)
@@ -5181,7 +5241,7 @@ impl EvolutionManager {
                     self.mark_failed_with_code(
                         key,
                         "evo_repair_plan_missing",
-                        "verify.jsonc 缺少 adjudication.repair_plan",
+                        &format!("{} 缺少 adjudication.repair_plan", verify_file),
                         ctx,
                     )
                     .await;
@@ -5218,7 +5278,7 @@ impl EvolutionManager {
                                 next_stage = instances
                                     .first()
                                     .map(|instance| instance.stage.clone())
-                                    .unwrap_or_else(|| "verify".to_string());
+                                    .unwrap_or_else(|| verify_stage_name_for_iteration(0));
                             }
                             Err(err) => {
                                 entry.status = "failed_system".to_string();
@@ -5243,7 +5303,7 @@ impl EvolutionManager {
                             next_stage = Self::next_initial_implementation_stage(&cycle_dir, stage)
                                 .ok()
                                 .flatten()
-                                .unwrap_or_else(|| "verify".to_string());
+                                .unwrap_or_else(|| verify_stage_name_for_iteration(entry.verify_iteration));
                         }
                         Err(err) => {
                             entry.status = "failed_system".to_string();
@@ -5254,8 +5314,18 @@ impl EvolutionManager {
                         }
                     }
                 }
-                _ if is_runtime_reimplement_stage(stage) => next_stage = "verify".to_string(),
-                "verify" => {
+                _ if is_runtime_reimplement_stage(stage) => {
+                    let verify_stage = verify_stage_name_for_iteration(entry.verify_iteration);
+                    Self::ensure_runtime_stage_state_pending(
+                        &mut entry.stage_statuses,
+                        &mut entry.stage_tool_call_counts,
+                        &verify_stage,
+                    );
+                    entry.stage_started_ats.remove(&verify_stage);
+                    entry.stage_duration_ms.remove(&verify_stage);
+                    next_stage = verify_stage;
+                }
+                _ if is_runtime_verify_stage(stage) => {
                     if verify_pass {
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;
@@ -5264,17 +5334,6 @@ impl EvolutionManager {
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;
                         entry.verify_iteration += 1;
-                        Self::ensure_runtime_stage_state_pending(
-                            &mut entry.stage_statuses,
-                            &mut entry.stage_tool_call_counts,
-                            "verify",
-                        );
-                        entry
-                            .stage_statuses
-                            .insert("verify".to_string(), "pending".to_string());
-                        entry.stage_tool_call_counts.insert("verify".to_string(), 0);
-                        entry.stage_started_ats.remove("verify");
-                        entry.stage_duration_ms.remove("verify");
                         let reimplement_stage = reimplement_stage_name(entry.verify_iteration);
                         Self::ensure_runtime_stage_state_pending(
                             &mut entry.stage_statuses,
@@ -5799,10 +5858,10 @@ mod tests {
     fn resolve_stage_outcome_from_validated_artifacts_should_parse_verify_pass_result() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.1",
                 "cycle_id": "c-1",
                 "adjudication": {
                     "overall_result": {
@@ -5812,7 +5871,7 @@ mod tests {
             }),
         );
         let outcome =
-            EvolutionManager::resolve_stage_outcome_from_validated_artifacts("verify", dir.path())
+            EvolutionManager::resolve_stage_outcome_from_validated_artifacts("verify.1", dir.path())
                 .expect("verify outcome should be readable after validation");
         assert_eq!(outcome, Some(true));
     }
@@ -5838,10 +5897,10 @@ mod tests {
         );
         write_empty_implement_result_triplet(dir.path());
         super::write_jsonc_text(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             r#"{
   "$schema_version": "2.0",
-  "stage": "verify",
+  "stage": "verify.1",
   "cycle_id": "c-1",
   "verify_iteration": 0,
   "verify_iteration_limit": 2,
@@ -5865,14 +5924,14 @@ mod tests {
         )
         .expect("invalid verify jsonc should be written as raw text");
 
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 2)
+        let err = EvolutionManager::validate_stage_artifacts("verify.1", dir.path(), 0, 2)
             .expect_err("invalid verify jsonc should fail validation");
         assert!(err.contains("解析"));
-        assert!(err.contains("verify.jsonc"));
+        assert!(err.contains("verify.1.jsonc"));
         let stage_err = ArtifactValidationError::new("artifact_contract_violation", err.clone())
             .to_stage_error();
         assert!(EvolutionManager::should_retry_validation_with_reminder(
-            "verify", &stage_err
+            "verify.1", &stage_err
         ));
     }
 
@@ -5925,7 +5984,7 @@ mod tests {
             "evo_stage_output_invalid: x"
         ));
         assert!(EvolutionManager::should_retry_validation_with_reminder(
-            "verify",
+            "verify.1",
             "evo_stage_output_invalid: y"
         ));
         assert!(EvolutionManager::should_retry_validation_with_reminder(
@@ -5953,10 +6012,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_parse_standard_stage_error() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "evo_stage_output_invalid:artifact_contract_violation: verify.jsonc 缺少 adjudication.overall_result",
+            "evo_stage_output_invalid:artifact_contract_violation: verify.1.jsonc 缺少 adjudication.overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "verify.jsonc 缺少 adjudication.overall_result");
+        assert_eq!(message, "verify.1.jsonc 缺少 adjudication.overall_result");
     }
 
     #[test]
@@ -5971,10 +6030,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_fallback_when_prefix_missing() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "verify.jsonc 缺少 adjudication.overall_result",
+            "verify.1.jsonc 缺少 adjudication.overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "verify.jsonc 缺少 adjudication.overall_result");
+        assert_eq!(message, "verify.1.jsonc 缺少 adjudication.overall_result");
     }
 
     #[test]
@@ -5998,19 +6057,19 @@ mod tests {
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_general"),
-            "implement_general.jsonc / plan.jsonc / plan.md / verify.jsonc"
+            "implement_general.jsonc / plan.jsonc / plan.md / 对应 verify.<n>.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_visual"),
-            "implement_visual.jsonc / plan.jsonc / plan.md / verify.jsonc"
+            "implement_visual.jsonc / plan.jsonc / plan.md / 对应 verify.<n>.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_advanced"),
-            "implement_advanced.jsonc / plan.jsonc / plan.md / verify.jsonc"
+            "implement_advanced.jsonc / plan.jsonc / plan.md / 对应 verify.<n>.jsonc"
         );
         assert_eq!(
-            EvolutionManager::validation_target_files_for_stage("verify"),
-            "verify.jsonc / plan.jsonc / plan.md"
+            EvolutionManager::validation_target_files_for_stage("verify.1"),
+            "verify.1.jsonc / plan.jsonc / plan.md"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("auto_commit"),
@@ -6087,17 +6146,17 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_number_type_constraint() {
         let err = ArtifactValidationError::new(
             "artifact_contract_violation",
-            "verify.jsonc.carryover_verification.summary.total 必须是数字",
+            "verify.1.jsonc.carryover_verification.summary.total 必须是数字",
         );
         let raw_error = err.to_stage_error();
-        let msg = EvolutionManager::build_validation_reminder_message("verify", &err);
+        let msg = EvolutionManager::build_validation_reminder_message("verify.1", &err);
         let expected = expected_validation_reminder(
-            "verify",
+            "verify.1",
             "artifact_contract_violation",
-            "verify.jsonc.carryover_verification.summary.total 必须是数字",
-            &["verify.jsonc.carryover_verification.summary.total 必须是数字"],
+            "verify.1.jsonc.carryover_verification.summary.total 必须是数字",
+            &["verify.1.jsonc.carryover_verification.summary.total 必须是数字"],
             &["将该字段改为数字类型（JSON number），不要使用字符串或对象。"],
-            "verify.jsonc / plan.jsonc / plan.md",
+            "verify.1.jsonc / plan.jsonc / plan.md",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -6110,14 +6169,14 @@ mod tests {
             "carryover_verification.items[0] 缺少有效 id",
         );
         let raw_error = err.to_stage_error();
-        let msg = EvolutionManager::build_validation_reminder_message("verify", &err);
+        let msg = EvolutionManager::build_validation_reminder_message("verify.1", &err);
         let expected = expected_validation_reminder(
-            "verify",
+            "verify.1",
             "artifact_contract_violation",
             "carryover_verification.items[0] 缺少有效 id",
             &["carryover_verification.items[0] 缺少有效 id"],
             &["carryover_verification.items[*] 必须填写 id 或 item_id，且该值必须直接复用上一轮 repair_plan 中的 repair_item_id。"],
-            "verify.jsonc / plan.jsonc / plan.md",
+            "verify.1.jsonc / plan.jsonc / plan.md",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -6137,7 +6196,7 @@ mod tests {
             "implement_advanced.jsonc.quick_checks 必须是数组",
             &["implement_advanced.jsonc.quick_checks 必须是数组"],
             &["quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"],
-            "implement_advanced.jsonc / plan.jsonc / plan.md / verify.jsonc",
+            "implement_advanced.jsonc / plan.jsonc / plan.md / 对应 verify.<n>.jsonc",
             &raw_error,
         );
         assert_eq!(msg, expected);
@@ -6216,7 +6275,7 @@ mod tests {
         assert!(reimplement.contains("\"repair_item_results\""));
         assert!(reimplement.contains("//   \"repair_item_id\": \"RP-001\""));
 
-        let verify = verify_stage_template("c-42", 1, 3);
+        let verify = verify_stage_template("verify.2", "c-42", 1, 3);
         assert!(verify.contains("// criteria_id 集必须与 plan.acceptance_criteria 完全一致"));
         assert!(verify.contains("//   \"criteria_id\": \"AC-001\""));
         assert!(verify.contains("// 需要重实现时必须输出 repair_plan；pass 时 repair_items 必须为空数组"));
@@ -6385,8 +6444,8 @@ mod tests {
     }
 
     #[test]
-    fn next_stage_verify_should_goto_auto_commit() {
-        assert_eq!(next_stage("verify"), Some("auto_commit"));
+    fn next_stage_verify_instance_should_be_runtime_managed() {
+        assert_eq!(next_stage("verify.1"), None);
     }
 
     #[test]
@@ -6567,10 +6626,10 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.1",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "verify_iteration_limit": 2,
@@ -6596,7 +6655,7 @@ mod tests {
             }),
         );
 
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify.1", dir.path(), 0, 1)
             .expect_err("missing acceptance_evaluation should fail");
         assert!(err.contains("acceptance_evaluation"));
     }
@@ -6621,10 +6680,10 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.1",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -6653,7 +6712,7 @@ mod tests {
             }),
         );
 
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify.1", dir.path(), 0, 1)
             .expect_err("first round missing criteria coverage should fail");
         assert!(err.contains("criteria_judgement 覆盖不完整"));
     }
@@ -6671,7 +6730,7 @@ mod tests {
             }),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({}),
         );
         write_json(
@@ -6970,10 +7029,10 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "verify_iteration_limit": 2,
@@ -7012,7 +7071,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 1)
             .expect_err("verify missing carryover repair items should fail");
         assert!(err.contains("缺少 repair_item"));
     }
@@ -7065,10 +7124,10 @@ mod tests {
             base_implement_result_json(),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7107,7 +7166,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 1)
             .expect_err("verify acceptance 缺少 status 应失败");
         assert!(err.contains("acceptance_evaluation[0] 缺少 status"));
     }
@@ -7160,10 +7219,10 @@ mod tests {
             base_implement_result_json(),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7202,7 +7261,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 1)
             .expect_err("verify acceptance 非法 status 应失败");
         assert!(err.contains("acceptance_evaluation[0].status 非法"));
     }
@@ -7210,6 +7269,20 @@ mod tests {
     #[test]
     fn validate_stage_artifacts_should_reject_verify_missing_failed_requirements() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("cycle.jsonc"),
+            serde_json::json!({
+                "cycle_id": "c-1",
+                "stage_runtime": {
+                    "reimplement.1": {
+                        "assigned_repair_plan": {
+                            "summary": "上一轮修复",
+                            "repair_items": []
+                        }
+                    }
+                }
+            }),
+        );
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
@@ -7227,10 +7300,10 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7247,7 +7320,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let mut verify = super::read_json_file(dir.path(), "verify.jsonc")
+        let mut verify = super::read_json_file(dir.path(), "verify.2.jsonc")
             .expect("verify result should be readable");
         verify
             .as_object_mut()
@@ -7280,8 +7353,8 @@ mod tests {
                     }
                 }),
             );
-        write_json(&dir.path().join("verify.jsonc"), verify);
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+        write_json(&dir.path().join("verify.2.jsonc"), verify);
+        let err = EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 1)
             .expect_err("verify requirements missing should fail");
         assert!(err.contains("未覆盖 verify 未通过项"));
     }
@@ -7289,6 +7362,20 @@ mod tests {
     #[test]
     fn validate_stage_artifacts_should_reject_verify_repair_plan_missing_linked_check_ids() {
         let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("cycle.jsonc"),
+            serde_json::json!({
+                "cycle_id": "c-1",
+                "stage_runtime": {
+                    "reimplement.1": {
+                        "assigned_repair_plan": {
+                            "summary": "上一轮修复",
+                            "repair_items": []
+                        }
+                    }
+                }
+            }),
+        );
         write_json(
             &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
@@ -7321,10 +7408,10 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7363,7 +7450,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 2)
+        let err = EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 2)
             .expect_err("repair_plan missing linked_check_ids should fail");
         assert!(err.contains("linked_check_ids"));
     }
@@ -7417,10 +7504,10 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7459,7 +7546,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 2)
+        EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 2)
             .expect("verify complete repair_plan should pass");
     }
 
@@ -7499,10 +7586,10 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.1",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -7541,7 +7628,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 2)
+        let err = EvolutionManager::validate_stage_artifacts("verify.1", dir.path(), 0, 2)
             .expect_err("first iteration repair_plan missing source_work_item_ids should fail");
         assert!(err.contains("source_work_item_ids"));
     }
@@ -7582,10 +7669,10 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.1.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.1",
                 "cycle_id": "c-1",
                 "verify_iteration": 0,
                 "summary": "verify",
@@ -7624,7 +7711,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 2)
+        EvolutionManager::validate_stage_artifacts("verify.1", dir.path(), 0, 2)
             .expect("first iteration complete repair_plan should pass");
     }
 
@@ -7672,10 +7759,10 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "verify_iteration": 1,
                 "summary": "verify",
@@ -7715,7 +7802,7 @@ mod tests {
             }),
         );
 
-        EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+        EvolutionManager::validate_stage_artifacts("verify.2", dir.path(), 1, 1)
             .expect("single repair item may cover multiple failing criteria");
     }
 
@@ -8217,10 +8304,10 @@ mod tests {
             }),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "$schema_version": "2.0",
-                "stage": "verify",
+                "stage": "verify.2",
                 "cycle_id": "c-1",
                 "status": "done",
                 "decision": {"result": "fail", "reason": "需要重实现"},
@@ -8407,7 +8494,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -8453,7 +8540,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-2", "status": "insufficient_evidence"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -8499,7 +8586,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
@@ -8545,7 +8632,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
@@ -8591,7 +8678,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.jsonc"),
+            &dir.path().join("verify.2.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-404", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -8938,7 +9025,7 @@ mod tests {
             "implement_general.jsonc",
             "implement_visual.jsonc",
             "implement_advanced.jsonc",
-            "verify.jsonc",
+            "verify.1.jsonc",
             "auto_commit.jsonc",
         ];
 

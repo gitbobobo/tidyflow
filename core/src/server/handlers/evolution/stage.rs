@@ -8,7 +8,7 @@ use crate::server::protocol::EvolutionAgentInfo;
 
 use super::consts::{
     compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
-    ImplementationStageKind, STAGES,
+    parse_verify_stage_instance, ImplementationStageKind, STAGES,
 };
 
 fn runtime_extra_stages(stage_statuses: &HashMap<String, String>) -> Vec<String> {
@@ -77,10 +77,12 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
     if parse_reimplement_stage_instance(stage).is_some() {
         return "ReimplementAgent";
     }
+    if parse_verify_stage_instance(stage).is_some() {
+        return "VerifyAgent";
+    }
     match stage {
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
-        "verify" => "VerifyAgent",
         "auto_commit" => "AutoCommitAgent",
         _ => "UnknownAgent",
     }
@@ -90,7 +92,6 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
-        "verify" => Some("auto_commit"),
         "auto_commit" => Some("direction"),
         _ => None,
     }
@@ -103,10 +104,12 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
     if parse_reimplement_stage_instance(stage).is_some() {
         return Some(STAGE_REIMPLEMENT_PROMPT);
     }
+    if parse_verify_stage_instance(stage).is_some() {
+        return Some(STAGE_VERIFY_PROMPT);
+    }
     match stage {
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
-        "verify" => Some(STAGE_VERIFY_PROMPT),
         "auto_commit" => Some(STAGE_AUTO_COMMIT_PROMPT),
         _ => None,
     }
@@ -120,10 +123,12 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
     if parse_reimplement_stage_instance(stage).is_some() {
         return Some("builtin://evolution/stage.reimplement.prompt");
     }
+    if parse_verify_stage_instance(stage).is_some() {
+        return Some("builtin://evolution/stage.verify.prompt");
+    }
     match stage {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
-        "verify" => Some("builtin://evolution/stage.verify.prompt"),
         "auto_commit" => Some("builtin://evolution/stage.auto_commit.prompt"),
         _ => None,
     }
@@ -137,11 +142,6 @@ mod tests {
     fn stages_should_not_contain_judge_or_bootstrap() {
         assert!(!STAGES.contains(&"judge"), "STAGES 不应包含 judge");
         assert!(!STAGES.contains(&"bootstrap"), "STAGES 不应包含 bootstrap");
-    }
-
-    #[test]
-    fn next_stage_verify_should_goto_auto_commit() {
-        assert_eq!(next_stage("verify"), Some("auto_commit"));
     }
 
     #[test]

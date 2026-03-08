@@ -5,7 +5,8 @@ use chrono::Utc;
 
 use super::consts::{
     compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
-    reimplement_stage_name, stage_artifact_file, ImplementationStageKind,
+    parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file, verify_stage_name,
+    ImplementationStageKind,
 };
 use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
@@ -29,6 +30,30 @@ fn implementation_stage_kind_for_stage(stage: &str) -> Option<ImplementationStag
         "implement_advanced" => Some(ImplementationStageKind::Advanced),
         _ => None,
     }
+}
+
+fn is_runtime_verify_stage(stage: &str) -> bool {
+    parse_verify_stage_instance(stage).is_some()
+}
+
+fn verify_stage_name_for_iteration(verify_iteration: u32) -> String {
+    verify_stage_name(verify_iteration + 1)
+}
+
+fn latest_verify_stage_for_context(stage: &str, verify_iteration: u32) -> Option<String> {
+    if let Some(index) = parse_verify_stage_instance(stage) {
+        return Some(verify_stage_name(index));
+    }
+    if let Some(index) = parse_reimplement_stage_instance(stage) {
+        return Some(verify_stage_name(index));
+    }
+    if stage.trim().eq_ignore_ascii_case("auto_commit") {
+        return Some(verify_stage_name_for_iteration(verify_iteration));
+    }
+    if implementation_stage_kind_for_stage(stage).is_some() && verify_iteration > 0 {
+        return Some(verify_stage_name(verify_iteration));
+    }
+    None
 }
 
 fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
@@ -108,7 +133,7 @@ fn merge_stage_payload(
         obj.insert(
             "decision".to_string(),
             serde_json::json!({
-                "result": if stage == "verify" && status == "done" {
+                "result": if is_runtime_verify_stage(stage) && status == "done" {
                     if verify_result.unwrap_or(true) { "pass" } else { "fail" }
                 } else {
                     "n/a"
@@ -118,7 +143,7 @@ fn merge_stage_payload(
         );
     }
 
-    if stage == "verify" && status == "done" {
+    if is_runtime_verify_stage(stage) && status == "done" {
         if let Some(decision_obj) = obj.get_mut("decision").and_then(|v| v.as_object_mut()) {
             if !decision_obj
                 .get("result")
@@ -244,6 +269,9 @@ fn build_prompt_context(
     let implement_kind = implementation_stage_kind_for_stage(stage)
         .map(|kind| kind.as_str().to_string())
         .unwrap_or_default();
+    let verify_artifact_path = latest_verify_stage_for_context(stage, verify_iteration)
+        .map(|verify_stage| stage_artifact_path(cycle_dir, &verify_stage))
+        .unwrap_or_else(|| cycle_dir.join("verify.none.jsonc"));
     serde_json::json!({
         "PROJECT": project,
         "WORKSPACE": workspace,
@@ -259,7 +287,7 @@ fn build_prompt_context(
         "DIRECTION_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "direction"),
         "PLAN_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "plan"),
         "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
-        "VERIFY_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "verify"),
+        "VERIFY_ARTIFACT_PATH": verify_artifact_path,
         "AUTO_COMMIT_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "auto_commit"),
         "LAST_REIMPLEMENT_ARTIFACT_PATH": if verify_iteration > 0 {
             stage_artifact_path(cycle_dir, &reimplement_stage_name(verify_iteration))
@@ -309,7 +337,7 @@ fn required_context_keys(
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
         }
-        "verify" => {
+        _ if is_runtime_verify_stage(stage) => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
@@ -674,7 +702,7 @@ mod tests {
         let existing = serde_json::json!({
             "$schema_version": "1.0",
             "cycle_id": "cycle-a",
-            "stage": "verify",
+            "stage": "verify.2",
             "agent": "VerifyAgent",
             "status": "done",
             "decision": {
@@ -685,12 +713,12 @@ mod tests {
                 "type": "stop_cycle",
                 "target": null
             },
-            "outputs": [{"type": "file", "path": "verify.jsonc"}]
+            "outputs": [{"type": "file", "path": "verify.2.jsonc"}]
         });
         let merged = merge_stage_payload(
             Some(existing),
             "cycle-a",
-            "verify",
+            "verify.2",
             "done",
             None,
             Some(false),
@@ -735,7 +763,7 @@ mod tests {
         let merged = merge_stage_payload(
             Some(existing),
             "cycle-a",
-            "verify",
+            "verify.2",
             "done",
             None,
             None,
@@ -810,7 +838,7 @@ mod tests {
                 .get("VERIFY_ARTIFACT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/verify.jsonc"
+            "/tmp/tidyflow-cycle/verify.1.jsonc"
         );
         assert_eq!(
             context

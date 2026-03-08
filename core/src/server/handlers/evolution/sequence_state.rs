@@ -237,7 +237,7 @@ mod tests {
             status: status.to_string(),
             cycle_id: "cycle-1".to_string(),
             cycle_title: None,
-            current_stage: "verify".to_string(),
+            current_stage: "verify.1".to_string(),
             global_loop_round: 1,
             loop_round_limit: 1,
             verify_iteration: 0,
@@ -274,17 +274,17 @@ mod tests {
         }
 
         manager
-            .record_session_execution_started(&key, "verify", "codex", "sess-1")
+            .record_session_execution_started(&key, "verify.1", "codex", "sess-1")
             .await;
         manager
-            .record_session_execution_started(&key, "verify", "codex", "sess-2")
+            .record_session_execution_started(&key, "verify.1", "codex", "sess-2")
             .await;
 
         manager
-            .finalize_session_execution(&key, "verify", "sess-1", "done", 2)
+            .finalize_session_execution(&key, "verify.1", "sess-1", "done", 2)
             .await;
         manager
-            .finalize_session_execution(&key, "verify", "sess-2", "failed", 4)
+            .finalize_session_execution(&key, "verify.1", "sess-2", "failed", 4)
             .await;
 
         let state = manager.state.lock().await;

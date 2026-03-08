@@ -67,7 +67,7 @@
   - `GET /api/v1/evolution/projects/:project/workspaces/:workspace/cycle-history`
   - `GET /api/v1/evolution/projects/:project/workspaces/:workspace/stage-chat`
   - Evolution 快照与循环历史不再返回 `handoff` 字段；计划文档请直接读取循环目录下的 `plan.md`
-  - Evolution 运行时 `stage` 支持动态实例名，例如 `implement.general.1`、`implement.visual.2`、`reimplement.1`
+  - Evolution 运行时 `stage` 支持动态实例名，例如 `implement.general.1`、`implement.visual.2`、`verify.1`、`reimplement.1`
   - `stage-chat` 的 `stage` 查询参数必须传精确阶段实例名，不能假设实现阶段只有固定枚举
 - Evidence：
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot`

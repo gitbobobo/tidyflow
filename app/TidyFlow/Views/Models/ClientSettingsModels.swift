@@ -67,6 +67,155 @@ extension KeybindingConfig {
     }
 }
 
+// MARK: - Evolution Stage Semantics
+
+/// 统一维护自主进化运行时阶段的归一化、排序和显示规则。
+enum EvolutionStageSemantics {
+    static func runtimeStageKey(_ stage: String) -> String {
+        let normalized = normalize(stage)
+        if normalized.hasPrefix("implement.general.") { return "implement.general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement.visual" }
+        if normalized.hasPrefix("verify.") { return "verify" }
+        if normalized.hasPrefix("reimplement.") { return "reimplement" }
+        if normalized == "implement_general" || normalized == "implement" { return "implement.general" }
+        if normalized == "implement_visual" { return "implement.visual" }
+        if normalized == "implement_advanced" { return "reimplement" }
+        return normalized
+    }
+
+    static func profileStageKey(for stage: String) -> String {
+        let normalized = normalize(stage)
+        if normalized.hasPrefix("implement.general.") { return "implement_general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
+        if normalized.hasPrefix("verify.") { return "verify" }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return index <= 2 ? "implement_general" : "implement_advanced"
+            }
+            return "implement_general"
+        }
+        if normalized == "implement.general" { return "implement_general" }
+        if normalized == "implement.visual" { return "implement_visual" }
+        if normalized == "implement" { return "implement_general" }
+        if normalized == "reimplement" { return "implement_general" }
+        return normalized
+    }
+
+    static func stageSortOrder(_ stage: String) -> (Int, Int, Int, String) {
+        let normalized = normalize(stage)
+        if normalized == "direction" { return (0, 0, 0, "") }
+        if normalized == "plan" { return (1, 0, 0, "") }
+        if normalized == "auto_commit" { return (5, 0, 0, "") }
+        if normalized.hasPrefix("implement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 3, let index = Int(parts[2]) {
+                let kindRank = parts[1] == "general" ? 0 : 1
+                return (2, index, kindRank, "")
+            }
+        }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return (3, index, 0, "")
+            }
+        }
+        if normalized.hasPrefix("verify.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return (4, index, 0, "")
+            }
+        }
+        switch normalized {
+        case "implement_general", "implement":
+            return (2, 1, 0, "")
+        case "implement_visual":
+            return (2, 1, 1, "")
+        case "implement_advanced":
+            return (3, 1, 0, "")
+        default:
+            return (6, 0, 0, normalized)
+        }
+    }
+
+    static func isRepeatableStage(_ stage: String) -> Bool {
+        let normalized = normalize(stage)
+        return normalized == "verify" || normalized.hasPrefix("verify.") || normalized.hasPrefix("reimplement.")
+    }
+
+    static func displayName(for stage: String) -> String {
+        let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
+        let normalized = trimmed.lowercased()
+        if normalized.hasPrefix("implement.general.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement General #\(index)"
+        }
+        if normalized.hasPrefix("implement.visual.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement Visual #\(index)"
+        }
+        if normalized.hasPrefix("verify.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Verify #\(index)"
+        }
+        if normalized.hasPrefix("reimplement.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Reimplement #\(index)"
+        }
+        switch normalized {
+        case "direction":
+            return "evolution.stage.direction".localized
+        case "plan":
+            return "evolution.stage.plan".localized
+        case "implement_general", "implement":
+            return "evolution.stage.implementGeneral".localized
+        case "implement_visual":
+            return "evolution.stage.implementVisual".localized
+        case "implement_advanced":
+            return "evolution.stage.implementAdvanced".localized
+        case "verify":
+            return "evolution.stage.verify".localized
+        case "auto_commit":
+            return "evolution.stage.autoCommit".localized
+        default:
+            return trimmed
+        }
+    }
+
+    static func iconName(for stage: String) -> String {
+        let normalized = normalize(stage)
+        if normalized.hasPrefix("implement.general.") { return "hammer" }
+        if normalized.hasPrefix("implement.visual.") { return "paintbrush" }
+        if normalized.hasPrefix("verify.") { return "checkmark.seal" }
+        if normalized.hasPrefix("reimplement.") { return "wrench.and.screwdriver" }
+        switch normalized {
+        case "direction":
+            return "arrow.triangle.branch"
+        case "plan":
+            return "map"
+        case "implement_general", "implement":
+            return "hammer"
+        case "implement_visual":
+            return "paintbrush"
+        case "implement_advanced":
+            return "wand.and.stars"
+        case "code":
+            return "chevron.left.forwardslash.chevron.right"
+        case "verify":
+            return "checkmark.seal"
+        case "auto_commit":
+            return "sparkles"
+        default:
+            return "person.crop.square"
+        }
+    }
+
+    private static func normalize(_ stage: String) -> String {
+        stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 // MARK: - 工作空间待办
 
 enum WorkspaceTodoStatus: String, Codable, CaseIterable {

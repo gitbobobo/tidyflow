@@ -43,7 +43,7 @@ final class EvolutionHistoryParsingTests: XCTestCase {
                     ]
                 ],
                 [
-                    "stage": "verify",
+                    "stage": "verify.1",
                     "agent": "VerifyAgent",
                     "ai_tool": "copilot",
                     "status": "done",
@@ -57,7 +57,7 @@ final class EvolutionHistoryParsingTests: XCTestCase {
         XCTAssertEqual(item?.cycleID, "2026-03-07T06-41-44-767Z")
         XCTAssertEqual(item?.stages.count, 2)
         XCTAssertEqual(item?.stages.first?.stage, "plan")
-        XCTAssertEqual(item?.stages.last?.stage, "verify")
+        XCTAssertEqual(item?.stages.last?.stage, "verify.1")
     }
 
     func testWorkspaceItemIgnoresLegacyHandoffPayload() {
@@ -67,7 +67,7 @@ final class EvolutionHistoryParsingTests: XCTestCase {
             "cycle_id": "cycle-1",
             "title": "当前循环标题",
             "status": "running",
-            "current_stage": "verify",
+            "current_stage": "verify.1",
             "global_loop_round": 1,
             "loop_round_limit": 3,
             "verify_iteration": 0,
@@ -83,5 +83,30 @@ final class EvolutionHistoryParsingTests: XCTestCase {
         XCTAssertNotNil(item)
         XCTAssertEqual(item?.cycleID, "cycle-1")
         XCTAssertEqual(item?.title, "当前循环标题")
+        XCTAssertEqual(item?.currentStage, "verify.1")
+    }
+}
+
+final class EvolutionStageSemanticsTests: XCTestCase {
+    func testVerifyRuntimeStageMapsToVerifyProfileStage() {
+        XCTAssertEqual(EvolutionStageSemantics.runtimeStageKey("verify.2"), "verify")
+        XCTAssertEqual(EvolutionStageSemantics.profileStageKey(for: "verify.2"), "verify")
+    }
+
+    func testVerifyRuntimeStageDisplayNameUsesInstanceIndex() {
+        XCTAssertEqual(EvolutionStageSemantics.displayName(for: "verify.2"), "Verify #2")
+    }
+
+    func testVerifyRuntimeStageSortsAfterReimplementAndBeforeAutoCommit() {
+        let reimplementOrder = EvolutionStageSemantics.stageSortOrder("reimplement.1")
+        let verifyOrder = EvolutionStageSemantics.stageSortOrder("verify.2")
+        let autoCommitOrder = EvolutionStageSemantics.stageSortOrder("auto_commit")
+
+        XCTAssertTrue(reimplementOrder < verifyOrder)
+        XCTAssertTrue(verifyOrder < autoCommitOrder)
+    }
+
+    func testVerifyRuntimeStageIsRepeatable() {
+        XCTAssertTrue(EvolutionStageSemantics.isRepeatableStage("verify.2"))
     }
 }
