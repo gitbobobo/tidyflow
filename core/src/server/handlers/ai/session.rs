@@ -81,11 +81,45 @@ struct AiSessionMessagesPage {
     next_before_message_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AiSessionMessagesSource {
+    Snapshot,
+    Agent,
+    SnapshotEmptyFallbackAgent,
+}
+
 fn normalize_ai_session_messages_page_size(limit: Option<i64>) -> usize {
     match limit.unwrap_or(AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE as i64) {
         raw if raw <= 0 => AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE,
         raw => (raw as usize).min(AI_SESSION_MESSAGES_MAX_PAGE_SIZE),
     }
+}
+
+fn resolve_ai_session_messages_source(
+    cached_snapshot: Option<&AiStreamSnapshot>,
+    agent_messages: Option<Vec<crate::server::protocol::ai::MessageInfo>>,
+) -> (
+    Vec<crate::server::protocol::ai::MessageInfo>,
+    AiSessionMessagesSource,
+) {
+    if let Some(snapshot) = cached_snapshot {
+        if !snapshot.messages.is_empty() {
+            return (snapshot.messages.clone(), AiSessionMessagesSource::Snapshot);
+        }
+    }
+
+    if let Some(messages) = agent_messages {
+        if cached_snapshot.is_some() {
+            return (messages, AiSessionMessagesSource::SnapshotEmptyFallbackAgent);
+        }
+        return (messages, AiSessionMessagesSource::Agent);
+    }
+
+    if let Some(snapshot) = cached_snapshot {
+        return (snapshot.messages.clone(), AiSessionMessagesSource::Snapshot);
+    }
+
+    (Vec::new(), AiSessionMessagesSource::Agent)
 }
 
 fn paginate_ai_session_messages(
@@ -342,29 +376,43 @@ pub(crate) async fn query_ai_session_messages(
 
     let session_key = stream_key(&ai_tool, &directory, session_id);
     let cached_snapshot = get_stream_snapshot(ai_state, &session_key).await;
-    let from_snapshot = cached_snapshot.is_some();
     let cached_selection_hint = cached_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot.selection_hint.clone());
-    let all_messages: Vec<crate::server::protocol::ai::MessageInfo> = if let Some(snapshot) =
-        cached_snapshot
-    {
-        snapshot.messages
+    let should_load_agent_messages = cached_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.messages.is_empty())
+        .unwrap_or(true);
+    let agent_messages = if should_load_agent_messages {
+        Some(
+            agent
+                .list_messages(&directory, session_id, None)
+                .await
+                .map_err(|e| {
+                    warn!(
+                        "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, error={}",
+                        project_name, workspace_name, ai_tool, session_id, before_message_id, limit, e
+                    );
+                    e
+                })?
+                .into_iter()
+                .map(map_ai_message_for_wire)
+                .collect::<Vec<_>>(),
+        )
     } else {
-        agent
-            .list_messages(&directory, session_id, None)
-            .await
-            .map_err(|e| {
-                warn!(
-                    "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, error={}",
-                    project_name, workspace_name, ai_tool, session_id, before_message_id, limit, e
-                );
-                e
-            })?
-            .into_iter()
-            .map(map_ai_message_for_wire)
-            .collect()
+        None
     };
+    let (all_messages, messages_source) =
+        resolve_ai_session_messages_source(cached_snapshot.as_ref(), agent_messages);
+    if matches!(
+        messages_source,
+        AiSessionMessagesSource::SnapshotEmptyFallbackAgent
+    ) {
+        warn!(
+            "AISessionMessages live snapshot empty, fallback to adapter history: project={}, workspace={}, ai_tool={}, session_id={}",
+            project_name, workspace_name, ai_tool, session_id
+        );
+    }
     let page_size = normalize_ai_session_messages_page_size(limit);
     let mut page =
         paginate_ai_session_messages(&all_messages, before_message_id.as_deref(), page_size);
@@ -381,7 +429,7 @@ pub(crate) async fn query_ai_session_messages(
     }
     let mut messages = page.messages.clone();
 
-    let selection_hint = if from_snapshot {
+    let selection_hint = if matches!(messages_source, AiSessionMessagesSource::Snapshot) {
         if cached_selection_hint.is_some() {
             cached_selection_hint
         } else {
@@ -391,6 +439,8 @@ pub(crate) async fn query_ai_session_messages(
                 crate::ai::AiSessionSelectionHint::default(),
             )
         }
+    } else if cached_selection_hint.is_some() {
+        cached_selection_hint
     } else {
         let adapter_hint = agent
             .session_selection_hint(&directory, session_id)
@@ -536,7 +586,11 @@ pub(crate) async fn query_ai_session_messages(
         workspace_name,
         ai_tool,
         session_id,
-        if from_snapshot { "snapshot" } else { "agent" },
+        match messages_source {
+            AiSessionMessagesSource::Snapshot => "snapshot",
+            AiSessionMessagesSource::Agent => "agent",
+            AiSessionMessagesSource::SnapshotEmptyFallbackAgent => "snapshot_empty_fallback_agent",
+        },
         page.requested_before_message_id.as_deref(),
         page.applied_before_message_id.as_deref(),
         page_size,
@@ -1510,6 +1564,41 @@ mod tests {
         assert!(section.content.contains("已为历史展示裁剪"));
         assert!(section.collapsed_by_default);
         assert!(section.content.chars().count() < 40_000);
+    }
+
+    #[test]
+    fn resolve_messages_source_prefers_agent_when_live_snapshot_is_empty() {
+        let cached_snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        let agent_messages = build_messages(3);
+        let (messages, source) =
+            resolve_ai_session_messages_source(Some(&cached_snapshot), Some(agent_messages.clone()));
+
+        assert_eq!(source, AiSessionMessagesSource::SnapshotEmptyFallbackAgent);
+        assert_eq!(
+            messages.iter().map(|it| it.id.as_str()).collect::<Vec<_>>(),
+            agent_messages
+                .iter()
+                .map(|it| it.id.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn resolve_messages_source_prefers_snapshot_when_it_has_history() {
+        let snapshot_messages = build_messages(2);
+        let cached_snapshot = AiStreamSnapshot::seeded(snapshot_messages.clone(), None, true);
+        let agent_messages = build_messages(4);
+        let (messages, source) =
+            resolve_ai_session_messages_source(Some(&cached_snapshot), Some(agent_messages));
+
+        assert_eq!(source, AiSessionMessagesSource::Snapshot);
+        assert_eq!(
+            messages.iter().map(|it| it.id.as_str()).collect::<Vec<_>>(),
+            snapshot_messages
+                .iter()
+                .map(|it| it.id.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     fn build_test_app_state() -> SharedAppState {
