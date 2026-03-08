@@ -600,3 +600,172 @@ mod workspace_lifecycle_tests {
         assert_ne!(WorkspaceStatus::SetupFailed, WorkspaceStatus::Destroying);
     }
 }
+
+// ============================================================================
+// 多工作区隔离与资源管理测试
+// ============================================================================
+
+/// WI-001 / WI-003：验证多项目同名工作区状态隔离与 last_accessed 更新逻辑。
+mod multi_workspace_isolation_tests {
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tidyflow_core::workspace::state::{
+        AppState, Project, Workspace, WorkspaceStatus, DEFAULT_WORKSPACE_NAME,
+    };
+
+    fn make_project(name: &str, workspaces: &[&str]) -> Project {
+        let ws_map: HashMap<String, Workspace> = workspaces
+            .iter()
+            .map(|&ws_name| {
+                let ws = Workspace {
+                    name: ws_name.to_string(),
+                    worktree_path: format!("/tmp/{name}/ws/{ws_name}").into(),
+                    branch: format!("tidy/{ws_name}"),
+                    status: WorkspaceStatus::Ready,
+                    created_at: Utc::now(),
+                    last_accessed: Utc::now(),
+                    setup_result: None,
+                };
+                (ws_name.to_string(), ws)
+            })
+            .collect();
+        Project {
+            name: name.to_string(),
+            root_path: format!("/tmp/{name}").into(),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: Utc::now(),
+            workspaces: ws_map,
+            commands: vec![],
+        }
+    }
+
+    /// 同名工作区在不同项目中具有不同路径，不会混淆状态上下文。
+    #[test]
+    fn same_workspace_name_in_different_projects_has_different_paths() {
+        let proj_a = make_project("project-a", &["feature"]);
+        let proj_b = make_project("project-b", &["feature"]);
+
+        let ws_a = proj_a.get_workspace("feature").unwrap();
+        let ws_b = proj_b.get_workspace("feature").unwrap();
+
+        assert_ne!(
+            ws_a.worktree_path, ws_b.worktree_path,
+            "不同项目的同名工作区路径必须不同，否则文件索引缓存键会冲突"
+        );
+    }
+
+    /// touch_workspace_last_accessed 只更新指定项目+工作区，不影响其他工作区。
+    #[test]
+    fn touch_workspace_last_accessed_updates_only_target() {
+        let mut state = AppState::default();
+        state.add_project(make_project("proj-a", &["ws1", "ws2"]));
+        state.add_project(make_project("proj-b", &["ws1"]));
+
+        // 记录初始访问时间
+        let before_a_ws2 = state
+            .get_project("proj-a")
+            .unwrap()
+            .get_workspace("ws2")
+            .unwrap()
+            .last_accessed;
+        let before_b_ws1 = state
+            .get_project("proj-b")
+            .unwrap()
+            .get_workspace("ws1")
+            .unwrap()
+            .last_accessed;
+
+        // 稍微等待确保时间戳不同
+        std::thread::sleep(Duration::from_millis(5));
+
+        // 只 touch proj-a/ws1
+        state.touch_workspace_last_accessed("proj-a", "ws1");
+
+        let after_a_ws1 = state
+            .get_project("proj-a")
+            .unwrap()
+            .get_workspace("ws1")
+            .unwrap()
+            .last_accessed;
+        let after_a_ws2 = state
+            .get_project("proj-a")
+            .unwrap()
+            .get_workspace("ws2")
+            .unwrap()
+            .last_accessed;
+        let after_b_ws1 = state
+            .get_project("proj-b")
+            .unwrap()
+            .get_workspace("ws1")
+            .unwrap()
+            .last_accessed;
+
+        // proj-a/ws1 时间应更新（≥ before，通常更大）
+        assert!(
+            after_a_ws1 >= before_a_ws2,
+            "touch 后 proj-a/ws1 的 last_accessed 应被更新"
+        );
+        // proj-a/ws2 未被 touch，时间不变
+        assert_eq!(
+            before_a_ws2, after_a_ws2,
+            "未 touch 的 proj-a/ws2 last_accessed 不应改变"
+        );
+        // proj-b/ws1 未被 touch，时间不变
+        assert_eq!(
+            before_b_ws1, after_b_ws1,
+            "未 touch 的 proj-b/ws1 last_accessed 不应改变"
+        );
+    }
+
+    /// touch default 虚拟工作区静默跳过（default 不持久化，不应有副作用）。
+    #[test]
+    fn touch_default_workspace_is_no_op() {
+        let mut state = AppState::default();
+        state.add_project(make_project("proj", &["ws1"]));
+
+        // 不应 panic，静默跳过
+        state.touch_workspace_last_accessed("proj", DEFAULT_WORKSPACE_NAME);
+        // ws1 未被改变
+        assert!(state.get_project("proj").unwrap().get_workspace("ws1").is_some());
+    }
+
+    /// touch 不存在的项目或工作区静默跳过，不 panic。
+    #[test]
+    fn touch_nonexistent_project_or_workspace_is_no_op() {
+        let mut state = AppState::default();
+        state.add_project(make_project("proj", &["ws1"]));
+
+        state.touch_workspace_last_accessed("no-such-project", "ws1");
+        state.touch_workspace_last_accessed("proj", "no-such-workspace");
+        // 仍然可以正常访问 proj/ws1
+        assert!(state.get_project("proj").unwrap().get_workspace("ws1").is_some());
+    }
+
+    /// workspaces_sorted_by_last_accessed 返回所有命名工作区（跨项目），按 last_accessed 升序。
+    #[test]
+    fn workspaces_sorted_by_last_accessed_returns_all_named_workspaces() {
+        let mut state = AppState::default();
+        state.add_project(make_project("proj-a", &["ws1", "ws2"]));
+        state.add_project(make_project("proj-b", &["ws3"]));
+
+        let sorted = state.workspaces_sorted_by_last_accessed();
+        // 三个命名工作区全部返回（不含 default 虚拟工作区）
+        assert_eq!(sorted.len(), 3, "应返回全部 3 个命名工作区");
+        // 验证单调非递减
+        let times: Vec<_> = sorted.iter().map(|(_, _, w)| w.last_accessed).collect();
+        for w in times.windows(2) {
+            assert!(w[0] <= w[1], "last_accessed 应升序排列");
+        }
+    }
+
+    /// 项目中无工作区时，workspaces_sorted_by_last_accessed 不会 panic。
+    #[test]
+    fn workspaces_sorted_by_last_accessed_empty_projects() {
+        let mut state = AppState::default();
+        state.add_project(make_project("proj-empty", &[]));
+        let sorted = state.workspaces_sorted_by_last_accessed();
+        assert!(sorted.is_empty());
+    }
+}

@@ -108,4 +108,62 @@ class GitCacheState: ObservableObject {
     func gitShowCacheKey(project: String, workspace: String, sha: String) -> String {
         return "\(workspaceCacheKey(workspace: workspace, project: project)):\(sha)"
     }
+
+    // MARK: - 资源管理：按工作区边界淘汰缓存
+
+    /// 清除指定工作区的全部 Git 缓存数据。
+    /// 在工作区被删除、项目下线或断线重连时调用，防止残留数据误导界面。
+    /// - Parameter globalKey: "project:workspace" 格式的全局键
+    func clearWorkspaceCache(globalKey: String) {
+        gitStatusCache.removeValue(forKey: globalKey)
+        gitLogCache.removeValue(forKey: globalKey)
+        gitBranchCache.removeValue(forKey: globalKey)
+        gitOpsInFlight.removeValue(forKey: globalKey)
+        gitOpStatusCache.removeValue(forKey: globalKey)
+        gitIntegrationStatusCache.removeValue(forKey: globalKey)
+        commitMessage.removeValue(forKey: globalKey)
+        commitInFlight.removeValue(forKey: globalKey)
+        rebaseInFlight.removeValue(forKey: globalKey)
+        mergeInFlight.removeValue(forKey: globalKey)
+        rebaseOntoDefaultInFlight.removeValue(forKey: globalKey)
+        branchSwitchInFlight.removeValue(forKey: globalKey)
+        branchCreateInFlight.removeValue(forKey: globalKey)
+        gitStatusIndexCache.removeValue(forKey: globalKey)
+        // Diff 缓存键格式为 "project:workspace:path:mode"，按前缀过滤
+        let prefix = globalKey + ":"
+        diffCache.keys.filter { $0.hasPrefix(prefix) }.forEach { diffCache.removeValue(forKey: $0) }
+        gitShowCache.keys.filter { $0.hasPrefix(prefix) }.forEach { gitShowCache.removeValue(forKey: $0) }
+    }
+
+    /// 淘汰非活跃工作区的 Git 缓存，保留当前活跃工作区数据不受影响。
+    /// 多项目并行时降低非活跃工作区的常驻内存占用。
+    /// - Parameter activeGlobalKey: 当前活跃工作区的全局键（"project:workspace"）
+    func evictNonActiveWorkspaceCache(activeGlobalKey: String) {
+        let activePrefix = activeGlobalKey + ":"
+
+        func evictSimpleCache<V>(_ cache: inout [String: V]) {
+            cache.keys.filter { $0 != activeGlobalKey }.forEach { cache.removeValue(forKey: $0) }
+        }
+        func evictPrefixCache<V>(_ cache: inout [String: V]) {
+            cache.keys.filter { !$0.hasPrefix(activePrefix) && $0 != activeGlobalKey }
+                .forEach { cache.removeValue(forKey: $0) }
+        }
+
+        evictSimpleCache(&gitStatusCache)
+        evictSimpleCache(&gitLogCache)
+        evictSimpleCache(&gitBranchCache)
+        evictSimpleCache(&gitOpsInFlight)
+        evictSimpleCache(&gitOpStatusCache)
+        evictSimpleCache(&gitIntegrationStatusCache)
+        evictSimpleCache(&commitMessage)
+        evictSimpleCache(&commitInFlight)
+        evictSimpleCache(&rebaseInFlight)
+        evictSimpleCache(&mergeInFlight)
+        evictSimpleCache(&rebaseOntoDefaultInFlight)
+        evictSimpleCache(&branchSwitchInFlight)
+        evictSimpleCache(&branchCreateInFlight)
+        evictSimpleCache(&gitStatusIndexCache)
+        evictPrefixCache(&diffCache)
+        evictPrefixCache(&gitShowCache)
+    }
 }

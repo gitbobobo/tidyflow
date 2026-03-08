@@ -292,6 +292,36 @@ impl AppState {
     pub fn list_projects(&self) -> Vec<&str> {
         self.projects.keys().map(|s| s.as_str()).collect()
     }
+
+    /// 更新指定工作区的 last_accessed 时间戳。
+    /// 在工作区被选中（切换）时调用，供资源管理器按 LRU 顺序释放非活跃工作区缓存。
+    /// 若项目或工作区不存在则静默忽略（`default` 虚拟工作区无需持久化，跳过）。
+    pub fn touch_workspace_last_accessed(&mut self, project: &str, workspace: &str) {
+        if workspace == DEFAULT_WORKSPACE_NAME {
+            return;
+        }
+        if let Some(proj) = self.get_project_mut(project) {
+            if let Some(ws) = proj.get_workspace_mut(workspace) {
+                ws.last_accessed = chrono::Utc::now();
+            }
+        }
+    }
+
+    /// 返回所有命名工作区（不含 default 虚拟工作区），按 last_accessed 升序排列（最旧的在前）。
+    /// 用于资源管理器决定哪些工作区可以优先回收缓存。
+    pub fn workspaces_sorted_by_last_accessed(&self) -> Vec<(&str, &str, &Workspace)> {
+        let mut entries: Vec<(&str, &str, &Workspace)> = self
+            .projects
+            .values()
+            .flat_map(|p| {
+                p.workspaces
+                    .values()
+                    .map(move |w| (p.name.as_str(), w.name.as_str(), w))
+            })
+            .collect();
+        entries.sort_by_key(|(_, _, w)| w.last_accessed);
+        entries
+    }
 }
 
 impl Project {

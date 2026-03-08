@@ -90,9 +90,16 @@ extension MobileAppState {
     // MARK: - Project
 
     func handleProjectsList(_ result: ProjectsListResult) {
+        let oldNames = Set(projects.map(\.name))
+        let newNames = Set(result.items.map(\.name))
+        // 释放已下线项目的缓存，防止残留数据占用内存
+        let removedNames = oldNames.subtracting(newNames)
+        for projectName in removedNames {
+            evictProjectCache(projectName: projectName)
+        }
+
         projects = result.items
-        let names = Set(result.items.map(\.name))
-        workspacesByProject = workspacesByProject.filter { names.contains($0.key) }
+        workspacesByProject = workspacesByProject.filter { newNames.contains($0.key) }
         for project in result.items {
             wsClient.requestListWorkspaces(project: project.name)
         }

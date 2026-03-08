@@ -18,6 +18,13 @@ pub async fn select_workspace_and_spawn_terminal(
         .await
         .map_err(|e| e.to_server_error())?;
 
+    // 更新 last_accessed：让资源管理器能按 LRU 顺序释放非活跃工作区缓存。
+    // 在终端 spawn 前更新，确保切换成功后立刻反映访问时间。
+    {
+        let mut state = ctx.app_state.write().await;
+        state.touch_workspace_last_accessed(project, workspace);
+    }
+
     let (session_id, shell_name) = {
         let mut reg = ctx.terminal_registry.lock().await;
         reg.spawn(

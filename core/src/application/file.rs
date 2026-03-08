@@ -31,6 +31,91 @@ pub fn invalidate_file_index_cache(root: &Path) {
     }
 }
 
+/// 增量更新文件索引缓存：按事件类型精确增删缓存条目，避免全量重扫。
+///
+/// - `kind="removed"` 或 `kind="deleted"`：从缓存中删除指定路径。
+/// - `kind="created"` 或 `kind="renamed"`：检查文件是否存在，若存在则插入缓存。
+/// - `kind="modified"` 或其他类型：文件名未变，缓存条目无需调整。
+///
+/// 仅在缓存命中时生效；缓存未命中时退化为下次请求时的全量重建（正常兜底路径）。
+/// TTL 不重置，保持原有 15s 过期逻辑。
+pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: &str) {
+    let key = file_index_cache_key(root);
+    let Ok(mut cache) = FILE_INDEX_CACHE.lock() else {
+        return;
+    };
+    let Some(entry) = cache.get_mut(&key) else {
+        // 缓存不存在，下次请求时全量重建，无需操作
+        return;
+    };
+
+    // 将绝对路径转为相对路径（相对于 root）
+    let rel_paths: Vec<String> = abs_paths
+        .iter()
+        .filter_map(|p| {
+            let abs = Path::new(p);
+            abs.strip_prefix(root)
+                .ok()
+                .map(|rel| rel.to_string_lossy().to_string())
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if rel_paths.is_empty() {
+        return;
+    }
+
+    match kind {
+        "removed" | "deleted" => {
+            // 批量删除：构建待删除集合后过滤，O(n) 而非 O(n*m)
+            let to_remove: std::collections::HashSet<&str> =
+                rel_paths.iter().map(|p| p.as_str()).collect();
+            let mut new_items = Vec::with_capacity(entry.items.len());
+            let mut new_keys = Vec::with_capacity(entry.items.len());
+            for (item, key_str) in entry.items.iter().zip(entry.item_search_keys.iter()) {
+                if !to_remove.contains(item.as_str()) {
+                    new_items.push(item.clone());
+                    new_keys.push(key_str.clone());
+                }
+            }
+            entry.items = new_items;
+            entry.item_search_keys = new_keys;
+        }
+        "created" | "renamed" => {
+            // 新增文件：先收集不重复的待插入项，再批量插入
+            let to_insert: Vec<String> = {
+                let existing: std::collections::HashSet<&str> =
+                    entry.items.iter().map(|s| s.as_str()).collect();
+                rel_paths
+                    .iter()
+                    .filter(|rel| !existing.contains(rel.as_str()) && root.join(rel.as_str()).is_file())
+                    .cloned()
+                    .collect()
+            };
+            // 此时 `existing` 已释放，可以安全地修改 entry
+            for rel in to_insert {
+                let lower = rel.to_lowercase();
+                let pos = entry
+                    .item_search_keys
+                    .binary_search_by(|k| k.as_str().cmp(lower.as_str()))
+                    .unwrap_or_else(|i| i);
+                entry.items.insert(pos, rel);
+                entry.item_search_keys.insert(pos, lower);
+            }
+        }
+        // "modified" 及其他类型：路径未变，无需调整索引
+        _ => {}
+    }
+
+    debug!(
+        "Incremental file index update: root={:?}, kind={}, paths={:?}, cached_count={}",
+        root,
+        kind,
+        rel_paths,
+        entry.items.len()
+    );
+}
+
 fn read_file_index_cache(root: &Path) -> Option<(Vec<String>, Vec<String>, bool)> {
     let key = file_index_cache_key(root);
     let mut cache = FILE_INDEX_CACHE.lock().ok()?;

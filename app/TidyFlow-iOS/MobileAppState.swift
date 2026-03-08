@@ -3963,6 +3963,40 @@ final class MobileAppState: ObservableObject {
         WorkspaceKeySemantics.globalKey(project: project, workspace: workspace)
     }
 
+    // MARK: - 资源管理：按工作区边界淘汰缓存
+
+    /// 清除指定工作区的全部缓存数据（文件列表、Git 状态、文件索引等）。
+    /// 在工作区被删除或重连后调用，确保旧数据不残留。
+    func evictWorkspaceCache(project: String, workspace: String) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let prefix = explorerCachePrefix(project: project, workspace: workspace)
+
+        workspaceGitDetailState.removeValue(forKey: key)
+        workspaceTerminalOpenTime.removeValue(forKey: key)
+
+        // 文件浏览缓存
+        explorerFileListCache.keys
+            .filter { $0.hasPrefix(prefix) }
+            .forEach { explorerFileListCache.removeValue(forKey: $0) }
+        explorerDirectoryExpandState.keys
+            .filter { $0.hasPrefix(prefix) }
+            .forEach { explorerDirectoryExpandState.removeValue(forKey: $0) }
+
+        // AI 文件索引缓存（用 aiContextKey 格式，与 globalKey 相同）
+        aiFileIndexCache.removeValue(forKey: key)
+    }
+
+    /// 释放某个已下线项目的所有工作区缓存，防止残留数据污染内存。
+    func evictProjectCache(projectName: String) {
+        // 获取该项目下所有已知工作区
+        let wsNames = (workspacesByProject[projectName] ?? []).map(\.name)
+        let allWsNames = wsNames + ["default"]
+        for wsName in allWsNames {
+            evictWorkspaceCache(project: projectName, workspace: wsName)
+        }
+        workspacesByProject.removeValue(forKey: projectName)
+    }
+
     private func applyEvolutionProfilesFromClientSettings(
         _ profileMap: [String: [EvolutionStageProfileInfoV2]]
     ) {

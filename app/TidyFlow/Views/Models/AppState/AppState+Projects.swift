@@ -119,13 +119,27 @@ extension AppState {
                     selectedWorkspaceKey = projects[index].workspaces.first?.name
                 }
             }
-            // 清理残留缓存
+            // 清理残留缓存（包括文件索引、Git、文件列表、目录展开状态）
             workspaceTabs.removeValue(forKey: globalKey)
             activeTabIdByWorkspace.removeValue(forKey: globalKey)
-            fileIndexCache.removeValue(forKey: globalKey)
             workspaceTerminalOpenTime.removeValue(forKey: globalKey)
             workspaceDiagnostics.removeValue(forKey: globalKey)
             workspaceSpecialPageByWorkspace.removeValue(forKey: globalKey)
+            // 通过专用清理接口确保文件/Git 缓存按工作区边界完整释放
+            fileCache.clearWorkspaceCache(globalKey: globalKey)
+            gitCache.clearWorkspaceCache(globalKey: globalKey)
+        }
+    }
+
+    /// 在移除项目时，释放该项目下所有工作区的文件和 Git 缓存。
+    /// 防止项目下线后旧缓存数据占用内存或干扰后续同名项目。
+    func evictProjectCache(projectName: String) {
+        guard let project = projects.first(where: { $0.name == projectName }) else { return }
+        let workspaceNames = project.workspaces.map(\.name) + ["default"]
+        for wsName in workspaceNames {
+            let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: wsName)
+            fileCache.clearWorkspaceCache(globalKey: globalKey)
+            gitCache.clearWorkspaceCache(globalKey: globalKey)
         }
     }
 
