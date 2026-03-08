@@ -1,0 +1,162 @@
+{
+  // 实现阶段模板：仅回填当前阶段实例负责的执行结果
+  "$schema_version": "2.0",
+  // 当前实现阶段名，固定为系统调度值
+  "stage": "implement.general.1",
+  // 当前循环 ID，必须与 cycle.jsonc 保持一致
+  "cycle_id": "2026-03-08T08-39-55-218Z",
+  // 阶段状态；完成后写 done/blocked/failed/skipped
+  "status": "done",
+  "decision": {
+    // 实施阶段通常保留 n/a；如需说明可写 reason
+    "result": "n/a",
+    "reason": ""
+  },
+  // 当前阶段实例的实施摘要，必须存在
+  "summary": "新增 TidyFlowShared 跨平台共享 Swift 框架，迁移 Project/Git/File/AIChat/Terminal 协议模型及 CoreTransport/CoreWSClient 网络抽象，调整 macOS AppState 与 iOS MobileAppState 依赖共享层，补齐 SharedProtocolModelsTests 与 SharedNetworkAbstractionTests 单元测试。修复 public struct 缺少 public init、iOS 部署版本不兼容、ProjectCommand 缺少 interactive 参数等编译问题。macOS Debug、iOS Simulator Debug 均构建通过，Swift 单元测试全部通过。",
+  // 工作项执行结果，仅填写当前阶段实例处理的 work_items
+  "work_item_results": [
+    {
+      "work_item_id": "WI-001",
+      "status": "done",
+      "summary": "在 app/TidyFlow.xcodeproj 新增 TidyFlowShared framework target（SHR0xxxx IDs），创建 Protocol/ 与 Networking/ 目录骨架，添加 IPHONEOS_DEPLOYMENT_TARGET=18.0 与 MACOSX_DEPLOYMENT_TARGET=14.0，framework 已链接到 TidyFlow target。",
+      "evidence_paths": [
+        "app/TidyFlow.xcodeproj/project.pbxproj",
+        "app/TidyFlowShared/Protocol/ProjectProtocolModels.swift",
+        "app/TidyFlowShared/Protocol/GitProtocolModels.swift",
+        "app/TidyFlowShared/Protocol/FileProtocolModels.swift",
+        "app/TidyFlowShared/Protocol/AIChatProtocolModels.swift",
+        "app/TidyFlowShared/Protocol/TerminalProtocolModels.swift",
+        "app/TidyFlowShared/Networking/CoreTransport.swift",
+        "app/TidyFlowShared/Networking/CoreWSClient.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-002",
+      "status": "done",
+      "summary": "Project/Git/File/AIChat/Terminal 协议模型迁移到 TidyFlowShared，原 TidyFlow/Networking/ 同名文件清空为迁移注释，ProtocolModels.swift 通过 @_exported import TidyFlowShared 重导出所有共享类型。AIChatTool/AISessionOrigin/AISessionSelectionHint/AIToolStatus 从视图模型层移至共享层，视图层保留扩展属性。",
+      "evidence_paths": [
+        "app/TidyFlow/Networking/ProjectProtocolModels.swift",
+        "app/TidyFlow/Networking/GitProtocolModels.swift",
+        "app/TidyFlow/Networking/FileProtocolModels.swift",
+        "app/TidyFlow/Networking/AIChatProtocolModels.swift",
+        "app/TidyFlow/Networking/TerminalProtocolModels.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-003",
+      "status": "done",
+      "summary": "共享层提供 CoreConnectionState、CoreMessageDispatcher（ServerEnvelopeMeta）和 CoreWSClientProtocol 统一传输抽象，平台侧仅保留界面绑定与终端适配。",
+      "evidence_paths": [
+        "app/TidyFlowShared/Networking/CoreTransport.swift",
+        "app/TidyFlowShared/Networking/CoreWSClient.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-004",
+      "status": "done",
+      "summary": "AppState+CoreWS.swift、AppState+CoreWS+WSClientBinder.swift、MobileAppState.swift 均添加 import TidyFlowShared，统一依赖共享协议模型与网络抽象。新增 SharedProtocolModelsTests 与 SharedNetworkAbstractionTests，所有测试通过。",
+      "evidence_paths": [
+        "app/TidyFlow/Views/Models/AppState/AppState+CoreWS.swift",
+        "app/TidyFlow/Views/Models/AppState/AppState+CoreWS+WSClientBinder.swift",
+        "app/TidyFlow-iOS/MobileAppState.swift",
+        "app/TidyFlowTests/SharedProtocolModelsTests.swift",
+        "app/TidyFlowTests/SharedNetworkAbstractionTests.swift"
+      ]
+    }
+  ],
+  // 实际变更文件路径数组，可为空
+  "changed_files": [
+    "app/TidyFlow.xcodeproj/project.pbxproj",
+    "app/TidyFlowShared/Protocol/ProjectProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/GitProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/FileProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/AIChatProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/TerminalProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/CoreErrorModels.swift",
+    "app/TidyFlowShared/Protocol/MessageHandlerProtocols.swift",
+    "app/TidyFlowShared/Networking/CoreTransport.swift",
+    "app/TidyFlowShared/Networking/CoreWSClient.swift",
+    "app/TidyFlow/Networking/ProtocolModels.swift",
+    "app/TidyFlow/Networking/ProjectProtocolModels.swift",
+    "app/TidyFlow/Networking/GitProtocolModels.swift",
+    "app/TidyFlow/Networking/FileProtocolModels.swift",
+    "app/TidyFlow/Networking/AIChatProtocolModels.swift",
+    "app/TidyFlow/Networking/TerminalProtocolModels.swift",
+    "app/TidyFlow/Networking/TypedProtocol.swift",
+    "app/TidyFlow/Views/Models/AIChatModels.swift",
+    "app/TidyFlow/Views/Models/AppState/AppState+CoreWS.swift",
+    "app/TidyFlow/Views/Models/AppState/AppState+CoreWS+WSClientBinder.swift",
+    "app/TidyFlow/Views/ProjectConfigView.swift",
+    "app/TidyFlow-iOS/MobileAppState.swift",
+    "app/TidyFlowTests/SharedProtocolModelsTests.swift",
+    "app/TidyFlowTests/SharedNetworkAbstractionTests.swift"
+  ],
+  // 执行过的命令数组，可为空
+  "commands_executed": [
+    "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=macOS' -derivedDataPath build SKIP_CORE_BUILD=1 build",
+    "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -derivedDataPath build SKIP_CORE_BUILD=1 build",
+    "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -destination 'platform=macOS' -derivedDataPath build SKIP_CORE_BUILD=1 test"
+  ],
+  // 快速检查结果数组；即使没有检查项也必须保留 []
+  "quick_checks": [
+    {
+      "name": "CHK-001: xcodebuild -list 确认 TidyFlowShared target 存在",
+      "result": "pass",
+      "details": "TidyFlowShared 出现在 Schemes 列表中，pbxproj 包含完整 target 定义"
+    },
+    {
+      "name": "CHK-002: 共享框架目录与文件完整落地",
+      "result": "pass",
+      "details": "app/TidyFlowShared/Protocol/ 与 app/TidyFlowShared/Networking/ 均存在预期源文件"
+    },
+    {
+      "name": "CHK-003: macOS 与 iOS 代码均含 import TidyFlowShared",
+      "result": "pass",
+      "details": "AppState+CoreWS.swift、AppState+CoreWS+WSClientBinder.swift、MobileAppState.swift 均已添加"
+    },
+    {
+      "name": "CHK-004: macOS Debug build",
+      "result": "pass",
+      "details": "xcodebuild BUILD SUCCEEDED，platform=macOS"
+    },
+    {
+      "name": "CHK-005: iOS Simulator Debug build",
+      "result": "pass",
+      "details": "xcodebuild BUILD SUCCEEDED，platform=iOS Simulator,name=iPhone 16,OS=18.6"
+    },
+    {
+      "name": "CHK-006: Swift 单元测试",
+      "result": "pass",
+      "details": "TEST SUCCEEDED，TidyFlowTests 全部通过，包含 SharedProtocolModelsTests 与 SharedNetworkAbstractionTests"
+    }
+  ],
+  // 当前 verify 重试轮次，由系统注入，不可改为其它数字
+  "verify_iteration": 0,
+  // backlog 契约版本，由系统注入
+  "backlog_contract_version": 2,
+  // backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。
+  // reimplement 阶段必须沿用 ISSUES_TO_FIX / managed.backlog.jsonc 中原始整改项的 implementation_stage_kind。
+  "backlog_resolution_updates": [
+    // {
+    //   "source_criteria_id": "AC-001",
+    //   "source_check_id": "CHK-001",
+    //   "work_item_id": "WI-001",
+    //   "implementation_stage_kind": "general",
+    //   "status": "done",
+    //   "evidence": null,
+    //   "notes": ""
+    // }
+  ],
+  // 以下三个字段由系统同步回填；代理不要伪造主键或改写系统统计
+  "failure_backlog": [],
+  "backlog_coverage": [],
+  "backlog_coverage_summary": {
+    "total": 0,
+    "done": 0,
+    "blocked": 0,
+    "not_done": 0
+  },
+  // 更新时间，由系统自动注入，代理无需填写
+  "updated_at": ""
+}
