@@ -712,9 +712,11 @@ final class AIChatStore: ObservableObject {
 
     private var pendingStreamEvents: [AIChatStreamEvent] = []
     private var streamFlushWorkItem: DispatchWorkItem?
-    private static let streamFlushFastInterval: TimeInterval = 1.0 / 30.0 // 33ms
-    private static let streamFlushMediumInterval: TimeInterval = 0.05 // 50ms
-    private static let streamFlushSlowInterval: TimeInterval = 1.0 / 12.0 // 83ms
+    private let streamIngressQueue = DispatchQueue(
+        label: "cn.tidyflow.ai.stream.reducer",
+        qos: .userInitiated
+    )
+    private static let streamCommitInterval: TimeInterval = 0.05
 
     // MARK: - Snapshot
 
@@ -915,28 +917,127 @@ final class AIChatStore: ObservableObject {
         _ ops: [AIProtocolSessionCacheOp],
         isStreaming: Bool
     ) {
-        for op in ops {
-            switch op {
-            case .messageUpdated(let messageId, let role):
-                enqueueMessageUpdated(messageId: messageId, role: role)
-            case .partUpdated(let messageId, let part):
-                enqueuePartUpdated(messageId: messageId, part: part)
-            case .partDelta(let messageId, let partId, let partType, let field, let delta):
-                enqueuePartDelta(
-                    messageId: messageId,
-                    partId: partId,
-                    partType: partType,
-                    field: field,
-                    delta: delta
-                )
-            }
+        let events = ops.map(Self.streamEvent(from:))
+        if isStreaming {
+            enqueuePreparedStreamEvents(events)
+        } else {
+            applyStreamEvents(events)
         }
         if !isStreaming {
-            flushPendingStreamEvents()
             clearAssistantStreaming()
             self.isStreaming = false
             recomputeIsStreaming()
         }
+    }
+
+    private static func streamEvent(from op: AIProtocolSessionCacheOp) -> AIChatStreamEvent {
+        switch op {
+        case .messageUpdated(let messageId, let role):
+            return .messageUpdated(messageId: messageId, role: role)
+        case .partUpdated(let messageId, let part):
+            return .partUpdated(messageId: messageId, part: part)
+        case .partDelta(let messageId, let partId, let partType, let field, let delta):
+            return .partDelta(messageId: messageId, partId: partId, partType: partType, field: field, delta: delta)
+        }
+    }
+
+    private func enqueuePreparedStreamEvents(_ events: [AIChatStreamEvent]) {
+        guard !events.isEmpty else { return }
+        streamIngressQueue.async { [weak self] in
+            guard let self else { return }
+            self.pendingStreamEvents.append(contentsOf: events)
+            self.scheduleStreamFlushIfNeeded()
+        }
+    }
+
+    private func drainPreparedStreamEvents() -> [AIChatStreamEvent] {
+        streamIngressQueue.sync {
+            streamFlushWorkItem?.cancel()
+            streamFlushWorkItem = nil
+            let events = Self.coalesceStreamEvents(pendingStreamEvents)
+            pendingStreamEvents.removeAll(keepingCapacity: true)
+            return events
+        }
+    }
+
+    private func flushPreparedStreamEventsFromIngressQueue() {
+        let rawEvents = pendingStreamEvents
+        pendingStreamEvents.removeAll(keepingCapacity: true)
+        streamFlushWorkItem = nil
+        let events = Self.coalesceStreamEvents(rawEvents)
+        guard !events.isEmpty else { return }
+
+        let rawEventCount = rawEvents.count
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyStreamEvents(events)
+            TFLog.perf.debug(
+                "ai_stream_commit events=\(events.count, privacy: .public) raw_events=\(rawEventCount, privacy: .public)"
+            )
+        }
+    }
+
+    private static func coalesceStreamEvents(_ events: [AIChatStreamEvent]) -> [AIChatStreamEvent] {
+        guard !events.isEmpty else { return [] }
+
+        var result: [AIChatStreamEvent] = []
+        var pendingMessageUpdates: [String: String] = [:]
+        var pendingMessageOrder: [String] = []
+        var pendingDelta: AIChatStreamEvent?
+
+        func flushMessageUpdates() {
+            guard !pendingMessageOrder.isEmpty else { return }
+            for messageId in pendingMessageOrder {
+                if let role = pendingMessageUpdates.removeValue(forKey: messageId) {
+                    result.append(.messageUpdated(messageId: messageId, role: role))
+                }
+            }
+            pendingMessageOrder.removeAll(keepingCapacity: true)
+        }
+
+        func flushPendingDelta() {
+            if let pendingDelta {
+                result.append(pendingDelta)
+            }
+            pendingDelta = nil
+        }
+
+        for event in events {
+            switch event {
+            case .messageUpdated(let messageId, let role):
+                flushPendingDelta()
+                if pendingMessageUpdates[messageId] == nil {
+                    pendingMessageOrder.append(messageId)
+                }
+                pendingMessageUpdates[messageId] = role
+            case .partUpdated:
+                flushMessageUpdates()
+                flushPendingDelta()
+                result.append(event)
+            case .partDelta(let messageId, let partId, let partType, let field, let delta):
+                flushMessageUpdates()
+                if case let .partDelta(existingMessageId, existingPartId, existingPartType, existingField, existingDelta)? = pendingDelta,
+                   existingMessageId == messageId,
+                   existingPartId == partId,
+                   existingPartType == partType,
+                   existingField == field {
+                    pendingDelta = .partDelta(
+                        messageId: messageId,
+                        partId: partId,
+                        partType: partType,
+                        field: field,
+                        delta: existingDelta + delta
+                    )
+                } else {
+                    flushPendingDelta()
+                    pendingDelta = event
+                }
+            }
+        }
+
+        flushMessageUpdates()
+        flushPendingDelta()
+        return result
     }
 
     /// 仅接受单调不回退的 cache_revision，避免异步快照覆盖更晚到达的增量。
@@ -1222,34 +1323,31 @@ final class AIChatStore: ObservableObject {
     // MARK: - Streaming Batch Apply
 
     func enqueueMessageUpdated(messageId: String, role: String) {
-        pendingStreamEvents.append(.messageUpdated(messageId: messageId, role: role))
-        scheduleStreamFlushIfNeeded()
+        enqueuePreparedStreamEvents([.messageUpdated(messageId: messageId, role: role)])
     }
 
     func enqueuePartUpdated(messageId: String, part: AIProtocolPartInfo) {
-        pendingStreamEvents.append(.partUpdated(messageId: messageId, part: part))
-        scheduleStreamFlushIfNeeded()
+        enqueuePreparedStreamEvents([.partUpdated(messageId: messageId, part: part)])
     }
 
     func enqueuePartDelta(messageId: String, partId: String, partType: String, field: String, delta: String) {
-        pendingStreamEvents.append(
+        enqueuePreparedStreamEvents([
             .partDelta(messageId: messageId, partId: partId, partType: partType, field: field, delta: delta)
-        )
-        scheduleStreamFlushIfNeeded()
+        ])
     }
 
     func flushPendingStreamEvents() {
-        streamFlushWorkItem?.cancel()
-        streamFlushWorkItem = nil
-        guard !pendingStreamEvents.isEmpty else { return }
+        let events = drainPreparedStreamEvents()
+        applyStreamEvents(events)
+    }
 
-        // 首批内容到达，清除 pending 态
+    private func applyStreamEvents(_ events: [AIChatStreamEvent]) {
+        guard !events.isEmpty else { return }
+
         if hasPendingFirstContent {
             hasPendingFirstContent = false
         }
 
-        let events = pendingStreamEvents
-        pendingStreamEvents.removeAll(keepingCapacity: true)
         var latestMessageIndex: Int?
 
         // 先消费 message.updated，尽量先建立 message_id -> role 映射，
@@ -1425,24 +1523,13 @@ final class AIChatStore: ObservableObject {
 
     // MARK: - Internal Helpers
 
-    func streamFlushInterval(forBacklog backlog: Int) -> TimeInterval {
-        if backlog <= 20 {
-            return Self.streamFlushFastInterval
-        }
-        if backlog <= 80 {
-            return Self.streamFlushMediumInterval
-        }
-        return Self.streamFlushSlowInterval
-    }
-
     private func scheduleStreamFlushIfNeeded() {
         guard streamFlushWorkItem == nil else { return }
-        let interval = streamFlushInterval(forBacklog: pendingStreamEvents.count)
         let workItem = DispatchWorkItem { [weak self] in
-            self?.flushPendingStreamEvents()
+            self?.flushPreparedStreamEventsFromIngressQueue()
         }
         streamFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: workItem)
+        streamIngressQueue.asyncAfter(deadline: .now() + Self.streamCommitInterval, execute: workItem)
     }
 
     private func rebuildIndexes() {

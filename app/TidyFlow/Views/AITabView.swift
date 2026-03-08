@@ -30,6 +30,7 @@ struct AITabView: View {
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
     @State private var sessionStatusRequestLimiter = AISessionStatusRequestLimiter()
+    @StateObject private var sidebarState = AIChatSidebarState()
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
     private let sessionStatusMinInterval: TimeInterval = 1.2
@@ -57,6 +58,7 @@ struct AITabView: View {
         .background(Color(NSColor.windowBackgroundColor))
         #endif
         .onAppear {
+            sidebarState.bind(appState: appState)
             restoreAIContextOnAppear()
             requestCurrentSessionStatus()
             consumeOneShotHintIfNeeded()
@@ -239,10 +241,22 @@ struct AITabView: View {
         HStack(spacing: 0) {
             // 左侧：会话列表侧边栏
             AIChatSidebarView(
+                state: sidebarState,
                 onSelect: { session in loadSession(session) },
-                onDelete: { session in deleteSession(session) }
+                onDelete: { session in deleteSession(session) },
+                onRename: { session in
+                    appState.sessionPanelAction = .renameSession(session, session.title)
+                },
+                onFilterChange: { filter in
+                    appState.sessionPanelFilter = filter
+                },
+                onRequestSessionList: { filter in
+                    _ = appState.requestAISessionList(for: filter, limit: aiSessionListLimit)
+                },
+                onLoadNextPage: { filter in
+                    _ = appState.loadNextAISessionListPage(for: filter, limit: aiSessionListLimit)
+                }
             )
-            .environmentObject(appState)
 
             Divider()
 

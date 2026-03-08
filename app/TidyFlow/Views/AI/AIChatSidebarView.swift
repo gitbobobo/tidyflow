@@ -1,24 +1,126 @@
 #if os(macOS)
 import SwiftUI
+import Combine
 
-/// AI 聊天界面左侧常驻侧边栏，显示会话列表
-/// 顶部筛选 AI 工具，列表显示对应工具的历史会话
+@MainActor
+final class AIChatSidebarState: ObservableObject {
+    @Published private(set) var filter: AISessionListFilter = .all
+    @Published private(set) var pageState: AISessionListPageState = .empty()
+    @Published private(set) var currentSessionId: String?
+    @Published private(set) var currentTool: AIChatTool = .opencode
+    @Published private(set) var sessionStatusesBySessionKey: [String: AISessionStatusSnapshot] = [:]
+
+    private weak var appState: AppState?
+    private var cancellables: Set<AnyCancellable> = []
+    private var currentStoreCancellable: AnyCancellable?
+    private weak var observedStore: AIChatStore?
+
+    func bind(appState: AppState) {
+        if self.appState !== appState {
+            self.appState = appState
+            cancellables.removeAll()
+            currentStoreCancellable = nil
+            observedStore = nil
+
+            appState.$sessionPanelFilter
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+
+            appState.$aiSessionListPageStates
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+
+            appState.$selectedProjectName
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+
+            appState.$selectedWorkspaceKey
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+
+            appState.$aiChatTool
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+
+            appState.$aiSessionStatusesByTool
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refreshSessionStatuses() }
+                .store(in: &cancellables)
+
+            appState.$aiChatStore
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] store in
+                    self?.bindCurrentStore(store)
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
+        }
+
+        bindCurrentStore(appState.aiChatStore)
+        refresh()
+    }
+
+    func sessionStatus(for session: AISessionInfo) -> AISessionStatusSnapshot? {
+        sessionStatusesBySessionKey[session.sessionKey]
+    }
+
+    private func bindCurrentStore(_ store: AIChatStore) {
+        guard observedStore !== store else { return }
+        observedStore = store
+        currentStoreCancellable = store.$currentSessionId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] currentSessionId in
+                self?.currentSessionId = currentSessionId
+            }
+    }
+
+    private func refresh() {
+        guard let appState else { return }
+        filter = appState.sessionPanelFilter
+        pageState = appState.displayedAISessionListState
+        currentTool = appState.aiChatTool
+        currentSessionId = appState.aiChatStore.currentSessionId
+        refreshSessionStatuses()
+    }
+
+    private func refreshSessionStatuses() {
+        guard let appState else { return }
+        var statuses: [String: AISessionStatusSnapshot] = [:]
+        for session in pageState.sessions {
+            if let status = appState.aiSessionStatus(for: session) {
+                statuses[session.sessionKey] = status
+            }
+        }
+        sessionStatusesBySessionKey = statuses
+    }
+}
+
+/// AI 聊天界面左侧常驻侧边栏，显示会话列表。
+/// 通过派生状态对象隔离高频 `AppState` 更新，避免无关发布导致整个侧栏重算。
 struct AIChatSidebarView: View {
-    @EnvironmentObject var appState: AppState
+    @ObservedObject var state: AIChatSidebarState
 
     var onSelect: (AISessionInfo) -> Void
     var onDelete: (AISessionInfo) -> Void
+    var onRename: (AISessionInfo) -> Void
+    var onFilterChange: (AISessionListFilter) -> Void
+    var onRequestSessionList: (AISessionListFilter) -> Void
+    var onLoadNextPage: (AISessionListFilter) -> Void
 
     @State private var searchText: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部：工具筛选下拉
             HStack(spacing: 8) {
                 Menu {
                     ForEach(AISessionListFilter.allOptions) { filter in
                         Button(action: {
-                            appState.sessionPanelFilter = filter
+                            onFilterChange(filter)
                         }) {
                             Label {
                                 Text(filter.displayName)
@@ -33,13 +135,13 @@ struct AIChatSidebarView: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        if let iconAssetName = appState.sessionPanelFilter.iconAssetName {
+                        if let iconAssetName = state.filter.iconAssetName {
                             FixedSizeAssetImage(name: iconAssetName, targetSize: 16)
                         } else {
                             Image(systemName: "square.stack.3d.up")
                                 .font(.system(size: 12, weight: .medium))
                         }
-                        Text(appState.sessionPanelFilter.displayName)
+                        Text(state.filter.displayName)
                             .font(.system(size: 12, weight: .medium))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -60,7 +162,6 @@ struct AIChatSidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            // 搜索框
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
@@ -88,8 +189,7 @@ struct AIChatSidebarView: View {
 
             Divider()
 
-            // 会话列表
-            let pageState = appState.displayedAISessionListState
+            let pageState = state.pageState
             let allSessions = pageState.sessions
             let sessions: [AISessionInfo] = searchText.isEmpty
                 ? allSessions
@@ -123,9 +223,8 @@ struct AIChatSidebarView: View {
                     ForEach(sessions) { session in
                         SessionRow(
                             session: session,
-                            isSelected: session.id == appState.aiChatStore.currentSessionId
-                                && session.aiTool == appState.aiChatTool,
-                            status: appState.aiSessionStatus(for: session)
+                            isSelected: session.id == state.currentSessionId && session.aiTool == state.currentTool,
+                            status: state.sessionStatus(for: session)
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -133,7 +232,7 @@ struct AIChatSidebarView: View {
                         }
                         .contextMenu {
                             Button {
-                                appState.sessionPanelAction = .renameSession(session, session.title)
+                                onRename(session)
                             } label: {
                                 Label("重命名", systemImage: "pencil")
                             }
@@ -157,7 +256,7 @@ struct AIChatSidebarView: View {
                         .listRowSeparator(.hidden)
                         .onAppear {
                             if searchText.isEmpty {
-                                _ = appState.loadNextAISessionListPage(for: appState.sessionPanelFilter)
+                                onLoadNextPage(state.filter)
                             }
                         }
                     }
@@ -169,29 +268,25 @@ struct AIChatSidebarView: View {
         .frame(width: 260)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
         .onAppear {
-            appState.sessionPanelFilter = .all
-            requestSessionList(for: appState.sessionPanelFilter)
+            onFilterChange(.all)
+            onRequestSessionList(.all)
         }
-        .onChange(of: appState.sessionPanelFilter) { _, newFilter in
-            requestSessionList(for: newFilter)
+        .onChange(of: state.filter) { _, newFilter in
+            onRequestSessionList(newFilter)
         }
-        .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
-            requestSessionList(for: appState.sessionPanelFilter)
-        }
-    }
-
-    /// 向服务端请求指定筛选条件的 AI 会话列表
-    private func requestSessionList(for filter: AISessionListFilter) {
-        _ = appState.requestAISessionList(for: filter, limit: 50)
     }
 }
 
 #Preview {
     AIChatSidebarView(
+        state: AIChatSidebarState(),
         onSelect: { _ in },
-        onDelete: { _ in }
+        onDelete: { _ in },
+        onRename: { _ in },
+        onFilterChange: { _ in },
+        onRequestSessionList: { _ in },
+        onLoadNextPage: { _ in }
     )
-    .environmentObject(AppState())
     .frame(height: 500)
 }
 #endif

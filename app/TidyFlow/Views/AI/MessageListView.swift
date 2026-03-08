@@ -1,9 +1,96 @@
 import SwiftUI
+import ImageIO
+import CoreGraphics
 #if os(macOS)
 import AppKit
 #elseif os(iOS)
 import UIKit
 #endif
+
+private struct ChatImagePreviewPayload {
+    let data: Data
+    let previewCGImage: CGImage
+}
+
+private actor ChatImageLoader {
+    static let shared = ChatImageLoader()
+
+    private struct CacheEntry {
+        let payload: ChatImagePreviewPayload?
+        let failedAt: Date?
+    }
+
+    private var cache: [String: CacheEntry] = [:]
+    private let failureTTL: TimeInterval = 30
+    private let previewMaxPixelSize = 1_400
+
+    func loadImage(key: String, urlString: String) async -> ChatImagePreviewPayload? {
+        if let entry = cache[key] {
+            if let payload = entry.payload {
+                return payload
+            }
+            if let failedAt = entry.failedAt,
+               Date().timeIntervalSince(failedAt) < failureTTL {
+                return nil
+            }
+        }
+
+        let payload = await Task.detached(priority: .utility) { [previewMaxPixelSize] in
+            Self.makePayload(urlString: urlString, previewMaxPixelSize: previewMaxPixelSize)
+        }.value
+
+        if let payload {
+            cache[key] = CacheEntry(payload: payload, failedAt: nil)
+        } else {
+            cache[key] = CacheEntry(payload: nil, failedAt: Date())
+        }
+        return payload
+    }
+
+    private static func makePayload(urlString: String, previewMaxPixelSize: Int) -> ChatImagePreviewPayload? {
+        guard let data = loadData(urlString: urlString),
+              let previewCGImage = makePreviewImage(data: data, previewMaxPixelSize: previewMaxPixelSize) else {
+            return nil
+        }
+        return ChatImagePreviewPayload(data: data, previewCGImage: previewCGImage)
+    }
+
+    private static func loadData(urlString: String) -> Data? {
+        if let data = decodeDataURL(urlString) {
+            return data
+        }
+        guard let url = URL(string: urlString), url.isFileURL else { return nil }
+        return try? Data(contentsOf: url, options: [.mappedIfSafe])
+    }
+
+    private static func decodeDataURL(_ value: String) -> Data? {
+        guard value.hasPrefix("data:"),
+              let comma = value.firstIndex(of: ",") else { return nil }
+        let header = String(value[..<comma]).lowercased()
+        let payload = String(value[value.index(after: comma)...])
+
+        if header.contains(";base64") {
+            return Data(base64Encoded: payload)
+        }
+        return payload.removingPercentEncoding?.data(using: .utf8)
+    }
+
+    private static func makePreviewImage(data: Data, previewMaxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: previewMaxPixelSize
+        ]
+        if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) {
+            return thumbnail
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+}
 
 struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
@@ -819,14 +906,19 @@ private struct MessageBubble: View, Equatable {
         let mime = part.mime ?? "application/octet-stream"
 
         VStack(alignment: .leading, spacing: 8) {
-            if let imageData = resolveImageData(for: part) {
-                imagePreview(data: imageData)
-                    .frame(maxWidth: 320, maxHeight: 240)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onTapGesture {
-                        fullscreenImageData = imageData
+            if let cacheKey = imageCacheKey(for: part),
+               let imageURL = part.url,
+               mime.lowercased().hasPrefix("image/") {
+                AsyncChatAttachmentImageView(
+                    cacheKey: cacheKey,
+                    urlString: imageURL,
+                    onOpenFullscreen: { data in
+                        fullscreenImageData = data
                     }
-                    .help("点击查看大图")
+                )
+                .frame(maxWidth: 320, maxHeight: 240)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .help("点击查看大图")
             }
 
             HStack(spacing: 6) {
@@ -846,56 +938,52 @@ private struct MessageBubble: View, Equatable {
         .frame(maxWidth: 360, alignment: .leading)
     }
 
-    private func resolveImageData(for part: AIChatPart) -> Data? {
-        guard let mime = part.mime?.lowercased(), mime.hasPrefix("image/") else { return nil }
-        if let url = part.url {
-            if let data = decodeDataURL(url) {
-                return data
-            }
-            if let data = loadFromFileURL(url) {
-                return data
-            }
-        }
-        return nil
-    }
-
-    private func decodeDataURL(_ value: String) -> Data? {
-        guard value.hasPrefix("data:"),
-              let comma = value.firstIndex(of: ",") else { return nil }
-        let header = String(value[..<comma]).lowercased()
-        let payloadStart = value.index(after: comma)
-        let payload = String(value[payloadStart...])
-
-        if header.contains(";base64") {
-            return Data(base64Encoded: payload)
-        }
-        return payload.removingPercentEncoding?.data(using: .utf8)
-    }
-
-    private func loadFromFileURL(_ value: String) -> Data? {
-        guard let url = URL(string: value), url.isFileURL else { return nil }
-        return try? Data(contentsOf: url)
-    }
-
-    @ViewBuilder
-    private func imagePreview(data: Data) -> some View {
-        #if os(macOS)
-        if let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-        }
-        #elseif os(iOS)
-        if let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-        }
-        #endif
+    private func imageCacheKey(for part: AIChatPart) -> String? {
+        guard let url = part.url, !url.isEmpty else { return nil }
+        return "\(part.id)|\(url)"
     }
 }
 
 // MARK: - 图片全屏查看支持
+
+private struct AsyncChatAttachmentImageView: View {
+    let cacheKey: String
+    let urlString: String
+    let onOpenFullscreen: (Data) -> Void
+
+    @State private var payload: ChatImagePreviewPayload?
+    @State private var loading = false
+
+    var body: some View {
+        Group {
+            if let payload {
+                Image(decorative: payload.previewCGImage, scale: 1)
+                    .resizable()
+                    .scaledToFit()
+                    .onTapGesture {
+                        onOpenFullscreen(payload.data)
+                    }
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.12))
+                    .overlay {
+                        if loading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+            }
+        }
+        .task(id: cacheKey) {
+            loading = true
+            payload = await ChatImageLoader.shared.loadImage(key: cacheKey, urlString: urlString)
+            loading = false
+        }
+    }
+}
 
 private struct FullscreenImageItem: Identifiable {
     let id = UUID()

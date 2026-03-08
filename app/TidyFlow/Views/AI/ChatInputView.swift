@@ -933,7 +933,7 @@ struct ChatInputView: View {
         Task {
             for item in items {
                 guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-                let fileInfo = detectImageFileInfo(data: data)
+                let fileInfo = Self.detectImageFileInfo(data: data)
                 let suffix = UUID().uuidString.prefix(8)
                 let filename = "image_\(suffix).\(fileInfo.ext)"
                 let attachment = ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
@@ -956,24 +956,11 @@ struct ChatInputView: View {
         panel.canChooseDirectories = false
         panel.begin { response in
             guard response == .OK else { return }
-            for url in panel.urls {
-                guard let data = try? Data(contentsOf: url) else { continue }
-                let ext = url.pathExtension.lowercased()
-                let mime: String
-                switch ext {
-                case "png": mime = "image/png"
-                case "jpg", "jpeg": mime = "image/jpeg"
-                case "gif": mime = "image/gif"
-                case "webp": mime = "image/webp"
-                default: mime = "image/png"
-                }
-                let attachment = ImageAttachment(
-                    filename: url.lastPathComponent,
-                    data: data,
-                    mime: mime
-                )
+            let urls = panel.urls
+            DispatchQueue.global(qos: .userInitiated).async {
+                let attachments = urls.compactMap(Self.makeImageAttachment)
                 DispatchQueue.main.async {
-                    imageAttachments.append(attachment)
+                    appendImageAttachments(attachments)
                 }
             }
         }
@@ -981,10 +968,15 @@ struct ChatInputView: View {
     }
 
     #if os(macOS)
+    private enum ClipboardImageCandidate {
+        case fileURL(URL)
+        case rawData(Data)
+    }
+
     private func handleMacOSPasteImages() -> Bool {
         let pasteboard = NSPasteboard.general
-        let imageDataList = collectClipboardImageData(from: pasteboard, maxCount: maxImageAttachmentCount)
-        guard !imageDataList.isEmpty else {
+        let candidates = collectClipboardImageCandidates(from: pasteboard, maxCount: maxImageAttachmentCount)
+        guard !candidates.isEmpty else {
             return false
         }
 
@@ -993,35 +985,26 @@ struct ChatInputView: View {
             return true
         }
 
-        var appendedCount = 0
-        for sourceData in imageDataList.prefix(remaining) {
-            guard let jpegData = encodeClipboardImageAsJPEG(sourceData) else { continue }
-            let suffix = UUID().uuidString.prefix(8)
-            let filename = "clipboard_\(suffix).jpg"
-            imageAttachments.append(
-                ImageAttachment(
-                    filename: filename,
-                    data: jpegData,
-                    mime: "image/jpeg"
-                )
-            )
-            appendedCount += 1
+        let limitedCandidates = Array(candidates.prefix(remaining))
+        DispatchQueue.global(qos: .userInitiated).async {
+            let attachments = limitedCandidates.compactMap(Self.makeClipboardAttachment)
+            DispatchQueue.main.async {
+                appendImageAttachments(attachments)
+            }
         }
-
-        return appendedCount > 0
+        return true
     }
 
-    private func collectClipboardImageData(from pasteboard: NSPasteboard, maxCount: Int) -> [Data] {
-        var result: [Data] = []
+    private func collectClipboardImageCandidates(from pasteboard: NSPasteboard, maxCount: Int) -> [ClipboardImageCandidate] {
+        var result: [ClipboardImageCandidate] = []
 
         let options: [NSPasteboard.ReadingOptionKey: Any] = [
             .urlReadingFileURLsOnly: true
         ]
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty {
             for url in urls {
-                guard isSupportedClipboardImageURL(url) else { continue }
-                guard let data = try? Data(contentsOf: url) else { continue }
-                result.append(data)
+                guard Self.isSupportedClipboardImageURL(url) else { continue }
+                result.append(.fileURL(url))
                 if result.count >= maxCount {
                     return result
                 }
@@ -1043,7 +1026,7 @@ struct ChatInputView: View {
                 var appended = false
                 for type in preferredTypes {
                     if let data = item.data(forType: type), !data.isEmpty {
-                        result.append(data)
+                        result.append(.rawData(data))
                         appended = true
                         break
                     }
@@ -1051,9 +1034,8 @@ struct ChatInputView: View {
                 if !appended,
                    let fileURLString = item.string(forType: .fileURL),
                    let url = URL(string: fileURLString),
-                   isSupportedClipboardImageURL(url),
-                   let data = try? Data(contentsOf: url) {
-                    result.append(data)
+                   Self.isSupportedClipboardImageURL(url) {
+                    result.append(.fileURL(url))
                 }
                 if result.count >= maxCount {
                     return result
@@ -1065,7 +1047,7 @@ struct ChatInputView: View {
            let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] {
             for image in images {
                 guard let tiffData = image.tiffRepresentation else { continue }
-                result.append(tiffData)
+                result.append(.rawData(tiffData))
                 if result.count >= maxCount {
                     return result
                 }
@@ -1075,7 +1057,7 @@ struct ChatInputView: View {
         return result
     }
 
-    private func isSupportedClipboardImageURL(_ url: URL) -> Bool {
+    private static func isSupportedClipboardImageURL(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         let supported: Set<String> = [
             "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp"
@@ -1096,8 +1078,8 @@ struct ChatInputView: View {
                     } else {
                         return
                     }
-                    guard let url, let data = try? Data(contentsOf: url) else { return }
-                    let fileInfo = detectImageFileInfo(data: data)
+                    guard let url, let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return }
+                    let fileInfo = Self.detectImageFileInfo(data: data)
                     guard fileInfo.mime.hasPrefix("image/") else { return }
                     let attachment = ImageAttachment(
                         filename: url.lastPathComponent,
@@ -1111,7 +1093,7 @@ struct ChatInputView: View {
                 }
             } else if provider.hasItemConformingToTypeIdentifier("public.image") {
                 provider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
-                    guard let data, let jpegData = encodeClipboardImageAsJPEG(data) else { return }
+                    guard let data, let jpegData = Self.encodeClipboardImageAsJPEG(data) else { return }
                     let suffix = UUID().uuidString.prefix(8)
                     let filename = "dropped_\(suffix).jpg"
                     DispatchQueue.main.async {
@@ -1128,12 +1110,12 @@ struct ChatInputView: View {
     }
 
 
-    private func encodeClipboardImageAsJPEG(_ sourceData: Data) -> Data? {
+    private static func encodeClipboardImageAsJPEG(_ sourceData: Data) -> Data? {
         if let bitmap = NSBitmapImageRep(data: sourceData),
            let encoded = bitmap.representation(
                using: .jpeg,
                properties: [.compressionFactor: 0.85]
-           ) {
+            ) {
             return encoded
         }
 
@@ -1151,7 +1133,7 @@ struct ChatInputView: View {
     #endif
 
     /// 根据文件头推断图片 MIME 与扩展名
-    private func detectImageFileInfo(data: Data) -> (mime: String, ext: String) {
+    private static func detectImageFileInfo(data: Data) -> (mime: String, ext: String) {
         let bytes = [UInt8](data.prefix(16))
         if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
             return ("image/png", "png")
@@ -1179,6 +1161,59 @@ struct ChatInputView: View {
         }
         return ("application/octet-stream", "bin")
     }
+
+    #if os(macOS)
+    private func appendImageAttachments(_ attachments: [ImageAttachment]) {
+        guard !attachments.isEmpty else { return }
+        let remaining = max(0, maxImageAttachmentCount - imageAttachments.count)
+        guard remaining > 0 else { return }
+        imageAttachments.append(contentsOf: attachments.prefix(remaining))
+    }
+
+    private static func makeImageAttachment(from url: URL) -> ImageAttachment? {
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
+        let ext = url.pathExtension.lowercased()
+        let mime: String
+        switch ext {
+        case "png": mime = "image/png"
+        case "jpg", "jpeg": mime = "image/jpeg"
+        case "gif": mime = "image/gif"
+        case "webp": mime = "image/webp"
+        case "heic": mime = "image/heic"
+        case "heif": mime = "image/heif"
+        case "tiff", "tif": mime = "image/tiff"
+        default: mime = "image/png"
+        }
+        return ImageAttachment(
+            filename: url.lastPathComponent,
+            data: data,
+            mime: mime
+        )
+    }
+
+    private static func makeClipboardAttachment(from candidate: ClipboardImageCandidate) -> ImageAttachment? {
+        let sourceData: Data
+        let filename: String
+
+        switch candidate {
+        case .fileURL(let url):
+            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
+            sourceData = data
+            filename = url.lastPathComponent
+        case .rawData(let data):
+            sourceData = data
+            let suffix = UUID().uuidString.prefix(8)
+            filename = "clipboard_\(suffix).jpg"
+        }
+
+        guard let jpegData = encodeClipboardImageAsJPEG(sourceData) else { return nil }
+        return ImageAttachment(
+            filename: filename.hasSuffix(".jpg") ? filename : "\(filename).jpg",
+            data: jpegData,
+            mime: "image/jpeg"
+        )
+    }
+    #endif
 
     private var dropdownPrimaryTextColor: Color {
         #if os(iOS)
