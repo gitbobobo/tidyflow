@@ -108,6 +108,8 @@
 		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
 		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677A21DC64E8B5102B08960B /* MobileAppState.swift */; };
+		MHA00001 /* MobileAppState+MessageHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00011 /* MobileAppState+MessageHandlers.swift */; };
+		MHA00002 /* MobileAppState+HandlerMethods.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00012 /* MobileAppState+HandlerMethods.swift */; };
 		MOB00032 /* SavedConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00031 /* SavedConnection.swift */; };
 		MOB00057 /* MobileAIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00056 /* MobileAIChatView.swift */; };
 		MOB00059 /* MobileSessionListSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00058 /* MobileSessionListSheet.swift */; };
@@ -285,6 +287,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		MOB00016 /* ProjectListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
 		MOB00017 /* WorkspaceListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
 		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
+		MHA00011 /* MobileAppState+MessageHandlers.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "MobileAppState+MessageHandlers.swift"; sourceTree = "<group>"; };
+		MHA00012 /* MobileAppState+HandlerMethods.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "MobileAppState+HandlerMethods.swift"; sourceTree = "<group>"; };
 		MOB00031 /* SavedConnection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SavedConnection.swift; sourceTree = "<group>"; };
 		MOB00056 /* MobileAIChatView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAIChatView.swift; sourceTree = "<group>"; };
 		MOB00058 /* MobileSessionListSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileSessionListSheet.swift; sourceTree = "<group>"; };
@@ -591,6 +595,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			children = (
 				33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */,
 				677A21DC64E8B5102B08960B /* MobileAppState.swift */,
+				MHA00011 /* MobileAppState+MessageHandlers.swift */,
+				MHA00012 /* MobileAppState+HandlerMethods.swift */,
 				MOB00031 /* SavedConnection.swift */,
 				MOB00030 /* Views */,
 				2E667DE0A535A7448B3C8A7B /* Info.plist */,
@@ -1015,6 +1021,8 @@ TSST011 /* TerminalSessionStore.swift */,
 			files = (
 				AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */,
 				E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */,
+				MHA00001 /* MobileAppState+MessageHandlers.swift in Sources */,
+				MHA00002 /* MobileAppState+HandlerMethods.swift in Sources */,
 				MOB00032 /* SavedConnection.swift in Sources */,
 				MOB00034 /* SwiftTermTerminalView.swift in Sources */,
 				MOB00023 /* TerminalInputAccessoryView.swift in Sources */,
@@ -1494,6 +1502,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				);
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = (
 					"MobileAppState.swift",
+					"MobileAppState+MessageHandlers.swift",
+					"MobileAppState+HandlerMethods.swift",
 					"TidyFlowiOSApp.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
@@ -1626,6 +1636,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				);
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = (
 					"MobileAppState.swift",
+					"MobileAppState+MessageHandlers.swift",
+					"MobileAppState+HandlerMethods.swift",
 					"TidyFlowiOSApp.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",

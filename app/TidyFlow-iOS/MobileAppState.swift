@@ -216,8 +216,8 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewError: String?
     @Published var mergeAIAgent: String?
     @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
-    private var clientFixedPort: Int = 0
-    private var clientRemoteAccessEnabled: Bool = false
+    var clientFixedPort: Int = 0
+    var clientRemoteAccessEnabled: Bool = false
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""
     @Published var aiActiveWorkspace: String = ""
@@ -285,7 +285,7 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionPlanDocumentLoading: Bool = false
     @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
-    private var pendingPlanDocumentReadPath: String?
+    var pendingPlanDocumentReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
@@ -294,7 +294,7 @@ final class MobileAppState: ObservableObject {
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
     /// ClientSettings 下发的 Evolution 代理配置（key: "project/workspace"）
-    private var evolutionProfilesFromClientSettings: [String: [EvolutionStageProfileInfoV2]] = [:]
+    var evolutionProfilesFromClientSettings: [String: [EvolutionStageProfileInfoV2]] = [:]
     @Published private var evolutionProvidersByWorkspace: [String: [AIChatTool: [AIProviderInfo]]] = [:]
     @Published private var evolutionAgentsByWorkspace: [String: [AIChatTool: [AIAgentInfo]]] = [:]
     /// Evolution：按工作空间追踪 provider/agent 列表是否齐全，用于串联 profile 加载时序。
@@ -303,15 +303,15 @@ final class MobileAppState: ObservableObject {
     private var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
-    private var evolutionPendingActionByWorkspace: [String: String] = [:]
-    private var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
-    private var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
+    var evolutionPendingActionByWorkspace: [String: String] = [:]
+    var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
+    var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
 
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
 
     // AI Chat：按工具分桶存储会话
-    private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
+    var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
     private var aiSessionIndexByKey: [String: AISessionInfo] = [:]
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
     private var aiSlashCommandsBySessionByTool: [AIChatTool: [String: [AISlashCommandInfo]]] = [:]
@@ -344,11 +344,11 @@ final class MobileAppState: ObservableObject {
     /// 待附着的终端 ID（重连场景）
     private var pendingAttachTermId: String = ""
     /// 待执行的自定义命令（终端创建后自动发送）
-    private var pendingCustomCommand: String = ""
+    var pendingCustomCommand: String = ""
     /// 待执行命令图标（用于终端列表展示）
-    private var pendingCustomCommandIcon: String = ""
+    var pendingCustomCommandIcon: String = ""
     /// 待执行命令名称（用于终端列表展示）
-    private var pendingCustomCommandName: String = ""
+    var pendingCustomCommandName: String = ""
     /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
@@ -364,22 +364,30 @@ final class MobileAppState: ObservableObject {
     let performanceTracer = TFPerformanceTracer()
 
     /// 原生终端输出目标（SwiftTerm）
-    private weak var terminalSink: MobileTerminalOutputSink?
+    weak var terminalSink: MobileTerminalOutputSink?
     /// 终端未 ready 或尚未绑定 sink 时暂存输出，避免首屏丢数据
     private var pendingOutputChunks: [[UInt8]] = []
     private let pendingOutputChunkLimit = 128
     /// 记录最近一次已重置并开始渲染的 term_id，用于避免 SwiftUI 复用视图导致内容串台
     private var lastRenderedTermId: String = ""
     /// AI 提交结果不带 project/workspace，按触发顺序匹配
-    private var aiCommitPendingTaskIds: [String] = []
+    var aiCommitPendingTaskIds: [String] = []
     /// AI 合并按 project 匹配
-    private var aiMergePendingTaskIdByProject: [String: String] = [:]
+    var aiMergePendingTaskIdByProject: [String: String] = [:]
     /// AI 会话状态请求限流（key: project/workspace/tool/session）。
     private var aiSessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     private let aiSessionStatusMinInterval: TimeInterval = 1.2
     /// WI-004：共享 AIMessageHandler 适配器，确保 iOS 通过统一协议入口接收所有 AI 消息，
     /// 与 macOS 的 AppStateAIMessageHandlerAdapter 对称，不再依赖独立 wsClient.on* 闭包。
     private var _aiHandlerAdapter: MobileAppStateAIMessageHandlerAdapter?
+    /// 领域消息处理适配器强引用（防止被 WSClient weak 引用回收）
+    private var _gitHandlerAdapter: MobileAppStateGitMessageHandlerAdapter?
+    private var _projectHandlerAdapter: MobileAppStateProjectMessageHandlerAdapter?
+    private var _fileHandlerAdapter: MobileAppStateFileMessageHandlerAdapter?
+    private var _terminalHandlerAdapter: MobileAppStateTerminalMessageHandlerAdapter?
+    private var _evolutionHandlerAdapter: MobileAppStateEvolutionMessageHandlerAdapter?
+    private var _evidenceHandlerAdapter: MobileAppStateEvidenceMessageHandlerAdapter?
+    private var _errorHandlerAdapter: MobileAppStateErrorMessageHandlerAdapter?
     /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
     private var aiPendingSendRequest: (
         projectName: String,
@@ -388,11 +396,11 @@ final class MobileAppState: ObservableObject {
         kind: PendingAIRequestKind
     )?
     /// 项目命令 started/completed 路由（project|workspace|commandId -> taskId 队列）
-    private var projectCommandPendingTaskIdsByKey: [String: [String]] = [:]
+    var projectCommandPendingTaskIdsByKey: [String: [String]] = [:]
     /// 项目命令 remote task_id -> 本地 taskId
-    private var projectCommandTaskIdByRemoteTaskId: [String: String] = [:]
+    var projectCommandTaskIdByRemoteTaskId: [String: String] = [:]
     /// Evolution 阶段聊天回放请求
-    private var evolutionReplayRequest: (
+    var evolutionReplayRequest: (
         project: String,
         workspace: String,
         aiTool: AIChatTool,
@@ -407,9 +415,32 @@ final class MobileAppState: ObservableObject {
         sessionId: String
     )?
     /// 当前详情页选中的项目名（兼容旧接口）
-    private var selectedProjectName: String = ""
+    var selectedProjectName: String = ""
+
+    /// 当前选中工作区的名称（由导航传入，用于构建 WorkspaceIdentity）
+    private var selectedWorkspaceName: String = ""
+
+    /// 当前选中的工作区身份标识（共享语义层），与 macOS 的 `selectedWorkspaceIdentity` 对齐。
+    /// iOS 端在进入 WorkspaceDetailView 时通过 `selectWorkspaceContext(project:workspace:)` 设置。
+    var selectedWorkspaceIdentity: WorkspaceIdentity? {
+        guard !selectedProjectName.isEmpty, !selectedWorkspaceName.isEmpty else { return nil }
+        // iOS 端项目无 UUID（使用 ProjectInfo 而非 ProjectModel），以名称哈希生成 deterministic UUID
+        let projectId = deterministicProjectUUID(for: selectedProjectName)
+        return WorkspaceIdentity(
+            projectId: projectId,
+            projectName: selectedProjectName,
+            workspaceName: selectedWorkspaceName
+        )
+    }
+
+    /// 设置当前工作区上下文（从 WorkspaceDetailView / 终端页进入时调用）。
+    /// 集中管理选中态更新，避免在视图层各自反推。
+    func selectWorkspaceContext(project: String, workspace: String) {
+        selectedProjectName = project
+        selectedWorkspaceName = workspace
+    }
     /// 资源管理器预览请求（用于过滤过期回调）
-    private var pendingExplorerPreviewRequest: (project: String, workspace: String, path: String)?
+    var pendingExplorerPreviewRequest: (project: String, workspace: String, path: String)?
 
     /// AI Chat 待发送请求类型
     private enum PendingAIRequestKind {
@@ -430,7 +461,7 @@ final class MobileAppState: ObservableObject {
         )
     }
 
-    private let wsClient = WSClient()
+    let wsClient = WSClient()
     /// 重连任务（指数退避）
     private var reconnectTask: Task<Void, Never>?
     init() {
@@ -904,25 +935,14 @@ final class MobileAppState: ObservableObject {
         return nil
     }
 
-    /// iOS 侧与 macOS 相同的项目排序策略
+    /// iOS 侧与 macOS 共享的项目排序策略（委托到 ProjectSortingSemantics）。
     var sortedProjectsForSidebar: [ProjectInfo] {
-        projects.sorted { lhs, rhs in
-            let lhsHasShortcut = projectMinShortcutKey(lhs) < Int.max
-            let rhsHasShortcut = projectMinShortcutKey(rhs) < Int.max
-            if lhsHasShortcut != rhsHasShortcut {
-                return lhsHasShortcut
-            }
-
-            if lhsHasShortcut && rhsHasShortcut {
-                let lhsTime = projectEarliestTerminalTime(lhs)
-                let rhsTime = projectEarliestTerminalTime(rhs)
-                if let l = lhsTime, let r = rhsTime, l != r {
-                    return l < r
-                }
-            }
-
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
+        ProjectSortingSemantics.sortedProjects(
+            projects,
+            shortcutKeyFinder: { self.projectMinShortcutKey($0) },
+            earliestTerminalTimeFinder: { self.projectEarliestTerminalTime($0) },
+            nameExtractor: { $0.name }
+        )
     }
 
     /// 获取指定项目+工作空间的活跃终端
@@ -1920,7 +1940,7 @@ final class MobileAppState: ObservableObject {
         wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
     }
 
-    private func finishEvolutionProfileReloadTracking(project: String, workspace: String) {
+    func finishEvolutionProfileReloadTracking(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         evolutionPendingProfileReloadWorkspaces.remove(key)
@@ -2696,7 +2716,7 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    private func aiContextKey(project: String, workspace: String) -> String {
+    func aiContextKey(project: String, workspace: String) -> String {
         "\(project):\(workspace):\(aiChatTool.rawValue)"
     }
 
@@ -3490,7 +3510,7 @@ final class MobileAppState: ObservableObject {
         "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
     }
 
-    private func requestAISessionStatus(
+    func requestAISessionStatus(
         projectName: String,
         workspaceName: String,
         aiTool: AIChatTool,
@@ -3679,7 +3699,7 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    private func switchToTerminal(termId: String) {
+    func switchToTerminal(termId: String) {
         let switchStartedAt = Date()
         let newId = termId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newId.isEmpty else { return }
@@ -3775,6 +3795,7 @@ final class MobileAppState: ObservableObject {
     // MARK: - WS 回调
 
     private func setupWSCallbacks() {
+        // 保留非 handler 协议的回调闭包
         wsClient.onConnectionStateChanged = { [weak self] connected in
             guard let self else { return }
             if connected {
@@ -3800,468 +3821,19 @@ final class MobileAppState: ObservableObject {
             }
         }
 
-        wsClient.onProjectsList = { [weak self] result in
-            guard let self else { return }
-            self.projects = result.items
-            let names = Set(result.items.map(\.name))
-            self.workspacesByProject = self.workspacesByProject.filter { names.contains($0.key) }
-            for project in result.items {
-                self.wsClient.requestListWorkspaces(project: project.name)
-            }
-        }
-
-        wsClient.onWorkspacesList = { [weak self] result in
-            guard let self else { return }
-            self.workspacesByProject[result.project] = result.items
-            // 只在响应归属当前选中项目时更新便捷工作区列表，
-            // 避免其他项目的工作区列表回包污染当前上下文。
-            if self.selectedProjectName == result.project {
-                self.workspaces = result.items
-            }
-        }
-
-        wsClient.onFileListResult = { [weak self] result in
-            guard let self else { return }
-            let key = self.explorerCacheKey(project: result.project, workspace: result.workspace, path: result.path)
-            self.explorerFileListCache[key] = FileListCache(
-                items: result.items,
-                isLoading: false,
-                error: nil,
-                updatedAt: Date()
-            )
-        }
-
-        wsClient.onFileWriteResult = { [weak self] result in
-            guard let self else { return }
-            if result.success {
-                self.refreshExplorer(project: result.project, workspace: result.workspace)
-            } else {
-                self.errorMessage = "新建文件失败：\(result.path)"
-            }
-        }
-
-        wsClient.onFileRenameResult = { [weak self] result in
-            guard let self else { return }
-            if result.success {
-                self.refreshExplorer(project: result.project, workspace: result.workspace)
-            } else {
-                self.errorMessage = result.message ?? "重命名失败"
-            }
-        }
-
-        wsClient.onFileDeleteResult = { [weak self] result in
-            guard let self else { return }
-            if result.success {
-                self.refreshExplorer(project: result.project, workspace: result.workspace)
-            } else {
-                self.errorMessage = result.message ?? "删除失败"
-            }
-        }
-
-        wsClient.onFileReadResult = { [weak self] result in
-            guard let self else { return }
-
-            // 计划文档预览分流
-            if let pendingPath = self.pendingPlanDocumentReadPath, pendingPath == result.path {
-                self.pendingPlanDocumentReadPath = nil
-                self.evolutionPlanDocumentLoading = false
-                let bytes = Data(result.content)
-                if let text = String(data: bytes, encoding: .utf8) {
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        self.evolutionPlanDocumentError = "evolution.page.planDocument.empty".localized
-                        self.evolutionPlanDocumentContent = nil
-                    } else {
-                        self.evolutionPlanDocumentContent = text
-                    }
-                } else {
-                    self.evolutionPlanDocumentError = "evolution.page.planDocument.empty".localized
-                    self.evolutionPlanDocumentContent = nil
-                }
-                return
-            }
-
-            guard let pending = self.pendingExplorerPreviewRequest else { return }
-            guard pending.project == result.project,
-                  pending.workspace == result.workspace,
-                  pending.path == result.path else { return }
-            self.pendingExplorerPreviewRequest = nil
-            self.explorerPreviewLoading = false
-
-            let bytes = Data(result.content)
-            if result.size > 256 * 1024 {
-                self.explorerPreviewError = "文件过大，暂不支持预览"
-                self.explorerPreviewContent = ""
-                return
-            }
-
-            if let text = String(data: bytes, encoding: .utf8) {
-                self.explorerPreviewError = nil
-                self.explorerPreviewContent = text
-            } else {
-                self.explorerPreviewError = "二进制文件暂不支持预览"
-                self.explorerPreviewContent = ""
-            }
-        }
-
-        wsClient.onGitStatusResult = { [weak self] result in
-            guard let self else { return }
-            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            // 统一写入 workspaceGitDetailState，additions/deletions 汇总通过 semanticSnapshot 按需计算
-            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-            detail.currentBranch = result.currentBranch
-            detail.defaultBranch = result.defaultBranch
-            detail.isGitRepo = result.isGitRepo
-            detail.aheadBy = result.aheadBy
-            detail.behindBy = result.behindBy
-            let staged = result.items.filter { $0.staged == true }
-            let unstaged = result.items.filter { $0.staged != true }
-            detail.stagedItems = staged
-            detail.unstagedItems = unstaged
-            self.workspaceGitDetailState[key] = detail
-        }
-
-        wsClient.onGitBranchesResult = { [weak self] result in
-            guard let self else { return }
-            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-            detail.currentBranch = result.current
-            detail.branches = result.branches
-            self.workspaceGitDetailState[key] = detail
-        }
-
-        wsClient.onGitCommitResult = { [weak self] result in
-            guard let self else { return }
-            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            var detail = self.workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-            detail.isCommitting = false
-            detail.commitResult = result.ok ? "提交成功" : (result.message ?? "提交失败")
-            // 提交成功后刷新 Git 状态
-            if result.ok {
-                detail.stagedItems = []
-                self.wsClient.requestGitStatus(project: result.project, workspace: result.workspace)
-            }
-            self.workspaceGitDetailState[key] = detail
-        }
-
-        wsClient.onTermList = { [weak self] result in
-            guard let self else { return }
-            self.activeTerminals = result.items
-            // 通过共享终端存储协调 term_list 恢复（清理过期条目 + 服务端展示信息兜底恢复 + open time 更新）
-            self.terminalSessionStore.reconcileTermList(
-                items: result.items,
-                makeKey: self.globalWorkspaceKey(project:workspace:)
-            )
-            self.workspaceTerminalOpenTime = self.terminalSessionStore.workspaceOpenTime
-        }
-
-        wsClient.onTermCreated = { [weak self] result in
-            guard let self else { return }
-            self.switchToTerminal(termId: result.termId)
-            // 通过共享终端存储处理 term_created（展示信息 + open time）
-            self.terminalSessionStore.handleTermCreated(
-                result: result,
-                pendingCommandIcon: self.pendingCustomCommandIcon.isEmpty ? nil : self.pendingCustomCommandIcon,
-                pendingCommandName: self.pendingCustomCommandName.isEmpty ? nil : self.pendingCustomCommandName,
-                pendingCommand: self.pendingCustomCommand.isEmpty ? nil : self.pendingCustomCommand,
-                makeKey: self.globalWorkspaceKey(project:workspace:)
-            )
-            self.workspaceTerminalOpenTime = self.terminalSessionStore.workspaceOpenTime
-
-            // 确保 PTY 尺寸与终端视图一致（兜底 resize）
-            self.wsClient.requestTermResize(
-                termId: result.termId,
-                cols: self.terminalCols,
-                rows: self.terminalRows
-            )
-            self.terminalSink?.focusTerminal()
-            // 刷新终端列表
-            self.wsClient.requestTermList()
-            // 自定义命令：延迟发送，等 shell 初始化完成
-            let cmd = self.pendingCustomCommand
-            if !cmd.isEmpty {
-                let termId = result.termId
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.wsClient.sendTerminalInput(cmd + "\n", termId: termId)
-                }
-            }
-            self.pendingCustomCommand = ""
-            self.pendingCustomCommandIcon = ""
-            self.pendingCustomCommandName = ""
-        }
-
-        wsClient.onTermAttached = { [weak self] result in
-            guard let self else { return }
-            // 通过共享终端存储处理 attach 完成（含 RTT 追踪 + 展示信息恢复）
-            if let rtt = self.terminalSessionStore.handleTermAttached(result: result) {
-                let costMs = Int(rtt * 1000)
-                TFLog.app.info("perf.mobile.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
-            }
-            self.switchToTerminal(termId: result.termId)
-            // 写入 scrollback 到 SwiftTerm
-            if !result.scrollback.isEmpty {
-                self.emitTerminalOutput(result.scrollback, termId: result.termId, shouldRender: true)
-                // scrollback 回放后立即发送 ACK，避免大量 scrollback 数据触发背压
-                if !result.termId.isEmpty {
-                    self.wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
-                    self.terminalSessionStore.resetUnackedBytes(for: result.termId)
-                }
-            }
-            self.wsClient.requestTermResize(
-                termId: result.termId,
-                cols: self.terminalCols,
-                rows: self.terminalRows
-            )
-            self.terminalSink?.focusTerminal()
-        }
-
-        wsClient.onTerminalOutput = { [weak self] termId, bytes in
-            guard let self else { return }
-            if let termId, self.currentTermId.isEmpty {
-                self.switchToTerminal(termId: termId)
-            }
-            guard let termId else { return }
-            self.emitTerminalOutput(bytes, termId: termId, shouldRender: termId == self.currentTermId)
-        }
-
-        wsClient.onTerminalExit = { [weak self] _, _ in
-            // 终端退出，可选择通知用户
-            _ = self
-        }
-
-        wsClient.onTermClosed = { [weak self] termId in
-            guard let self else { return }
-            // 通过共享终端存储清理所有与该 termId 相关的追踪状态
-            self.terminalSessionStore.handleTermClosed(termId: termId)
-            if self.currentTermId == termId {
-                self.currentTermId = ""
-            }
-            // 刷新终端列表
-            self.wsClient.requestTermList()
-        }
-
-        wsClient.onEvoAutoCommitResult = { [weak self] result in
-            guard let self else { return }
-            // 按 project:workspace 匹配本地任务
-            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            let localTaskId = self.aiCommitPendingTaskIds.first.flatMap { taskId -> String? in
-                // 验证 taskId 归属的 workspace key 匹配
-                if self.taskStore.allTasks(for: key).contains(where: { $0.id == taskId && $0.status.isActive }) {
-                    return taskId
-                }
-                return nil
-            } ?? self.aiCommitPendingTaskIds.first // 兜底：按顺序匹配
-
-            if let taskId = localTaskId {
-                self.aiCommitPendingTaskIds.removeAll { $0 == taskId }
-                self.mutateTask(taskId) { task in
-                    task.status = result.success ? .completed : .failed
-                    task.message = result.message
-                    task.completedAt = Date()
-                }
-            } else {
-                // 远程任务：非本地发起，创建条目并直接标记完成
-                let task = self.createTask(
-                    project: result.project,
-                    workspace: result.workspace,
-                    type: .aiCommit,
-                    title: "一键提交",
-                    icon: "sparkles",
-                    message: result.message
-                )
-                self.mutateTask(task.id) { t in
-                    t.status = result.success ? .completed : .failed
-                    t.completedAt = Date()
-                }
-            }
-        }
-
-        wsClient.onGitAIMergeResult = { [weak self] result in
-            guard let self else { return }
-            let resolvedTaskId =
-                self.aiMergePendingTaskIdByProject.removeValue(forKey: result.project)
-                ?? self.findLatestActiveTaskId(project: result.project, type: .aiMerge)
-            if let taskId = resolvedTaskId {
-                self.mutateTask(taskId) { task in
-                    task.status = result.success ? .completed : .failed
-                    task.message = result.message
-                    task.completedAt = Date()
-                }
-            } else {
-                // 远程任务：非本地发起，创建条目并直接标记完成
-                let task = self.createTask(
-                    project: result.project,
-                    workspace: result.workspace,
-                    type: .aiMerge,
-                    title: "智能合并",
-                    icon: "cpu",
-                    message: result.message
-                )
-                self.mutateTask(task.id) { t in
-                    t.status = result.success ? .completed : .failed
-                    t.completedAt = Date()
-                }
-            }
-        }
-
-        wsClient.onGitMergeToDefaultResult = { [weak self] result in
-            guard let self else { return }
-            let resolvedTaskId =
-                self.aiMergePendingTaskIdByProject.removeValue(forKey: result.project)
-                ?? self.findLatestActiveTaskId(project: result.project, type: .aiMerge)
-            guard let taskId = resolvedTaskId else { return }
-            self.mutateTask(taskId) { task in
-                let success = result.ok && result.state == .completed
-                task.status = success ? .completed : .failed
-                task.message = result.message ?? (success ? "完成" : "失败")
-                task.completedAt = Date()
-            }
-        }
-
-        wsClient.onProjectCommandStarted = { [weak self] project, workspace, commandId, taskId in
-            guard let self else { return }
-            let routeKey = self.projectCommandRoutingKey(project: project, workspace: workspace, commandId: commandId)
-            let localTaskId: String?
-            if let mapped = self.projectCommandTaskIdByRemoteTaskId[taskId] {
-                localTaskId = mapped
-            } else if var queue = self.projectCommandPendingTaskIdsByKey[routeKey], !queue.isEmpty {
-                let first = queue.removeFirst()
-                self.projectCommandPendingTaskIdsByKey[routeKey] = queue.isEmpty ? nil : queue
-                self.projectCommandTaskIdByRemoteTaskId[taskId] = first
-                localTaskId = first
-            } else {
-                localTaskId = nil
-            }
-            if let resolvedId = localTaskId {
-                self.mutateTask(resolvedId) { task in
-                    task.status = .running
-                    task.startedAt = task.startedAt ?? Date()
-                    task.message = "运行中..."
-                    task.remoteTaskId = taskId
-                }
-            } else {
-                // 远程任务：非本地发起，创建远程任务条目
-                let commandName = self.resolveCommandName(project: project, commandId: commandId)
-                let commandIcon = self.resolveCommandIcon(project: project, commandId: commandId)
-                let task = self.createTask(
-                    project: project,
-                    workspace: workspace,
-                    type: .projectCommand,
-                    title: commandName,
-                    icon: commandIcon,
-                    message: "运行中..."
-                )
-                self.mutateTask(task.id) { t in
-                    t.commandId = commandId
-                    t.remoteTaskId = taskId
-                }
-                self.projectCommandTaskIdByRemoteTaskId[taskId] = task.id
-            }
-        }
-
-        wsClient.onProjectCommandOutput = { [weak self] taskId, line in
-            guard let self else { return }
-            guard let localTaskId = self.projectCommandTaskIdByRemoteTaskId[taskId] else { return }
-            self.mutateTask(localTaskId) { task in
-                task.lastOutputLine = line
-            }
-        }
-
-        wsClient.onProjectCommandCompleted = { [weak self] project, workspace, commandId, taskId, ok, message in
-            guard let self else { return }
-            let routeKey = self.projectCommandRoutingKey(project: project, workspace: workspace, commandId: commandId)
-            let localTaskId = self.projectCommandTaskIdByRemoteTaskId.removeValue(forKey: taskId)
-                ?? self.projectCommandPendingTaskIdsByKey[routeKey]?.first
-            if let localTaskId,
-               var queue = self.projectCommandPendingTaskIdsByKey[routeKey],
-               queue.first == localTaskId {
-                queue.removeFirst()
-                self.projectCommandPendingTaskIdsByKey[routeKey] = queue.isEmpty ? nil : queue
-            }
-            guard let resolvedId = localTaskId else { return }
-            self.mutateTask(resolvedId) { task in
-                task.status = ok ? .completed : .failed
-                task.message = message ?? (ok ? "完成" : "失败")
-                task.completedAt = Date()
-            }
-        }
-
-        wsClient.onError = { [weak self] message in
-            guard let self else { return }
-            self.errorMessage = message
-            self.aiSessionListPageStates = self.aiSessionListPageStates.mapValues { state in
-                var updated = state
-                updated.isLoadingInitial = false
-                updated.isLoadingNextPage = false
-                return updated
-            }
-            if !self.evolutionPendingActionByWorkspace.isEmpty {
-                let pendingCount = self.evolutionPendingActionByWorkspace.count
-                self.evolutionPendingActionByWorkspace.removeAll()
-                NSLog(
-                    "[MobileAppState] Evolution pending actions cleared after client error: count=%d, error=%@",
-                    pendingCount,
-                    message
-                )
-            }
-            if self.pendingExplorerPreviewRequest != nil {
-                self.pendingExplorerPreviewRequest = nil
-                self.explorerPreviewLoading = false
-                self.explorerPreviewError = message
-                self.explorerPreviewContent = ""
-            }
-            if self.pendingPlanDocumentReadPath != nil {
-                self.pendingPlanDocumentReadPath = nil
-                self.evolutionPlanDocumentLoading = false
-                self.evolutionPlanDocumentError = message
-            }
-            if !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty {
-                let key = self.aiContextKey(project: self.aiActiveProject, workspace: self.aiActiveWorkspace)
-                if var cache = self.aiFileIndexCache[key], cache.isLoading {
-                    cache.isLoading = false
-                    cache.error = message
-                    self.aiFileIndexCache[key] = cache
-                }
-            }
-        }
-
-        // 结构化 Core 错误处理：通过错误码决定行为，避免字符串匹配漂移
-        // 多工作区安全：只更新归属当前项目/工作区的错误状态
-        wsClient.onCoreError = { [weak self] error in
-            guard let self else { return }
-            // 过滤跨工作区的错误污染
-            let currentProject = self.selectedProjectName.isEmpty ? nil : self.selectedProjectName
-            let currentWorkspace = self.aiActiveWorkspace.isEmpty ? nil : self.aiActiveWorkspace
-            guard error.belongsTo(project: currentProject, workspace: currentWorkspace) else {
-                NSLog(
-                    "[MobileAppState] Ignoring cross-workspace Core error: code=%@ project=%@ workspace=%@",
-                    error.code.rawValue,
-                    error.project ?? "nil",
-                    error.workspace ?? "nil"
-                )
-                return
-            }
-            // 可恢复错误只记录，不更新错误状态
-            if error.code.isRecoverable {
-                return
-            }
-            self.errorMessage = error.message
-        }
-
         wsClient.onClipboardImageSet = { [weak self] ok, message in
             guard let self else { return }
             if ok {
-                // 图片已写入 macOS 剪贴板，发送 Ctrl+V 让 TUI 应用读取
                 self.sendSpecialKey("\u{16}")
             } else {
                 self.errorMessage = message ?? "剪贴板图片写入失败"
             }
         }
 
-        // WI-004：通过共享 AIMessageHandler 适配器接收所有 AI 消息，
-        // 与 macOS AppStateAIMessageHandlerAdapter 对称，不再依赖独立 wsClient.on* 闭包。
-        let aiAdapter = MobileAppStateAIMessageHandlerAdapter(appState: self)
-        _aiHandlerAdapter = aiAdapter
-        wsClient.aiMessageHandler = aiAdapter
+        wsClient.onTasksSnapshot = { [weak self] entries in
+            guard let self else { return }
+            self.restoreTasksFromSnapshot(entries)
+        }
 
         wsClient.onClientSettingsResult = { [weak self] settings in
             guard let self else { return }
@@ -4277,332 +3849,33 @@ final class MobileAppState: ObservableObject {
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }
 
-        wsClient.onTasksSnapshot = { [weak self] entries in
-            guard let self else { return }
-            self.restoreTasksFromSnapshot(entries)
-        }
+        // 按领域 handler 绑定，替代大量 onXxx 闭包接线（与 macOS AppState+CoreWS+WSClientBinder 对称）
+        let gitHandler = MobileAppStateGitMessageHandlerAdapter(appState: self)
+        let projectHandler = MobileAppStateProjectMessageHandlerAdapter(appState: self)
+        let fileHandler = MobileAppStateFileMessageHandlerAdapter(appState: self)
+        let terminalHandler = MobileAppStateTerminalMessageHandlerAdapter(appState: self)
+        let aiHandler = MobileAppStateAIMessageHandlerAdapter(appState: self)
+        let evolutionHandler = MobileAppStateEvolutionMessageHandlerAdapter(appState: self)
+        let evidenceHandler = MobileAppStateEvidenceMessageHandlerAdapter(appState: self)
+        let errorHandler = MobileAppStateErrorMessageHandlerAdapter(appState: self)
 
-        // Evolution
-        wsClient.onEvoPulse = { [weak self] in
-            self?.wsClient.requestEvoSnapshot()
-        }
+        _gitHandlerAdapter = gitHandler
+        _projectHandlerAdapter = projectHandler
+        _fileHandlerAdapter = fileHandler
+        _terminalHandlerAdapter = terminalHandler
+        _aiHandlerAdapter = aiHandler
+        _evolutionHandlerAdapter = evolutionHandler
+        _evidenceHandlerAdapter = evidenceHandler
+        _errorHandlerAdapter = errorHandler
 
-        wsClient.onEvoSnapshot = { [weak self] snapshot in
-            guard let self else { return }
-            if self.evolutionScheduler != snapshot.scheduler {
-                self.evolutionScheduler = snapshot.scheduler
-            }
-            let items = snapshot.workspaceItems.sorted {
-                ($0.project, $0.workspace) < ($1.project, $1.workspace)
-            }
-            if self.evolutionWorkspaceItems != items {
-                self.evolutionWorkspaceItems = items
-            }
-            for item in items where item.status != "interrupted" {
-                let key = self.globalWorkspaceKey(project: item.project, workspace: self.normalizeEvolutionWorkspaceName(item.workspace))
-                self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
-            }
-        }
-
-        wsClient.onEvoAgentProfile = { [weak self] ev in
-            guard let self else { return }
-            let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: workspace)
-            if ev.stageProfiles.isEmpty {
-                NSLog(
-                    "[MobileAppState] Evolution profile ignored: empty stage_profiles, project=%@, workspace=%@",
-                    ev.project,
-                    workspace
-                )
-                self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
-                return
-            }
-            self.evolutionStageProfilesByWorkspace[key] = ev.stageProfiles
-            let directionModel = ev.stageProfiles
-                .first(where: { $0.stage == "direction" })?
-                .model
-                .map { "\($0.providerID)/\($0.modelID)" } ?? "default"
-            NSLog(
-                "[MobileAppState] Evolution profile applied: project=%@, workspace=%@, stages=%d, direction_model=%@",
-                ev.project,
-                workspace,
-                ev.stageProfiles.count,
-                directionModel
-            )
-            self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
-        }
-
-        wsClient.onEvoStageChatOpened = { [weak self] ev in
-            guard let self else { return }
-            guard let aiTool = ev.aiTool else {
-                self.evolutionReplayLoading = false
-                self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
-                return
-            }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            self.evolutionReplayRequest = (
-                project: ev.project,
-                workspace: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                cycleId: ev.cycleID,
-                stage: ev.stage
-            )
-            self.evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
-            self.evolutionReplayMessages = []
-            self.evolutionReplayError = nil
-            self.evolutionReplayLoading = false
-
-            self.openAIChat(project: ev.project, workspace: normalizedWorkspace)
-
-            let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
-            let session = AISessionInfo(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                id: ev.sessionID,
-                title: "\(ev.stage) · \(ev.cycleID)",
-                updatedAt: updatedAt,
-                origin: .evolutionSystem
-            )
-
-            var sessions = self.aiSessionsByTool[aiTool] ?? []
-            sessions.removeAll { $0.id == session.id }
-            sessions.insert(session, at: 0)
-            self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
-
-            // 通过共享协调器订阅并加载历史，确保与 macOS 端语义一致
-            let evoContext = AISessionHistoryCoordinator.Context(
-                project: ev.project,
-                workspace: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID
-            )
-            AISessionHistoryCoordinator.subscribeAndLoadRecent(
-                context: evoContext,
-                wsClient: self.wsClient,
-                store: self.aiChatStore
-            )
-            self.requestAISessionStatus(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                force: true
-            )
-        }
-
-        wsClient.onEvoError = { [weak self] message in
-            guard let self else { return }
-            self.evolutionReplayLoading = false
-            self.evolutionReplayError = message
-            self.evolutionPendingActionByWorkspace.removeAll()
-            for key in self.evidenceLoadingByWorkspace.keys {
-                self.evidenceLoadingByWorkspace[key] = false
-                self.evidenceErrorByWorkspace[key] = message
-            }
-            let promptCallbacks = self.evidencePromptCompletionByWorkspace
-            self.evidencePromptCompletionByWorkspace.removeAll()
-            for (_, completion) in promptCallbacks {
-                completion(nil, message)
-            }
-            let readRequests = self.evidenceReadRequestByWorkspace
-            self.evidenceReadRequestByWorkspace.removeAll()
-            for (_, request) in readRequests {
-                if request.autoContinue {
-                    request.fullCompletion(nil, message)
-                } else {
-                    request.pageCompletion(nil, message)
-                }
-            }
-        }
-
-        wsClient.onEvoBlockingRequired = { [weak self] ev in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            self.evolutionBlockingRequired = EvolutionBlockingRequiredV2(
-                project: ev.project,
-                workspace: normalizedWorkspace,
-                trigger: ev.trigger,
-                cycleID: ev.cycleID,
-                stage: ev.stage,
-                blockerFilePath: ev.blockerFilePath,
-                unresolvedItems: ev.unresolvedItems
-            )
-            self.evolutionBlockers = ev.unresolvedItems
-        }
-
-        wsClient.onEvoBlockersUpdated = { [weak self] ev in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            self.evolutionBlockers = ev.unresolvedItems
-            if ev.unresolvedCount > 0 {
-                self.evolutionBlockingRequired = EvolutionBlockingRequiredV2(
-                    project: ev.project,
-                    workspace: normalizedWorkspace,
-                    trigger: "updated",
-                    cycleID: self.evolutionBlockingRequired?.cycleID,
-                    stage: self.evolutionBlockingRequired?.stage,
-                    blockerFilePath: self.evolutionBlockingRequired?.blockerFilePath ?? "",
-                    unresolvedItems: ev.unresolvedItems
-                )
-                return
-            }
-            self.evolutionBlockingRequired = nil
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
-            guard let pendingAction = self.evolutionPendingActionByWorkspace.removeValue(forKey: key) else {
-                return
-            }
-            if pendingAction == "start" {
-                let profiles = self.evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
-                let loopRoundLimit = max(
-                    1,
-                    self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
-                )
-                self.startEvolution(
-                    project: ev.project,
-                    workspace: normalizedWorkspace,
-                    loopRoundLimit: loopRoundLimit,
-                    profiles: profiles
-                )
-                return
-            }
-            if pendingAction == "resume" {
-                self.resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
-            }
-        }
-
-        wsClient.onEvoCycleHistory = { [weak self] project, workspace, cycles in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(workspace)
-            let key = self.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-            self.evolutionCycleHistories[key] = cycles
-        }
-
-        wsClient.onEvidenceSnapshot = { [weak self] ev in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
-            self.evidenceSnapshotsByWorkspace[key] = ev
-            self.evidenceLoadingByWorkspace[key] = false
-            self.evidenceErrorByWorkspace[key] = nil
-        }
-
-        wsClient.onEvidenceRebuildPrompt = { [weak self] ev in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
-            if let completion = self.evidencePromptCompletionByWorkspace.removeValue(forKey: key) {
-                completion(ev, nil)
-            }
-        }
-
-        wsClient.onEvidenceItemChunk = { [weak self] ev in
-            guard let self else { return }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
-            guard var request = self.evidenceReadRequestByWorkspace[key] else { return }
-            guard request.itemID == ev.itemID else { return }
-
-            guard ev.offset == request.expectedOffset else {
-                // 同一条目的旧分块回包（通常由重入读取触发）直接丢弃，避免误判中断。
-                if ev.offset < request.expectedOffset {
-                    return
-                }
-                // 首块期待偏移为 0；若先收到更大偏移，通常是上一次读取会话的滞后分块。
-                if request.expectedOffset == 0 {
-                    return
-                }
-                self.evidenceReadRequestByWorkspace.removeValue(forKey: key)
-                if request.autoContinue {
-                    request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")
-                } else {
-                    request.pageCompletion(nil, "证据分块偏移不连续，读取已中断")
-                }
-                return
-            }
-
-            request.totalSizeBytes = ev.totalSizeBytes
-            request.mimeType = ev.mimeType
-            request.expectedOffset = ev.nextOffset
-
-            if !request.autoContinue {
-                self.evidenceReadRequestByWorkspace.removeValue(forKey: key)
-                request.pageCompletion(
-                    .init(
-                        mimeType: ev.mimeType,
-                        content: ev.content,
-                        offset: ev.offset,
-                        nextOffset: ev.nextOffset,
-                        totalSizeBytes: ev.totalSizeBytes,
-                        eof: ev.eof
-                    ),
-                    nil
-                )
-                return
-            }
-
-            request.content.append(contentsOf: ev.content)
-
-            if ev.eof {
-                self.evidenceReadRequestByWorkspace.removeValue(forKey: key)
-                request.fullCompletion((mimeType: request.mimeType, content: request.content), nil)
-                return
-            }
-
-            self.evidenceReadRequestByWorkspace[key] = request
-            self.wsClient.requestEvidenceReadItem(
-                project: request.project,
-                workspace: request.workspace,
-                itemID: request.itemID,
-                offset: request.expectedOffset,
-                limit: request.limit
-            )
-        }
-
-        // AI Chat: 文件索引（@ 自动补全）
-        wsClient.onFileIndexResult = { [weak self] result in
-            guard let self else { return }
-            let key = self.aiContextKey(project: result.project, workspace: result.workspace)
-            self.aiFileIndexCache[key] = FileIndexCache(
-                items: result.items,
-                truncated: result.truncated,
-                updatedAt: Date(),
-                isLoading: false,
-                error: nil
-            )
-        }
-
-
-        // v1.40: 工作流模板回调
-        wsClient.onTemplatesList = { [weak self] result in
-            guard let self else { return }
-            self.templates = result.items
-        }
-        wsClient.onTemplateSaved = { [weak self] result in
-            guard let self, result.ok else { return }
-            if let idx = self.templates.firstIndex(where: { $0.id == result.template.id }) {
-                self.templates[idx] = result.template
-            } else {
-                self.templates.append(result.template)
-            }
-        }
-        wsClient.onTemplateDeleted = { [weak self] result in
-            guard let self, result.ok else { return }
-            self.templates.removeAll { $0.id == result.templateId }
-        }
-        wsClient.onTemplateImported = { [weak self] result in
-            guard let self, result.ok else { return }
-            if let idx = self.templates.firstIndex(where: { $0.id == result.template.id }) {
-                self.templates[idx] = result.template
-            } else {
-                self.templates.append(result.template)
-            }
-        }
-        wsClient.onTemplateExported = { [weak self] _ in
-            // iOS 端导出通过 share sheet 实现
-            _ = self
-        }
+        wsClient.gitMessageHandler = gitHandler
+        wsClient.projectMessageHandler = projectHandler
+        wsClient.fileMessageHandler = fileHandler
+        wsClient.terminalMessageHandler = terminalHandler
+        wsClient.aiMessageHandler = aiHandler
+        wsClient.evolutionMessageHandler = evolutionHandler
+        wsClient.evidenceMessageHandler = evidenceHandler
+        wsClient.errorMessageHandler = errorHandler
     }
 
     private func resolveDefaultAgentName() -> String {
@@ -4670,7 +3943,7 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    private func explorerCacheKey(project: String, workspace: String, path: String) -> String {
+    func explorerCacheKey(project: String, workspace: String, path: String) -> String {
         WorkspaceKeySemantics.fileCacheKey(project: project, workspace: workspace, path: path)
     }
 
@@ -4795,8 +4068,29 @@ final class MobileAppState: ObservableObject {
         return minKey
     }
 
+    /// iOS 端项目不持有 UUID（使用 ProjectInfo），通过项目名哈希生成确定性 UUID。
+    /// 保证同一项目名始终生成同一 UUID，用于构建 WorkspaceIdentity。
+    private func deterministicProjectUUID(for projectName: String) -> UUID {
+        let data = Data(projectName.utf8)
+        var bytes = [UInt8](repeating: 0, count: 16)
+        data.withUnsafeBytes { buffer in
+            for (i, byte) in buffer.enumerated() {
+                bytes[i % 16] ^= byte
+            }
+        }
+        // 设置 UUID version 5 标志位（name-based SHA-1 风格）
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
+
     @discardableResult
-    private func createTask(
+    func createTask(
         project: String,
         workspace: String,
         type: WorkspaceTaskType,
@@ -4827,11 +4121,11 @@ final class MobileAppState: ObservableObject {
         return item
     }
 
-    private func mutateTask(_ taskId: String, mutate: (inout WorkspaceTaskItem) -> Void) {
+    func mutateTask(_ taskId: String, mutate: (inout WorkspaceTaskItem) -> Void) {
         taskStore.mutate(id: taskId, mutate)
     }
 
-    private func findLatestActiveTaskId(project: String, type: WorkspaceTaskType) -> String? {
+    func findLatestActiveTaskId(project: String, type: WorkspaceTaskType) -> String? {
         taskStore.tasksByKey.values
             .flatMap { $0 }
             .filter { $0.project == project && $0.type == type && $0.status.isActive }
@@ -4840,19 +4134,19 @@ final class MobileAppState: ObservableObject {
             .id
     }
 
-    private func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
+    func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
         "\(project)|\(workspace)|\(commandId)"
     }
 
     /// 从项目配置中查找命令名称
-    private func resolveCommandName(project: String, commandId: String) -> String {
+    func resolveCommandName(project: String, commandId: String) -> String {
         projects.first(where: { $0.name == project })?
             .commands.first(where: { $0.id == commandId })?
             .name ?? commandId
     }
 
     /// 从项目配置中查找命令图标
-    private func resolveCommandIcon(project: String, commandId: String) -> String {
+    func resolveCommandIcon(project: String, commandId: String) -> String {
         projects.first(where: { $0.name == project })?
             .commands.first(where: { $0.id == commandId })?
             .icon ?? "terminal"
@@ -4860,7 +4154,7 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 输出缓冲
 
-    private func emitTerminalOutput(_ bytes: [UInt8], termId: String, shouldRender: Bool) {
+    func emitTerminalOutput(_ bytes: [UInt8], termId: String, shouldRender: Bool) {
         guard !bytes.isEmpty else { return }
 
         // 通过共享终端存储追踪 ACK 计数，流控 ACK：超过阈值时通知 Core 释放背压
