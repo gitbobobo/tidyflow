@@ -658,6 +658,8 @@ struct AIChatErrorV2 {
     let aiTool: AIChatTool
     let sessionId: String
     let error: String
+    /// 结构化错误码（与 Core 共享，用于状态迁移决策）
+    let errorCode: CoreErrorCode
 
     static func from(json: [String: Any]) -> AIChatErrorV2? {
         guard let projectName = json["project_name"] as? String,
@@ -665,7 +667,15 @@ struct AIChatErrorV2 {
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let error = json["error"] as? String else { return nil }
-        return AIChatErrorV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, error: error)
+        let errorCode = CoreErrorCode.parse(json["error_code"] as? String ?? "ai_session_error")
+        return AIChatErrorV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            error: error,
+            errorCode: errorCode
+        )
     }
 }
 

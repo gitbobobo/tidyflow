@@ -210,8 +210,8 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) { appState?.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles) }
     func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult) { appState?.handleEvoAutoCommitResult(result) }
-    func handleEvolutionError(_ message: String, project: String?, workspace: String?) {
-        appState?.handleEvolutionError(message, project: project, workspace: workspace)
+    func handleEvolutionError(_ error: CoreError) {
+        appState?.handleEvolutionError(error.message, project: error.project, workspace: error.workspace)
     }
 }
 
@@ -236,5 +236,9 @@ final class AppStateErrorMessageHandlerAdapter: ErrorMessageHandler {
 
     func handleClientError(_ message: String) {
         appState?.handleClientErrorMessage(message)
+    }
+
+    func handleCoreError(_ error: CoreError) {
+        appState?.handleCoreError(error)
     }
 }

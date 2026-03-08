@@ -172,6 +172,8 @@ class WSClient: NSObject, ObservableObject {
     var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
+    /// 结构化 Core 错误回调（含错误码与上下文）
+    var onCoreError: ((CoreError) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
     /// v7 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
@@ -181,6 +183,16 @@ class WSClient: NSObject, ObservableObject {
             handler.handleClientError(message)
         } else {
             onError?(message)
+        }
+    }
+
+    /// 发送结构化 Core 错误（含错误码与上下文，供多工作区定位使用）
+    func emitCoreError(_ error: CoreError) {
+        if let handler = errorMessageHandler {
+            handler.handleCoreError(error)
+        } else {
+            onCoreError?(error)
+            onError?(error.message)
         }
     }
 

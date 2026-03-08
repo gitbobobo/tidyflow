@@ -19,6 +19,8 @@
 		3DFCBC76B433FB811DF17512 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 		4CF1B8472DFEE28D7A8B1058 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
 		5B5240BAA41C840D0593927E /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
+		CERC00001 /* CoreErrorCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CERC00011 /* CoreErrorCode.swift */; };
+		ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESBT00011 /* ErrorSemanticsBridgeTests.swift */; };
 		5C4A680741E10100F1A1A150 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		6737475ACFA51F4EFC6E1D20 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		6DC2CD6DD0EA09E6120CCC90 /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
@@ -389,6 +391,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
 		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
+		CERC00011 /* CoreErrorCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreErrorCode.swift; sourceTree = "<group>"; };
+		ESBT00011 /* ErrorSemanticsBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorSemanticsBridgeTests.swift; sourceTree = "<group>"; };
 		SPL00016 /* WSClient+Receive+DomainRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainRouting.swift"; sourceTree = "<group>"; };
 		SPL00017 /* WSClient+Receive+DomainCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainCore.swift"; sourceTree = "<group>"; };
 		SPL00018 /* WSClient+Receive+DomainWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainWorkspace.swift"; sourceTree = "<group>"; };
@@ -619,6 +623,7 @@ TSLT011 /* TerminalSessionSemanticLayerTests.swift */,
 TSST013 /* TerminalSessionStoreTests.swift */,
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
+				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -662,6 +667,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				SPL00018 /* WSClient+Receive+DomainWorkspace.swift */,
 				SPL00019 /* WSClient+Receive+DomainAI.swift */,
 				SPL00014 /* WSClient+Send.swift */,
+				CERC00011 /* CoreErrorCode.swift */,
 				1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */,
 			);
 			path = Networking;
@@ -1026,6 +1032,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TPR00001 /* TypedProtocol.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				B3A0000A /* AIChatProtocolModels.swift in Sources */,
+				CERC00001 /* CoreErrorCode.swift in Sources */,
 				EVT00001 /* EvidenceTabSemantics.swift in Sources */,
 				SPL00001 /* ProjectProtocolModels.swift in Sources */,
 				SPL00002 /* GitProtocolModels.swift in Sources */,
@@ -1082,6 +1089,7 @@ TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */,
 TSST003 /* TerminalSessionStoreTests.swift in Sources */,
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
+				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

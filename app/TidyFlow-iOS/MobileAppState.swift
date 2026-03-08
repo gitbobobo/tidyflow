@@ -4192,6 +4192,29 @@ final class MobileAppState: ObservableObject {
             }
         }
 
+        // 结构化 Core 错误处理：通过错误码决定行为，避免字符串匹配漂移
+        // 多工作区安全：只更新归属当前项目/工作区的错误状态
+        wsClient.onCoreError = { [weak self] error in
+            guard let self else { return }
+            // 过滤跨工作区的错误污染
+            let currentProject = self.selectedProjectName.isEmpty ? nil : self.selectedProjectName
+            let currentWorkspace = self.aiActiveWorkspace.isEmpty ? nil : self.aiActiveWorkspace
+            guard error.belongsTo(project: currentProject, workspace: currentWorkspace) else {
+                NSLog(
+                    "[MobileAppState] Ignoring cross-workspace Core error: code=%@ project=%@ workspace=%@",
+                    error.code.rawValue,
+                    error.project ?? "nil",
+                    error.workspace ?? "nil"
+                )
+                return
+            }
+            // 可恢复错误只记录，不更新错误状态
+            if error.code.isRecoverable {
+                return
+            }
+            self.errorMessage = error.message
+        }
+
         wsClient.onClipboardImageSet = { [weak self] ok, message in
             guard let self else { return }
             if ok {

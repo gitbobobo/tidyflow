@@ -13,7 +13,25 @@ enum TFLog {
     static weak var wsClient: WSClient?
 
     /// 同时写入 os.Logger 和通过 WebSocket 发送到 Rust Core
-    static func log(_ logger: Logger, category: String, level: String, _ message: String, detail: String? = nil) {
+    ///
+    /// - Parameters:
+    ///   - errorCode: 当 level == "ERROR" 时可携带共享错误码，与 Core 端的 AppError::code() 对应
+    ///   - project: 错误归属项目（多项目场景）
+    ///   - workspace: 错误归属工作区
+    ///   - sessionId: AI 会话 ID（AI 相关错误）
+    ///   - cycleId: Evolution Cycle ID（Evolution 相关错误）
+    static func log(
+        _ logger: Logger,
+        category: String,
+        level: String,
+        _ message: String,
+        detail: String? = nil,
+        errorCode: CoreErrorCode? = nil,
+        project: String? = nil,
+        workspace: String? = nil,
+        sessionId: String? = nil,
+        cycleId: String? = nil
+    ) {
         // 写入系统日志
         switch level {
         case "DEBUG":
@@ -26,7 +44,17 @@ enum TFLog {
             logger.info("\(message, privacy: .public)")
         }
 
-        // 通过 WebSocket 发送到 Rust Core 写入文件
-        wsClient?.sendLogEntry(level: level, category: category, msg: message, detail: detail)
+        // 通过 WebSocket 发送到 Rust Core 写入文件（含结构化错误码与上下文）
+        wsClient?.sendLogEntry(
+            level: level,
+            category: category,
+            msg: message,
+            detail: detail,
+            errorCode: errorCode,
+            project: project,
+            workspace: workspace,
+            sessionId: sessionId,
+            cycleId: cycleId
+        )
     }
 }

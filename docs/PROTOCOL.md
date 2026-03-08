@@ -456,6 +456,55 @@
   - `thought_level`
 - 其他 category 不直接展示，但会在 Core/App 里保存并透传。
 
+## 错误契约
+
+### 通用错误响应
+
+当 Core 无法处理请求时，发送 `kind = "error"` 包络或 `action = "error"` 事件。Payload 结构（v7）：
+
+```json
+{
+  "code": "project_not_found",
+  "message": "Project 'foo' not found",
+  "project": "foo",
+  "workspace": "default",
+  "session_id": null,
+  "cycle_id": null
+}
+```
+
+- `code`（必填）：稳定错误码字符串，与 `AppError::code()` 一一对应。
+- `message`（必填）：人类可读错误描述，**不得**用于状态迁移决策。
+- `project`、`workspace`、`session_id`、`cycle_id`（均可选）：多项目/多工作区场景下的错误归属定位。
+
+**共享错误码一览**：
+
+| 错误码 | 分类 | 含义 |
+|--------|------|------|
+| `project_not_found` | 基础 | 项目不存在 |
+| `workspace_not_found` | 基础 | 工作区不存在 |
+| `git_error` | 领域 | Git 操作失败 |
+| `file_error` | 领域 | 文件操作失败 |
+| `ai_session_error` | 领域 | AI 会话操作失败 |
+| `evolution_error` | 领域 | Evolution 阶段执行失败 |
+| `artifact_contract_violation` | 领域 | Evolution 产物格式违反契约 |
+| `internal_error` | 通用 | 内部错误 |
+| `error` | 通用 | 兜底错误 |
+
+### 客户端消费约束
+
+1. 状态迁移（可恢复/不可恢复）**必须**依赖 `code` 字段，不允许 `message` 字符串匹配。
+2. 多工作区：通过 `project` + `workspace` 字段过滤，来自其它工作区的错误不覆盖当前 UI 状态。
+3. macOS 与 iOS 对同一错误码必须表现出一致的核心行为语义。
+
+### Evolution 错误事件
+
+`evo_error` 事件额外包含 `source`、`ts`、`cycle_id`，客户端解析时应通过 `CoreError.fromEvoError()` 提取。
+
+### 结构化日志（v1.30.1）
+
+`log_entry` 消息新增 `error_code`、`project`、`workspace`、`session_id`、`cycle_id` 字段，供 Core 文件日志与客户端日志跨端关联同一问题归因。
+
 ## 调试建议
 
 - 先确认双方都使用 `MessagePack`，避免把 JSON 文本发到 v3 通道。
@@ -463,3 +512,4 @@
   - `core/src/server/protocol/mod.rs`
   - `app/TidyFlow/Networking/ProtocolModels.swift`
   - 对应 handler 与 UI 调用方
+  - `schema/protocol/v7/README.md`（错误契约部分）

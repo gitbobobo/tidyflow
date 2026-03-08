@@ -210,3 +210,200 @@ mod msgpack_tests {
         assert!(encoded.len() < 50); // 简单消息应该很紧凑
     }
 }
+
+// ============================================================================
+// 共享错误码归一化测试
+// ============================================================================
+
+mod shared_error_code_tests {
+    use tidyflow_core::server::context::AppError;
+    use tidyflow_core::server::protocol::ServerMessage;
+
+    #[test]
+    fn test_app_error_code_mapping() {
+        // 验证 AppError 各变体映射到稳定错误码
+        assert_eq!(AppError::ProjectNotFound("foo".into()).code(), "project_not_found");
+        assert_eq!(AppError::WorkspaceNotFound("bar".into()).code(), "workspace_not_found");
+        assert_eq!(AppError::Git("err".into()).code(), "git_error");
+        assert_eq!(AppError::File("err".into()).code(), "file_error");
+        assert_eq!(AppError::Internal("err".into()).code(), "internal_error");
+        assert_eq!(AppError::Custom("err".into()).code(), "error");
+        assert_eq!(AppError::AISession("err".into()).code(), "ai_session_error");
+        assert_eq!(AppError::Evolution("err".into()).code(), "evolution_error");
+    }
+
+    #[test]
+    fn test_to_server_error_has_code_field() {
+        // 验证 to_server_error() 产生的协议消息包含正确 code
+        let err = AppError::ProjectNotFound("myproject".into());
+        let msg = err.to_server_error();
+        match msg {
+            ServerMessage::Error { code, message, project, workspace, session_id, cycle_id } => {
+                assert_eq!(code, "project_not_found");
+                assert!(message.contains("myproject"));
+                // 无上下文版本字段全为 None
+                assert!(project.is_none());
+                assert!(workspace.is_none());
+                assert!(session_id.is_none());
+                assert!(cycle_id.is_none());
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn test_to_server_error_with_context() {
+        // 验证带上下文版本保留多工作区定位字段
+        let err = AppError::AISession("session failed".into());
+        let msg = err.to_server_error_with_context(
+            Some("myproject".to_string()),
+            Some("feature-x".to_string()),
+            Some("sess-123".to_string()),
+            None,
+        );
+        match msg {
+            ServerMessage::Error { code, project, workspace, session_id, .. } => {
+                assert_eq!(code, "ai_session_error");
+                assert_eq!(project.as_deref(), Some("myproject"));
+                assert_eq!(workspace.as_deref(), Some("feature-x"));
+                assert_eq!(session_id.as_deref(), Some("sess-123"));
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn test_make_error_helper() {
+        // 验证辅助构造方法向后兼容（无上下文）
+        let msg = ServerMessage::make_error("git_error", "git failed");
+        match msg {
+            ServerMessage::Error { code, message, project, workspace, session_id, cycle_id } => {
+                assert_eq!(code, "git_error");
+                assert_eq!(message, "git failed");
+                assert!(project.is_none());
+                assert!(workspace.is_none());
+                assert!(session_id.is_none());
+                assert!(cycle_id.is_none());
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn test_make_error_with_context_helper() {
+        // 验证带上下文辅助构造方法保留所有上下文字段
+        let msg = ServerMessage::make_error_with_context(
+            "evolution_error",
+            "evo failed",
+            Some("proj".to_string()),
+            Some("ws".to_string()),
+            None,
+            Some("cycle-abc".to_string()),
+        );
+        match msg {
+            ServerMessage::Error { code, project, workspace, cycle_id, .. } => {
+                assert_eq!(code, "evolution_error");
+                assert_eq!(project.as_deref(), Some("proj"));
+                assert_eq!(workspace.as_deref(), Some("ws"));
+                assert_eq!(cycle_id.as_deref(), Some("cycle-abc"));
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn test_error_serialization_omits_none_context() {
+        // 验证无上下文时 JSON 序列化不输出 None 字段（协议向后兼容）
+        let msg = ServerMessage::make_error("internal_error", "something went wrong");
+        let json = serde_json::to_string(&msg).expect("serialize should succeed");
+        // None 字段不应出现在 JSON 中
+        assert!(!json.contains("\"project\""));
+        assert!(!json.contains("\"workspace\""));
+        assert!(!json.contains("\"session_id\""));
+        assert!(!json.contains("\"cycle_id\""));
+        // code 和 message 应存在
+        assert!(json.contains("\"internal_error\""));
+        assert!(json.contains("something went wrong"));
+    }
+
+    #[test]
+    fn test_error_serialization_includes_context_when_present() {
+        // 验证有上下文时 JSON 序列化包含上下文字段
+        let msg = ServerMessage::make_error_with_context(
+            "project_not_found",
+            "Project 'foo' not found",
+            Some("foo".to_string()),
+            Some("default".to_string()),
+            None,
+            None,
+        );
+        let json = serde_json::to_string(&msg).expect("serialize should succeed");
+        assert!(json.contains("\"foo\""));
+        assert!(json.contains("\"default\""));
+        // 仍然不应输出 None 字段
+        assert!(!json.contains("\"session_id\""));
+        assert!(!json.contains("\"cycle_id\""));
+    }
+
+    #[test]
+    fn test_log_entry_new_fields_deserialization() {
+        // 验证 ClientMessage::LogEntry 新字段可正确反序列化
+        use tidyflow_core::server::protocol::ClientMessage;
+
+        let json_with_error_code = serde_json::json!({
+            "type": "log_entry",
+            "level": "ERROR",
+            "source": "swift",
+            "category": "ws",
+            "msg": "WebSocket receive failed",
+            "detail": "timeout",
+            "error_code": "ws_receive_error",
+            "project": "myproject",
+            "workspace": "default",
+            "session_id": null,
+            "cycle_id": null
+        });
+
+        let msg: ClientMessage = serde_json::from_value(json_with_error_code)
+            .expect("deserialize should succeed");
+
+        match msg {
+            ClientMessage::LogEntry { level, error_code, project, workspace, .. } => {
+                assert_eq!(level, "ERROR");
+                assert_eq!(error_code.as_deref(), Some("ws_receive_error"));
+                assert_eq!(project.as_deref(), Some("myproject"));
+                assert_eq!(workspace.as_deref(), Some("default"));
+            }
+            _ => panic!("Expected ClientMessage::LogEntry"),
+        }
+    }
+
+    #[test]
+    fn test_log_entry_backward_compat_without_new_fields() {
+        // 验证旧格式 LogEntry（无新字段）仍可正确反序列化（向后兼容）
+        use tidyflow_core::server::protocol::ClientMessage;
+
+        let json_old_format = serde_json::json!({
+            "type": "log_entry",
+            "level": "INFO",
+            "source": "swift",
+            "msg": "App started"
+        });
+
+        let msg: ClientMessage = serde_json::from_value(json_old_format)
+            .expect("old format deserialize should succeed");
+
+        match msg {
+            ClientMessage::LogEntry { level, error_code, project, workspace, session_id, cycle_id, .. } => {
+                assert_eq!(level, "INFO");
+                // 新字段均应为 None（向后兼容默认值）
+                assert!(error_code.is_none());
+                assert!(project.is_none());
+                assert!(workspace.is_none());
+                assert!(session_id.is_none());
+                assert!(cycle_id.is_none());
+            }
+            _ => panic!("Expected ClientMessage::LogEntry"),
+        }
+    }
+}

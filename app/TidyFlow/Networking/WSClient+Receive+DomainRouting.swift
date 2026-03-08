@@ -98,8 +98,8 @@ extension WSClient {
             onClipboardImageSet?(ok, message)
             return true
         case "error":
-            let errorMsg = json["message"] as? String ?? "Unknown error"
-            emitClientError(errorMsg)
+            let coreError = CoreError.from(json: json)
+            emitCoreError(coreError)
             return true
         default:
             TFLog.ws.warning(

@@ -110,3 +110,77 @@ AI 会话列表 HTTP 读取接口统一为：
 - 排序固定为 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`
 - 默认列表排除 `session_origin = evolution_system` 的系统会话
 - 按 `session_id` 精确读取消息/状态不受列表过滤影响
+
+## 错误契约（v7）
+
+### 通用错误响应（`kind = "error"` 或 `action = "error"`）
+
+所有 Core 错误响应的 payload 保证以下字段：
+
+```json
+{
+  "code": "project_not_found",
+  "message": "Project 'foo' not found",
+  "project": "foo",         // 可选：错误归属项目
+  "workspace": "default",   // 可选：错误归属工作区
+  "session_id": null,       // 可选：AI 会话 ID
+  "cycle_id": null          // 可选：Evolution Cycle ID
+}
+```
+
+**共享错误码**（`code` 字段）与 `AppError::code()` 保持一一对应：
+
+| 错误码 | 含义 | 可恢复 |
+|--------|------|--------|
+| `project_not_found` | 指定项目不存在 | ✓ |
+| `workspace_not_found` | 指定工作区不存在 | ✓ |
+| `git_error` | Git 操作失败 | - |
+| `file_error` | 文件操作失败 | - |
+| `internal_error` | 内部错误 | - |
+| `ai_session_error` | AI 会话操作失败 | - |
+| `evolution_error` | Evolution 阶段执行失败 | - |
+| `artifact_contract_violation` | Evolution 产物格式违反契约 | - |
+| `error` | 通用兜底错误 | - |
+
+**多工作区/多项目消费约束**：
+- 客户端通过 `project` + `workspace` 字段决定是否更新当前上下文的状态
+- 来自其它工作区的错误不允许覆盖当前工作区的 UI 状态
+- 错误码是决定状态迁移（可恢复/不可恢复）的唯一依据，不允许客户端通过 `message` 字段的字符串匹配决定行为
+
+### Evolution 错误事件（`action = "evo_error"`）
+
+`evo_error` 事件的 payload 继承通用错误字段，并额外包含：
+
+```json
+{
+  "code": "artifact_contract_violation",
+  "message": "...",
+  "project": "myproject",
+  "workspace": "feature-x",
+  "cycle_id": "2026-03-08T06-39-28-187Z",
+  "source": "implement.general.1",
+  "ts": "2026-03-08T06:45:00.000+00:00"
+}
+```
+
+### 结构化日志字段（`ClientMessage::LogEntry`，v1.30.1）
+
+客户端日志上报（`log_entry`）现支持携带结构化错误信息：
+
+```json
+{
+  "type": "log_entry",
+  "level": "ERROR",
+  "source": "swift",
+  "category": "ws",
+  "msg": "WebSocket receive failed",
+  "detail": "...",
+  "error_code": "ws_receive_error",
+  "project": "myproject",
+  "workspace": "default",
+  "session_id": null,
+  "cycle_id": null
+}
+```
+
+Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Core 日志均写入相同的上下文字段，便于跨端关联同一问题。

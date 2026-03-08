@@ -1175,4 +1175,46 @@ extension AppState {
             aiStore(for: tool).setRecentHistoryLoading(false)
         }
     }
+
+    /// 处理来自 Core 的结构化错误（通过 errorCode 决定状态迁移，避免字符串匹配漂移）
+    ///
+    /// 多工作区安全：错误仅影响归属的 project/workspace，不污染当前上下文。
+    func handleCoreError(_ error: CoreError) {
+        // 过滤：跨工作区的错误不影响当前选中工作区的状态
+        let belongsToCurrentContext = error.belongsTo(
+            project: selectedProjectName.isEmpty ? nil : selectedProjectName,
+            workspace: selectedWorkspaceKey
+        )
+
+        // 对可恢复错误只记录日志，不改变状态
+        if error.code.isRecoverable {
+            TFLog.app.info(
+                "Recoverable Core error (code=\(error.code.rawValue, privacy: .public)): \(error.message, privacy: .public)"
+            )
+            if belongsToCurrentContext {
+                handleClientErrorMessage(error.message)
+            }
+            return
+        }
+
+        // 多工作区定位：只有归属当前工作区的错误才触发 UI 更新
+        guard belongsToCurrentContext else {
+            TFLog.app.warning(
+                "Ignoring Core error for other workspace: code=\(error.code.rawValue, privacy: .public) project=\(error.project ?? "nil", privacy: .public) workspace=\(error.workspace ?? "nil", privacy: .public)"
+            )
+            return
+        }
+
+        switch error.code {
+        case .evolutionError, .artifactContractViolation, .managedBacklogSyncFailed:
+            handleEvolutionError(error.message, project: error.project, workspace: error.workspace)
+        case .aiSessionError:
+            // AI 会话错误已由 AIChatErrorV2 路径处理，这里只补充日志
+            TFLog.app.error(
+                "AI session error from Core: session=\(error.sessionId ?? "nil", privacy: .public), msg=\(error.message, privacy: .public)"
+            )
+        default:
+            handleClientErrorMessage(error.message)
+        }
+    }
 }

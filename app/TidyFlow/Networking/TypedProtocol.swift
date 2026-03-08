@@ -200,7 +200,8 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2])
     func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult)
-    func handleEvolutionError(_ message: String, project: String?, workspace: String?)
+    /// 处理 Evolution 错误（携带结构化错误码与上下文）
+    func handleEvolutionError(_ error: CoreError)
 }
 
 extension EvolutionMessageHandler {
@@ -213,7 +214,7 @@ extension EvolutionMessageHandler {
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {}
     func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult) {}
-    func handleEvolutionError(_ message: String, project: String?, workspace: String?) {}
+    func handleEvolutionError(_ error: CoreError) {}
 }
 
 protocol EvidenceMessageHandler: AnyObject {
@@ -230,10 +231,16 @@ extension EvidenceMessageHandler {
 
 protocol ErrorMessageHandler: AnyObject {
     func handleClientError(_ message: String)
+    /// 处理来自 Core 的结构化错误（含错误码与上下文）
+    func handleCoreError(_ error: CoreError)
 }
 
 extension ErrorMessageHandler {
     func handleClientError(_ message: String) {}
+    /// 默认实现：将结构化错误降级为纯文本消息（向后兼容）
+    func handleCoreError(_ error: CoreError) {
+        handleClientError(error.message)
+    }
 }
 
 // MARK: - 类型安全的请求构建器
