@@ -6,6 +6,7 @@
 //! - Setup step execution from project config
 //! - State persistence
 
+pub mod cache_metrics;
 pub mod config;
 pub mod project;
 pub mod setup;

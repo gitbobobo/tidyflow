@@ -769,3 +769,281 @@ mod multi_workspace_isolation_tests {
         assert!(sorted.is_empty());
     }
 }
+
+// ============================================================================
+// cache_metrics 模块定向测试（WI-005）
+// ============================================================================
+
+mod workspace_cache_metrics {
+    use tidyflow_core::workspace::cache_metrics::{
+        self, WorkspaceCacheSnapshot, REBUILD_BUDGET_THRESHOLD,
+    };
+
+    fn root(id: &str) -> String {
+        format!("/tmp/unit_test_cache_metrics/{}", id)
+    }
+
+    fn clean(id: &str) -> String {
+        let r = root(id);
+        cache_metrics::clear_metrics_for_path(&r);
+        r
+    }
+
+    // --------------------------------------------------------
+    // 基础计数正确性
+    // --------------------------------------------------------
+
+    #[test]
+    fn file_cache_counters_count_correctly() {
+        let r = clean("file_basic");
+        cache_metrics::record_file_cache_hit(&r);
+        cache_metrics::record_file_cache_hit(&r);
+        cache_metrics::record_file_cache_miss(&r);
+        cache_metrics::record_file_cache_rebuild(&r, 100);
+        cache_metrics::record_file_cache_incremental_update(&r, 101);
+        cache_metrics::record_file_cache_eviction(&r, "test_evict");
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert_eq!(snap.file_cache.hit_count, 2);
+        assert_eq!(snap.file_cache.miss_count, 1);
+        assert_eq!(snap.file_cache.rebuild_count, 1);
+        assert_eq!(snap.file_cache.incremental_update_count, 1);
+        assert_eq!(snap.file_cache.eviction_count, 1);
+    }
+
+    #[test]
+    fn git_cache_counters_count_correctly() {
+        let r = clean("git_basic");
+        cache_metrics::record_git_cache_hit(&r);
+        cache_metrics::record_git_cache_miss(&r);
+        cache_metrics::record_git_cache_miss(&r);
+        cache_metrics::record_git_cache_rebuild(&r, 20);
+        cache_metrics::record_git_cache_eviction(&r, "invalidated");
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "ws_git", &r);
+        assert_eq!(snap.git_cache.hit_count, 1);
+        assert_eq!(snap.git_cache.miss_count, 2);
+        assert_eq!(snap.git_cache.rebuild_count, 1);
+        assert_eq!(snap.git_cache.eviction_count, 1);
+    }
+
+    // --------------------------------------------------------
+    // 预算判定由 Core 计算
+    // --------------------------------------------------------
+
+    #[test]
+    fn budget_not_exceeded_below_threshold() {
+        let r = clean("budget_below");
+        for _ in 0..(REBUILD_BUDGET_THRESHOLD - 1) {
+            cache_metrics::record_file_cache_rebuild(&r, 50);
+        }
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert!(!snap.budget_exceeded, "未超阈值不应标记 budget_exceeded");
+    }
+
+    #[test]
+    fn budget_exceeded_at_threshold() {
+        let r = clean("budget_at");
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            cache_metrics::record_file_cache_rebuild(&r, 50);
+        }
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert!(snap.budget_exceeded, "达到阈值应标记 budget_exceeded");
+    }
+
+    #[test]
+    fn budget_exceeded_by_combined_file_and_git_rebuilds() {
+        let r = clean("budget_combined");
+        // 文件重建 + git 重建合并超过阈值
+        let half = REBUILD_BUDGET_THRESHOLD / 2;
+        for _ in 0..=half {
+            cache_metrics::record_file_cache_rebuild(&r, 50);
+        }
+        for _ in 0..=half {
+            cache_metrics::record_git_cache_rebuild(&r, 20);
+        }
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert!(snap.budget_exceeded, "文件+git 重建合并超阈值应标记 budget_exceeded");
+    }
+
+    // --------------------------------------------------------
+    // 淘汰原因传播
+    // --------------------------------------------------------
+
+    #[test]
+    fn eviction_reason_propagated_in_snapshot() {
+        let r = clean("evict_reason");
+        cache_metrics::record_file_cache_eviction(&r, "memory_pressure");
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert_eq!(snap.last_eviction_reason.as_deref(), Some("memory_pressure"));
+    }
+
+    #[test]
+    fn later_eviction_reason_overwrites_earlier() {
+        let r = clean("evict_overwrite");
+        cache_metrics::record_file_cache_eviction(&r, "ttl_expired");
+        cache_metrics::record_git_cache_eviction(&r, "invalidated");
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        // 最后一次淘汰原因为 invalidated
+        assert_eq!(snap.last_eviction_reason.as_deref(), Some("invalidated"));
+    }
+
+    #[test]
+    fn no_eviction_produces_none_reason() {
+        let r = clean("no_evict");
+        cache_metrics::record_file_cache_hit(&r);
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert!(snap.last_eviction_reason.is_none());
+    }
+
+    // --------------------------------------------------------
+    // 多项目隔离性（(project, workspace) 边界）
+    // --------------------------------------------------------
+
+    #[test]
+    fn metrics_isolated_per_project_same_workspace_name() {
+        let root_a = clean("iso_proj_a");
+        let root_b = clean("iso_proj_b");
+
+        for _ in 0..10 {
+            cache_metrics::record_file_cache_hit(&root_a);
+        }
+        for _ in 0..3 {
+            cache_metrics::record_file_cache_hit(&root_b);
+        }
+
+        let snap_a = WorkspaceCacheSnapshot::from_counters("project_a", "default", &root_a);
+        let snap_b = WorkspaceCacheSnapshot::from_counters("project_b", "default", &root_b);
+
+        assert_eq!(snap_a.file_cache.hit_count, 10, "project_a/default 指标被污染");
+        assert_eq!(snap_b.file_cache.hit_count, 3, "project_b/default 指标被污染");
+        assert_ne!(
+            snap_a.file_cache.hit_count,
+            snap_b.file_cache.hit_count,
+            "同名 default 工作区必须按项目隔离"
+        );
+    }
+
+    #[test]
+    fn clear_metrics_resets_all_counters() {
+        let r = clean("clear_test");
+        cache_metrics::record_file_cache_hit(&r);
+        cache_metrics::record_file_cache_rebuild(&r, 50);
+        cache_metrics::record_git_cache_hit(&r);
+        cache_metrics::clear_metrics_for_path(&r);
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &r);
+        assert_eq!(snap.file_cache.hit_count, 0);
+        assert_eq!(snap.file_cache.rebuild_count, 0);
+        assert_eq!(snap.git_cache.hit_count, 0);
+        assert!(!snap.budget_exceeded);
+    }
+}
+
+// ============================================================================
+// 工作区资源监控守护测试（WI-001, WI-005）
+// ============================================================================
+
+mod workspace_cache_resource_guard {
+    use tidyflow_core::workspace::cache_metrics::{
+        self, WorkspaceCacheSnapshot, REBUILD_BUDGET_THRESHOLD,
+    };
+
+    fn clean(id: &str) -> String {
+        let r = format!("/tmp/unit_test_resource_guard/{}", id);
+        cache_metrics::clear_metrics_for_path(&r);
+        r
+    }
+
+    /// 预算超限时 budget_exceeded 标志被正确设置，可用于资源守护决策。
+    #[test]
+    fn budget_guard_triggers_on_rebuild_storm() {
+        let r = clean("guard_storm");
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            cache_metrics::record_file_cache_rebuild(&r, 30);
+        }
+        let snap = WorkspaceCacheSnapshot::from_counters("proj", "ws", &r);
+        assert!(
+            snap.budget_exceeded,
+            "重建风暴后 budget_exceeded 应被设置，触发资源守护"
+        );
+    }
+
+    /// 清理后预算超限标志复位，资源守护可以重新计入。
+    #[test]
+    fn budget_guard_resets_after_clear() {
+        let r = clean("guard_reset");
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            cache_metrics::record_file_cache_rebuild(&r, 30);
+        }
+        let snap_before = WorkspaceCacheSnapshot::from_counters("proj", "ws", &r);
+        assert!(snap_before.budget_exceeded, "清理前应超限");
+
+        cache_metrics::clear_metrics_for_path(&r);
+        let snap_after = WorkspaceCacheSnapshot::from_counters("proj", "ws", &r);
+        assert!(
+            !snap_after.budget_exceeded,
+            "清理后 budget_exceeded 应复位"
+        );
+    }
+
+    /// 多工作区间资源守护状态相互隔离，一个工作区超限不影响另一个。
+    #[test]
+    fn resource_guard_isolation_across_workspaces() {
+        let r_hot = clean("guard_hot");
+        let r_cold = clean("guard_cold");
+
+        // r_hot 发生重建风暴
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            cache_metrics::record_file_cache_rebuild(&r_hot, 40);
+        }
+        // r_cold 只有少量命中
+        cache_metrics::record_file_cache_hit(&r_cold);
+
+        let snap_hot = WorkspaceCacheSnapshot::from_counters("proj", "hot_ws", &r_hot);
+        let snap_cold = WorkspaceCacheSnapshot::from_counters("proj", "cold_ws", &r_cold);
+
+        assert!(
+            snap_hot.budget_exceeded,
+            "热工作区应触发资源守护"
+        );
+        assert!(
+            !snap_cold.budget_exceeded,
+            "冷工作区不应被热工作区的超限状态污染"
+        );
+    }
+
+    /// 淘汰事件被正确记录且资源守护可感知淘汰原因。
+    #[test]
+    fn resource_guard_detects_eviction_events() {
+        let r = clean("guard_evict");
+        cache_metrics::record_file_cache_eviction(&r, "memory_limit");
+        cache_metrics::record_git_cache_eviction(&r, "ttl_expired");
+
+        let snap = WorkspaceCacheSnapshot::from_counters("proj", "ws", &r);
+        // 最后一次淘汰来自 git cache
+        assert_eq!(
+            snap.last_eviction_reason.as_deref(),
+            Some("ttl_expired"),
+            "资源守护应可感知最近一次淘汰原因"
+        );
+        assert_eq!(snap.file_cache.eviction_count, 1);
+        assert_eq!(snap.git_cache.eviction_count, 1);
+    }
+
+    /// 无活动工作区（仅 hit，无 rebuild）不应触发资源守护预算超限。
+    #[test]
+    fn inactive_workspace_does_not_trigger_resource_guard() {
+        let r = clean("guard_inactive");
+        // 大量命中但无重建
+        for _ in 0..100 {
+            cache_metrics::record_file_cache_hit(&r);
+            cache_metrics::record_git_cache_hit(&r);
+        }
+        let snap = WorkspaceCacheSnapshot::from_counters("proj", "ws", &r);
+        assert!(
+            !snap.budget_exceeded,
+            "纯命中型工作区不应触发资源守护"
+        );
+    }
+}

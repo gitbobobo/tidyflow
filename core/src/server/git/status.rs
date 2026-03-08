@@ -13,6 +13,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use super::utils::*;
+use crate::workspace::cache_metrics;
 
 /// 缓存条目
 struct CacheEntry {
@@ -132,22 +133,28 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     if let Ok(cache) = GIT_STATUS_CACHE.lock() {
         if let Some(entry) = cache.get(&key) {
             if entry.created_at.elapsed().as_secs() < CACHE_TTL_SECS {
+                cache_metrics::record_git_cache_hit(&key);
                 return Ok(entry.result.clone());
             }
+            // TTL 过期，将在下方重建
+            cache_metrics::record_git_cache_eviction(&key, "ttl_expired");
         }
     }
 
+    cache_metrics::record_git_cache_miss(&key);
     let result = git_status_uncached(workspace_root)?;
+    let item_count = result.items.len();
 
     if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
         cache.insert(
-            key,
+            key.clone(),
             CacheEntry {
                 result: result.clone(),
                 created_at: Instant::now(),
             },
         );
     }
+    cache_metrics::record_git_cache_rebuild(&key, item_count);
 
     Ok(result)
 }
@@ -236,7 +243,9 @@ pub fn check_branch_divergence_local(
 pub fn invalidate_git_status_cache(workspace_root: &Path) {
     let key = workspace_root.to_string_lossy().to_string();
     if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
-        cache.remove(&key);
+        if cache.remove(&key).is_some() {
+            cache_metrics::record_git_cache_eviction(&key, "invalidated");
+        }
     }
 }
 

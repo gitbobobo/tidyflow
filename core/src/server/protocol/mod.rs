@@ -1779,6 +1779,51 @@ pub struct WorkspaceInfo {
     pub sidebar_status: WorkspaceSidebarStatusInfo,
 }
 
+// ============================================================================
+// 工作区缓存可观测性协议类型
+// ============================================================================
+
+/// 文件索引缓存指标（协议传输用，由 Core 权威输出）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileCacheMetricsInfo {
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub rebuild_count: u64,
+    pub incremental_update_count: u64,
+    pub eviction_count: u64,
+    pub item_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_eviction_reason: Option<String>,
+}
+
+/// Git 状态缓存指标（协议传输用，由 Core 权威输出）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GitCacheMetricsInfo {
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub rebuild_count: u64,
+    pub eviction_count: u64,
+    pub item_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_eviction_reason: Option<String>,
+}
+
+/// 工作区级缓存可观测性快照（HTTP system_snapshot 响应字段）
+///
+/// 按 `(project, workspace)` 隔离，所有字段由 Core 权威计算，客户端只消费。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCacheMetricsInfo {
+    pub project: String,
+    pub workspace: String,
+    pub file_cache: FileCacheMetricsInfo,
+    pub git_cache: GitCacheMetricsInfo,
+    /// true 表示该工作区缓存重建次数已超过预算阈值
+    pub budget_exceeded: bool,
+    /// 最近一次淘汰原因（文件或 Git 缓存）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_eviction_reason: Option<String>,
+}
+
 /// AI Git commit information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIGitCommit {

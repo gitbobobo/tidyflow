@@ -7,6 +7,7 @@ use tracing::debug;
 use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
 use crate::server::protocol::{FileEntryInfo, ServerMessage};
+use crate::workspace::cache_metrics;
 
 const FILE_INDEX_CACHE_TTL_SECS: u64 = 15;
 
@@ -27,7 +28,9 @@ fn file_index_cache_key(root: &Path) -> String {
 pub fn invalidate_file_index_cache(root: &Path) {
     let key = file_index_cache_key(root);
     if let Ok(mut cache) = FILE_INDEX_CACHE.lock() {
-        cache.remove(&key);
+        if cache.remove(&key).is_some() {
+            cache_metrics::record_file_cache_eviction(&key, "invalidated");
+        }
     }
 }
 
@@ -114,6 +117,10 @@ pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: 
         rel_paths,
         entry.items.len()
     );
+    cache_metrics::record_file_cache_incremental_update(
+        &file_index_cache_key(root),
+        entry.items.len(),
+    );
 }
 
 fn read_file_index_cache(root: &Path) -> Option<(Vec<String>, Vec<String>, bool)> {
@@ -122,8 +129,10 @@ fn read_file_index_cache(root: &Path) -> Option<(Vec<String>, Vec<String>, bool)
     let entry = cache.get(&key)?;
     if entry.created_at.elapsed().as_secs() >= FILE_INDEX_CACHE_TTL_SECS {
         cache.remove(&key);
+        cache_metrics::record_file_cache_eviction(&key, "ttl_expired");
         return None;
     }
+    cache_metrics::record_file_cache_hit(&key);
     Some((
         entry.items.clone(),
         entry.item_search_keys.clone(),
@@ -133,6 +142,7 @@ fn read_file_index_cache(root: &Path) -> Option<(Vec<String>, Vec<String>, bool)
 
 fn write_file_index_cache(root: &Path, items: &[String], truncated: bool) {
     let key = file_index_cache_key(root);
+    let item_count = items.len();
     let entry = FileIndexCacheEntry {
         items: items.to_vec(),
         item_search_keys: items.iter().map(|item| item.to_lowercase()).collect(),
@@ -140,8 +150,9 @@ fn write_file_index_cache(root: &Path, items: &[String], truncated: bool) {
         created_at: Instant::now(),
     };
     if let Ok(mut cache) = FILE_INDEX_CACHE.lock() {
-        cache.insert(key, entry);
+        cache.insert(key.clone(), entry);
     }
+    cache_metrics::record_file_cache_rebuild(&key, item_count);
 }
 
 /// 将 FileApiError 映射为协议错误码与消息。
@@ -296,6 +307,8 @@ pub async fn file_index_message(
     }
 
     let root_for_index = root.clone();
+    let root_key = file_index_cache_key(&root);
+    cache_metrics::record_file_cache_miss(&root_key);
     let walk_started = Instant::now();
     let result =
         tokio::task::spawn_blocking(move || file_index::index_files(&root_for_index)).await;

@@ -5,7 +5,11 @@ use serde::Serialize;
 
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
-use crate::server::protocol::{ServerMessage, WorkspaceInfo, PROTOCOL_VERSION};
+use crate::server::protocol::{
+    ServerMessage, WorkspaceCacheMetricsInfo, FileCacheMetricsInfo, GitCacheMetricsInfo,
+    WorkspaceInfo, PROTOCOL_VERSION,
+};
+use crate::workspace::cache_metrics::WorkspaceCacheSnapshot;
 use crate::workspace::state::DEFAULT_WORKSPACE_NAME;
 
 #[derive(Debug, Clone, Serialize)]
@@ -15,6 +19,8 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     core_version: String,
     protocol_version: u32,
     workspace_items: Vec<SystemSnapshotWorkspaceItem>,
+    /// 每个工作区的缓存可观测性指标，由 Core 权威输出，按 `(project, workspace)` 隔离
+    cache_metrics: Vec<WorkspaceCacheMetricsInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,13 +56,15 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
             .await
             .map_err(map_query_error)?;
     let evo_index = evolution_index_from_message(evo_snapshot)?;
-    let workspace_items = build_workspace_items(&ctx.app_state, &evo_index).await;
+    let (workspace_items, cache_metrics) =
+        build_workspace_items_and_metrics(&ctx.app_state, &evo_index).await;
 
     Ok(Json(SystemSnapshotResponse {
         msg_type: "system_snapshot",
         core_version: env!("CARGO_PKG_VERSION").to_string(),
         protocol_version: PROTOCOL_VERSION,
         workspace_items,
+        cache_metrics,
     }))
 }
 
@@ -100,19 +108,23 @@ fn evolution_index_from_items(
     index
 }
 
-async fn build_workspace_items(
+async fn build_workspace_items_and_metrics(
     app_state: &SharedAppState,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
-) -> Vec<SystemSnapshotWorkspaceItem> {
+) -> (Vec<SystemSnapshotWorkspaceItem>, Vec<WorkspaceCacheMetricsInfo>) {
     let mut items = Vec::new();
+    let mut cache_metrics_list = Vec::new();
 
     {
         let state = app_state.read().await;
         for project in state.projects.values() {
             let project_name = project.name.clone();
+
+            // default 虚拟工作区
+            let default_root = project.root_path.to_string_lossy().to_string();
             let default_info = WorkspaceInfo {
                 name: DEFAULT_WORKSPACE_NAME.to_string(),
-                root: project.root_path.to_string_lossy().to_string(),
+                root: default_root.clone(),
                 branch: project.default_branch.clone(),
                 status: "ready".to_string(),
                 sidebar_status: Default::default(),
@@ -122,18 +134,30 @@ async fn build_workspace_items(
                 default_info,
                 evo_index,
             ));
+            cache_metrics_list.push(snapshot_to_metrics_info(
+                &WorkspaceCacheSnapshot::from_counters(
+                    &project_name,
+                    DEFAULT_WORKSPACE_NAME,
+                    &default_root,
+                ),
+            ));
 
+            // 命名工作区
             let mut workspaces = project.workspaces.values().collect::<Vec<_>>();
             workspaces.sort_by(|a, b| a.name.cmp(&b.name));
             for ws in workspaces {
+                let root = ws.worktree_path.to_string_lossy().to_string();
                 let info = WorkspaceInfo {
                     name: ws.name.clone(),
-                    root: ws.worktree_path.to_string_lossy().to_string(),
+                    root: root.clone(),
                     branch: ws.branch.clone(),
                     status: crate::application::project::workspace_status_str(&ws.status),
                     sidebar_status: Default::default(),
                 };
                 items.push(build_workspace_item(project_name.clone(), info, evo_index));
+                cache_metrics_list.push(snapshot_to_metrics_info(
+                    &WorkspaceCacheSnapshot::from_counters(&project_name, &ws.name, &root),
+                ));
             }
         }
     }
@@ -141,7 +165,36 @@ async fn build_workspace_items(
     items.sort_by(|a, b| {
         (a.project.clone(), a.workspace.clone()).cmp(&(b.project.clone(), b.workspace.clone()))
     });
-    items
+    cache_metrics_list.sort_by(|a, b| {
+        (a.project.clone(), a.workspace.clone()).cmp(&(b.project.clone(), b.workspace.clone()))
+    });
+    (items, cache_metrics_list)
+}
+
+fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetricsInfo {
+    WorkspaceCacheMetricsInfo {
+        project: snap.project.clone(),
+        workspace: snap.workspace.clone(),
+        file_cache: FileCacheMetricsInfo {
+            hit_count: snap.file_cache.hit_count,
+            miss_count: snap.file_cache.miss_count,
+            rebuild_count: snap.file_cache.rebuild_count,
+            incremental_update_count: snap.file_cache.incremental_update_count,
+            eviction_count: snap.file_cache.eviction_count,
+            item_count: snap.file_cache.item_count as u64,
+            last_eviction_reason: snap.file_cache.last_eviction_reason.clone(),
+        },
+        git_cache: GitCacheMetricsInfo {
+            hit_count: snap.git_cache.hit_count,
+            miss_count: snap.git_cache.miss_count,
+            rebuild_count: snap.git_cache.rebuild_count,
+            eviction_count: snap.git_cache.eviction_count,
+            item_count: snap.git_cache.item_count as u64,
+            last_eviction_reason: snap.git_cache.last_eviction_reason.clone(),
+        },
+        budget_exceeded: snap.budget_exceeded,
+        last_eviction_reason: snap.last_eviction_reason.clone(),
+    }
 }
 
 fn build_workspace_item(
@@ -319,8 +372,8 @@ mod tests {
     async fn title_should_be_propagated_when_present() {
         let items = vec![test_item("cycle-2", Some("本轮标题"), None, None, None)];
         let idx = evolution_index_from_items(&items);
-        let result =
-            build_workspace_items(&Arc::new(tokio::sync::RwLock::new(make_test_state())), &idx)
+        let (result, _) =
+            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(make_test_state())), &idx)
                 .await;
         let default_item = result
             .iter()
@@ -333,8 +386,8 @@ mod tests {
     #[tokio::test]
     async fn workspace_items_should_include_default_and_not_started_when_no_evolution() {
         let state = make_test_state();
-        let items =
-            build_workspace_items(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
+        let (items, cache_metrics) =
+            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
                 .await;
         let default_item = items
             .iter()
@@ -343,6 +396,8 @@ mod tests {
         assert_eq!(default_item.evolution_status, "not_started");
         assert_eq!(default_item.evolution_cycle_id, None);
         assert_eq!(default_item.title, None);
+        // cache_metrics 应包含 default 工作区的指标条目
+        assert!(cache_metrics.iter().any(|m| m.project == "demo" && m.workspace == "default"));
     }
 
     #[tokio::test]
@@ -366,8 +421,8 @@ mod tests {
             workspaces: HashMap::new(),
             commands: Vec::new(),
         });
-        let items =
-            build_workspace_items(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
+        let (items, _) =
+            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
                 .await;
         let keys = items
             .into_iter()

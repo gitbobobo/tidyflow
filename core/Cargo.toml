@@ -50,6 +50,11 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 tempfile = "3"
 rmp-serde = "1.1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "workspace_cache_bench"
+harness = false
 
 [profile.release]
 opt-level = 3
