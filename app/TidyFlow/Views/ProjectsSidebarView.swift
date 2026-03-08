@@ -131,32 +131,13 @@ struct ProjectsSidebarView: View {
         return minKey
     }
 
-    /// 计算项目排序索引（纯排序逻辑，不含 Binding）
+    /// 计算项目排序索引（委托到 ProjectSortingSemantics 共享排序规则）
     private func computeSortedIndices() -> [Int] {
-        appState.projects.indices.sorted { i, j in
-            let projectA = appState.projects[i]
-            let projectB = appState.projects[j]
-
-            let hasShortcutA = projectMinShortcutKey(projectA) < Int.max
-            let hasShortcutB = projectMinShortcutKey(projectB) < Int.max
-
-            // 1. 有快捷键的项目排在前面
-            if hasShortcutA != hasShortcutB {
-                return hasShortcutA
-            }
-
-            // 2. 有快捷键的项目之间，按最早终端创建时间排序（早的在前）
-            if hasShortcutA && hasShortcutB {
-                let timeA = projectEarliestTerminalTime(projectA)
-                let timeB = projectEarliestTerminalTime(projectB)
-                if let tA = timeA, let tB = timeB, tA != tB {
-                    return tA < tB
-                }
-            }
-
-            // 3. 默认按项目名称字母序，确保启动时排序稳定
-            return projectA.name.localizedCaseInsensitiveCompare(projectB.name) == .orderedAscending
-        }
+        ProjectSortingSemantics.sortedIndices(
+            appState.projects,
+            shortcutKeyFinder: { self.projectMinShortcutKey($0) },
+            earliestTerminalTimeFinder: { self.projectEarliestTerminalTime($0) }
+        )
     }
 
     /// 防抖排序：100ms 内多次触发只执行最后一次

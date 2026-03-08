@@ -211,6 +211,7 @@ struct WorkspaceDetailView: View {
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
         }
         .onAppear {
+            appState.selectWorkspaceContext(project: project, workspace: workspace)
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
         }
     }

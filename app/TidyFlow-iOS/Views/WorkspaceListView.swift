@@ -6,11 +6,12 @@ struct WorkspaceListView: View {
     let project: String
 
     var body: some View {
+        let sortedWorkspaces = WorkspaceSelectionSemantics.sortedWorkspaces(appState.workspaces)
         List {
-            if appState.workspaces.isEmpty {
+            if sortedWorkspaces.isEmpty {
                 ContentUnavailableView("暂无工作空间", systemImage: "square.grid.2x2")
             } else {
-                ForEach(appState.workspaces, id: \.name) { workspace in
+                ForEach(sortedWorkspaces, id: \.name) { workspace in
                     Section {
                         let terminals = appState.terminalsForWorkspace(
                             project: project, workspace: workspace.name

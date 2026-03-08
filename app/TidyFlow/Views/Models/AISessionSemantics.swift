@@ -339,3 +339,23 @@ enum AISessionListSemantics {
         "\(project)::\(workspace)::\(filter.id)"
     }
 }
+
+// MARK: - 会话列表展示状态
+
+/// AI 会话列表的展示阶段，双端共享判断逻辑。
+/// 视图通过此枚举决定呈现 loading / empty / content，不再在 View body 中内联 if-else 判断。
+enum AISessionListDisplayPhase {
+    /// 初次加载中且无缓存会话
+    case loading
+    /// 加载完成但会话列表为空
+    case empty
+    /// 有会话可展示（含分页加载更多状态）
+    case content
+
+    /// 从分页状态和会话列表推导展示阶段。
+    static func from(isLoadingInitial: Bool, sessions: [AISessionInfo]) -> AISessionListDisplayPhase {
+        if isLoadingInitial && sessions.isEmpty { return .loading }
+        if sessions.isEmpty { return .empty }
+        return .content
+    }
+}

@@ -289,3 +289,86 @@ final class PerformanceTracerRegressionTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 共享展示阶段与视图语义回归
+
+final class SharedDisplayPhaseRegressionTests: XCTestCase {
+
+    // MARK: AISessionListDisplayPhase 视图消费语义
+
+    func testAISessionDisplayPhase_loading_matchesExpectedViewBehavior() {
+        // loading 状态：视图应展示骨架屏/spinner，不应展示空态占位
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: true, sessions: [])
+        switch phase {
+        case .loading: break // 正确
+        default: XCTFail("初始加载无缓存应进入 loading 阶段")
+        }
+    }
+
+    func testAISessionDisplayPhase_empty_matchesExpectedViewBehavior() {
+        // empty 状态：视图应展示空态占位，不应展示 spinner
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: false, sessions: [])
+        switch phase {
+        case .empty: break // 正确
+        default: XCTFail("加载完成但无会话应进入 empty 阶段")
+        }
+    }
+
+    // MARK: TerminalListDisplayPhase 视图消费语义
+
+    func testTerminalDisplayPhase_empty_noTerminalsForWorkspace() {
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "ws",
+            allTerminals: [], pinnedIds: []
+        )
+        switch phase {
+        case .empty: break
+        default: XCTFail("空终端列表应进入 empty 阶段")
+        }
+    }
+
+    func testTerminalDisplayPhase_content_carriesFilteredTerminals() {
+        let term = TerminalSessionInfo(
+            termId: "t1", project: "p", workspace: "ws",
+            cwd: "/", shell: "bash", status: "running",
+            name: "Shell", icon: nil, remoteSubscribers: []
+        )
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "ws",
+            allTerminals: [term], pinnedIds: []
+        )
+        switch phase {
+        case .content(let terminals):
+            XCTAssertEqual(terminals.count, 1)
+        default:
+            XCTFail("有终端时应进入 content 阶段")
+        }
+    }
+
+    // MARK: 跨工作区隔离回归
+
+    func testDisplayPhases_isolateAcrossProjects() {
+        let term = TerminalSessionInfo(
+            termId: "t1", project: "projA", workspace: "ws",
+            cwd: "/", shell: "bash", status: "running",
+            name: "Shell", icon: nil, remoteSubscribers: []
+        )
+        // projA/ws 有终端，projB/ws 无终端
+        let phaseA = TerminalListDisplayPhase.from(
+            project: "projA", workspace: "ws",
+            allTerminals: [term], pinnedIds: []
+        )
+        let phaseB = TerminalListDisplayPhase.from(
+            project: "projB", workspace: "ws",
+            allTerminals: [term], pinnedIds: []
+        )
+        switch phaseA {
+        case .content: break
+        default: XCTFail("projA 应有终端")
+        }
+        switch phaseB {
+        case .empty: break
+        default: XCTFail("projB 不应看到 projA 的终端")
+        }
+    }
+}

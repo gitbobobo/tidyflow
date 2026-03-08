@@ -70,8 +70,11 @@ struct SessionsPanelView: View {
             // 会话列表
             let pageState = appState.displayedAISessionListState
             let sessions = pageState.sessions
-            let isLoadingSessions = pageState.isLoadingInitial
-            if isLoadingSessions && sessions.isEmpty {
+            let displayPhase = AISessionListDisplayPhase.from(
+                isLoadingInitial: pageState.isLoadingInitial, sessions: sessions
+            )
+            switch displayPhase {
+            case .loading:
                 VStack(spacing: 8) {
                     Spacer()
                     ProgressView()
@@ -82,7 +85,7 @@ struct SessionsPanelView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if sessions.isEmpty {
+            case .empty:
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "bubble.left.and.bubble.right")
@@ -94,7 +97,7 @@ struct SessionsPanelView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            case .content:
                 List {
                     ForEach(sessions) { session in
                         SessionRow(

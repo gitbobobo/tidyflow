@@ -180,3 +180,30 @@ enum TerminalSessionSemantics {
         return result.filter { activeWorkspaceKeys.contains($0.key) }
     }
 }
+
+// MARK: - 终端列表展示阶段
+
+/// 指定工作区的终端列表展示阶段，双端共享判断逻辑。
+/// 视图通过此枚举决定呈现 empty / content，不再在 View body 中各自判断 isEmpty。
+enum TerminalListDisplayPhase {
+    /// 工作区无活跃终端
+    case empty
+    /// 有终端可展示
+    case content(terminals: [TerminalSessionInfo])
+
+    /// 从全局终端列表推导指定工作区的展示阶段。
+    static func from(
+        project: String,
+        workspace: String,
+        allTerminals: [TerminalSessionInfo],
+        pinnedIds: Set<String>
+    ) -> TerminalListDisplayPhase {
+        let terminals = TerminalSessionSemantics.terminalsForWorkspace(
+            project: project,
+            workspace: workspace,
+            allTerminals: allTerminals,
+            pinnedIds: pinnedIds
+        )
+        return terminals.isEmpty ? .empty : .content(terminals: terminals)
+    }
+}

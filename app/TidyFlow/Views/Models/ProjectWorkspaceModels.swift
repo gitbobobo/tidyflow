@@ -25,6 +25,11 @@ struct WorkspaceModel: Identifiable, Equatable {
     var sidebarStatus: WorkspaceSidebarStatusModel = .empty
 }
 
+extension WorkspaceModel: WorkspaceSortable {
+    var isDefaultWorkspace: Bool { isDefault }
+    var workspaceSortName: String { name }
+}
+
 /// Represents a project containing multiple workspaces
 struct ProjectModel: Identifiable, Equatable {
     let id: UUID
@@ -34,3 +39,10 @@ struct ProjectModel: Identifiable, Equatable {
     var isExpanded: Bool = true
     var commands: [ProjectCommand] = []
 }
+
+extension ProjectModel: ProjectIdentifiable {
+    var projectUUID: UUID { id }
+    var projectDisplayName: String { name }
+}
+
+

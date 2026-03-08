@@ -185,3 +185,98 @@ final class TerminalWorkspaceIsolationTests: XCTestCase {
         XCTAssertEqual(result.map(\.termId), ["t1"], "应只返回 p1/w1 的终端")
     }
 }
+
+// MARK: - TerminalListDisplayPhase 展示阶段测试
+
+final class TerminalListDisplayPhaseTests: XCTestCase {
+
+    func testFrom_noTerminals_returnsEmpty() {
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "w",
+            allTerminals: [], pinnedIds: []
+        )
+        if case .empty = phase { } else {
+            XCTFail("无终端时应返回 .empty")
+        }
+    }
+
+    func testFrom_hasMatchingTerminals_returnsContent() {
+        let term = makeTerminal(termId: "t1", project: "p", workspace: "w")
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "w",
+            allTerminals: [term], pinnedIds: []
+        )
+        if case .content(let terminals) = phase {
+            XCTAssertEqual(terminals.count, 1)
+            XCTAssertEqual(terminals.first?.termId, "t1")
+        } else {
+            XCTFail("有匹配终端时应返回 .content")
+        }
+    }
+
+    func testFrom_noMatchingWorkspace_returnsEmpty() {
+        let term = makeTerminal(termId: "t1", project: "p", workspace: "other-ws")
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "w",
+            allTerminals: [term], pinnedIds: []
+        )
+        if case .empty = phase { } else {
+            XCTFail("无匹配工作区的终端时应返回 .empty")
+        }
+    }
+
+    func testFrom_noMatchingProject_returnsEmpty() {
+        let term = makeTerminal(termId: "t1", project: "other-p", workspace: "w")
+        let phase = TerminalListDisplayPhase.from(
+            project: "p", workspace: "w",
+            allTerminals: [term], pinnedIds: []
+        )
+        if case .empty = phase { } else {
+            XCTFail("无匹配项目的终端时应返回 .empty")
+        }
+    }
+
+    func testFrom_multipleTerminals_onlyMatchingInContent() {
+        let terminals = [
+            makeTerminal(termId: "t1", project: "p1", workspace: "w1"),
+            makeTerminal(termId: "t2", project: "p1", workspace: "w1"),
+            makeTerminal(termId: "t3", project: "p2", workspace: "w1"),
+        ]
+        let phase = TerminalListDisplayPhase.from(
+            project: "p1", workspace: "w1",
+            allTerminals: terminals, pinnedIds: []
+        )
+        if case .content(let result) = phase {
+            XCTAssertEqual(result.count, 2, "应只包含 p1/w1 的终端")
+            XCTAssertEqual(Set(result.map(\.termId)), ["t1", "t2"])
+        } else {
+            XCTFail("应返回 .content")
+        }
+    }
+
+    func testFrom_isolatesProjectWorkspaceDimensions() {
+        let terminals = [
+            makeTerminal(termId: "t1", project: "p1", workspace: "w1"),
+            makeTerminal(termId: "t2", project: "p1", workspace: "w2"),
+            makeTerminal(termId: "t3", project: "p2", workspace: "w1"),
+        ]
+        // p1/w2 视角
+        let phase = TerminalListDisplayPhase.from(
+            project: "p1", workspace: "w2",
+            allTerminals: terminals, pinnedIds: []
+        )
+        if case .content(let result) = phase {
+            XCTAssertEqual(result.map(\.termId), ["t2"])
+        } else {
+            XCTFail("p1/w2 应有一个终端")
+        }
+    }
+
+    private func makeTerminal(termId: String, project: String, workspace: String) -> TerminalSessionInfo {
+        TerminalSessionInfo(
+            termId: termId, project: project, workspace: workspace,
+            cwd: "/", shell: "bash", status: "running",
+            name: termId, icon: nil, remoteSubscribers: []
+        )
+    }
+}

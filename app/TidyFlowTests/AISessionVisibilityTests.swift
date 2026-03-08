@@ -401,3 +401,56 @@ final class AISessionListSemanticsTests: XCTestCase {
         XCTAssertTrue(appState.aiSessionListPageStates.isEmpty, "清理后分页状态应为空")
     }
 }
+
+// MARK: - AISessionListDisplayPhase 展示阶段测试
+
+final class AISessionListDisplayPhaseTests: XCTestCase {
+
+    func testFrom_loadingInitial_emptySessions_returnsLoading() {
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: true, sessions: [])
+        if case .loading = phase { } else {
+            XCTFail("初次加载且无缓存应返回 .loading")
+        }
+    }
+
+    func testFrom_loadingInitial_hasSessions_returnsContent() {
+        let session = makeAISession(id: "s1")
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: true, sessions: [session])
+        if case .content = phase { } else {
+            XCTFail("加载中但有缓存会话应返回 .content")
+        }
+    }
+
+    func testFrom_notLoading_emptySessions_returnsEmpty() {
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: false, sessions: [])
+        if case .empty = phase { } else {
+            XCTFail("非加载中且无会话应返回 .empty")
+        }
+    }
+
+    func testFrom_notLoading_hasSessions_returnsContent() {
+        let session = makeAISession(id: "s1")
+        let phase = AISessionListDisplayPhase.from(isLoadingInitial: false, sessions: [session])
+        if case .content = phase { } else {
+            XCTFail("非加载中且有会话应返回 .content")
+        }
+    }
+
+    func testFrom_multipleSessions_alwaysContent() {
+        let sessions = [makeAISession(id: "s1"), makeAISession(id: "s2")]
+        for isLoading in [true, false] {
+            let phase = AISessionListDisplayPhase.from(isLoadingInitial: isLoading, sessions: sessions)
+            if case .content = phase { } else {
+                XCTFail("有会话时无论加载状态都应返回 .content (isLoading=\(isLoading))")
+            }
+        }
+    }
+
+    private func makeAISession(id: String) -> AISessionInfo {
+        AISessionInfo(
+            projectName: "proj", workspaceName: "ws",
+            aiTool: .codex, id: id, title: id,
+            updatedAt: 0, origin: .user
+        )
+    }
+}

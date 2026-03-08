@@ -147,3 +147,290 @@ final class WorkspaceKeySemanticsTests: XCTestCase {
         XCTAssertNotEqual(key1, key2, "即使工作区都是 default，不同项目的全局键也必须不同")
     }
 }
+
+// MARK: - WorkspaceIdentity 身份标识测试
+
+final class WorkspaceIdentityTests: XCTestCase {
+
+    func testGlobalKey_matchesWorkspaceKeySemantics() {
+        let identity = WorkspaceIdentity(
+            projectId: UUID(),
+            projectName: "MyProject",
+            workspaceName: "main"
+        )
+        let expected = WorkspaceKeySemantics.globalKey(project: "MyProject", workspace: "main")
+        XCTAssertEqual(identity.globalKey, expected, "WorkspaceIdentity.globalKey 应委托到 WorkspaceKeySemantics")
+    }
+
+    func testFileCachePrefix_matchesWorkspaceKeySemantics() {
+        let identity = WorkspaceIdentity(
+            projectId: UUID(),
+            projectName: "P",
+            workspaceName: "W"
+        )
+        let expected = WorkspaceKeySemantics.fileCachePrefix(project: "P", workspace: "W")
+        XCTAssertEqual(identity.fileCachePrefix, expected)
+    }
+
+    func testFileCacheKey_matchesWorkspaceKeySemantics() {
+        let identity = WorkspaceIdentity(
+            projectId: UUID(),
+            projectName: "P",
+            workspaceName: "W"
+        )
+        let expected = WorkspaceKeySemantics.fileCacheKey(project: "P", workspace: "W", path: "src")
+        XCTAssertEqual(identity.fileCacheKey(path: "src"), expected)
+    }
+
+    func testEquality_sameValues() {
+        let id = UUID()
+        let a = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W")
+        let b = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W")
+        XCTAssertEqual(a, b)
+    }
+
+    func testEquality_differentProjectName() {
+        let id = UUID()
+        let a = WorkspaceIdentity(projectId: id, projectName: "P1", workspaceName: "W")
+        let b = WorkspaceIdentity(projectId: id, projectName: "P2", workspaceName: "W")
+        XCTAssertNotEqual(a, b, "项目名不同应视为不同身份")
+    }
+
+    func testEquality_differentWorkspace() {
+        let id = UUID()
+        let a = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W1")
+        let b = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W2")
+        XCTAssertNotEqual(a, b, "工作区名不同应视为不同身份")
+    }
+
+    func testHashable_usableInSet() {
+        let id = UUID()
+        let a = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W")
+        let b = WorkspaceIdentity(projectId: id, projectName: "P", workspaceName: "W")
+        let set: Set<WorkspaceIdentity> = [a, b]
+        XCTAssertEqual(set.count, 1, "相同身份应合并")
+    }
+
+    func testDifferentProjectId_sameNamesDifferentIdentity() {
+        let a = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W")
+        let b = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W")
+        XCTAssertNotEqual(a, b, "不同 projectId 即使名称相同也应视为不同身份")
+    }
+}
+
+// MARK: - WorkspaceSelectionSemantics 选择匹配测试
+
+final class WorkspaceSelectionSemanticsTests: XCTestCase {
+
+    func testMatches_nilIdentity_returnsFalse() {
+        let result = WorkspaceSelectionSemantics.matches(
+            identity: nil,
+            projectName: "P",
+            workspaceName: "W"
+        )
+        XCTAssertFalse(result, "无选中状态时应返回 false")
+    }
+
+    func testMatches_exactMatch_returnsTrue() {
+        let identity = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W")
+        XCTAssertTrue(WorkspaceSelectionSemantics.matches(
+            identity: identity, projectName: "P", workspaceName: "W"
+        ))
+    }
+
+    func testMatches_differentProject_returnsFalse() {
+        let identity = WorkspaceIdentity(projectId: UUID(), projectName: "P1", workspaceName: "W")
+        XCTAssertFalse(WorkspaceSelectionSemantics.matches(
+            identity: identity, projectName: "P2", workspaceName: "W"
+        ))
+    }
+
+    func testMatches_differentWorkspace_returnsFalse() {
+        let identity = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W1")
+        XCTAssertFalse(WorkspaceSelectionSemantics.matches(
+            identity: identity, projectName: "P", workspaceName: "W2"
+        ))
+    }
+
+    func testMatchesGlobalKey_nilIdentity_returnsFalse() {
+        XCTAssertFalse(WorkspaceSelectionSemantics.matchesGlobalKey(identity: nil, globalKey: "P:W"))
+    }
+
+    func testMatchesGlobalKey_correctKey_returnsTrue() {
+        let identity = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W")
+        XCTAssertTrue(WorkspaceSelectionSemantics.matchesGlobalKey(
+            identity: identity, globalKey: "P:W"
+        ))
+    }
+
+    func testMatchesGlobalKey_wrongKey_returnsFalse() {
+        let identity = WorkspaceIdentity(projectId: UUID(), projectName: "P", workspaceName: "W")
+        XCTAssertFalse(WorkspaceSelectionSemantics.matchesGlobalKey(
+            identity: identity, globalKey: "P:OtherW"
+        ))
+    }
+
+    // MARK: - 工作区列表排序
+
+    private struct MockWorkspace: WorkspaceSortable {
+        let name: String
+        let isDefaultWorkspace: Bool
+        var workspaceSortName: String { name }
+    }
+
+    func testSortedWorkspaces_defaultFirst() {
+        let workspaces = [
+            MockWorkspace(name: "feature", isDefaultWorkspace: false),
+            MockWorkspace(name: "default", isDefaultWorkspace: true),
+            MockWorkspace(name: "alpha", isDefaultWorkspace: false),
+        ]
+        let sorted = WorkspaceSelectionSemantics.sortedWorkspaces(workspaces)
+        XCTAssertEqual(sorted.map(\.name), ["default", "alpha", "feature"],
+                       "默认工作区应排在最前，其余按名称字母序")
+    }
+
+    func testSortedWorkspaces_multipleDefaults_bothFirst() {
+        let workspaces = [
+            MockWorkspace(name: "z-feature", isDefaultWorkspace: false),
+            MockWorkspace(name: "default-b", isDefaultWorkspace: true),
+            MockWorkspace(name: "default-a", isDefaultWorkspace: true),
+        ]
+        let sorted = WorkspaceSelectionSemantics.sortedWorkspaces(workspaces)
+        XCTAssertTrue(sorted[0].isDefaultWorkspace && sorted[1].isDefaultWorkspace)
+    }
+
+    func testSortedWorkspaces_empty() {
+        let sorted = WorkspaceSelectionSemantics.sortedWorkspaces([MockWorkspace]())
+        XCTAssertTrue(sorted.isEmpty)
+    }
+
+    // MARK: - resolveProjectName
+
+    private struct MockProject: ProjectIdentifiable {
+        let projectUUID: UUID
+        let projectDisplayName: String
+    }
+
+    func testResolveProjectName_found() {
+        let id = UUID()
+        let projects = [MockProject(projectUUID: id, projectDisplayName: "Found")]
+        XCTAssertEqual(
+            WorkspaceSelectionSemantics.resolveProjectName(projectId: id, in: projects, fallback: "FB"),
+            "Found"
+        )
+    }
+
+    func testResolveProjectName_notFound_returnsFallback() {
+        let projects = [MockProject(projectUUID: UUID(), projectDisplayName: "Other")]
+        XCTAssertEqual(
+            WorkspaceSelectionSemantics.resolveProjectName(projectId: UUID(), in: projects, fallback: "Fallback"),
+            "Fallback"
+        )
+    }
+}
+
+// MARK: - ProjectSortingSemantics 项目排序测试
+
+final class ProjectSortingSemanticsTests: XCTestCase {
+
+    private struct TestProject {
+        let name: String
+        let shortcutKey: Int
+        let terminalTime: Date?
+    }
+
+    func testSortedProjects_shortcutFirst() {
+        let projects = [
+            TestProject(name: "Zebra", shortcutKey: Int.max, terminalTime: nil),
+            TestProject(name: "Alpha", shortcutKey: 1, terminalTime: nil),
+        ]
+        let sorted = ProjectSortingSemantics.sortedProjects(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        XCTAssertEqual(sorted.map(\.name), ["Alpha", "Zebra"],
+                       "有快捷键的项目应排在无快捷键项目之前")
+    }
+
+    func testSortedProjects_sameShortcutStatus_alphabetical() {
+        let projects = [
+            TestProject(name: "Charlie", shortcutKey: Int.max, terminalTime: nil),
+            TestProject(name: "Alpha", shortcutKey: Int.max, terminalTime: nil),
+            TestProject(name: "Bravo", shortcutKey: Int.max, terminalTime: nil),
+        ]
+        let sorted = ProjectSortingSemantics.sortedProjects(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        XCTAssertEqual(sorted.map(\.name), ["Alpha", "Bravo", "Charlie"])
+    }
+
+    func testSortedProjects_bothShortcutted_earlierTerminalFirst() {
+        let earlier = Date(timeIntervalSince1970: 1000)
+        let later = Date(timeIntervalSince1970: 2000)
+        let projects = [
+            TestProject(name: "B", shortcutKey: 2, terminalTime: later),
+            TestProject(name: "A", shortcutKey: 1, terminalTime: earlier),
+        ]
+        let sorted = ProjectSortingSemantics.sortedProjects(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        XCTAssertEqual(sorted.map(\.name), ["A", "B"],
+                       "两个有快捷键的项目按终端首次打开时间排序")
+    }
+
+    func testSortedIndices_matchesSortedProjects() {
+        let projects = [
+            TestProject(name: "Charlie", shortcutKey: Int.max, terminalTime: nil),
+            TestProject(name: "Alpha", shortcutKey: 1, terminalTime: nil),
+            TestProject(name: "Bravo", shortcutKey: Int.max, terminalTime: nil),
+        ]
+        let indices = ProjectSortingSemantics.sortedIndices(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        let sorted = ProjectSortingSemantics.sortedProjects(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        let fromIndices = indices.map { projects[$0].name }
+        let fromSorted = sorted.map(\.name)
+        XCTAssertEqual(fromIndices, fromSorted,
+                       "sortedIndices 的顺序应与 sortedProjects 一致")
+    }
+
+    func testSortedIndices_emptyInput() {
+        let indices = ProjectSortingSemantics.sortedIndices(
+            [TestProject](),
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        XCTAssertTrue(indices.isEmpty)
+    }
+
+    func testSortedIndices_preservesOriginalArrayMapping() {
+        let projects = [
+            TestProject(name: "Z", shortcutKey: Int.max, terminalTime: nil),
+            TestProject(name: "A", shortcutKey: Int.max, terminalTime: nil),
+        ]
+        let indices = ProjectSortingSemantics.sortedIndices(
+            projects,
+            shortcutKeyFinder: { $0.shortcutKey },
+            earliestTerminalTimeFinder: { $0.terminalTime },
+            nameExtractor: { $0.name }
+        )
+        XCTAssertEqual(indices, [1, 0], "索引应指向原数组中 A（idx=1）和 Z（idx=0）的位置")
+    }
+}

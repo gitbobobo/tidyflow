@@ -38,6 +38,7 @@ struct MobileTerminalView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
+            appState.selectWorkspaceContext(project: project, workspace: workspace)
             if let termId {
                 appState.attachTerminal(project: project, workspace: workspace, termId: termId)
             } else if let command {

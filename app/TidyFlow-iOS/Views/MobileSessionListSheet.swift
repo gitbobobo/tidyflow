@@ -35,8 +35,11 @@ struct MobileSessionListSheet: View {
 
                 let pageState = appState.sessionListPageState(for: appState.sessionListFilter)
                 let sessions = pageState.sessions
-                let isLoadingSessions = pageState.isLoadingInitial
-                if isLoadingSessions && sessions.isEmpty {
+                let displayPhase = AISessionListDisplayPhase.from(
+                    isLoadingInitial: pageState.isLoadingInitial, sessions: sessions
+                )
+                switch displayPhase {
+                case .loading:
                     VStack(spacing: 12) {
                         Spacer()
                         ProgressView()
@@ -46,7 +49,7 @@ struct MobileSessionListSheet: View {
                         Spacer()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if sessions.isEmpty {
+                case .empty:
                     VStack(spacing: 12) {
                         Spacer()
                         Image(systemName: "bubble.left.and.bubble.right")
@@ -58,7 +61,7 @@ struct MobileSessionListSheet: View {
                         Spacer()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
+                case .content:
                     List {
                         ForEach(sessions) { session in
                             Button(action: {

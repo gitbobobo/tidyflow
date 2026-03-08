@@ -3,14 +3,28 @@ import Foundation
 extension AppState {
     // MARK: - UX-1: Project/Workspace Selection
 
+    /// 当前选中的工作区身份标识（共享语义层）。
+    /// 由 `selectedProjectId`、`selectedProjectName`、`selectedWorkspaceKey` 派生，
+    /// 视图层与业务逻辑统一通过此属性获取当前工作区上下文，不再各自拼装。
+    var selectedWorkspaceIdentity: WorkspaceIdentity? {
+        guard let projectId = selectedProjectId,
+              let workspaceName = selectedWorkspaceKey else { return nil }
+        return WorkspaceIdentity(
+            projectId: projectId,
+            projectName: selectedProjectName,
+            workspaceName: workspaceName
+        )
+    }
+
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
         // 性能追踪：工作区切换
-        let projectName: String
-        if let project = projects.first(where: { $0.id == projectId }) {
-            projectName = project.name
-        } else {
-            projectName = selectedProjectName
+        let projectName = WorkspaceSelectionSemantics.resolveProjectName(
+            projectId: projectId,
+            in: projects,
+            fallback: selectedProjectName
+        )
+        if projects.first(where: { $0.id == projectId }) == nil {
             TFLog.app.error("selectWorkspace failed: project not found for id=\(projectId.uuidString, privacy: .public)")
         }
         let perfTraceId = performanceTracer.begin(TFPerformanceContext(
