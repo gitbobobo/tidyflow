@@ -5500,7 +5500,6 @@ extension MobileAppState {
 /// iOS 端 AI 消息处理适配器，与 macOS AppStateAIMessageHandlerAdapter 对称。
 /// 持有对 MobileAppState 的弱引用，由 wsClient.aiMessageHandler 统一分发事件。
 /// 所有 AI 消息经此单一入口路由，确保 macOS/iOS 共享相同的消息边界与协议语义。
-@MainActor
 final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
     weak var appState: MobileAppState?
 
@@ -5508,21 +5507,81 @@ final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
         self.appState = appState
     }
 
-    func handleAITaskCancelled(_ result: AITaskCancelled) { appState?.handleAITaskCancelled(result) }
-    func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
-    func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
-    func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }
-    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { appState?.handleAISessionMessagesUpdate(ev) }
-    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { appState?.handleAISessionStatusResult(ev) }
-    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { appState?.handleAISessionStatusUpdate(ev) }
-    func handleAIChatDone(_ ev: AIChatDoneV2) { appState?.handleAIChatDone(ev) }
-    func handleAIChatError(_ ev: AIChatErrorV2) { appState?.handleAIChatError(ev) }
-    func handleAIProviderList(_ ev: AIProviderListResult) { appState?.handleAIProviderList(ev) }
-    func handleAIAgentList(_ ev: AIAgentListResult) { appState?.handleAIAgentList(ev) }
-    func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
-    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { appState?.handleAISlashCommandsUpdate(ev) }
-    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { appState?.handleAISessionConfigOptions(ev) }
-    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { appState?.handleAIQuestionAsked(ev) }
-    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { appState?.handleAIQuestionCleared(ev) }
-    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { appState?.handleAISessionRenameResult(ev) }
+    /// WSClient 在解码队列回调协议方法；这里统一切回主线程，避免 UI 状态跨线程写入。
+    private func dispatchToMain(_ action: @escaping @MainActor (MobileAppState) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let appState = self?.appState else { return }
+            MainActor.assumeIsolated {
+                action(appState)
+            }
+        }
+    }
+
+    func handleAITaskCancelled(_ result: AITaskCancelled) {
+        dispatchToMain { $0.handleAITaskCancelled(result) }
+    }
+
+    func handleAISessionStarted(_ ev: AISessionStartedV2) {
+        dispatchToMain { $0.handleAISessionStarted(ev) }
+    }
+
+    func handleAISessionList(_ ev: AISessionListV2) {
+        dispatchToMain { $0.handleAISessionList(ev) }
+    }
+
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) {
+        dispatchToMain { $0.handleAISessionMessages(ev) }
+    }
+
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
+        dispatchToMain { $0.handleAISessionMessagesUpdate(ev) }
+    }
+
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
+        dispatchToMain { $0.handleAISessionStatusResult(ev) }
+    }
+
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
+        dispatchToMain { $0.handleAISessionStatusUpdate(ev) }
+    }
+
+    func handleAIChatDone(_ ev: AIChatDoneV2) {
+        dispatchToMain { $0.handleAIChatDone(ev) }
+    }
+
+    func handleAIChatError(_ ev: AIChatErrorV2) {
+        dispatchToMain { $0.handleAIChatError(ev) }
+    }
+
+    func handleAIProviderList(_ ev: AIProviderListResult) {
+        dispatchToMain { $0.handleAIProviderList(ev) }
+    }
+
+    func handleAIAgentList(_ ev: AIAgentListResult) {
+        dispatchToMain { $0.handleAIAgentList(ev) }
+    }
+
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) {
+        dispatchToMain { $0.handleAISlashCommands(ev) }
+    }
+
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {
+        dispatchToMain { $0.handleAISlashCommandsUpdate(ev) }
+    }
+
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {
+        dispatchToMain { $0.handleAISessionConfigOptions(ev) }
+    }
+
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {
+        dispatchToMain { $0.handleAIQuestionAsked(ev) }
+    }
+
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {
+        dispatchToMain { $0.handleAIQuestionCleared(ev) }
+    }
+
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
+        dispatchToMain { $0.handleAISessionRenameResult(ev) }
+    }
 }
