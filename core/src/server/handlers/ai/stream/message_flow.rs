@@ -9,6 +9,7 @@ use tracing::{info, warn};
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
 use crate::ai::{AiAgent, AiEvent};
 use crate::server::context::{SharedAppState, TaskBroadcastTx};
+use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -281,6 +282,7 @@ pub(crate) async fn handle_ai_chat_start(
         &session.id,
         &session.title,
         created_at_ms,
+        AiSessionOrigin::User,
     )
     .await
     {
@@ -327,6 +329,7 @@ pub(crate) async fn handle_ai_chat_start(
         session_id: session.id,
         title: session.title,
         updated_at: session.updated_at,
+        session_origin: AiSessionOrigin::User,
         selection_hint,
     };
     send_message(socket, &msg).await?;

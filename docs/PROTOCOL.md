@@ -155,10 +155,12 @@
     - 非空：仅返回指定工具会话
 - 服务端结果 `type=ai_session_list`：
   - `filter_ai_tool`：本次实际使用的工具筛选（可选）
-  - `sessions`：会话数组（按 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`）
+  - `sessions`：会话数组（按 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`，默认排除 `session_origin=evolution_system`）
   - `sessions[].ai_tool`：会话所属工具
+  - `sessions[].session_origin`：会话来源，当前取值 `user | evolution_system`
   - `has_more`：是否还有下一页
   - `next_cursor`：下一页游标（用于继续向后加载）
+  - 按 `session_id` 精确读取消息/状态不受列表过滤影响
 
 ### 请求示例（全部工具首屏）
 
@@ -207,7 +209,8 @@
         "ai_tool": "codex",
         "id": "ses_123",
         "title": "实现分页",
-        "updated_at": 1730966400000
+        "updated_at": 1730966400000,
+        "session_origin": "user"
       }
     ],
     "has_more": true,

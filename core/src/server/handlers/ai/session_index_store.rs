@@ -8,6 +8,7 @@ use sqlx::{Pool, QueryBuilder, Row, Sqlite};
 use tokio::sync::Mutex;
 
 use crate::workspace::sqlite_store;
+use crate::server::protocol::ai::AiSessionOrigin;
 
 const AI_SESSION_LIST_DEFAULT_PAGE_SIZE: u32 = 50;
 const AI_SESSION_LIST_MAX_PAGE_SIZE: u32 = 200;
@@ -22,6 +23,7 @@ pub struct AiSessionIndexEntry {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub session_origin: AiSessionOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +78,7 @@ impl AiSessionIndexStore {
         session_id: &str,
         title: &str,
         created_at_ms: i64,
+        session_origin: AiSessionOrigin,
     ) -> Result<(), String> {
         self.ensure_schema().await?;
         let pool = self.pool().await?;
@@ -90,15 +93,17 @@ impl AiSessionIndexStore {
                 session_id,
                 title,
                 created_at_ms,
-                updated_at_ms
+                updated_at_ms,
+                session_origin
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(project_name, workspace_name, ai_tool, session_id)
             DO UPDATE SET
                 directory = excluded.directory,
                 title = excluded.title,
                 created_at_ms = excluded.created_at_ms,
-                updated_at_ms = excluded.updated_at_ms
+                updated_at_ms = excluded.updated_at_ms,
+                session_origin = excluded.session_origin
             "#,
         )
         .bind(project_name)
@@ -109,6 +114,7 @@ impl AiSessionIndexStore {
         .bind(title)
         .bind(created_at_ms)
         .bind(created_at_ms)
+        .bind(session_origin_as_str(&session_origin))
         .execute(&pool)
         .await
         .map_err(|e| format!("failed to record ai session index: {}", e))?;
@@ -143,7 +149,8 @@ impl AiSessionIndexStore {
                 session_id,
                 title,
                 created_at_ms,
-                updated_at_ms
+                updated_at_ms,
+                session_origin
             FROM ai_session_index
             WHERE project_name =
             "#,
@@ -151,6 +158,8 @@ impl AiSessionIndexStore {
         builder.push_bind(project_name);
         builder.push(" AND workspace_name = ");
         builder.push_bind(workspace_name);
+        builder.push(" AND session_origin != ");
+        builder.push_bind(session_origin_as_str(&AiSessionOrigin::EvolutionSystem));
         if let Some(filter_ai_tool) = filter_ai_tool {
             builder.push(" AND ai_tool = ");
             builder.push_bind(filter_ai_tool);
@@ -331,7 +340,8 @@ impl AiSessionIndexStore {
                 session_id,
                 title,
                 created_at_ms,
-                updated_at_ms
+                updated_at_ms,
+                session_origin
             FROM ai_session_index
             WHERE project_name = ?1 AND workspace_name = ?2 AND ai_tool = ?3
               AND title LIKE ?4
@@ -368,6 +378,7 @@ impl AiSessionIndexStore {
                 title TEXT NOT NULL,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL,
+                session_origin TEXT NOT NULL DEFAULT 'user',
                 PRIMARY KEY (project_name, workspace_name, ai_tool, session_id)
             )
             "#,
@@ -398,6 +409,27 @@ impl AiSessionIndexStore {
                 .await
                 .map_err(|e| format!("failed to initialize ai session index schema: {}", e))?;
         }
+
+        let has_session_origin = sqlx::query("PRAGMA table_info(ai_session_index)")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("failed to inspect ai session index schema: {}", e))?
+            .into_iter()
+            .any(|row| row.try_get::<String, _>("name").unwrap_or_default() == "session_origin");
+        if !has_session_origin {
+            sqlx::query(
+                "ALTER TABLE ai_session_index ADD COLUMN session_origin TEXT NOT NULL DEFAULT 'user'",
+            )
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("failed to migrate ai session index schema: {}", e))?;
+        }
+        sqlx::query(
+            "UPDATE ai_session_index SET session_origin = 'user' WHERE session_origin IS NULL OR TRIM(session_origin) = ''",
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("failed to backfill ai session origin: {}", e))?;
 
         self.schema_initialized.store(true, Ordering::Release);
         Ok(())
@@ -434,6 +466,25 @@ fn map_row_to_entry(row: sqlx::sqlite::SqliteRow) -> AiSessionIndexEntry {
         title: row.try_get("title").unwrap_or_default(),
         created_at_ms: row.try_get("created_at_ms").unwrap_or_default(),
         updated_at_ms: row.try_get("updated_at_ms").unwrap_or_default(),
+        session_origin: parse_session_origin(
+            row.try_get::<String, _>("session_origin")
+                .unwrap_or_else(|_| "user".to_string())
+                .as_str(),
+        ),
+    }
+}
+
+fn session_origin_as_str(origin: &AiSessionOrigin) -> &'static str {
+    match origin {
+        AiSessionOrigin::User => "user",
+        AiSessionOrigin::EvolutionSystem => "evolution_system",
+    }
+}
+
+fn parse_session_origin(value: &str) -> AiSessionOrigin {
+    match value.trim() {
+        "evolution_system" => AiSessionOrigin::EvolutionSystem,
+        _ => AiSessionOrigin::User,
     }
 }
 
@@ -463,11 +514,29 @@ mod tests {
         let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
 
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s1", "会话 1", 100)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s1",
+                "会话 1",
+                100,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s1");
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s2", "会话 2", 200)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s2",
+                "会话 2",
+                200,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s2");
 
@@ -521,11 +590,29 @@ mod tests {
         let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
 
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s1", "会话 1", 100)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s1",
+                "会话 1",
+                100,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s1");
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s2", "会话 2", 200)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s2",
+                "会话 2",
+                200,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s2");
 
@@ -547,15 +634,42 @@ mod tests {
         let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
 
         store
-            .record_created("p", "w", "opencode", "/tmp/p/w", "s1", "会话 1", 100)
+            .record_created(
+                "p",
+                "w",
+                "opencode",
+                "/tmp/p/w",
+                "s1",
+                "会话 1",
+                100,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s1");
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s2", "会话 2", 100)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s2",
+                "会话 2",
+                100,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s2");
         store
-            .record_created("p", "w", "copilot", "/tmp/p/w", "s3", "会话 3", 90)
+            .record_created(
+                "p",
+                "w",
+                "copilot",
+                "/tmp/p/w",
+                "s3",
+                "会话 3",
+                90,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s3");
         store
@@ -600,11 +714,29 @@ mod tests {
         let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
 
         store
-            .record_created("p", "w", "codex", "/tmp/p/w", "s1", "会话 1", 100)
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "s1",
+                "会话 1",
+                100,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s1");
         store
-            .record_created("p", "w", "opencode", "/tmp/p/w", "s2", "会话 2", 200)
+            .record_created(
+                "p",
+                "w",
+                "opencode",
+                "/tmp/p/w",
+                "s2",
+                "会话 2",
+                200,
+                AiSessionOrigin::User,
+            )
             .await
             .expect("record s2");
 
@@ -619,5 +751,112 @@ mod tests {
 
         assert_eq!(first_page.entries, invalid_cursor_page.entries);
         assert_eq!(first_page.has_more, invalid_cursor_page.has_more);
+    }
+
+    #[tokio::test]
+    async fn should_hide_evolution_sessions_from_default_list() {
+        let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
+
+        store
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "user-session",
+                "用户会话",
+                100,
+                AiSessionOrigin::User,
+            )
+            .await
+            .expect("record user session");
+        store
+            .record_created(
+                "p",
+                "w",
+                "codex",
+                "/tmp/p/w",
+                "evolution-session",
+                "系统会话",
+                200,
+                AiSessionOrigin::EvolutionSystem,
+            )
+            .await
+            .expect("record evolution session");
+
+        let listed = store
+            .list_page("p", "w", Some("codex"), None, None)
+            .await
+            .expect("list visible sessions");
+
+        assert_eq!(listed.entries.len(), 1);
+        assert_eq!(listed.entries[0].session_id, "user-session");
+
+        let searched = store
+            .search("p", "w", "codex", "系统", None)
+            .await
+            .expect("search hidden session");
+        assert_eq!(searched.len(), 1);
+        assert_eq!(searched[0].session_id, "evolution-session");
+        assert!(matches!(
+            searched[0].session_origin,
+            AiSessionOrigin::EvolutionSystem
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_backfill_session_origin_for_legacy_schema() {
+        let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
+        let pool = store.pool().await.expect("open pool");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE ai_session_index (
+                project_name TEXT NOT NULL,
+                workspace_name TEXT NOT NULL,
+                ai_tool TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (project_name, workspace_name, ai_tool, session_id)
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy schema");
+        sqlx::query(
+            r#"
+            INSERT INTO ai_session_index (
+                project_name,
+                workspace_name,
+                ai_tool,
+                directory,
+                session_id,
+                title,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ('p', 'w', 'codex', '/tmp/p/w', 'legacy', '旧会话', 100, 100)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert legacy row");
+        store
+            .schema_initialized
+            .store(false, Ordering::Release);
+
+        let listed = store
+            .list_page("p", "w", Some("codex"), None, None)
+            .await
+            .expect("list after migration");
+
+        assert_eq!(listed.entries.len(), 1);
+        assert!(matches!(
+            listed.entries[0].session_origin,
+            AiSessionOrigin::User
+        ));
     }
 }

@@ -9,6 +9,7 @@ struct AISessionStartedV2 {
     let sessionId: String
     let title: String
     let updatedAt: Int64
+    let origin: AISessionOrigin
     let selectionHint: AISessionSelectionHint?
 
     static func from(json: [String: Any]) -> AISessionStartedV2? {
@@ -18,6 +19,7 @@ struct AISessionStartedV2 {
               let sessionId = json["session_id"] as? String,
               let title = json["title"] as? String else { return nil }
         let updatedAt = parseInt64(json["updated_at"])
+        let origin = parseAISessionOrigin(json["session_origin"])
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
         return AISessionStartedV2(
             projectName: projectName,
@@ -26,6 +28,7 @@ struct AISessionStartedV2 {
             sessionId: sessionId,
             title: title,
             updatedAt: updatedAt,
+            origin: origin,
             selectionHint: selectionHint
         )
     }
@@ -377,6 +380,7 @@ struct AIProtocolSessionInfo {
     let id: String
     let title: String
     let updatedAt: Int64
+    let origin: AISessionOrigin
 
     static func from(json: [String: Any]) -> AIProtocolSessionInfo? {
         guard let projectName = json["project_name"] as? String,
@@ -385,13 +389,15 @@ struct AIProtocolSessionInfo {
               let id = json["id"] as? String,
               let title = json["title"] as? String else { return nil }
         let updatedAt = parseInt64(json["updated_at"])
+        let origin = parseAISessionOrigin(json["session_origin"])
         return AIProtocolSessionInfo(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             id: id,
             title: title,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            origin: origin
         )
     }
 }
@@ -921,6 +927,10 @@ private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
         normalizedRaw
     }
     return AIChatTool(rawValue: mapped)
+}
+
+private func parseAISessionOrigin(_ any: Any?) -> AISessionOrigin {
+    AISessionOrigin.from(rawValue: parseOptionalString(any))
 }
 
 // MARK: - Provider / Agent 列表
@@ -1872,8 +1882,9 @@ struct AISessionSearchResult {
             guard let id = item["id"] as? String,
                   let title = item["title"] as? String else { return nil }
             let updatedAt = (item["updated_at"] as? Int64) ?? (item["updated_at"] as? Int).map { Int64($0) } ?? 0
+            let origin = parseAISessionOrigin(item["session_origin"])
             return AISessionInfo(projectName: projectName, workspaceName: workspaceName,
-                                 aiTool: aiChatTool, id: id, title: title, updatedAt: updatedAt)
+                                 aiTool: aiChatTool, id: id, title: title, updatedAt: updatedAt, origin: origin)
         }
         return AISessionSearchResult(projectName: projectName, workspaceName: workspaceName,
                                      aiTool: aiTool, query: query, sessions: sessions)

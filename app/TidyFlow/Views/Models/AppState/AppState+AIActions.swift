@@ -171,7 +171,15 @@ extension AppState {
 
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
         guard let tool = AIChatTool(rawValue: ev.aiTool) else { return }
-        guard let session = aiSessionsForTool(tool).first(where: { $0.id == ev.sessionId }) else { return }
+        guard let session = aiSessionsForTool(tool).first(where: { $0.id == ev.sessionId })
+            ?? cachedAISession(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: tool,
+                sessionId: ev.sessionId
+            ) else {
+            return
+        }
         renameSession(
             AISessionInfo(
                 projectName: session.projectName,
@@ -179,7 +187,8 @@ extension AppState {
                 aiTool: session.aiTool,
                 id: session.id,
                 title: session.title,
-                updatedAt: ev.updatedAt > 0 ? ev.updatedAt : session.updatedAt
+                updatedAt: ev.updatedAt > 0 ? ev.updatedAt : session.updatedAt,
+                origin: session.origin
             ),
             newTitle: ev.title
         )

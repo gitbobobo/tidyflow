@@ -101,7 +101,8 @@ extension AppState {
             aiTool: ev.aiTool,
             id: ev.sessionId,
             title: ev.title,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            origin: ev.origin
         )
         upsertAISession(session, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
@@ -125,7 +126,8 @@ extension AppState {
                     aiTool: $0.aiTool,
                     id: $0.id,
                     title: $0.title,
-                    updatedAt: $0.updatedAt
+                    updatedAt: $0.updatedAt,
+                    origin: $0.origin
                 )
             }
             let sorted = sessions.sorted {
@@ -921,7 +923,8 @@ extension AppState {
             aiTool: aiTool,
             id: ev.sessionID,
             title: "\(ev.stage) · \(ev.cycleID)",
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            origin: .evolutionSystem
         )
         upsertAISession(session, for: aiTool)
 

@@ -5,6 +5,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::server::context::{SharedAppState, TaskBroadcastTx};
 use crate::server::handlers::dispatch_handlers;
+use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 
 pub mod ai_state;
@@ -48,6 +49,7 @@ pub(crate) async fn record_session_index_created(
     session_id: &str,
     title: &str,
     created_at_ms: i64,
+    session_origin: AiSessionOrigin,
 ) -> Result<(), String> {
     let store = {
         let ai = ai_state.lock().await;
@@ -62,6 +64,7 @@ pub(crate) async fn record_session_index_created(
             session_id,
             title,
             created_at_ms,
+            session_origin,
         )
         .await
 }

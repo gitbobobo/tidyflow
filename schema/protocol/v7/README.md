@@ -88,4 +88,7 @@ AI 会话列表 HTTP 读取接口统一为：
 
 - `ai_session_list` 顶层返回 `filter_ai_tool`、`has_more`、`next_cursor`
 - `sessions[]` 必须显式包含 `ai_tool`
+- `sessions[]` 必须显式包含 `session_origin`
 - 排序固定为 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`
+- 默认列表排除 `session_origin = evolution_system` 的系统会话
+- 按 `session_id` 精确读取消息/状态不受列表过滤影响

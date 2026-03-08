@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 use crate::ai::CompletionAgent;
 use crate::server::context::SharedAppState;
+use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -245,6 +246,7 @@ pub(crate) async fn query_ai_session_list(
             id: s.session_id,
             title: s.title,
             updated_at: s.updated_at_ms,
+            session_origin: s.session_origin,
         })
         .collect();
 
@@ -976,6 +978,7 @@ pub(super) async fn query_ai_session_search(
             id: e.session_id,
             title: e.title,
             updated_at: e.updated_at_ms,
+            session_origin: e.session_origin,
         })
         .collect();
 
@@ -1048,6 +1051,7 @@ pub(super) async fn handle_ai_code_review(
         &session.id,
         session_title,
         now,
+        AiSessionOrigin::User,
     )
     .await
     {
@@ -1402,6 +1406,7 @@ mod tests {
             "s1",
             "会话 1",
             100,
+            AiSessionOrigin::User,
         )
         .await
         .expect("record s1");
@@ -1414,6 +1419,7 @@ mod tests {
             "s2",
             "会话 2",
             200,
+            AiSessionOrigin::User,
         )
         .await
         .expect("record s2");
@@ -1472,6 +1478,7 @@ mod tests {
             "s1",
             "会话 1",
             100,
+            AiSessionOrigin::User,
         )
         .await
         .expect("record s1");
@@ -1484,6 +1491,7 @@ mod tests {
             "s2",
             "会话 2",
             200,
+            AiSessionOrigin::User,
         )
         .await
         .expect("record s2");
@@ -1496,6 +1504,7 @@ mod tests {
             "s3",
             "会话 3",
             150,
+            AiSessionOrigin::User,
         )
         .await
         .expect("record s3");

@@ -38,6 +38,16 @@ enum AIChatTool: String, CaseIterable, Identifiable {
     }
 }
 
+enum AISessionOrigin: String, Equatable {
+    case user
+    case evolutionSystem = "evolution_system"
+
+    static func from(rawValue: String?) -> AISessionOrigin {
+        guard let rawValue else { return .user }
+        return AISessionOrigin(rawValue: rawValue) ?? .user
+    }
+}
+
 enum AISessionListFilter: Hashable, Identifiable, Equatable {
     case all
     case tool(AIChatTool)
@@ -717,9 +727,32 @@ struct AISessionInfo: Identifiable, Equatable {
     let id: String
     let title: String
     let updatedAt: Int64
+    let origin: AISessionOrigin
+
+    init(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        id: String,
+        title: String,
+        updatedAt: Int64,
+        origin: AISessionOrigin = .user
+    ) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.aiTool = aiTool
+        self.id = id
+        self.title = title
+        self.updatedAt = updatedAt
+        self.origin = origin
+    }
 
     var sessionKey: String {
         "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(id)"
+    }
+
+    var isVisibleInDefaultSessionList: Bool {
+        origin != .evolutionSystem
     }
 
     var displayTitle: String {

@@ -839,7 +839,9 @@ class AppState: ObservableObject {
     }
 
     func replaceToolSessionIndex(_ sessions: [AISessionInfo], for tool: AIChatTool) {
-        let filteredExisting = aiSessionIndexByKey.filter { $0.value.aiTool != tool }
+        let filteredExisting = aiSessionIndexByKey.filter {
+            $0.value.aiTool != tool || !$0.value.isVisibleInDefaultSessionList
+        }
         aiSessionIndexByKey = filteredExisting
         for session in sessions {
             aiSessionIndexByKey[session.sessionKey] = session
@@ -878,10 +880,11 @@ class AppState: ObservableObject {
 
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
         let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
-        aiSessionsByTool[tool] = sortedSessions
+        let visibleSessions = sortedSessions.filter(\.isVisibleInDefaultSessionList)
+        aiSessionsByTool[tool] = visibleSessions
         replaceToolSessionIndex(sortedSessions, for: tool)
         if aiChatTool == tool {
-            aiSessions = sortedSessions
+            aiSessions = visibleSessions
         }
     }
 
@@ -905,7 +908,9 @@ class AppState: ObservableObject {
             )
             if key == allKey || key == toolKey {
                 updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
-                updated.sessions.insert(session, at: 0)
+                if session.isVisibleInDefaultSessionList {
+                    updated.sessions.insert(session, at: 0)
+                }
             }
             result[key] = updated
         }
@@ -956,9 +961,21 @@ class AppState: ObservableObject {
                                         aiTool: session.aiTool,
                                         id: session.id,
                                         title: newTitle,
-                                        updatedAt: session.updatedAt)
+                                        updatedAt: session.updatedAt,
+                                        origin: session.origin)
             sessions[idx] = updated
             setAISessions(sessions, for: session.aiTool)
+        }
+        if let cached = aiSessionIndexByKey[session.sessionKey] {
+            aiSessionIndexByKey[session.sessionKey] = AISessionInfo(
+                projectName: cached.projectName,
+                workspaceName: cached.workspaceName,
+                aiTool: cached.aiTool,
+                id: cached.id,
+                title: newTitle,
+                updatedAt: session.updatedAt,
+                origin: cached.origin
+            )
         }
         aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
             var updatedState = state
@@ -969,7 +986,8 @@ class AppState: ObservableObject {
                     aiTool: session.aiTool,
                     id: session.id,
                     title: newTitle,
-                    updatedAt: session.updatedAt
+                    updatedAt: session.updatedAt,
+                    origin: session.origin
                 )
             }
             return updatedState

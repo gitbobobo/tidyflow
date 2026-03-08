@@ -1370,6 +1370,8 @@ pub enum ServerMessage {
         session_id: String,
         title: String,
         updated_at: i64,
+        #[serde(default)]
+        session_origin: ai::AiSessionOrigin,
         #[serde(skip_serializing_if = "Option::is_none")]
         selection_hint: Option<ai::SessionSelectionHint>,
     },
@@ -2350,6 +2352,7 @@ mod tests {
                 id: "ses_1".to_string(),
                 title: "实现分页".to_string(),
                 updated_at: 123,
+                session_origin: ai::AiSessionOrigin::EvolutionSystem,
             }],
             has_more: true,
             next_cursor: Some("cursor_1".to_string()),
@@ -2368,6 +2371,10 @@ mod tests {
                 assert_eq!(filter_ai_tool, None);
                 assert_eq!(sessions.len(), 1);
                 assert_eq!(sessions[0].ai_tool, "codex");
+                assert!(matches!(
+                    sessions[0].session_origin,
+                    ai::AiSessionOrigin::EvolutionSystem
+                ));
                 assert!(has_more);
                 assert_eq!(next_cursor.as_deref(), Some("cursor_1"));
             }

@@ -18,6 +18,7 @@ use crate::server::handlers::ai::{
     record_session_index_created, resolve_directory, seed_stream_snapshot,
     split_utf8_text_by_max_bytes, stream_key, touch_session_index_updated_at,
 };
+use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::consts::{
@@ -4155,6 +4156,7 @@ impl EvolutionManager {
             &session.id,
             &session.title,
             created_at_ms,
+            AiSessionOrigin::EvolutionSystem,
         )
         .await
         {
@@ -5676,6 +5678,7 @@ impl EvolutionManager {
             &session.id,
             &session.title,
             created_at_ms,
+            AiSessionOrigin::EvolutionSystem,
         )
         .await
         {

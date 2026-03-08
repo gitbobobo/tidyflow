@@ -3372,15 +3372,18 @@ final class MobileAppState: ObservableObject {
 
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
         let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
-        aiSessionsByTool[tool] = sortedSessions
+        let visibleSessions = sortedSessions.filter(\.isVisibleInDefaultSessionList)
+        aiSessionsByTool[tool] = visibleSessions
         replaceToolSessionIndex(sortedSessions, for: tool)
         if aiChatTool == tool {
-            aiSessions = sortedSessions
+            aiSessions = visibleSessions
         }
     }
 
     func replaceToolSessionIndex(_ sessions: [AISessionInfo], for tool: AIChatTool) {
-        let filteredExisting = aiSessionIndexByKey.filter { $0.value.aiTool != tool }
+        let filteredExisting = aiSessionIndexByKey.filter {
+            $0.value.aiTool != tool || !$0.value.isVisibleInDefaultSessionList
+        }
         aiSessionIndexByKey = filteredExisting
         for session in sessions {
             aiSessionIndexByKey[session.sessionKey] = session
@@ -3419,7 +3422,9 @@ final class MobileAppState: ObservableObject {
             )
             if key == allKey || key == toolKey {
                 updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
-                updated.sessions.insert(session, at: 0)
+                if session.isVisibleInDefaultSessionList {
+                    updated.sessions.insert(session, at: 0)
+                }
             }
             result[key] = updated
         }
@@ -4311,7 +4316,8 @@ final class MobileAppState: ObservableObject {
                 aiTool: aiTool,
                 id: ev.sessionID,
                 title: "\(ev.stage) · \(ev.cycleID)",
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                origin: .evolutionSystem
             )
 
             var sessions = self.aiSessionsByTool[aiTool] ?? []
@@ -4555,7 +4561,8 @@ final class MobileAppState: ObservableObject {
                 aiTool: ev.aiTool,
                 id: ev.sessionId,
                 title: ev.title,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                origin: ev.origin
             )
             self.upsertAISession(session, for: ev.aiTool)
 
@@ -4588,7 +4595,8 @@ final class MobileAppState: ObservableObject {
                     aiTool: $0.aiTool,
                     id: $0.id,
                     title: $0.title,
-                    updatedAt: $0.updatedAt
+                    updatedAt: $0.updatedAt,
+                    origin: $0.origin
                 )
             }
             let sorted = sessions.sorted {
@@ -4990,26 +4998,36 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISessionRenameResult = { [weak self] ev in
             guard let self,
                   let tool = AIChatTool(rawValue: ev.aiTool) else { return }
-            var sessions = self.aiSessionsByTool[tool] ?? []
-            if let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) {
-                let old = sessions[idx]
-                let updated = AISessionInfo(
-                    projectName: old.projectName,
-                    workspaceName: old.workspaceName,
-                    aiTool: old.aiTool,
-                    id: old.id,
-                    title: ev.title,
-                    updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt
-                )
+            guard let old = (self.aiSessionsByTool[tool] ?? []).first(where: { $0.id == ev.sessionId })
+                ?? self.cachedAISession(
+                    projectName: ev.projectName,
+                    workspaceName: ev.workspaceName,
+                    aiTool: tool,
+                    sessionId: ev.sessionId
+                ) else { return }
+
+            let updated = AISessionInfo(
+                projectName: old.projectName,
+                workspaceName: old.workspaceName,
+                aiTool: old.aiTool,
+                id: old.id,
+                title: ev.title,
+                updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt,
+                origin: old.origin
+            )
+
+            if var sessions = self.aiSessionsByTool[tool],
+               let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) {
                 sessions[idx] = updated
                 self.setAISessions(sessions, for: tool)
-                self.aiSessionListPageStates = self.aiSessionListPageStates.mapValues { state in
-                    var pageState = state
-                    if let pageIndex = pageState.sessions.firstIndex(where: { $0.sessionKey == updated.sessionKey }) {
-                        pageState.sessions[pageIndex] = updated
-                    }
-                    return pageState
+            }
+            self.aiSessionIndexByKey[updated.sessionKey] = updated
+            self.aiSessionListPageStates = self.aiSessionListPageStates.mapValues { state in
+                var pageState = state
+                if let pageIndex = pageState.sessions.firstIndex(where: { $0.sessionKey == updated.sessionKey }) {
+                    pageState.sessions[pageIndex] = updated
                 }
+                return pageState
             }
         }
 

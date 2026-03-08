@@ -56,6 +56,20 @@ pub struct AiSessionStatusUpdate {
 }
 
 /// AI 会话信息（归属到某个 project/workspace）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiSessionOrigin {
+    User,
+    EvolutionSystem,
+}
+
+impl Default for AiSessionOrigin {
+    fn default() -> Self {
+        Self::User
+    }
+}
+
+/// AI 会话信息（归属到某个 project/workspace）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub project_name: String,
@@ -65,6 +79,8 @@ pub struct SessionInfo {
     pub title: String,
     /// 毫秒时间戳
     pub updated_at: i64,
+    #[serde(default)]
+    pub session_origin: AiSessionOrigin,
 }
 
 /// AI Part（对齐 OpenCode part，tool_state 透传 JSON）
@@ -577,6 +593,7 @@ mod tests {
             id: "s1".to_string(),
             title: "t".to_string(),
             updated_at: 123,
+            session_origin: AiSessionOrigin::EvolutionSystem,
         };
         let json = serde_json::to_string(&s).unwrap();
         let parsed: SessionInfo = serde_json::from_str(&json).unwrap();
@@ -584,6 +601,10 @@ mod tests {
         assert_eq!(parsed.workspace_name, "w");
         assert_eq!(parsed.ai_tool, "codex");
         assert_eq!(parsed.id, "s1");
+        assert!(matches!(
+            parsed.session_origin,
+            AiSessionOrigin::EvolutionSystem
+        ));
     }
 
     #[test]
