@@ -541,7 +541,10 @@ pub enum ClientMessage {
     AISessionList {
         project_name: String,
         workspace_name: String,
-        ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ai_tool: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
@@ -1374,8 +1377,12 @@ pub enum ServerMessage {
     AISessionListV2 {
         project_name: String,
         workspace_name: String,
-        ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        filter_ai_tool: Option<String>,
         sessions: Vec<ai::SessionInfo>,
+        has_more: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        next_cursor: Option<String>,
     },
     #[serde(rename = "ai_session_messages")]
     AISessionMessages {
@@ -2325,6 +2332,44 @@ mod tests {
                 assert!(has_more);
                 assert_eq!(next_before_message_id.as_deref(), Some("msg_21"));
                 assert_eq!(truncated, Some(true));
+            }
+            other => panic!("Unexpected message type: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_ai_session_list_result_roundtrip_with_pagination_fields() {
+        let message = ServerMessage::AISessionListV2 {
+            project_name: "demo".to_string(),
+            workspace_name: "default".to_string(),
+            filter_ai_tool: None,
+            sessions: vec![ai::SessionInfo {
+                project_name: "demo".to_string(),
+                workspace_name: "default".to_string(),
+                ai_tool: "codex".to_string(),
+                id: "ses_1".to_string(),
+                title: "实现分页".to_string(),
+                updated_at: 123,
+            }],
+            has_more: true,
+            next_cursor: Some("cursor_1".to_string()),
+        };
+        let encoded = rmp_serde::to_vec_named(&message).expect("encode ai_session_list");
+        let decoded: ServerMessage =
+            rmp_serde::from_slice(&encoded).expect("decode ai_session_list");
+        match decoded {
+            ServerMessage::AISessionListV2 {
+                filter_ai_tool,
+                sessions,
+                has_more,
+                next_cursor,
+                ..
+            } => {
+                assert_eq!(filter_ai_tool, None);
+                assert_eq!(sessions.len(), 1);
+                assert_eq!(sessions[0].ai_tool, "codex");
+                assert!(has_more);
+                assert_eq!(next_cursor.as_deref(), Some("cursor_1"));
             }
             other => panic!("Unexpected message type: {:?}", other),
         }

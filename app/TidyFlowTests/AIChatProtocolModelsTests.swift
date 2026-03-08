@@ -2,6 +2,42 @@ import XCTest
 @testable import TidyFlow
 
 final class AIChatProtocolModelsTests: XCTestCase {
+    func testAISessionListParsesAllFilterAndPaginationFields() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "sessions": [
+                [
+                    "project_name": "tidyflow",
+                    "workspace_name": "default",
+                    "ai_tool": "codex",
+                    "id": "s1",
+                    "title": "实现分页",
+                    "updated_at": 123
+                ],
+                [
+                    "project_name": "tidyflow",
+                    "workspace_name": "default",
+                    "ai_tool": "opencode",
+                    "id": "s2",
+                    "title": "修复 bug",
+                    "updated_at": 122
+                ]
+            ],
+            "has_more": true,
+            "next_cursor": "cursor-1"
+        ]
+
+        let result = AISessionListV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertNil(result?.filterAIChatTool)
+        XCTAssertEqual(result?.sessions.count, 2)
+        XCTAssertEqual(result?.sessions.first?.aiTool, .codex)
+        XCTAssertEqual(result?.sessions.last?.aiTool, .opencode)
+        XCTAssertEqual(result?.hasMore, true)
+        XCTAssertEqual(result?.nextCursor, "cursor-1")
+    }
+
     func testAIProviderListParsesClaudeCodeUnderscoreTool() {
         let json: [String: Any] = [
             "project_name": "tidyflow",

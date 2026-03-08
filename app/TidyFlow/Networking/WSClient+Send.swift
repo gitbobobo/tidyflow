@@ -1284,13 +1284,21 @@ extension WSClient {
     func requestAISessionList(
         projectName: String,
         workspaceName: String,
-        aiTool: AIChatTool,
+        filter: AIChatTool? = nil,
+        cursor: String? = nil,
         limit: Int? = 50
     ) {
-        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions"
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/sessions"
         var queryItems: [URLQueryItem] = []
         if let limit, limit > 0 {
             queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+        }
+        if let filter {
+            queryItems.append(URLQueryItem(name: "ai_tool", value: filter.rawValue))
+        }
+        if let cursor,
+           !cursor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
         }
         requestReadViaHTTP(
             domain: "ai",

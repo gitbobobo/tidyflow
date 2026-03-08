@@ -20,7 +20,7 @@ mod stream;
 mod utils;
 
 pub use ai_state::AIState;
-pub(crate) use session_index_store::{AiSessionIndexEntry, AiSessionIndexStore};
+pub(crate) use session_index_store::{AiSessionIndexPage, AiSessionIndexStore};
 pub(crate) use utils::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, ensure_agent,
     infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
@@ -66,19 +66,20 @@ pub(crate) async fn record_session_index_created(
         .await
 }
 
-pub(crate) async fn list_session_index_entries(
+pub(crate) async fn list_session_index_page(
     ai_state: &SharedAIState,
     project_name: &str,
     workspace_name: &str,
-    ai_tool: &str,
+    filter_ai_tool: Option<&str>,
+    cursor: Option<&str>,
     limit: Option<u32>,
-) -> Result<Vec<AiSessionIndexEntry>, String> {
+) -> Result<AiSessionIndexPage, String> {
     let store = {
         let ai = ai_state.lock().await;
         ai.session_index_store.clone()
     };
     store
-        .list(project_name, workspace_name, ai_tool, limit)
+        .list_page(project_name, workspace_name, filter_ai_tool, cursor, limit)
         .await
 }
 

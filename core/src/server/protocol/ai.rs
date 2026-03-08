@@ -60,6 +60,7 @@ pub struct AiSessionStatusUpdate {
 pub struct SessionInfo {
     pub project_name: String,
     pub workspace_name: String,
+    pub ai_tool: String,
     pub id: String,
     pub title: String,
     /// 毫秒时间戳
@@ -572,6 +573,7 @@ mod tests {
         let s = SessionInfo {
             project_name: "p".to_string(),
             workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
             id: "s1".to_string(),
             title: "t".to_string(),
             updated_at: 123,
@@ -580,6 +582,7 @@ mod tests {
         let parsed: SessionInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.project_name, "p");
         assert_eq!(parsed.workspace_name, "w");
+        assert_eq!(parsed.ai_tool, "codex");
         assert_eq!(parsed.id, "s1");
     }
 

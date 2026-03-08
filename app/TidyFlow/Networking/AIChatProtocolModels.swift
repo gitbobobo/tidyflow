@@ -34,15 +34,26 @@ struct AISessionStartedV2 {
 struct AISessionListV2 {
     let projectName: String
     let workspaceName: String
-    let aiTool: AIChatTool
+    let filterAIChatTool: AIChatTool?
     let sessions: [AIProtocolSessionInfo]
+    let hasMore: Bool
+    let nextCursor: String?
 
     static func from(json: [String: Any]) -> AISessionListV2? {
         guard let projectName = json["project_name"] as? String,
-              let workspaceName = json["workspace_name"] as? String,
-              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
+              let workspaceName = json["workspace_name"] as? String else { return nil }
+        let filterAIChatTool = parseAIChatTool(json["filter_ai_tool"])
         let items = (json["sessions"] as? [[String: Any]] ?? []).compactMap { AIProtocolSessionInfo.from(json: $0) }
-        return AISessionListV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessions: items)
+        let hasMore = parseBool(json["has_more"]) ?? false
+        let nextCursor = parseOptionalString(json["next_cursor"])
+        return AISessionListV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            filterAIChatTool: filterAIChatTool,
+            sessions: items,
+            hasMore: hasMore,
+            nextCursor: nextCursor
+        )
     }
 }
 
@@ -362,6 +373,7 @@ struct AISessionConfigOptionsResult {
 struct AIProtocolSessionInfo {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let id: String
     let title: String
     let updatedAt: Int64
@@ -369,10 +381,18 @@ struct AIProtocolSessionInfo {
     static func from(json: [String: Any]) -> AIProtocolSessionInfo? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let id = json["id"] as? String,
               let title = json["title"] as? String else { return nil }
         let updatedAt = parseInt64(json["updated_at"])
-        return AIProtocolSessionInfo(projectName: projectName, workspaceName: workspaceName, id: id, title: title, updatedAt: updatedAt)
+        return AIProtocolSessionInfo(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            id: id,
+            title: title,
+            updatedAt: updatedAt
+        )
     }
 }
 

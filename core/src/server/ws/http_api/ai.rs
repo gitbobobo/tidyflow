@@ -16,6 +16,12 @@ pub(in crate::server::ws) struct AiWorkspacePath {
 }
 
 #[derive(Debug, Deserialize)]
+pub(in crate::server::ws) struct WorkspacePath {
+    project: String,
+    workspace: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(in crate::server::ws) struct AiSessionPath {
     project: String,
     workspace: String,
@@ -27,6 +33,10 @@ pub(in crate::server::ws) struct AiSessionPath {
 pub(in crate::server::ws) struct SessionListQuery {
     #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    ai_tool: Option<String>,
     #[serde(default)]
     token: Option<String>,
 }
@@ -52,7 +62,7 @@ pub(in crate::server::ws) struct OptionalSessionQuery {
 pub(in crate::server::ws) async fn ai_sessions_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
     headers: HeaderMap,
-    Path(path): Path<AiWorkspacePath>,
+    Path(path): Path<WorkspacePath>,
     Query(query): Query<SessionListQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
@@ -61,7 +71,8 @@ pub(in crate::server::ws) async fn ai_sessions_handler(
         &ctx.ai_state,
         &path.project,
         &path.workspace,
-        &path.ai_tool,
+        query.ai_tool.as_deref(),
+        query.cursor.as_deref(),
         query.limit,
     )
     .await

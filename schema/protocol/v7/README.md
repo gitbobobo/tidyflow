@@ -71,3 +71,21 @@ Core `upsert_tool_part_in_history_messages` 在加载历史时原地更新已存
 3. 均失败时回退为空字典 `{}`，不中断渲染流程。
 
 此行为在 `AIChatProtocolModelsTests.testAIToolInvocationStateFromParsesJSONStringInput` 中有回归覆盖。
+
+## AI 会话列表读取（v7 补充）
+
+AI 会话列表 HTTP 读取接口统一为：
+
+- `GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions`
+
+查询参数约束：
+
+- `limit`：默认 `50`，最大 `200`
+- `cursor`：不透明分页游标
+- `ai_tool`：可选工具筛选；为空表示返回当前工作区全部工具会话
+
+返回约束：
+
+- `ai_session_list` 顶层返回 `filter_ai_tool`、`has_more`、`next_cursor`
+- `sessions[]` 必须显式包含 `ai_tool`
+- 排序固定为 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`

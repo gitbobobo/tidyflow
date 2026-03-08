@@ -182,7 +182,7 @@ pub(super) async fn handle_ai_read_via_http_required(
         &ServerMessage::Error {
             code: "read_via_http_required".to_string(),
             message: format!(
-                "{} must be fetched via HTTP API (/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/...)",
+                "{} must be fetched via HTTP API (/api/v1/projects/:project/workspaces/:workspace/ai/...)",
                 action
             ),
         },
@@ -196,32 +196,52 @@ pub(crate) async fn query_ai_session_list(
     ai_state: &SharedAIState,
     project_name: &str,
     workspace_name: &str,
-    ai_tool: &str,
+    filter_ai_tool: Option<&str>,
+    cursor: Option<&str>,
     limit: Option<u32>,
 ) -> Result<ServerMessage, String> {
-    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let filter_ai_tool = match filter_ai_tool {
+        Some(ai_tool) => Some(normalize_ai_tool(ai_tool)?),
+        None => None,
+    };
     resolve_directory(app_state, project_name, workspace_name).await?;
 
     info!(
-        "AISessionList(DB): project={}, workspace={}, ai_tool={}",
-        project_name, workspace_name, ai_tool
+        "AISessionList(DB): project={}, workspace={}, filter_ai_tool={:?}, cursor_present={}",
+        project_name,
+        workspace_name,
+        filter_ai_tool.as_deref(),
+        cursor.is_some()
     );
 
-    let sessions =
-        super::list_session_index_entries(ai_state, project_name, workspace_name, &ai_tool, limit)
-            .await?;
-    let total_sessions = sessions.len();
+    let page = super::list_session_index_page(
+        ai_state,
+        project_name,
+        workspace_name,
+        filter_ai_tool.as_deref(),
+        cursor,
+        limit,
+    )
+    .await?;
+    let total_sessions = page.entries.len();
 
     info!(
-        "AISessionList(DB): project={}, workspace={}, ai_tool={}, returned_count={}, limit={:?}",
-        project_name, workspace_name, ai_tool, total_sessions, limit
+        "AISessionList(DB): project={}, workspace={}, filter_ai_tool={:?}, returned_count={}, limit={:?}, has_more={}",
+        project_name,
+        workspace_name,
+        filter_ai_tool.as_deref(),
+        total_sessions,
+        limit,
+        page.has_more
     );
 
-    let sessions: Vec<_> = sessions
+    let sessions: Vec<_> = page
+        .entries
         .into_iter()
         .map(|s| crate::server::protocol::ai::SessionInfo {
             project_name: project_name.to_string(),
             workspace_name: workspace_name.to_string(),
+            ai_tool: s.ai_tool,
             id: s.session_id,
             title: s.title,
             updated_at: s.updated_at_ms,
@@ -231,8 +251,10 @@ pub(crate) async fn query_ai_session_list(
     Ok(ServerMessage::AISessionListV2 {
         project_name: project_name.to_string(),
         workspace_name: workspace_name.to_string(),
-        ai_tool,
+        filter_ai_tool,
         sessions,
+        has_more: page.has_more,
+        next_cursor: page.next_cursor,
     })
 }
 
@@ -950,6 +972,7 @@ pub(super) async fn query_ai_session_search(
         .map(|e| crate::server::protocol::ai::SessionInfo {
             project_name: e.project_name,
             workspace_name: e.workspace_name,
+            ai_tool: e.ai_tool,
             id: e.session_id,
             title: e.title,
             updated_at: e.updated_at_ms,
@@ -1307,7 +1330,8 @@ mod tests {
     fn paginate_empty_session_returns_empty_no_more() {
         // ACP 新会话或历史为空时，should 返回 0 条消息，has_more=false
         let messages: Vec<crate::server::protocol::ai::MessageInfo> = vec![];
-        let page = paginate_ai_session_messages(&messages, None, AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
+        let page =
+            paginate_ai_session_messages(&messages, None, AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE);
         assert!(page.messages.is_empty());
         assert!(!page.has_more);
         assert_eq!(page.next_before_message_id, None);
@@ -1399,17 +1423,36 @@ mod tests {
         .await
         .expect("touch s1");
 
-        let resp = query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", None)
-            .await
-            .expect("query list");
+        let resp = query_ai_session_list(
+            &app_state,
+            &ai_state,
+            "demo",
+            "default",
+            Some("codex"),
+            None,
+            None,
+        )
+        .await
+        .expect("query list");
 
         match resp {
-            ServerMessage::AISessionListV2 { sessions, .. } => {
+            ServerMessage::AISessionListV2 {
+                filter_ai_tool,
+                sessions,
+                has_more,
+                next_cursor,
+                ..
+            } => {
+                assert_eq!(filter_ai_tool.as_deref(), Some("codex"));
                 assert_eq!(sessions.len(), 2);
+                assert_eq!(sessions[0].ai_tool, "codex");
                 assert_eq!(sessions[0].id, "s1");
                 assert_eq!(sessions[0].updated_at, 300);
+                assert_eq!(sessions[1].ai_tool, "codex");
                 assert_eq!(sessions[1].id, "s2");
                 assert_eq!(sessions[1].updated_at, 200);
+                assert!(!has_more);
+                assert_eq!(next_cursor, None);
             }
             _ => panic!("expected ai_session_list response"),
         }
@@ -1444,27 +1487,68 @@ mod tests {
         )
         .await
         .expect("record s2");
+        super::super::record_session_index_created(
+            &ai_state,
+            "demo",
+            "default",
+            "opencode",
+            "/tmp/demo",
+            "s3",
+            "会话 3",
+            150,
+        )
+        .await
+        .expect("record s3");
 
-        let resp_limit_zero =
-            query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", Some(0))
-                .await
-                .expect("query list with limit 0");
-        let resp_limit_one =
-            query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", Some(1))
-                .await
-                .expect("query list with limit 1");
+        let resp_limit_zero = query_ai_session_list(
+            &app_state,
+            &ai_state,
+            "demo",
+            "default",
+            None,
+            None,
+            Some(0),
+        )
+        .await
+        .expect("query list with limit 0");
+        let resp_limit_one = query_ai_session_list(
+            &app_state,
+            &ai_state,
+            "demo",
+            "default",
+            None,
+            None,
+            Some(1),
+        )
+        .await
+        .expect("query list with limit 1");
 
         match resp_limit_zero {
-            ServerMessage::AISessionListV2 { sessions, .. } => {
-                assert_eq!(sessions.len(), 2);
+            ServerMessage::AISessionListV2 {
+                filter_ai_tool,
+                sessions,
+                has_more,
+                ..
+            } => {
+                assert_eq!(filter_ai_tool, None);
+                assert_eq!(sessions.len(), 3);
+                assert!(!has_more);
             }
             _ => panic!("expected ai_session_list response"),
         }
 
         match resp_limit_one {
-            ServerMessage::AISessionListV2 { sessions, .. } => {
+            ServerMessage::AISessionListV2 {
+                sessions,
+                has_more,
+                next_cursor,
+                ..
+            } => {
                 assert_eq!(sessions.len(), 1);
                 assert_eq!(sessions[0].id, "s2");
+                assert_eq!(sessions[0].ai_tool, "codex");
+                assert!(has_more);
+                assert!(next_cursor.is_some());
             }
             _ => panic!("expected ai_session_list response"),
         }

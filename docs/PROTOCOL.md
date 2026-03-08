@@ -54,7 +54,7 @@
 ## 读取 API（`/api/v1`）
 
 - AI：
-  - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions`
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/messages`
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/status`
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/providers`
@@ -138,6 +138,83 @@
 - 文件能力（列表、读取、写入、索引、重命名、删除、复制、移动）
 - Git 能力（状态、diff、stage/unstage、commit、branch、rebase、merge、log、show）
 - 客户端设置同步与文件系统监听
+
+## AI 会话列表分页（HTTP `.../sessions`）
+
+- 客户端请求：
+  - `GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions`
+  - `limit`：页大小（可选）
+    - 缺省：`50`
+    - `<= 0`：按 `50` 处理
+    - `> 200`：按 `200` 处理
+  - `cursor`：下一页游标（可选）
+    - 服务端使用不透明游标
+    - 游标无效时：服务端回退到第一页，不报错
+  - `ai_tool`：工具筛选（可选）
+    - 为空：返回当前工作区全部工具会话
+    - 非空：仅返回指定工具会话
+- 服务端结果 `type=ai_session_list`：
+  - `filter_ai_tool`：本次实际使用的工具筛选（可选）
+  - `sessions`：会话数组（按 `updated_at DESC, created_at DESC, ai_tool ASC, session_id ASC`）
+  - `sessions[].ai_tool`：会话所属工具
+  - `has_more`：是否还有下一页
+  - `next_cursor`：下一页游标（用于继续向后加载）
+
+### 请求示例（全部工具首屏）
+
+```json
+{
+  "domain": "ai",
+  "action": "ai_session_list",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "limit": 50
+  }
+}
+```
+
+### 请求示例（单工具下一页）
+
+```json
+{
+  "domain": "ai",
+  "action": "ai_session_list",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "ai_tool": "codex",
+    "cursor": "opaque_cursor",
+    "limit": 50
+  }
+}
+```
+
+### 响应示例
+
+```json
+{
+  "action": "ai_session_list",
+  "kind": "result",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "filter_ai_tool": null,
+    "sessions": [
+      {
+        "project_name": "demo",
+        "workspace_name": "default",
+        "ai_tool": "codex",
+        "id": "ses_123",
+        "title": "实现分页",
+        "updated_at": 1730966400000
+      }
+    ],
+    "has_more": true,
+    "next_cursor": "opaque_cursor"
+  }
+}
+```
 
 ## AI 会话历史分页（HTTP `.../messages`）
 

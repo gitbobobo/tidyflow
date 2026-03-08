@@ -24,7 +24,7 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             post(crate::server::ws::pairing::pair_revoke_handler),
         )
         .route(
-            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions",
+            "/api/v1/projects/:project/workspaces/:workspace/ai/sessions",
             get(crate::server::ws::http_api::ai_sessions_handler),
         )
         .route(
