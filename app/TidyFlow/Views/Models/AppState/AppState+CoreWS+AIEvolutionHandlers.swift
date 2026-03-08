@@ -122,15 +122,55 @@ extension AppState {
                 AISessionInfo(
                     projectName: $0.projectName,
                     workspaceName: $0.workspaceName,
-                    aiTool: ev.aiTool,
+                    aiTool: $0.aiTool,
                     id: $0.id,
                     title: $0.title,
                     updatedAt: $0.updatedAt
                 )
             }
-            let sorted = sessions.sorted { $0.updatedAt > $1.updatedAt }
+            let sorted = sessions.sorted {
+                if $0.updatedAt != $1.updatedAt {
+                    return $0.updatedAt > $1.updatedAt
+                }
+                if $0.aiTool != $1.aiTool {
+                    return $0.aiTool.rawValue < $1.aiTool.rawValue
+                }
+                return $0.id < $1.id
+            }
             DispatchQueue.main.async { [weak self] in
-                self?.setAISessions(sorted, for: ev.aiTool)
+                guard let self else { return }
+                let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
+                var pageState = self.sessionListPageState(for: filter)
+                let mergedSessions = pageState.isLoadingNextPage
+                    ? (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
+                        result[session.sessionKey] = session
+                    }
+                    : sorted.reduce(into: [String: AISessionInfo]()) { result, session in
+                        result[session.sessionKey] = session
+                    }
+                let orderedMergedSessions: [AISessionInfo]
+                if pageState.isLoadingNextPage {
+                    let orderedKeys = (pageState.sessions + sorted).map(\.sessionKey)
+                    var seen = Set<String>()
+                    orderedMergedSessions = orderedKeys.compactMap { key in
+                        guard seen.insert(key).inserted else { return nil }
+                        return mergedSessions[key]
+                    }
+                } else {
+                    orderedMergedSessions = sorted
+                }
+                pageState.sessions = orderedMergedSessions
+                pageState.hasMore = ev.hasMore
+                pageState.nextCursor = ev.nextCursor
+                pageState.isLoadingInitial = false
+                pageState.isLoadingNextPage = false
+                self.updateSessionListPageState(
+                    pageState,
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    filter: filter
+                )
+                self.mergeKnownAISessions(orderedMergedSessions)
             }
         }
     }
@@ -889,8 +929,8 @@ extension AppState {
             aiChatTool = aiTool
         }
         // 同步侧边栏筛选，确保会话列表高亮当前进化会话
-        if sessionPanelFilterTool != aiTool {
-            sessionPanelFilterTool = aiTool
+        if sessionPanelFilter != .tool(aiTool) {
+            sessionPanelFilter = .tool(aiTool)
         }
         let targetStore = aiStore(for: aiTool)
         targetStore.setAbortPendingSessionId(nil)
@@ -1095,7 +1135,12 @@ extension AppState {
     }
 
     func handleClientErrorMessage(_ errorMsg: String) {
-        aiSessionListLoadingTools.removeAll()
+        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
+            var updated = state
+            updated.isLoadingInitial = false
+            updated.isLoadingNextPage = false
+            return updated
+        }
         if !evolutionPendingActionByWorkspace.isEmpty {
             let pendingCount = evolutionPendingActionByWorkspace.count
             evolutionPendingActionByWorkspace.removeAll()

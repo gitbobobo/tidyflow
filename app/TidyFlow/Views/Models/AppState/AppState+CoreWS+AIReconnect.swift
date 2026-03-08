@@ -51,8 +51,6 @@ extension AppState {
 
     // 退避策略常量由共享 ReconnectPolicy 提供，确保 macOS/iOS 使用同一份参数。
     private static let aiSessionListLimit = 50
-    private static let aiDeferredSessionReloadDelay: TimeInterval = 0.35
-
     func reloadAISessionDataAfterReconnect() {
         deferredAISessionReloadWorkItem?.cancel()
         deferredAISessionReloadWorkItem = nil
@@ -61,37 +59,7 @@ extension AppState {
             return
         }
 
-        // 当前工具优先，减少首轮大包对连接稳定性的冲击。
-        let currentTool = aiChatTool
-        wsClient.requestAISessionList(
-            projectName: selectedProjectName,
-            workspaceName: workspace,
-            aiTool: currentTool,
-            limit: Self.aiSessionListLimit
-        )
-        let delayedTools = AIChatTool.allCases.filter { $0 != currentTool }
-        if !delayedTools.isEmpty {
-            let expectedProject = selectedProjectName
-            let expectedWorkspace = workspace
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard self.selectedProjectName == expectedProject,
-                      self.selectedWorkspaceKey == expectedWorkspace else { return }
-                for tool in delayedTools {
-                    self.wsClient.requestAISessionList(
-                        projectName: expectedProject,
-                        workspaceName: expectedWorkspace,
-                        aiTool: tool,
-                        limit: Self.aiSessionListLimit
-                    )
-                }
-            }
-            deferredAISessionReloadWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + Self.aiDeferredSessionReloadDelay,
-                execute: workItem
-            )
-        }
+        _ = requestAISessionList(for: sessionPanelFilter, limit: Self.aiSessionListLimit)
 
         // 若某工具已有选中会话，则补拉详情，避免断线窗口内响应丢失导致空白。
         for tool in AIChatTool.allCases {

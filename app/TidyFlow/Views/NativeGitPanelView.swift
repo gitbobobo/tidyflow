@@ -172,8 +172,7 @@ struct NativeGitPanelView: View {
 
     private func openAIReviewSession(sessionId: String) {
         // 通过 sessionPanelAction 触发 AI 标签页加载对应会话
-        let tool = appState.aiChatTool
-        if let session = appState.aiSessionsForTool(tool).first(where: { $0.id == sessionId }) {
+        if let session = appState.cachedAISession(sessionId: sessionId) {
             appState.sessionPanelAction = .loadSession(session)
         }
     }

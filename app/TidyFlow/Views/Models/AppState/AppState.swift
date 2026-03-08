@@ -376,10 +376,10 @@ class AppState: ObservableObject {
         }
     }
 
-    /// 右侧面板会话列表当前筛选的 AI 工具
-    @Published var sessionPanelFilterTool: AIChatTool = .opencode
-    /// 正在加载会话列表的 AI 工具集合
-    @Published var aiSessionListLoadingTools: Set<AIChatTool> = []
+    /// 右侧面板会话列表当前筛选条件，默认展示全部工具。
+    @Published var sessionPanelFilter: AISessionListFilter = .all
+    /// 当前工作区会话列表分页状态（按筛选维度分桶）。
+    @Published var aiSessionListPageStates: [String: AISessionListPageState] = [:]
 
     /// 右侧面板会话操作（由 SessionsPanelView 发起，AITabView 响应）
     enum SessionPanelAction: Equatable {
@@ -390,28 +390,83 @@ class AppState: ObservableObject {
     }
     @Published var sessionPanelAction: SessionPanelAction?
 
-    /// 获取指定工具的会话列表
+    /// 获取指定工具的辅助索引会话列表。
     func aiSessionsForTool(_ tool: AIChatTool) -> [AISessionInfo] {
         aiSessionsByTool[tool] ?? []
     }
 
-    /// 请求指定 AI 工具的会话列表，并统一维护 loading 状态。
+    func displayedAISessions(for filter: AISessionListFilter) -> [AISessionInfo] {
+        sessionListPageState(for: filter).sessions
+    }
+
+    func sessionListPageState(for filter: AISessionListFilter) -> AISessionListPageState {
+        guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else {
+            return .empty()
+        }
+        return aiSessionListPageStates[sessionListPageKey(
+            project: selectedProjectName,
+            workspace: workspace,
+            filter: filter
+        )] ?? .empty()
+    }
+
+    var displayedAISessionListState: AISessionListPageState {
+        sessionListPageState(for: sessionPanelFilter)
+    }
+
+    /// 请求指定筛选的 AI 会话列表，并统一维护分页 loading 状态。
     @discardableResult
-    func requestAISessionList(for tool: AIChatTool, limit: Int = 50) -> Bool {
+    func requestAISessionList(
+        for filter: AISessionListFilter,
+        limit: Int = 50,
+        cursor: String? = nil,
+        append: Bool = false
+    ) -> Bool {
         guard let workspace = selectedWorkspaceKey,
               !workspace.isEmpty,
               connectionState == .connected else {
-            aiSessionListLoadingTools.remove(tool)
             return false
         }
-        aiSessionListLoadingTools.insert(tool)
+        let pageKey = sessionListPageKey(
+            project: selectedProjectName,
+            workspace: workspace,
+            filter: filter
+        )
+        var pageState = aiSessionListPageStates[pageKey] ?? .empty()
+        if append {
+            guard !pageState.isLoadingNextPage else { return false }
+            pageState.isLoadingNextPage = true
+        } else {
+            guard !pageState.isLoadingInitial else { return false }
+            if cursor == nil {
+                pageState = .empty()
+            }
+            pageState.isLoadingInitial = true
+            pageState.isLoadingNextPage = false
+        }
+        aiSessionListPageStates[pageKey] = pageState
         wsClient.requestAISessionList(
             projectName: selectedProjectName,
             workspaceName: workspace,
-            aiTool: tool,
+            filter: filter.tool,
+            cursor: cursor,
             limit: limit
         )
         return true
+    }
+
+    @discardableResult
+    func loadNextAISessionListPage(for filter: AISessionListFilter, limit: Int = 50) -> Bool {
+        let pageState = sessionListPageState(for: filter)
+        guard pageState.hasMore,
+              let nextCursor = pageState.nextCursor,
+              !nextCursor.isEmpty else { return false }
+        return requestAISessionList(
+            for: filter,
+            limit: limit,
+            cursor: nextCursor,
+            append: true
+        )
     }
 
     // AI Provider / Model / Agent 状态（当前工具上下文）
@@ -485,6 +540,7 @@ class AppState: ObservableObject {
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
+    private var aiSessionIndexByKey: [String: AISessionInfo] = [:]
     private var aiProvidersByTool: [AIChatTool: [AIProviderInfo]] = [:]
     private var aiSelectedModelByTool: [AIChatTool: AIModelSelection?] = [:]
     private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
@@ -761,6 +817,35 @@ class AppState: ObservableObject {
         }
     }
 
+    func sessionListPageKey(
+        project: String,
+        workspace: String,
+        filter: AISessionListFilter
+    ) -> String {
+        "\(project)::\(workspace)::\(filter.id)"
+    }
+
+    func updateSessionListPageState(
+        _ state: AISessionListPageState,
+        project: String,
+        workspace: String,
+        filter: AISessionListFilter
+    ) {
+        aiSessionListPageStates[sessionListPageKey(project: project, workspace: workspace, filter: filter)] = state
+    }
+
+    func clearAISessionListPageStates() {
+        aiSessionListPageStates = [:]
+    }
+
+    func replaceToolSessionIndex(_ sessions: [AISessionInfo], for tool: AIChatTool) {
+        let filteredExisting = aiSessionIndexByKey.filter { $0.value.aiTool != tool }
+        aiSessionIndexByKey = filteredExisting
+        for session in sessions {
+            aiSessionIndexByKey[session.sessionKey] = session
+        }
+    }
+
     func aiStore(for tool: AIChatTool) -> AIChatStore {
         if let store = aiChatStoresByTool[tool] {
             return store
@@ -794,7 +879,7 @@ class AppState: ObservableObject {
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
         let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
         aiSessionsByTool[tool] = sortedSessions
-        aiSessionListLoadingTools.remove(tool)
+        replaceToolSessionIndex(sortedSessions, for: tool)
         if aiChatTool == tool {
             aiSessions = sortedSessions
         }
@@ -802,15 +887,54 @@ class AppState: ObservableObject {
 
     func upsertAISession(_ session: AISessionInfo, for tool: AIChatTool) {
         var sessions = aiSessionsByTool[tool] ?? []
-        sessions.removeAll { $0.id == session.id }
+        sessions.removeAll { $0.sessionKey == session.sessionKey }
         sessions.insert(session, at: 0)
         setAISessions(sessions, for: tool)
+        aiSessionListPageStates = aiSessionListPageStates.reduce(into: [:]) { result, item in
+            let (key, state) = item
+            var updated = state
+            let allKey = sessionListPageKey(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                filter: .all
+            )
+            let toolKey = sessionListPageKey(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                filter: .tool(session.aiTool)
+            )
+            if key == allKey || key == toolKey {
+                updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
+                updated.sessions.insert(session, at: 0)
+            }
+            result[key] = updated
+        }
+    }
+
+    func mergeKnownAISessions(_ sessions: [AISessionInfo]) {
+        let grouped = Dictionary(grouping: sessions, by: \.aiTool)
+        for (tool, incomingSessions) in grouped {
+            var merged = aiSessionsByTool[tool] ?? []
+            for session in incomingSessions {
+                merged.removeAll { $0.sessionKey == session.sessionKey }
+                merged.append(session)
+            }
+            setAISessions(merged, for: tool)
+        }
     }
 
     func removeAISession(_ sessionId: String, for tool: AIChatTool) {
         var sessions = aiSessionsByTool[tool] ?? []
         sessions.removeAll { $0.id == sessionId }
         setAISessions(sessions, for: tool)
+        aiSessionIndexByKey = aiSessionIndexByKey.filter {
+            !($0.value.aiTool == tool && $0.value.id == sessionId)
+        }
+        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
+            var updated = state
+            updated.sessions.removeAll { $0.aiTool == tool && $0.id == sessionId }
+            return updated
+        }
 
         // 同步清理状态缓存（仅按 sessionId 删除可能误删其他工作空间，因此这里做“全表扫描”）。
         let prefix = "::\(sessionId)"
@@ -836,6 +960,33 @@ class AppState: ObservableObject {
             sessions[idx] = updated
             setAISessions(sessions, for: session.aiTool)
         }
+        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
+            var updatedState = state
+            if let idx = updatedState.sessions.firstIndex(where: { $0.sessionKey == session.sessionKey }) {
+                updatedState.sessions[idx] = AISessionInfo(
+                    projectName: session.projectName,
+                    workspaceName: session.workspaceName,
+                    aiTool: session.aiTool,
+                    id: session.id,
+                    title: newTitle,
+                    updatedAt: session.updatedAt
+                )
+            }
+            return updatedState
+        }
+    }
+
+    func cachedAISession(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> AISessionInfo? {
+        aiSessionIndexByKey["\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"]
+    }
+
+    func cachedAISession(sessionId: String) -> AISessionInfo? {
+        aiSessionIndexByKey.values.first { $0.id == sessionId }
     }
 
     // MARK: - AI 会话状态

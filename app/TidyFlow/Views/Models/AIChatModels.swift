@@ -38,6 +38,51 @@ enum AIChatTool: String, CaseIterable, Identifiable {
     }
 }
 
+enum AISessionListFilter: Hashable, Identifiable, Equatable {
+    case all
+    case tool(AIChatTool)
+
+    static var allOptions: [AISessionListFilter] {
+        [.all] + AIChatTool.allCases.map { .tool($0) }
+    }
+
+    var id: String {
+        switch self {
+        case .all:
+            return "all"
+        case .tool(let tool):
+            return tool.rawValue
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "全部"
+        case .tool(let tool):
+            return tool.displayName
+        }
+    }
+
+    var iconAssetName: String? {
+        switch self {
+        case .all:
+            return nil
+        case .tool(let tool):
+            return tool.iconAssetName
+        }
+    }
+
+    var tool: AIChatTool? {
+        switch self {
+        case .all:
+            return nil
+        case .tool(let tool):
+            return tool
+        }
+    }
+}
+
 struct AIToolBadgeState: Equatable {
     var hasRunning: Bool = false
     var hasUnread: Bool = false
@@ -673,6 +718,10 @@ struct AISessionInfo: Identifiable, Equatable {
     let title: String
     let updatedAt: Int64
 
+    var sessionKey: String {
+        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(id)"
+    }
+
     var displayTitle: String {
         return title.isEmpty ? "New Chat" : title
     }
@@ -682,6 +731,18 @@ struct AISessionInfo: Identifiable, Equatable {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+struct AISessionListPageState: Equatable {
+    var sessions: [AISessionInfo] = []
+    var hasMore: Bool = false
+    var nextCursor: String? = nil
+    var isLoadingInitial: Bool = false
+    var isLoadingNextPage: Bool = false
+
+    static func empty() -> AISessionListPageState {
+        AISessionListPageState()
     }
 }
 

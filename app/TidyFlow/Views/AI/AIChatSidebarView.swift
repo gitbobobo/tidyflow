@@ -16,21 +16,30 @@ struct AIChatSidebarView: View {
             // 顶部：工具筛选下拉
             HStack(spacing: 8) {
                 Menu {
-                    ForEach(AIChatTool.allCases) { tool in
+                    ForEach(AISessionListFilter.allOptions) { filter in
                         Button(action: {
-                            appState.sessionPanelFilterTool = tool
+                            appState.sessionPanelFilter = filter
                         }) {
                             Label {
-                                Text(tool.displayName)
+                                Text(filter.displayName)
                             } icon: {
-                                FixedSizeAssetImage(name: tool.iconAssetName, targetSize: 16)
+                                if let iconAssetName = filter.iconAssetName {
+                                    FixedSizeAssetImage(name: iconAssetName, targetSize: 16)
+                                } else {
+                                    Image(systemName: "square.stack.3d.up")
+                                }
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        FixedSizeAssetImage(name: appState.sessionPanelFilterTool.iconAssetName, targetSize: 16)
-                        Text(appState.sessionPanelFilterTool.displayName)
+                        if let iconAssetName = appState.sessionPanelFilter.iconAssetName {
+                            FixedSizeAssetImage(name: iconAssetName, targetSize: 16)
+                        } else {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        Text(appState.sessionPanelFilter.displayName)
                             .font(.system(size: 12, weight: .medium))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -80,11 +89,12 @@ struct AIChatSidebarView: View {
             Divider()
 
             // 会话列表
-            let allSessions = appState.aiSessionsForTool(appState.sessionPanelFilterTool)
+            let pageState = appState.displayedAISessionListState
+            let allSessions = pageState.sessions
             let sessions: [AISessionInfo] = searchText.isEmpty
                 ? allSessions
-                : allSessions.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
-            let isLoadingSessions = appState.aiSessionListLoadingTools.contains(appState.sessionPanelFilterTool)
+                : allSessions.filter { $0.title.localizedStandardContains(searchText) }
+            let isLoadingSessions = pageState.isLoadingInitial
             if isLoadingSessions && sessions.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -109,31 +119,48 @@ struct AIChatSidebarView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(sessions) { session in
-                    SessionRow(
-                        session: session,
-                        isSelected: session.id == appState.aiChatStore.currentSessionId
-                            && session.aiTool == appState.aiChatTool,
-                        status: appState.aiSessionStatus(for: session)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onSelect(session)
-                    }
-                    .contextMenu {
-                        Button {
-                            appState.sessionPanelAction = .renameSession(session, session.title)
-                        } label: {
-                            Label("重命名", systemImage: "pencil")
+                List {
+                    ForEach(sessions) { session in
+                        SessionRow(
+                            session: session,
+                            isSelected: session.id == appState.aiChatStore.currentSessionId
+                                && session.aiTool == appState.aiChatTool,
+                            status: appState.aiSessionStatus(for: session)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            onSelect(session)
                         }
-                        Button(role: .destructive) {
-                            onDelete(session)
-                        } label: {
-                            Label("删除", systemImage: "trash")
+                        .contextMenu {
+                            Button {
+                                appState.sessionPanelAction = .renameSession(session, session.title)
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                onDelete(session)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                    }
+                    if pageState.isLoadingNextPage || pageState.hasMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                        .listRowSeparator(.hidden)
+                        .onAppear {
+                            if searchText.isEmpty {
+                                _ = appState.loadNextAISessionListPage(for: appState.sessionPanelFilter)
+                            }
                         }
                     }
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -142,20 +169,20 @@ struct AIChatSidebarView: View {
         .frame(width: 260)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
         .onAppear {
-            appState.sessionPanelFilterTool = appState.aiChatTool
-            requestSessionList(for: appState.aiChatTool)
+            appState.sessionPanelFilter = .all
+            requestSessionList(for: appState.sessionPanelFilter)
         }
-        .onChange(of: appState.sessionPanelFilterTool) { _, newTool in
-            requestSessionList(for: newTool)
+        .onChange(of: appState.sessionPanelFilter) { _, newFilter in
+            requestSessionList(for: newFilter)
         }
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
-            requestSessionList(for: appState.sessionPanelFilterTool)
+            requestSessionList(for: appState.sessionPanelFilter)
         }
     }
 
-    /// 向服务端请求指定 AI 工具的会话列表
-    private func requestSessionList(for tool: AIChatTool) {
-        _ = appState.requestAISessionList(for: tool, limit: 50)
+    /// 向服务端请求指定筛选条件的 AI 会话列表
+    private func requestSessionList(for filter: AISessionListFilter) {
+        _ = appState.requestAISessionList(for: filter, limit: 50)
     }
 }
 

@@ -232,7 +232,6 @@ struct AITabView: View {
     @State private var deferredSessionListLoadWorkItem: DispatchWorkItem? = nil
     private let aiSessionListLimit = 50
     private let aiSessionMessagesPageSize = AISessionSemantics.defaultMessagesPageSize
-    private let deferredSessionListDelay: TimeInterval = 0.35
 
     private var canSwitchAITool: Bool {
         pendingSendRequest == nil
@@ -388,9 +387,7 @@ struct AITabView: View {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else { return }
 
-        if let matched = AIChatTool.allCases.lazy
-            .flatMap({ self.appState.aiSessionsForTool($0) })
-            .first(where: { $0.id == trimmedSessionId }) {
+        if let matched = appState.cachedAISession(sessionId: trimmedSessionId) {
             appState.openSubAgentSessionViewer(
                 project: matched.projectName,
                 workspace: matched.workspaceName,
@@ -561,6 +558,7 @@ struct AITabView: View {
         for tool in AIChatTool.allCases {
             appState.setAISessions([], for: tool)
         }
+        appState.clearAISessionListPageStates()
         appState.clearAISessionStatuses()
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             aiChatStore.applySnapshot(snapshot)
@@ -596,6 +594,7 @@ struct AITabView: View {
         for tool in AIChatTool.allCases {
             appState.setAISessions([], for: tool)
         }
+        appState.clearAISessionListPageStates()
         appState.clearAISessionStatuses()
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             // 恢复缓存的快照
@@ -624,57 +623,30 @@ struct AITabView: View {
             for tool in AIChatTool.allCases {
                 appState.setAISessions([], for: tool)
             }
+            appState.clearAISessionListPageStates()
             appState.clearAISessionStatuses()
             return
         }
 
-        // 当前工具优先，其余工具延迟拉取，降低首屏大包冲击。
-        let aiTool = appState.aiChatTool
         let sessionListLimit = aiSessionListLimit
-        let delayedSessionListDelay = deferredSessionListDelay
-        appState.wsClient.requestAISessionList(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
-            aiTool: aiTool,
-            limit: sessionListLimit
-        )
         deferredSessionListLoadWorkItem?.cancel()
-        let delayedTools = AIChatTool.allCases.filter { $0 != aiTool }
-        if !delayedTools.isEmpty {
-            let appStateRef = appState
-            let expectedProject = appState.selectedProjectName
-            let expectedWorkspace = ws
-            let workItem = DispatchWorkItem {
-                guard appStateRef.selectedProjectName == expectedProject,
-                      appStateRef.selectedWorkspaceKey == expectedWorkspace else { return }
-                for tool in delayedTools {
-                    appStateRef.wsClient.requestAISessionList(
-                        projectName: expectedProject,
-                        workspaceName: expectedWorkspace,
-                        aiTool: tool,
-                        limit: sessionListLimit
-                    )
-                }
-            }
-            deferredSessionListLoadWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + delayedSessionListDelay, execute: workItem)
-        }
+        _ = appState.requestAISessionList(for: appState.sessionPanelFilter, limit: sessionListLimit)
 
         appState.isAILoadingModels = true
         appState.isAILoadingAgents = true
-        appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
-        appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
+        appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: appState.aiChatTool)
+        appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: appState.aiChatTool)
         appState.wsClient.requestAISlashCommands(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
-            aiTool: aiTool,
-            sessionId: appState.aiStore(for: aiTool).currentSessionId
+            aiTool: appState.aiChatTool,
+            sessionId: appState.aiStore(for: appState.aiChatTool).currentSessionId
         )
         appState.wsClient.requestAISessionConfigOptions(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
-            aiTool: aiTool,
-            sessionId: appState.aiStore(for: aiTool).currentSessionId
+            aiTool: appState.aiChatTool,
+            sessionId: appState.aiStore(for: appState.aiChatTool).currentSessionId
         )
     }
 

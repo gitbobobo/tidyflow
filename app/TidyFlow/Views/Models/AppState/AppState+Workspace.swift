@@ -17,8 +17,8 @@ extension AppState {
         selectedProjectForConfig = nil
         // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
         clearAISelectorBootstrapContexts()
-        // 切换工作空间时清理会话列表 loading，避免旧请求残留导致界面长期转圈。
-        aiSessionListLoadingTools.removeAll()
+        // 切换工作空间时清理会话列表分页状态，避免旧请求残留导致界面串页。
+        clearAISessionListPageStates()
 
         // 使用全局工作空间键（包含项目名称）来区分不同项目的同名工作空间
         guard let globalKey = currentGlobalWorkspaceKey else {

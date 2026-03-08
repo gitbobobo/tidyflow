@@ -2,7 +2,7 @@
 import SwiftUI
 
 /// 右侧面板中的 AI 会话列表视图
-/// 顶部下拉菜单筛选 AI 工具，按工具分别显示历史会话
+/// 顶部下拉菜单支持“全部/单工具”筛选，统一展示当前工作区历史会话
 struct SessionsPanelView: View {
     @EnvironmentObject var appState: AppState
 
@@ -11,21 +11,30 @@ struct SessionsPanelView: View {
             // 顶部：工具筛选下拉 + 新建按钮
             HStack(spacing: 8) {
                 Menu {
-                    ForEach(AIChatTool.allCases) { tool in
+                    ForEach(AISessionListFilter.allOptions) { filter in
                         Button(action: {
-                            appState.sessionPanelFilterTool = tool
+                            appState.sessionPanelFilter = filter
                         }) {
                             Label {
-                                Text(tool.displayName)
+                                Text(filter.displayName)
                             } icon: {
-                                FixedSizeAssetImage(name: tool.iconAssetName, targetSize: 16)
+                                if let iconAssetName = filter.iconAssetName {
+                                    FixedSizeAssetImage(name: iconAssetName, targetSize: 16)
+                                } else {
+                                    Image(systemName: "square.stack.3d.up")
+                                }
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        FixedSizeAssetImage(name: appState.sessionPanelFilterTool.iconAssetName, targetSize: 16)
-                        Text(appState.sessionPanelFilterTool.displayName)
+                        if let iconAssetName = appState.sessionPanelFilter.iconAssetName {
+                            FixedSizeAssetImage(name: iconAssetName, targetSize: 16)
+                        } else {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        Text(appState.sessionPanelFilter.displayName)
                             .font(.system(size: 12, weight: .medium))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -58,8 +67,9 @@ struct SessionsPanelView: View {
             Divider()
 
             // 会话列表
-            let sessions = appState.aiSessionsForTool(appState.sessionPanelFilterTool)
-            let isLoadingSessions = appState.aiSessionListLoadingTools.contains(appState.sessionPanelFilterTool)
+            let pageState = appState.displayedAISessionListState
+            let sessions = pageState.sessions
+            let isLoadingSessions = pageState.isLoadingInitial
             if isLoadingSessions && sessions.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -84,50 +94,61 @@ struct SessionsPanelView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(sessions) { session in
-                    SessionRow(
-                        session: session,
-                        isSelected: session.id == appState.aiStore(for: appState.sessionPanelFilterTool).currentSessionId
-                            && appState.sessionPanelFilterTool == appState.aiChatTool,
-                        status: appState.aiSessionStatus(for: session)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        appState.sessionPanelAction = .loadSession(session)
+                List {
+                    ForEach(sessions) { session in
+                        SessionRow(
+                            session: session,
+                            isSelected: session.id == appState.aiStore(for: session.aiTool).currentSessionId
+                                && session.aiTool == appState.aiChatTool,
+                            status: appState.aiSessionStatus(for: session)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            appState.sessionPanelAction = .loadSession(session)
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                appState.sessionPanelAction = .deleteSession(session)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     }
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            appState.sessionPanelAction = .deleteSession(session)
-                        } label: {
-                            Label("删除", systemImage: "trash")
+                    if pageState.isLoadingNextPage || pageState.hasMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                        .listRowSeparator(.hidden)
+                        .onAppear {
+                            _ = appState.loadNextAISessionListPage(for: appState.sessionPanelFilter)
                         }
                     }
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
         }
         .onAppear {
-            // 默认显示当前聊天工具的会话
-            appState.sessionPanelFilterTool = appState.aiChatTool
-            // 面板首次出现时只拉取当前选中工具的会话列表
-            requestSessionList(for: appState.aiChatTool)
+            appState.sessionPanelFilter = .all
+            requestSessionList(for: appState.sessionPanelFilter)
         }
-        .onChange(of: appState.sessionPanelFilterTool) { _, newTool in
-            // 切换筛选工具时按需拉取该工具的会话列表
-            requestSessionList(for: newTool)
+        .onChange(of: appState.sessionPanelFilter) { _, newFilter in
+            requestSessionList(for: newFilter)
         }
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
-            // 工作空间切换时拉取当前选中工具的会话列表
-            requestSessionList(for: appState.sessionPanelFilterTool)
+            requestSessionList(for: appState.sessionPanelFilter)
         }
     }
 
-    /// 向服务端请求指定 AI 工具的会话列表
-    private func requestSessionList(for tool: AIChatTool) {
-        _ = appState.requestAISessionList(for: tool, limit: 50)
+    /// 向服务端请求指定筛选条件的 AI 会话列表
+    private func requestSessionList(for filter: AISessionListFilter) {
+        _ = appState.requestAISessionList(for: filter, limit: 50)
     }
 }
 
