@@ -1,14 +1,36 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
-use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
+use super::consts::{
+    compare_runtime_stage_names, parse_implement_stage_instance,
+    parse_reimplement_stage_instance, stage_artifact_file, ImplementationStageKind,
+    MANAGED_BACKLOG_FILE,
+};
 use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
     cycle_dir_path, evolution_workspace_dir, read_json, sanitize_validation_attempts, write_json,
 };
 use super::{EvolutionManager, StageSession, STAGES};
+
+fn stage_artifact_path(cycle_dir: &Path, stage: &str) -> PathBuf {
+    stage_artifact_file(stage)
+        .map(|file| cycle_dir.join(file))
+        .unwrap_or_else(|| cycle_dir.join("unknown.jsonc"))
+}
+
+fn implementation_stage_kind_for_stage(stage: &str) -> Option<ImplementationStageKind> {
+    if let Some((kind, _)) = parse_implement_stage_instance(stage) {
+        return Some(kind);
+    }
+    match stage.trim().to_ascii_lowercase().as_str() {
+        "implement_general" => Some(ImplementationStageKind::General),
+        "implement_visual" => Some(ImplementationStageKind::Visual),
+        "implement_advanced" => Some(ImplementationStageKind::Advanced),
+        _ => None,
+    }
+}
 
 fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
     let mut session_ids: Vec<String> = Vec::new();
@@ -220,6 +242,9 @@ fn build_prompt_context(
     cycle_dir: &Path,
     workspace_root: &str,
 ) -> serde_json::Value {
+    let implement_kind = implementation_stage_kind_for_stage(stage)
+        .map(|kind| kind.as_str().to_string())
+        .unwrap_or_default();
     serde_json::json!({
         "PROJECT": project,
         "WORKSPACE": workspace,
@@ -231,16 +256,16 @@ fn build_prompt_context(
         "BACKLOG_CONTRACT_VERSION": backlog_contract_version,
         "CYCLE_DIR": cycle_dir,
         "CYCLE_FILE_PATH": cycle_dir.join("cycle.jsonc"),
-        "CURRENT_STAGE_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file(stage).unwrap_or("unknown.jsonc")),
-        "DIRECTION_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("direction").unwrap()),
-        "PLAN_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("plan").unwrap()),
+        "CURRENT_STAGE_ARTIFACT_PATH": stage_artifact_path(cycle_dir, stage),
+        "DIRECTION_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "direction"),
+        "PLAN_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "plan"),
         "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
-        "IMPLEMENT_GENERAL_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_general").unwrap()),
-        "IMPLEMENT_VISUAL_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_visual").unwrap()),
-        "IMPLEMENT_ADVANCED_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("implement_advanced").unwrap()),
-        "VERIFY_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("verify").unwrap()),
-        "AUTO_COMMIT_ARTIFACT_PATH": cycle_dir.join(stage_artifact_file("auto_commit").unwrap()),
+        "VERIFY_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "verify"),
+        "AUTO_COMMIT_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "auto_commit"),
         "MANAGED_BACKLOG_PATH": cycle_dir.join(MANAGED_BACKLOG_FILE),
+        "IMPLEMENT_STAGE_KIND": implement_kind,
+        "TASKS_TO_COMPLETE": "",
+        "ISSUES_TO_FIX": "",
         "ENV_CONTRACT_PATH": evolution_workspace_dir(workspace_root)
             .map(|p| p.join("env.contract.jsonc"))
             .unwrap_or_else(|_| Path::new("env.contract.jsonc").to_path_buf()),
@@ -281,49 +306,43 @@ fn required_context_keys(
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
         }
-        "implement_general" => {
-            push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
-        }
-        "implement_visual" => {
-            push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
-        }
-        "implement_advanced" => {
-            push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
-            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
-            push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
-        }
         "verify" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_GENERAL_ARTIFACT_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_VISUAL_ARTIFACT_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_ADVANCED_ARTIFACT_PATH");
+            push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
         }
         "auto_commit" => {
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
         }
+        _ if implementation_stage_kind_for_stage(stage).is_some() => {
+            push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_STAGE_KIND");
+            push_required_key(&mut keys, "TASKS_TO_COMPLETE");
+        }
+        _ if parse_reimplement_stage_instance(stage).is_some() => {
+            push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_ARTIFACT_PATH");
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
+            push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
+            push_required_key(&mut keys, "ISSUES_TO_FIX");
+            push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
+        }
         _ => {}
     }
 
-    if matches!(
-        stage,
-        "implement_general" | "implement_visual" | "implement_advanced"
-    ) && verify_iteration > 0
+    if implementation_stage_kind_for_stage(stage).is_some() && verify_iteration > 0
     {
         push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
     }
 
-    if matches!(
-        stage,
-        "implement_general" | "implement_visual" | "implement_advanced" | "verify"
-    ) && verify_iteration > 0
+    if (implementation_stage_kind_for_stage(stage).is_some()
+        || parse_reimplement_stage_instance(stage).is_some()
+        || stage == "verify")
+        && verify_iteration > 0
         && backlog_contract_version >= 2
     {
         push_required_key(&mut keys, "MANAGED_BACKLOG_PATH");
@@ -361,8 +380,19 @@ fn build_markdown_context_block(
         let Some(value) = context_map.get(*key) else {
             continue;
         };
-        let rendered = escape_inline_code(&format_context_value(value));
-        lines.push(format!("- `{}`：`{}`", key, rendered));
+        let rendered = format_context_value(value);
+        if rendered.contains('\n') {
+            lines.push(format!("- `{}`：", key));
+            lines.push("```text".to_string());
+            lines.push(rendered);
+            lines.push("```".to_string());
+        } else {
+            lines.push(format!(
+                "- `{}`：`{}`",
+                key,
+                escape_inline_code(&rendered)
+            ));
+        }
         injected.insert((*key).to_string());
     }
 
@@ -390,53 +420,64 @@ impl EvolutionManager {
             .and_then(|value| value.as_object())
             .cloned()
             .unwrap_or_default();
-        for stage in STAGES {
+        let mut pipeline: Vec<String> = STAGES.iter().map(|stage| (*stage).to_string()).collect();
+        let mut extra_stages: Vec<String> = entry
+            .stage_statuses
+            .keys()
+            .filter(|stage| !STAGES.contains(&stage.as_str()))
+            .cloned()
+            .collect();
+        pipeline.append(&mut extra_stages);
+        pipeline.sort_by(|left, right| compare_runtime_stage_names(left, right));
+        pipeline.dedup();
+
+        for stage in &pipeline {
             let session_ids = entry
                 .stage_session_history
-                .get(stage)
+                .get(stage.as_str())
                 .map(|items| collect_session_ids(items))
                 .unwrap_or_default();
             let latest_ai_tool = entry
                 .stage_session_history
-                .get(stage)
+                .get(stage.as_str())
                 .and_then(|items| items.last())
                 .map(|item| item.ai_tool.clone())
                 .unwrap_or_default();
             let started_at = entry
                 .stage_started_ats
-                .get(stage)
+                .get(stage.as_str())
                 .cloned()
                 .unwrap_or_default();
             let completed_at = entry
                 .session_executions
                 .iter()
                 .rev()
-                .find(|item| item.stage == stage && item.completed_at.is_some())
+                .find(|item| item.stage == *stage && item.completed_at.is_some())
                 .and_then(|item| item.completed_at.clone());
-            let duration_ms = entry.stage_duration_ms.get(stage).copied().or_else(|| {
+            let duration_ms = entry.stage_duration_ms.get(stage.as_str()).copied().or_else(|| {
                 entry
                     .session_executions
                     .iter()
                     .rev()
-                    .find(|item| item.stage == stage)
+                    .find(|item| item.stage == *stage)
                     .and_then(|item| item.duration_ms)
             });
             let validation_attempts = sanitize_validation_attempts(
                 preserved_stage_runtime
-                    .get(stage)
+                    .get(stage.as_str())
                     .and_then(|value| value.get("validation_attempts")),
             );
             stage_runtime.insert(
                 stage.to_string(),
                 serde_json::json!({
-                    "status": entry.stage_statuses.get(stage).cloned().unwrap_or_else(|| "pending".to_string()),
+                    "status": entry.stage_statuses.get(stage.as_str()).cloned().unwrap_or_else(|| "pending".to_string()),
                     "ai_tool": latest_ai_tool,
                     "timing": {
                         "started_at": started_at,
                         "completed_at": completed_at,
                         "duration_ms": duration_ms,
                     },
-                    "tool_call_count": entry.stage_tool_call_counts.get(stage).copied().unwrap_or(0),
+                    "tool_call_count": entry.stage_tool_call_counts.get(stage.as_str()).copied().unwrap_or(0),
                     "session_ids": session_ids,
                     "validation_attempts": validation_attempts,
                 }),
@@ -451,7 +492,7 @@ impl EvolutionManager {
             "title": entry.cycle_title.clone(),
             "status": entry.status,
             "current_stage": entry.current_stage,
-            "pipeline": STAGES,
+            "pipeline": pipeline,
             "verify_iteration": entry.verify_iteration,
             "verify_iteration_limit": entry.verify_iteration_limit,
             "backlog_contract_version": entry.backlog_contract_version,
@@ -566,13 +607,28 @@ impl EvolutionManager {
             &cycle_dir,
             &workspace_root,
         );
-        let context_map = context
+        let mut context_map = context
             .as_object()
+            .cloned()
             .ok_or_else(|| "prompt context should be JSON object".to_string())?;
+        if parse_implement_stage_instance(stage).is_some() {
+            let tasks = Self::tasks_to_complete_for_stage(&cycle_dir, stage)?;
+            context_map.insert(
+                "TASKS_TO_COMPLETE".to_string(),
+                serde_json::Value::String(tasks),
+            );
+        }
+        if parse_reimplement_stage_instance(stage).is_some() {
+            let issues = Self::issues_to_fix_for_stage(&cycle_dir, stage)?;
+            context_map.insert(
+                "ISSUES_TO_FIX".to_string(),
+                serde_json::Value::String(issues),
+            );
+        }
         let required_keys =
             required_context_keys(stage, verify_iteration, backlog_contract_version);
         let (markdown_context, injected_keys) =
-            build_markdown_context_block(context_map, &required_keys, already_injected_keys);
+            build_markdown_context_block(&context_map, &required_keys, already_injected_keys);
 
         Ok((
             format!("{}\n\n---\n\n{}\n", prompt_body, markdown_context),
@@ -701,7 +757,7 @@ mod tests {
             "demo",
             "default",
             "cycle-1",
-            "implement_general",
+            "implement.general.1",
             1,
             1,
             5,
@@ -721,7 +777,7 @@ mod tests {
                 .get("CURRENT_STAGE_ARTIFACT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_general.jsonc"
+            "/tmp/tidyflow-cycle/implement.general.1.jsonc"
         );
         assert_eq!(
             context
@@ -746,24 +802,10 @@ mod tests {
         );
         assert_eq!(
             context
-                .get("IMPLEMENT_GENERAL_ARTIFACT_PATH")
+                .get("IMPLEMENT_STAGE_KIND")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_general.jsonc"
-        );
-        assert_eq!(
-            context
-                .get("IMPLEMENT_VISUAL_ARTIFACT_PATH")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_visual.jsonc"
-        );
-        assert_eq!(
-            context
-                .get("IMPLEMENT_ADVANCED_ARTIFACT_PATH")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_advanced.jsonc"
+            "general"
         );
         assert_eq!(
             context
@@ -783,7 +825,7 @@ mod tests {
 
     #[test]
     fn required_context_keys_should_include_managed_files_when_reimplementation_enabled() {
-        let keys = required_context_keys("implement_advanced", 1, 2);
+        let keys = required_context_keys("reimplement.1", 1, 2);
         assert!(keys.contains(&"MANAGED_BACKLOG_PATH"));
         assert!(keys.contains(&"VERIFY_ARTIFACT_PATH"));
         assert!(keys.contains(&"PLAN_MARKDOWN_PATH"));

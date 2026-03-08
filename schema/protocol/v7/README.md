@@ -29,6 +29,8 @@
 
 Evolution 快照与循环历史结果不再暴露 `handoff` 字段。
 客户端若需展示计划文档，应直接读取循环目录中的 `plan.md`。
+Evolution 运行时 `stage` 字段允许动态实例名，例如 `implement.general.1`、`implement.visual.2`、`reimplement.1`。
+Plan / Verify 相关产物中的工作项归属字段统一使用 `implementation_stage_kind`，不再使用旧的 `implementation_agent`。
 
 ## ACP `tool-calls` 对齐说明（v7）
 

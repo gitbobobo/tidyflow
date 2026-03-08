@@ -1,4 +1,43 @@
-pub(super) const STAGES: [&str; 7] = [
+use std::cmp::Ordering;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(super) enum ImplementationStageKind {
+    General,
+    Visual,
+    Advanced,
+}
+
+impl ImplementationStageKind {
+    pub(super) fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "general" | "implement_general" => Some(Self::General),
+            "visual" | "implement_visual" => Some(Self::Visual),
+            "advanced" | "implement_advanced" => Some(Self::Advanced),
+            _ => None,
+        }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Visual => "visual",
+            Self::Advanced => "advanced",
+        }
+    }
+
+    pub(super) fn profile_stage(self) -> &'static str {
+        match self {
+            Self::General => "implement_general",
+            Self::Visual => "implement_visual",
+            Self::Advanced => "implement_advanced",
+        }
+    }
+
+}
+
+pub(super) const STAGES: [&str; 4] = ["direction", "plan", "verify", "auto_commit"];
+
+pub(super) const PROFILE_STAGES: [&str; 7] = [
     "direction",
     "plan",
     "implement_general",
@@ -7,6 +46,9 @@ pub(super) const STAGES: [&str; 7] = [
     "verify",
     "auto_commit",
 ];
+
+pub(super) const IMPLEMENTATION_STAGE_KINDS: [ImplementationStageKind; 2] =
+    [ImplementationStageKind::General, ImplementationStageKind::Visual];
 
 pub(super) const MAX_STAGE_RUNTIME_SECS: u64 = 3600;
 pub(super) const DEFAULT_VERIFY_LIMIT: u32 = 5;
@@ -23,15 +65,109 @@ pub(super) const SESSION_RETRY_BACKOFF_MAX_SECS: u64 = 30;
 pub(super) const STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION: &str = "2.0";
 pub(super) const MANAGED_BACKLOG_FILE: &str = "managed.backlog.jsonc";
 
-pub(super) fn stage_artifact_file(stage: &str) -> Option<&'static str> {
-    match stage {
-        "direction" => Some("direction.jsonc"),
-        "plan" => Some("plan.jsonc"),
-        "implement_general" => Some("implement_general.jsonc"),
-        "implement_visual" => Some("implement_visual.jsonc"),
-        "implement_advanced" => Some("implement_advanced.jsonc"),
-        "verify" => Some("verify.jsonc"),
-        "auto_commit" => Some("auto_commit.jsonc"),
-        _ => None,
+pub(super) fn parse_implement_stage_instance(
+    stage: &str,
+) -> Option<(ImplementationStageKind, u32)> {
+    let mut parts = stage.trim().split('.');
+    let prefix = parts.next()?;
+    let kind = parts.next()?;
+    let index = parts.next()?;
+    if prefix != "implement" || parts.next().is_some() {
+        return None;
+    }
+    let kind = ImplementationStageKind::parse(kind)?;
+    let index = index.parse::<u32>().ok()?;
+    if index == 0 || kind == ImplementationStageKind::Advanced {
+        return None;
+    }
+    Some((kind, index))
+}
+
+pub(super) fn parse_reimplement_stage_instance(stage: &str) -> Option<u32> {
+    let mut parts = stage.trim().split('.');
+    let prefix = parts.next()?;
+    let index = parts.next()?;
+    if prefix != "reimplement" || parts.next().is_some() {
+        return None;
+    }
+    let index = index.parse::<u32>().ok()?;
+    (index > 0).then_some(index)
+}
+
+pub(super) fn implement_stage_name(kind: ImplementationStageKind, index: u32) -> String {
+    format!("implement.{}.{}", kind.as_str(), index)
+}
+
+pub(super) fn reimplement_stage_name(index: u32) -> String {
+    format!("reimplement.{}", index)
+}
+
+fn kind_sort_rank(kind: ImplementationStageKind) -> u8 {
+    match kind {
+        ImplementationStageKind::General => 0,
+        ImplementationStageKind::Visual => 1,
+        ImplementationStageKind::Advanced => 2,
+    }
+}
+
+pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
+    fn stage_key(stage: &str) -> (u8, u32, u8, String) {
+        match stage.trim() {
+            "direction" => (0, 0, 0, String::new()),
+            "plan" => (1, 0, 0, String::new()),
+            "verify" => (4, 0, 0, String::new()),
+            "auto_commit" => (5, 0, 0, String::new()),
+            other => {
+                if let Some((kind, index)) = parse_implement_stage_instance(other) {
+                    return (2, index, kind_sort_rank(kind), String::new());
+                }
+                if let Some(index) = parse_reimplement_stage_instance(other) {
+                    return (3, index, 0, String::new());
+                }
+                (6, 0, 0, other.to_string())
+            }
+        }
+    }
+
+    stage_key(left).cmp(&stage_key(right))
+}
+
+pub(super) fn stage_profile_stage(stage: &str) -> Option<String> {
+    let normalized = stage.trim();
+    if PROFILE_STAGES.contains(&normalized) {
+        return Some(normalized.to_string());
+    }
+    if let Some((kind, _)) = parse_implement_stage_instance(normalized) {
+        return Some(kind.profile_stage().to_string());
+    }
+    if let Some(index) = parse_reimplement_stage_instance(normalized) {
+        let kind = if index <= 2 {
+            ImplementationStageKind::General
+        } else {
+            ImplementationStageKind::Advanced
+        };
+        return Some(kind.profile_stage().to_string());
+    }
+    None
+}
+
+pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
+    match stage.trim() {
+        "direction" => Some("direction.jsonc".to_string()),
+        "plan" => Some("plan.jsonc".to_string()),
+        "verify" => Some("verify.jsonc".to_string()),
+        "auto_commit" => Some("auto_commit.jsonc".to_string()),
+        "implement_general" => Some("implement_general.jsonc".to_string()),
+        "implement_visual" => Some("implement_visual.jsonc".to_string()),
+        "implement_advanced" => Some("implement_advanced.jsonc".to_string()),
+        other => {
+            if let Some((kind, index)) = parse_implement_stage_instance(other) {
+                return Some(format!("implement.{}.{}.jsonc", kind.as_str(), index));
+            }
+            if let Some(index) = parse_reimplement_stage_instance(other) {
+                return Some(format!("reimplement.{}.jsonc", index));
+            }
+            None
+        }
     }
 }

@@ -21,7 +21,10 @@ use crate::server::handlers::ai::{
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::consts::{
-    stage_artifact_file, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+    implement_stage_name, parse_implement_stage_instance, parse_reimplement_stage_instance,
+    reimplement_stage_name, stage_artifact_file, ImplementationStageKind,
+    IMPLEMENTATION_STAGE_KINDS, MANAGED_BACKLOG_FILE,
+    STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
 };
 use super::profile::profile_for_stage;
 use super::utils::{
@@ -139,54 +142,32 @@ fn should_attempt_idle_recovery(stall_recovery_attempts: u32) -> bool {
     stall_recovery_attempts < STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum PlanImplementationAgent {
-    ImplementGeneral,
-    ImplementVisual,
-    ImplementAdvanced,
-}
-
-impl PlanImplementationAgent {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "implement_general" => Some(Self::ImplementGeneral),
-            "implement_visual" => Some(Self::ImplementVisual),
-            "implement_advanced" => Some(Self::ImplementAdvanced),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::ImplementGeneral => "implement_general",
-            Self::ImplementVisual => "implement_visual",
-            Self::ImplementAdvanced => "implement_advanced",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ImplementLane {
-    General,
-    Visual,
-    Advanced,
-}
-
-impl ImplementLane {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::General => "implement_general",
-            Self::Visual => "implement_visual",
-            Self::Advanced => "implement_advanced",
-        }
-    }
-}
-
 struct PlanRoutingTables {
-    lane_presence: HashSet<PlanImplementationAgent>,
     criteria_to_checks: HashMap<String, Vec<String>>,
-    check_to_agents: HashMap<String, HashSet<PlanImplementationAgent>>,
+    check_to_stage_kinds: HashMap<String, HashSet<ImplementationStageKind>>,
 }
+
+#[derive(Debug, Clone)]
+struct PlanWorkItem {
+    id: String,
+    title: String,
+    implementation_stage_kind: ImplementationStageKind,
+    depends_on: Vec<String>,
+    linked_check_ids: Vec<String>,
+    definition_of_done: Vec<String>,
+    targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplementationStageInstance {
+    stage: String,
+    kind: ImplementationStageKind,
+    index: u32,
+    work_item_ids: Vec<String>,
+}
+
+#[cfg(test)]
+type ImplementLane = ImplementationStageKind;
 
 struct StageRunContext {
     ai_tool: String,
@@ -344,7 +325,7 @@ struct ManagedBacklogItem {
     source_criteria_id: String,
     source_check_id: String,
     work_item_id: String,
-    implementation_agent: String,
+    implementation_stage_kind: String,
     #[serde(default)]
     requirement_ref: String,
     #[serde(default)]
@@ -371,7 +352,7 @@ struct BacklogResolutionUpdate {
     source_criteria_id: String,
     source_check_id: String,
     work_item_id: String,
-    implementation_agent: String,
+    implementation_stage_kind: String,
     status: String,
     #[serde(default)]
     evidence: serde_json::Value,
@@ -406,23 +387,31 @@ fn sanitize_ai_config_options(
     }
 }
 
-fn ordered_lanes_from_agent_presence(
-    agent_presence: &HashSet<PlanImplementationAgent>,
-) -> Vec<ImplementLane> {
-    let mut lanes = Vec::with_capacity(3);
-    if agent_presence.contains(&PlanImplementationAgent::ImplementGeneral) {
-        lanes.push(ImplementLane::General);
+fn implementation_stage_kind_rank(kind: ImplementationStageKind) -> usize {
+    IMPLEMENTATION_STAGE_KINDS
+        .iter()
+        .position(|candidate| *candidate == kind)
+        .unwrap_or(IMPLEMENTATION_STAGE_KINDS.len())
+}
+
+fn implementation_stage_kind_for_stage(stage: &str) -> Option<ImplementationStageKind> {
+    if let Some((kind, _)) = parse_implement_stage_instance(stage) {
+        return Some(kind);
     }
-    if agent_presence.contains(&PlanImplementationAgent::ImplementVisual) {
-        lanes.push(ImplementLane::Visual);
+    match stage.trim().to_ascii_lowercase().as_str() {
+        "implement_general" => Some(ImplementationStageKind::General),
+        "implement_visual" => Some(ImplementationStageKind::Visual),
+        "implement_advanced" => Some(ImplementationStageKind::Advanced),
+        _ => None,
     }
-    if agent_presence.contains(&PlanImplementationAgent::ImplementAdvanced) {
-        lanes.push(ImplementLane::Advanced);
-    }
-    if lanes.is_empty() {
-        lanes.push(ImplementLane::General);
-    }
-    lanes
+}
+
+fn is_runtime_implement_stage(stage: &str) -> bool {
+    implementation_stage_kind_for_stage(stage).is_some()
+}
+
+fn is_runtime_reimplement_stage(stage: &str) -> bool {
+    parse_reimplement_stage_instance(stage).is_some()
 }
 
 fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
@@ -430,6 +419,31 @@ fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
         .as_str()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn parse_string_list(
+    item: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    item_label: &str,
+    allow_empty: bool,
+) -> Result<Vec<String>, String> {
+    let values = item
+        .get(key)
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| format!("{} 缺少 {}", item_label, key))?;
+    if !allow_empty && values.is_empty() {
+        return Err(format!("{}.{} 不能为空", item_label, key));
+    }
+    let mut out = Vec::with_capacity(values.len());
+    for (idx, value) in values.iter().enumerate() {
+        let parsed = value
+            .as_str()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .ok_or_else(|| format!("{}.{}[{}] 必须是非空字符串", item_label, key, idx))?;
+        out.push(parsed);
+    }
+    Ok(out)
 }
 
 fn collect_plan_acceptance_criteria_ids(
@@ -509,8 +523,7 @@ fn parse_plan_routing_tables_report(
 
     let work_items = value.pointer("/work_items").and_then(|v| v.as_array());
     let mut work_item_ids = HashSet::new();
-    let mut lane_presence: HashSet<PlanImplementationAgent> = HashSet::new();
-    let mut check_to_agents: HashMap<String, HashSet<PlanImplementationAgent>> = HashMap::new();
+    let mut check_to_stage_kinds: HashMap<String, HashSet<ImplementationStageKind>> = HashMap::new();
     match work_items {
         Some(work_items) => {
             if work_items.is_empty() {
@@ -536,32 +549,31 @@ fn parse_plan_routing_tables_report(
                 };
 
                 let agent = match item_obj
-                    .get("implementation_agent")
+                    .get("implementation_stage_kind")
                     .and_then(|v| v.as_str())
                 {
-                    Some(agent_raw) => match PlanImplementationAgent::parse(agent_raw) {
+                    Some(agent_raw) => match ImplementationStageKind::parse(agent_raw) {
                         Some(agent) => {
-                            if matches!(agent, PlanImplementationAgent::ImplementAdvanced) {
+                            if matches!(agent, ImplementationStageKind::Advanced) {
                                 report.push(format!(
-                                    "work_items[{}].implementation_agent 仅允许 implement_general 或 implement_visual",
+                                    "work_items[{}].implementation_stage_kind 仅允许 general 或 visual",
                                     idx
                                 ));
                                 None
                             } else {
-                                lane_presence.insert(agent);
                                 Some(agent)
                             }
                         }
                         None => {
                             report.push(format!(
-                                "work_items[{}].implementation_agent 非法: {}",
+                                "work_items[{}].implementation_stage_kind 非法: {}",
                                 idx, agent_raw
                             ));
                             None
                         }
                     },
                     None => {
-                        report.push(format!("work_items[{}] 缺少 implementation_agent", idx));
+                        report.push(format!("work_items[{}] 缺少 implementation_stage_kind", idx));
                         None
                     }
                 };
@@ -597,7 +609,7 @@ fn parse_plan_routing_tables_report(
                     }
                     if let Some(agent) = agent {
                         let _ = &work_id;
-                        check_to_agents.entry(check_id).or_default().insert(agent);
+                        check_to_stage_kinds.entry(check_id).or_default().insert(agent);
                     }
                 }
             }
@@ -659,7 +671,7 @@ fn parse_plan_routing_tables_report(
                         ));
                         continue;
                     }
-                    if check_to_agents.contains_key(&check_id) {
+                    if check_to_stage_kinds.contains_key(&check_id) {
                         mapped_to_work_item = true;
                     }
                     mapped_checks.push(check_id);
@@ -691,9 +703,8 @@ fn parse_plan_routing_tables_report(
     if report.is_empty() {
         (
             Some(PlanRoutingTables {
-                lane_presence,
                 criteria_to_checks,
-                check_to_agents,
+                check_to_stage_kinds,
             }),
             report,
         )
@@ -707,6 +718,200 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
     tables.ok_or_else(|| report.summary())
 }
 
+fn parse_plan_work_items(value: &serde_json::Value) -> Result<Vec<PlanWorkItem>, String> {
+    let work_items = value
+        .get("work_items")
+        .and_then(|items| items.as_array())
+        .ok_or_else(|| "plan.jsonc 缺少 work_items".to_string())?;
+    if work_items.is_empty() {
+        return Err("plan.jsonc.work_items 不能为空".to_string());
+    }
+
+    let mut seen_ids = HashSet::new();
+    let mut parsed_items = Vec::with_capacity(work_items.len());
+
+    for (idx, item) in work_items.iter().enumerate() {
+        let item_obj = item
+            .as_object()
+            .ok_or_else(|| format!("work_items[{}] 必须是对象", idx))?;
+        let item_label = format!("work_items[{}]", idx);
+        let id = item_obj
+            .get("id")
+            .and_then(parse_non_empty_string)
+            .ok_or_else(|| format!("{} 缺少 id", item_label))?;
+        if !seen_ids.insert(id.clone()) {
+            return Err(format!("work_items.id 存在重复值: {}", id));
+        }
+
+        let title = item_obj
+            .get("title")
+            .and_then(parse_non_empty_string)
+            .ok_or_else(|| format!("{}.title 不能为空", item_label))?;
+        let implementation_stage_kind = item_obj
+            .get("implementation_stage_kind")
+            .and_then(|value| value.as_str())
+            .and_then(ImplementationStageKind::parse)
+            .ok_or_else(|| format!("{}.implementation_stage_kind 缺失或非法", item_label))?;
+        if implementation_stage_kind == ImplementationStageKind::Advanced {
+            return Err(format!(
+                "{}.implementation_stage_kind 仅允许 general 或 visual",
+                item_label
+            ));
+        }
+
+        let depends_on = match item_obj.get("depends_on") {
+            Some(value) => {
+                let depends_on = value
+                    .as_array()
+                    .ok_or_else(|| format!("{}.depends_on 必须是数组", item_label))?;
+                let mut parsed = Vec::with_capacity(depends_on.len());
+                for (dep_idx, dep) in depends_on.iter().enumerate() {
+                    let dep = dep
+                        .as_str()
+                        .map(|raw| raw.trim().to_string())
+                        .filter(|raw| !raw.is_empty())
+                        .ok_or_else(|| {
+                            format!("{}.depends_on[{}] 必须是非空字符串", item_label, dep_idx)
+                        })?;
+                    parsed.push(dep);
+                }
+                parsed
+            }
+            None => Vec::new(),
+        };
+        let linked_check_ids =
+            parse_string_list(item_obj, "linked_check_ids", &item_label, false)?;
+        let definition_of_done =
+            parse_string_list(item_obj, "definition_of_done", &item_label, false)?;
+        let targets = parse_string_list(item_obj, "targets", &item_label, true)?;
+
+        parsed_items.push(PlanWorkItem {
+            id,
+            title,
+            implementation_stage_kind,
+            depends_on,
+            linked_check_ids,
+            definition_of_done,
+            targets,
+        });
+    }
+
+    let known_ids: HashSet<String> = parsed_items.iter().map(|item| item.id.clone()).collect();
+    for item in &parsed_items {
+        for dependency in &item.depends_on {
+            if dependency == &item.id {
+                return Err(format!("work_item {} 不能依赖自身", item.id));
+            }
+            if !known_ids.contains(dependency) {
+                return Err(format!(
+                    "work_item {} 依赖了未知 work_item: {}",
+                    item.id, dependency
+                ));
+            }
+        }
+    }
+
+    let _ = build_implementation_stage_instances(&parsed_items)?;
+    Ok(parsed_items)
+}
+
+fn build_implementation_stage_instances(
+    work_items: &[PlanWorkItem],
+) -> Result<Vec<ImplementationStageInstance>, String> {
+    let mut indegree: HashMap<String, usize> = HashMap::new();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+    let mut original_positions: HashMap<String, usize> = HashMap::new();
+    let mut by_id: HashMap<String, &PlanWorkItem> = HashMap::new();
+
+    for (idx, item) in work_items.iter().enumerate() {
+        indegree.insert(item.id.clone(), item.depends_on.len());
+        original_positions.insert(item.id.clone(), idx);
+        by_id.insert(item.id.clone(), item);
+        for dependency in &item.depends_on {
+            dependents
+                .entry(dependency.clone())
+                .or_default()
+                .push(item.id.clone());
+        }
+    }
+
+    let mut kind_indexes: HashMap<ImplementationStageKind, u32> = HashMap::new();
+    let mut remaining: HashSet<String> = work_items.iter().map(|item| item.id.clone()).collect();
+    let mut instances = Vec::new();
+
+    while !remaining.is_empty() {
+        let mut ready = remaining
+            .iter()
+            .filter_map(|id| {
+                let pending = indegree.get(id).copied().unwrap_or(usize::MAX);
+                (pending == 0).then_some(id.clone())
+            })
+            .collect::<Vec<String>>();
+        if ready.is_empty() {
+            return Err("work_items.depends_on 存在循环依赖".to_string());
+        }
+
+        ready.sort_by(|left, right| {
+            let left_item = by_id.get(left).copied().expect("ready item must exist");
+            let right_item = by_id.get(right).copied().expect("ready item must exist");
+            implementation_stage_kind_rank(left_item.implementation_stage_kind)
+                .cmp(&implementation_stage_kind_rank(
+                    right_item.implementation_stage_kind,
+                ))
+                .then_with(|| {
+                    original_positions
+                        .get(left)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .cmp(
+                            &original_positions
+                                .get(right)
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                        )
+                })
+        });
+
+        for kind in IMPLEMENTATION_STAGE_KINDS {
+            let work_item_ids = ready
+                .iter()
+                .filter(|id| {
+                    by_id
+                        .get(id.as_str())
+                        .map(|item| item.implementation_stage_kind == kind)
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect::<Vec<String>>();
+            if work_item_ids.is_empty() {
+                continue;
+            }
+
+            let index = kind_indexes.entry(kind).or_insert(0);
+            *index += 1;
+            instances.push(ImplementationStageInstance {
+                stage: implement_stage_name(kind, *index),
+                kind,
+                index: *index,
+                work_item_ids,
+            });
+        }
+
+        for id in ready {
+            remaining.remove(&id);
+            if let Some(children) = dependents.get(&id) {
+                for child in children {
+                    if let Some(pending) = indegree.get_mut(child) {
+                        *pending = pending.saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(instances)
+}
+
 fn validate_plan_markdown_artifact(
     cycle_dir: &Path,
     _plan_value: &serde_json::Value,
@@ -714,6 +919,7 @@ fn validate_plan_markdown_artifact(
     read_text_file(cycle_dir, PLAN_MARKDOWN_FILE).map(|_| ())
 }
 
+#[cfg(test)]
 fn is_criteria_failure_status(status: &str) -> bool {
     matches!(
         normalize_acceptance_evaluation_status(status),
@@ -1217,11 +1423,9 @@ fn as_failing_status(status: &str) -> bool {
     )
 }
 
-fn is_valid_implementation_agent(agent: &str) -> bool {
-    matches!(
-        agent.trim().to_ascii_lowercase().as_str(),
-        "implement_general" | "implement_visual" | "implement_advanced" | "unknown"
-    )
+fn is_valid_implementation_stage_kind(agent: &str) -> bool {
+    let normalized = agent.trim().to_ascii_lowercase();
+    normalized == "unknown" || ImplementationStageKind::parse(&normalized).is_some()
 }
 
 fn is_unknown_selector_value(value: &str) -> bool {
@@ -1275,9 +1479,9 @@ fn validate_requirement_selector_against_plan(
     source_criteria_id: &str,
     source_check_id: &str,
     work_item_id: &str,
-    implementation_agent: PlanImplementationAgent,
+    implementation_stage_kind: ImplementationStageKind,
     tables: &PlanRoutingTables,
-    check_to_work_items: &HashMap<String, Vec<(String, PlanImplementationAgent)>>,
+    check_to_work_items: &HashMap<String, Vec<(String, ImplementationStageKind)>>,
 ) -> Result<(), String> {
     let mapped_checks = tables
         .criteria_to_checks
@@ -1297,18 +1501,18 @@ fn validate_requirement_selector_against_plan(
             selector_label, source_criteria_id, source_check_id
         ));
     }
-    let mapped_agents = tables.check_to_agents.get(source_check_id).ok_or_else(|| {
+    let mapped_agents = tables.check_to_stage_kinds.get(source_check_id).ok_or_else(|| {
         format!(
-            "{}.source_check_id 未关联任何 implementation_agent: {}",
+            "{}.source_check_id 未关联任何 implementation_stage_kind: {}",
             selector_label, source_check_id
         )
     })?;
-    if !mapped_agents.contains(&implementation_agent) {
+    if !mapped_agents.contains(&implementation_stage_kind) {
         return Err(format!(
-            "{}.implementation_agent 与 source_check_id 不匹配: {} -> {}",
+            "{}.implementation_stage_kind 与 source_check_id 不匹配: {} -> {}",
             selector_label,
             source_check_id,
-            implementation_agent.as_str()
+            implementation_stage_kind.as_str()
         ));
     }
     let mapped_work_items = check_to_work_items.get(source_check_id).ok_or_else(|| {
@@ -1319,14 +1523,14 @@ fn validate_requirement_selector_against_plan(
     })?;
     if !mapped_work_items
         .iter()
-        .any(|(id, agent)| id == work_item_id && *agent == implementation_agent)
+        .any(|(id, agent)| id == work_item_id && *agent == implementation_stage_kind)
     {
         return Err(format!(
-            "{}.work_item_id 与 source_check_id/implementation_agent 不匹配: ({}, {}, {})",
+            "{}.work_item_id 与 source_check_id/implementation_stage_kind 不匹配: ({}, {}, {})",
             selector_label,
             source_check_id,
             work_item_id,
-            implementation_agent.as_str()
+            implementation_stage_kind.as_str()
         ));
     }
     Ok(())
@@ -1400,7 +1604,7 @@ fn plan_stage_template(cycle_id: &str) -> String {
     //   "definition_of_done": ["按钮可触发播放/暂停"],
     //   "risk": "low",
     //   "rollback": "git restore --source=HEAD -- <path>",
-    //   "implementation_agent": "implement_general", // 仅允许 implement_general 或 implement_visual
+    //   "implementation_stage_kind": "general", // 仅允许 general 或 visual
     //   "linked_check_ids": ["CHK-001"]
     // }
   ],
@@ -1483,7 +1687,7 @@ fn implement_stage_template(
 ) -> String {
     render_jsonc_template(
         r#"{
-  // Implement 阶段模板：仅回填当前 lane 负责的执行结果
+  // 实现阶段模板：仅回填当前阶段实例负责的执行结果
   "$schema_version": "2.0",
   // 当前实现阶段名，固定为系统调度值
   "stage": "__STAGE__",
@@ -1496,9 +1700,9 @@ fn implement_stage_template(
     "result": "n/a",
     "reason": ""
   },
-  // 本 lane 的实施摘要，必须存在
+  // 当前阶段实例的实施摘要，必须存在
   "summary": "",
-  // 工作项执行结果，仅填写当前 lane 处理的 work_items
+  // 工作项执行结果，仅填写当前阶段实例处理的 work_items
   "work_item_results": [
     // {
     //   "work_item_id": "WI-001",
@@ -1524,12 +1728,13 @@ fn implement_stage_template(
   // backlog 契约版本，由系统注入
   "backlog_contract_version": __BACKLOG_CONTRACT_VERSION__,
   // backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。
+  // reimplement 阶段必须沿用 ISSUES_TO_FIX / managed.backlog.jsonc 中原始整改项的 implementation_stage_kind。
   "backlog_resolution_updates": [
     // {
     //   "source_criteria_id": "AC-001",
     //   "source_check_id": "CHK-001",
     //   "work_item_id": "WI-001",
-    //   "implementation_agent": "__STAGE__",
+    //   "implementation_stage_kind": "__BACKLOG_IMPLEMENTATION_STAGE_KIND__",
     //   "status": "done",
     //   "evidence": null,
     //   "notes": ""
@@ -1552,6 +1757,12 @@ fn implement_stage_template(
             ("__STAGE__", stage.to_string()),
             ("__CYCLE_ID__", cycle_id.to_string()),
             ("__VERIFY_ITERATION__", verify_iteration.to_string()),
+            (
+                "__BACKLOG_IMPLEMENTATION_STAGE_KIND__",
+                implementation_stage_kind_for_stage(stage)
+                    .map(|kind| kind.as_str().to_string())
+                    .unwrap_or_else(|| "general".to_string()),
+            ),
             (
                 "__BACKLOG_CONTRACT_VERSION__",
                 backlog_contract_version.to_string(),
@@ -1644,7 +1855,7 @@ fn verify_stage_template(
       //   "source_criteria_id": "AC-001",
       //   "source_check_id": "CHK-001",
       //   "work_item_id": "WI-001",
-      //   "implementation_agent": "implement_general"
+      //   "implementation_stage_kind": "general"
       // }
     ]
   },
@@ -1704,7 +1915,7 @@ fn managed_backlog_template(cycle_id: &str, verify_iteration: u32) -> String {
     //   "source_criteria_id": "AC-001",
     //   "source_check_id": "CHK-001",
     //   "work_item_id": "WI-001",
-    //   "implementation_agent": "implement_general",
+    //   "implementation_stage_kind": "general",
     //   "requirement_ref": "REQ-001",
     //   "description": "系统生成的整改项描述",
     //   "status": "not_done",
@@ -1732,6 +1943,7 @@ fn managed_backlog_template(cycle_id: &str, verify_iteration: u32) -> String {
     )
 }
 
+#[cfg(test)]
 fn should_force_advanced_reimplementation(verify_iteration: u32) -> bool {
     verify_iteration >= 2
 }
@@ -1767,50 +1979,33 @@ impl EvolutionManager {
         report.into_error("artifact_contract_violation")
     }
 
-    fn implement_result_file_for_lane(lane: ImplementLane) -> &'static str {
-        match lane {
-            ImplementLane::General => "implement_general.jsonc",
-            ImplementLane::Visual => "implement_visual.jsonc",
-            ImplementLane::Advanced => "implement_advanced.jsonc",
-        }
+    fn implement_result_file_for_stage(stage: &str) -> Option<String> {
+        stage_artifact_file(stage)
     }
 
-    fn implement_result_file_for_stage(stage: &str) -> Option<&'static str> {
-        match stage {
-            "implement_general" => {
-                Some(Self::implement_result_file_for_lane(ImplementLane::General))
-            }
-            "implement_visual" => Some(Self::implement_result_file_for_lane(ImplementLane::Visual)),
-            "implement_advanced" => Some(Self::implement_result_file_for_lane(
-                ImplementLane::Advanced,
-            )),
-            _ => None,
+    fn preferred_stage_kind_from_set(
+        stage_kinds: &HashSet<ImplementationStageKind>,
+    ) -> Option<ImplementationStageKind> {
+        if stage_kinds.contains(&ImplementationStageKind::General) {
+            return Some(ImplementationStageKind::General);
         }
-    }
-
-    fn preferred_agent_from_set(
-        agents: &HashSet<PlanImplementationAgent>,
-    ) -> Option<PlanImplementationAgent> {
-        if agents.contains(&PlanImplementationAgent::ImplementGeneral) {
-            return Some(PlanImplementationAgent::ImplementGeneral);
+        if stage_kinds.contains(&ImplementationStageKind::Visual) {
+            return Some(ImplementationStageKind::Visual);
         }
-        if agents.contains(&PlanImplementationAgent::ImplementVisual) {
-            return Some(PlanImplementationAgent::ImplementVisual);
-        }
-        if agents.contains(&PlanImplementationAgent::ImplementAdvanced) {
-            return Some(PlanImplementationAgent::ImplementAdvanced);
+        if stage_kinds.contains(&ImplementationStageKind::Advanced) {
+            return Some(ImplementationStageKind::Advanced);
         }
         None
     }
 
     fn parse_check_to_work_items(
         plan: &serde_json::Value,
-    ) -> Result<HashMap<String, Vec<(String, PlanImplementationAgent)>>, String> {
+    ) -> Result<HashMap<String, Vec<(String, ImplementationStageKind)>>, String> {
         let work_items = plan
             .pointer("/work_items")
             .and_then(|v| v.as_array())
             .ok_or_else(|| "plan.jsonc 缺少 work_items".to_string())?;
-        let mut mapping: HashMap<String, Vec<(String, PlanImplementationAgent)>> = HashMap::new();
+        let mut mapping: HashMap<String, Vec<(String, ImplementationStageKind)>> = HashMap::new();
         for (idx, item) in work_items.iter().enumerate() {
             let obj = item
                 .as_object()
@@ -1820,10 +2015,10 @@ impl EvolutionManager {
                 .and_then(parse_non_empty_string)
                 .ok_or_else(|| format!("work_items[{}] 缺少 id", idx))?;
             let agent = obj
-                .get("implementation_agent")
+                .get("implementation_stage_kind")
                 .and_then(|v| v.as_str())
-                .and_then(PlanImplementationAgent::parse)
-                .ok_or_else(|| format!("work_items[{}].implementation_agent 缺失或非法", idx))?;
+                .and_then(ImplementationStageKind::parse)
+                .ok_or_else(|| format!("work_items[{}].implementation_stage_kind 缺失或非法", idx))?;
             let check_ids = obj
                 .get("linked_check_ids")
                 .and_then(|v| v.as_array())
@@ -1846,6 +2041,168 @@ impl EvolutionManager {
             }
         }
         Ok(mapping)
+    }
+
+    fn load_plan_work_items(cycle_dir: &Path) -> Result<Vec<PlanWorkItem>, String> {
+        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
+        parse_plan_work_items(&plan)
+    }
+
+    fn resolve_initial_implementation_stage_instances(
+        cycle_dir: &Path,
+    ) -> Result<Vec<ImplementationStageInstance>, String> {
+        let work_items = Self::load_plan_work_items(cycle_dir)?;
+        build_implementation_stage_instances(&work_items)
+    }
+
+    fn find_initial_implementation_stage_instance(
+        cycle_dir: &Path,
+        stage: &str,
+    ) -> Result<Option<ImplementationStageInstance>, String> {
+        Ok(Self::resolve_initial_implementation_stage_instances(cycle_dir)?
+            .into_iter()
+            .find(|instance| instance.stage == stage))
+    }
+
+    fn next_initial_implementation_stage(
+        cycle_dir: &Path,
+        current_stage: &str,
+    ) -> Result<Option<String>, String> {
+        let stages = Self::resolve_initial_implementation_stage_instances(cycle_dir)?;
+        let position = stages
+            .iter()
+            .position(|instance| instance.stage == current_stage)
+            .ok_or_else(|| format!("stage {} 不在首轮实现序列中", current_stage))?;
+        Ok(stages.get(position + 1).map(|instance| instance.stage.clone()))
+    }
+
+    pub(super) fn tasks_to_complete_for_stage(
+        cycle_dir: &Path,
+        stage: &str,
+    ) -> Result<String, String> {
+        let instance = Self::find_initial_implementation_stage_instance(cycle_dir, stage)?
+            .ok_or_else(|| format!("找不到实现阶段实例: {}", stage))?;
+        let work_items = Self::load_plan_work_items(cycle_dir)?;
+        let work_items_by_id: HashMap<String, PlanWorkItem> = work_items
+            .into_iter()
+            .map(|item| (item.id.clone(), item))
+            .collect();
+
+        let mut sections = Vec::new();
+        for work_item_id in instance.work_item_ids {
+            let item = work_items_by_id
+                .get(&work_item_id)
+                .ok_or_else(|| format!("plan.jsonc 缺少 work_item: {}", work_item_id))?;
+            let depends_text = if item.depends_on.is_empty() {
+                "无".to_string()
+            } else {
+                item.depends_on.join(", ")
+            };
+            let targets_text = if item.targets.is_empty() {
+                "- 无明确目标文件".to_string()
+            } else {
+                item.targets
+                    .iter()
+                    .map(|target| format!("- {}", target))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            };
+            let dod_text = item
+                .definition_of_done
+                .iter()
+                .map(|line| format!("- {}", line))
+                .collect::<Vec<String>>()
+                .join("\n");
+            let checks_text = item
+                .linked_check_ids
+                .iter()
+                .map(|check| format!("- {}", check))
+                .collect::<Vec<String>>()
+                .join("\n");
+            sections.push(format!(
+                "### {} {}\n- 实现阶段类型：{}\n- 直接依赖（系统已按依赖调度）：{}\n- 目标文件：\n{}\n- 完成定义：\n{}\n- 关联检查：\n{}",
+                item.id,
+                item.title,
+                item.implementation_stage_kind.as_str(),
+                depends_text,
+                targets_text,
+                dod_text,
+                checks_text
+            ));
+        }
+
+        Ok(sections.join("\n\n"))
+    }
+
+    pub(super) fn issues_to_fix_for_stage(
+        cycle_dir: &Path,
+        stage: &str,
+    ) -> Result<String, String> {
+        let round = parse_reimplement_stage_instance(stage)
+            .ok_or_else(|| format!("不是有效的重实现阶段: {}", stage))?;
+        let verify = read_json_file(cycle_dir, "verify.jsonc")?;
+        let requirements = extract_verify_requirements(&verify)
+            .ok_or_else(|| "verify.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string())?;
+        let mut sections = Vec::with_capacity(requirements.len());
+        for (idx, requirement) in requirements.iter().enumerate() {
+            let requirement_id = id_from_value(
+                requirement,
+                &[
+                    "requirement_id",
+                    "failure_backlog_id",
+                    "backlog_id",
+                    "id",
+                    "item_id",
+                ],
+            )
+            .unwrap_or_else(|| format!("REQ-{}", idx + 1));
+            let description = requirement
+                .get("description")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("未提供描述");
+            let source_criteria_id = id_from_value(
+                requirement,
+                &["source_criteria_id", "criteria_id", "criterion_id"],
+            )
+            .unwrap_or_else(|| "unknown".to_string());
+            let source_check_id = id_from_value(
+                requirement,
+                &["source_check_id", "check_id", "linked_check_id"],
+            )
+            .unwrap_or_else(|| "unknown".to_string());
+            let work_item_id =
+                id_from_value(requirement, &["work_item_id"]).unwrap_or_else(|| "unknown".to_string());
+            let implementation_stage_kind = requirement
+                .get("implementation_stage_kind")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+
+            sections.push(format!(
+                "### {}（第 {} 次重实现）\n- 问题描述：{}\n- source_criteria_id：{}\n- source_check_id：{}\n- work_item_id：{}\n- implementation_stage_kind：{}",
+                requirement_id,
+                round,
+                description,
+                source_criteria_id,
+                source_check_id,
+                work_item_id,
+                implementation_stage_kind
+            ));
+        }
+
+        Ok(sections.join("\n\n"))
+    }
+
+    fn ensure_runtime_stage_state_pending(
+        stage_statuses: &mut HashMap<String, String>,
+        stage_tool_call_counts: &mut HashMap<String, u32>,
+        stage: &str,
+    ) {
+        stage_statuses
+            .entry(stage.to_string())
+            .or_insert_with(|| "pending".to_string());
+        stage_tool_call_counts.entry(stage.to_string()).or_insert(0);
     }
 
     fn read_managed_backlog(cycle_dir: &Path) -> Result<ManagedBacklogFile, String> {
@@ -1980,44 +2337,44 @@ impl EvolutionManager {
                 ));
             }
 
-            let mut implementation_agent = None;
+            let mut implementation_stage_kind = None;
             if let Some(raw_agent) = requirement
-                .get("implementation_agent")
+                .get("implementation_stage_kind")
                 .and_then(|v| v.as_str())
             {
-                let parsed = PlanImplementationAgent::parse(raw_agent).ok_or_else(|| {
+                let parsed = ImplementationStageKind::parse(raw_agent).ok_or_else(|| {
                     format!(
-                        "full_next_iteration_requirements[{}].implementation_agent 非法: {}",
+                        "full_next_iteration_requirements[{}].implementation_stage_kind 非法: {}",
                         idx, raw_agent
                     )
                 })?;
-                implementation_agent = Some(parsed);
+                implementation_stage_kind = Some(parsed);
             }
-            if implementation_agent.is_none() {
-                implementation_agent = previous_item
-                    .and_then(|item| PlanImplementationAgent::parse(&item.implementation_agent));
+            if implementation_stage_kind.is_none() {
+                implementation_stage_kind = previous_item
+                    .and_then(|item| ImplementationStageKind::parse(&item.implementation_stage_kind));
             }
-            if implementation_agent.is_none() {
-                let mut agent_set: HashSet<PlanImplementationAgent> = HashSet::new();
-                if let Some(mapped) = tables.check_to_agents.get(&source_check_id) {
+            if implementation_stage_kind.is_none() {
+                let mut agent_set: HashSet<ImplementationStageKind> = HashSet::new();
+                if let Some(mapped) = tables.check_to_stage_kinds.get(&source_check_id) {
                     agent_set.extend(mapped.iter().copied());
                 }
                 if let Some(checks) = tables.criteria_to_checks.get(&source_criteria_id) {
                     for check_id in checks {
-                        if let Some(mapped) = tables.check_to_agents.get(check_id) {
+                        if let Some(mapped) = tables.check_to_stage_kinds.get(check_id) {
                             agent_set.extend(mapped.iter().copied());
                         }
                     }
                 }
-                implementation_agent = Self::preferred_agent_from_set(&agent_set);
+                implementation_stage_kind = Self::preferred_stage_kind_from_set(&agent_set);
             }
-            let implementation_agent = implementation_agent.ok_or_else(|| {
+            let implementation_stage_kind = implementation_stage_kind.ok_or_else(|| {
                 format!(
-                    "full_next_iteration_requirements[{}] 缺少 implementation_agent（无法映射 selector）",
+                    "full_next_iteration_requirements[{}] 缺少 implementation_stage_kind（无法映射 selector）",
                     idx
                 )
             })?;
-            let implementation_agent_text = implementation_agent.as_str().to_string();
+            let implementation_stage_kind_text = implementation_stage_kind.as_str().to_string();
 
             let mut work_item_id = id_from_value(requirement, &["work_item_id"]);
             if work_item_id.is_none() {
@@ -2027,7 +2384,7 @@ impl EvolutionManager {
                 if let Some(mapped_items) = check_to_work_items.get(&source_check_id) {
                     let preferred = mapped_items
                         .iter()
-                        .find(|(_, agent)| *agent == implementation_agent)
+                        .find(|(_, agent)| *agent == implementation_stage_kind)
                         .or_else(|| mapped_items.first());
                     work_item_id = preferred.map(|(id, _)| id.clone());
                 }
@@ -2050,7 +2407,7 @@ impl EvolutionManager {
                 &source_criteria_id,
                 &source_check_id,
                 &work_item_id,
-                implementation_agent,
+                implementation_stage_kind,
                 &tables,
                 &check_to_work_items,
             )?;
@@ -2059,7 +2416,7 @@ impl EvolutionManager {
                 source_criteria_id.clone(),
                 source_check_id.clone(),
                 work_item_id.clone(),
-                implementation_agent_text.clone(),
+                implementation_stage_kind_text.clone(),
             );
             if !seen_selectors.insert(selector) {
                 continue;
@@ -2071,7 +2428,7 @@ impl EvolutionManager {
                 source_criteria_id,
                 source_check_id,
                 work_item_id,
-                implementation_agent: implementation_agent_text,
+                implementation_stage_kind: implementation_stage_kind_text,
                 requirement_ref,
                 description: requirement
                     .get("description")
@@ -2102,23 +2459,23 @@ impl EvolutionManager {
         Ok(())
     }
 
-    fn sync_managed_backlog_for_implement_stage(
+    fn sync_managed_backlog_for_execution_stage(
         cycle_dir: &Path,
         stage: &str,
     ) -> Result<(), ArtifactValidationError> {
         let Some(file_name) = Self::implement_result_file_for_stage(stage) else {
             return Ok(());
         };
-        let Some(lane) = Self::lane_for_stage(stage) else {
+        let expected_stage_kind = implementation_stage_kind_for_stage(stage);
+        if expected_stage_kind.is_none() && !is_runtime_reimplement_stage(stage) {
             return Ok(());
-        };
-        let lane_name = lane.as_str();
+        }
 
         let mut managed_backlog = Self::read_managed_backlog(cycle_dir)
             .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
-        let mut lane_result = read_json_file(cycle_dir, file_name)
+        let mut stage_result = read_json_file(cycle_dir, &file_name)
             .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
-        let updates = lane_result
+        let updates = stage_result
             .pointer("/backlog_resolution_updates")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
@@ -2162,12 +2519,18 @@ impl EvolutionManager {
                 ));
                 item_has_error = true;
             }
-            if parsed.implementation_agent.trim() != lane_name {
-                report.push(format!(
-                    "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
-                    file_name, idx, lane_name
-                ));
-                item_has_error = true;
+            if let Some(expected_kind) = expected_stage_kind {
+                if ImplementationStageKind::parse(&parsed.implementation_stage_kind)
+                    != Some(expected_kind)
+                {
+                    report.push(format!(
+                        "{}.backlog_resolution_updates[{}].implementation_stage_kind 必须等于 {}",
+                        file_name,
+                        idx,
+                        expected_kind.as_str()
+                    ));
+                    item_has_error = true;
+                }
             }
             let normalized_status = match normalize_backlog_status(&parsed.status) {
                 Some(status) => status.to_string(),
@@ -2195,7 +2558,7 @@ impl EvolutionManager {
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
-                    parsed.implementation_agent,
+                    parsed.implementation_stage_kind,
                     matched_by,
                     matched_indexes.len()
                 );
@@ -2209,14 +2572,14 @@ impl EvolutionManager {
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
-                    parsed.implementation_agent
+                    parsed.implementation_stage_kind
                 );
                 report.push(format!(
                     "evo_backlog_mapping_missing: selector=({}, {}, {}, {}), candidates=0",
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
-                    parsed.implementation_agent
+                    parsed.implementation_stage_kind
                 ));
                 continue;
             }
@@ -2228,7 +2591,7 @@ impl EvolutionManager {
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
-                    parsed.implementation_agent,
+                    parsed.implementation_stage_kind,
                     matched_indexes.len()
                 );
                 report.push(format!(
@@ -2236,7 +2599,7 @@ impl EvolutionManager {
                     parsed.source_criteria_id,
                     parsed.source_check_id,
                     parsed.work_item_id,
-                    parsed.implementation_agent,
+                    parsed.implementation_stage_kind,
                     matched_indexes.len()
                 ));
                 continue;
@@ -2272,15 +2635,22 @@ impl EvolutionManager {
         managed_backlog.summary = coverage_summary(&managed_backlog.items);
         managed_backlog.updated_at = Utc::now().to_rfc3339();
 
-        let lane_backlog = managed_backlog
+        let stage_backlog = managed_backlog
             .items
             .iter()
-            .filter(|item| item.implementation_agent == lane_name)
+            .filter(|item| {
+                expected_stage_kind
+                    .map(|kind| {
+                        ImplementationStageKind::parse(&item.implementation_stage_kind)
+                            == Some(kind)
+                    })
+                    .unwrap_or(true)
+            })
             .cloned()
             .collect::<Vec<ManagedBacklogItem>>();
-        let lane_summary = coverage_summary(&lane_backlog);
+        let stage_summary = coverage_summary(&stage_backlog);
 
-        let lane_backlog_json = lane_backlog
+        let stage_backlog_json = stage_backlog
             .iter()
             .map(|item| {
                 serde_json::json!({
@@ -2288,13 +2658,13 @@ impl EvolutionManager {
                     "source_criteria_id": item.source_criteria_id,
                     "source_check_id": item.source_check_id,
                     "work_item_id": item.work_item_id,
-                    "implementation_agent": item.implementation_agent,
+                    "implementation_stage_kind": item.implementation_stage_kind,
                     "description": item.description,
                     "requirement_ref": item.requirement_ref
                 })
             })
             .collect::<Vec<serde_json::Value>>();
-        let lane_coverage_json = lane_backlog
+        let stage_coverage_json = stage_backlog
             .iter()
             .map(|item| {
                 serde_json::json!({
@@ -2305,7 +2675,7 @@ impl EvolutionManager {
                     "source_criteria_id": item.source_criteria_id,
                     "source_check_id": item.source_check_id,
                     "work_item_id": item.work_item_id,
-                    "implementation_agent": item.implementation_agent,
+                    "implementation_stage_kind": item.implementation_stage_kind,
                     "status": item.status,
                     "evidence": item.evidence,
                     "notes": item.notes
@@ -2313,52 +2683,105 @@ impl EvolutionManager {
             })
             .collect::<Vec<serde_json::Value>>();
 
-        let lane_obj = lane_result.as_object_mut().ok_or_else(|| {
+        let stage_obj = stage_result.as_object_mut().ok_or_else(|| {
             ArtifactValidationError::new(
                 "managed_backlog_sync_failed",
                 format!("{} 顶层必须是对象", file_name),
             )
         })?;
-        lane_obj.insert(
+        stage_obj.insert(
             "failure_backlog".to_string(),
-            serde_json::Value::Array(lane_backlog_json),
+            serde_json::Value::Array(stage_backlog_json),
         );
-        lane_obj.insert(
+        stage_obj.insert(
             "backlog_coverage".to_string(),
-            serde_json::Value::Array(lane_coverage_json),
+            serde_json::Value::Array(stage_coverage_json),
         );
-        lane_obj.insert(
+        stage_obj.insert(
             "backlog_coverage_summary".to_string(),
             serde_json::json!({
-                "total": lane_summary.total,
-                "done": lane_summary.done,
-                "blocked": lane_summary.blocked,
-                "not_done": lane_summary.not_done
+                "total": stage_summary.total,
+                "done": stage_summary.done,
+                "blocked": stage_summary.blocked,
+                "not_done": stage_summary.not_done
             }),
         );
-        lane_obj.insert(
+        stage_obj.insert(
             "updated_at".to_string(),
             serde_json::Value::String(Utc::now().to_rfc3339()),
         );
-        write_json(&cycle_dir.join(file_name), &lane_result)
+        write_json(&cycle_dir.join(file_name), &stage_result)
             .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
         Self::write_managed_backlog(cycle_dir, &managed_backlog)
             .map_err(|e| ArtifactValidationError::new("managed_backlog_sync_failed", e))?;
         Ok(())
     }
 
+    #[cfg(test)]
+    fn sync_managed_backlog_for_implement_stage(
+        cycle_dir: &Path,
+        stage: &str,
+    ) -> Result<(), ArtifactValidationError> {
+        Self::sync_managed_backlog_for_execution_stage(cycle_dir, stage)
+    }
+
+    #[cfg(test)]
+    fn resolve_implement_lanes(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+    ) -> Result<Vec<ImplementLane>, String> {
+        if verify_iteration >= 2 {
+            return Ok(vec![ImplementationStageKind::Advanced]);
+        }
+
+        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
+        let tables = parse_plan_routing_tables(&plan)?;
+        if verify_iteration == 0 {
+            let instances = Self::resolve_initial_implementation_stage_instances(cycle_dir)?;
+            let mut kinds = Vec::new();
+            for instance in instances {
+                if !kinds.contains(&instance.kind) {
+                    kinds.push(instance.kind);
+                }
+            }
+            return Ok(if kinds.is_empty() {
+                vec![ImplementationStageKind::General]
+            } else {
+                kinds
+            });
+        }
+
+        match Self::map_failed_agents_from_results(cycle_dir, &tables)? {
+            Some(mut kinds) => {
+                let mut ordered = IMPLEMENTATION_STAGE_KINDS
+                    .iter()
+                    .copied()
+                    .filter(|kind| kinds.remove(kind))
+                    .collect::<Vec<ImplementationStageKind>>();
+                if ordered.is_empty() {
+                    ordered.push(ImplementationStageKind::General);
+                }
+                Ok(ordered)
+            }
+            None => Ok(vec![ImplementationStageKind::General]),
+        }
+    }
+
     fn match_managed_backlog_indexes(
         backlog_items: &[ManagedBacklogItem],
         parsed: &BacklogResolutionUpdate,
     ) -> (Vec<usize>, &'static str) {
+        let parsed_stage_kind = ImplementationStageKind::parse(&parsed.implementation_stage_kind);
         let by_work_item_id = backlog_items
             .iter()
             .enumerate()
             .filter(|(_, backlog)| {
+                let backlog_stage_kind =
+                    ImplementationStageKind::parse(&backlog.implementation_stage_kind);
                 backlog.source_criteria_id == parsed.source_criteria_id
                     && backlog.source_check_id == parsed.source_check_id
                     && backlog.work_item_id == parsed.work_item_id
-                    && backlog.implementation_agent == parsed.implementation_agent
+                    && backlog_stage_kind == parsed_stage_kind
             })
             .map(|(i, _)| i)
             .collect::<Vec<usize>>();
@@ -2370,10 +2793,12 @@ impl EvolutionManager {
             .iter()
             .enumerate()
             .filter(|(_, backlog)| {
+                let backlog_stage_kind =
+                    ImplementationStageKind::parse(&backlog.implementation_stage_kind);
                 backlog.source_criteria_id == parsed.source_criteria_id
                     && backlog.source_check_id == parsed.source_check_id
                     && backlog.requirement_ref == parsed.work_item_id
-                    && backlog.implementation_agent == parsed.implementation_agent
+                    && backlog_stage_kind == parsed_stage_kind
             })
             .map(|(i, _)| i)
             .collect::<Vec<usize>>();
@@ -2385,10 +2810,12 @@ impl EvolutionManager {
             .iter()
             .enumerate()
             .filter(|(_, backlog)| {
+                let backlog_stage_kind =
+                    ImplementationStageKind::parse(&backlog.implementation_stage_kind);
                 backlog.source_criteria_id == parsed.source_criteria_id
                     && backlog.source_check_id == parsed.source_check_id
                     && backlog.id == parsed.work_item_id
-                    && backlog.implementation_agent == parsed.implementation_agent
+                    && backlog_stage_kind == parsed_stage_kind
             })
             .map(|(i, _)| i)
             .collect::<Vec<usize>>();
@@ -2402,6 +2829,7 @@ impl EvolutionManager {
     fn collect_reimplementation_backlog(
         cycle_dir: &Path,
         backlog_contract_version: u32,
+        verify_iteration: u32,
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
         if backlog_contract_version >= 2 {
             let backlog = Self::read_managed_backlog(cycle_dir)?;
@@ -2414,7 +2842,7 @@ impl EvolutionManager {
                         "source_criteria_id": item.source_criteria_id,
                         "source_check_id": item.source_check_id,
                         "work_item_id": item.work_item_id,
-                        "implementation_agent": item.implementation_agent
+                        "implementation_stage_kind": item.implementation_stage_kind
                     })
                 })
                 .collect::<Vec<serde_json::Value>>();
@@ -2432,51 +2860,99 @@ impl EvolutionManager {
             return Ok((backlog_values, coverage_values));
         }
 
-        let mut all_backlog: Vec<serde_json::Value> = Vec::new();
-        let mut all_coverage: Vec<serde_json::Value> = Vec::new();
-        for lane in [
-            ImplementLane::General,
-            ImplementLane::Visual,
-            ImplementLane::Advanced,
-        ] {
-            let file_name = Self::implement_result_file_for_lane(lane);
-            let value = read_json_file(cycle_dir, file_name)?;
-            let backlog = value
-                .pointer("/failure_backlog")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| format!("{} 缺少 failure_backlog（重实现轮必须提供）", file_name))?;
-            let coverage = value
-                .pointer("/backlog_coverage")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    format!("{} 缺少 backlog_coverage（重实现轮必须提供）", file_name)
-                })?;
-            let summary = value
-                .pointer("/backlog_coverage_summary")
-                .and_then(|v| v.as_object())
-                .ok_or_else(|| {
-                    format!(
-                        "{} 缺少 backlog_coverage_summary（重实现轮必须提供）",
-                        file_name
-                    )
-                })?;
-            for key in ["total", "done", "blocked", "not_done"] {
-                if !summary
-                    .get(key)
-                    .and_then(|v| v.as_u64())
-                    .map(|_| true)
-                    .unwrap_or(false)
-                {
-                    return Err(format!(
-                        "{}.backlog_coverage_summary.{} 必须是数字",
-                        file_name, key
-                    ));
+        let stage = reimplement_stage_name(verify_iteration);
+        let file_name = Self::implement_result_file_for_stage(&stage)
+            .ok_or_else(|| format!("无法解析重实现阶段产物: {}", stage))?;
+        let value = match read_json_file(cycle_dir, &file_name) {
+            Ok(value) => value,
+            Err(_) => {
+                let mut all_backlog: Vec<serde_json::Value> = Vec::new();
+                let mut all_coverage: Vec<serde_json::Value> = Vec::new();
+                let mut saw_legacy_file = false;
+                for legacy_file in [
+                    "implement_general.jsonc",
+                    "implement_visual.jsonc",
+                    "implement_advanced.jsonc",
+                ] {
+                    let value = match read_json_file(cycle_dir, legacy_file) {
+                        Ok(value) => value,
+                        Err(_) => continue,
+                    };
+                    saw_legacy_file = true;
+                    let backlog = value
+                        .pointer("/failure_backlog")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| {
+                            format!("{} 缺少 failure_backlog（重实现轮必须提供）", legacy_file)
+                        })?;
+                    let coverage = value
+                        .pointer("/backlog_coverage")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| {
+                            format!("{} 缺少 backlog_coverage（重实现轮必须提供）", legacy_file)
+                        })?;
+                    let summary = value
+                        .pointer("/backlog_coverage_summary")
+                        .and_then(|v| v.as_object())
+                        .ok_or_else(|| {
+                            format!(
+                                "{} 缺少 backlog_coverage_summary（重实现轮必须提供）",
+                                legacy_file
+                            )
+                        })?;
+                    for key in ["total", "done", "blocked", "not_done"] {
+                        if !summary
+                            .get(key)
+                            .and_then(|v| v.as_u64())
+                            .map(|_| true)
+                            .unwrap_or(false)
+                        {
+                            return Err(format!(
+                                "{}.backlog_coverage_summary.{} 必须是数字",
+                                legacy_file, key
+                            ));
+                        }
+                    }
+                    all_backlog.extend(backlog.iter().cloned());
+                    all_coverage.extend(coverage.iter().cloned());
                 }
+                if !saw_legacy_file {
+                    return Err(format!("读取 {} 失败: No such file or directory", file_name));
+                }
+                return Ok((all_backlog, all_coverage));
             }
-            all_backlog.extend(backlog.iter().cloned());
-            all_coverage.extend(coverage.iter().cloned());
+        };
+        let backlog = value
+            .pointer("/failure_backlog")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("{} 缺少 failure_backlog（重实现轮必须提供）", file_name))?;
+        let coverage = value
+            .pointer("/backlog_coverage")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("{} 缺少 backlog_coverage（重实现轮必须提供）", file_name))?;
+        let summary = value
+            .pointer("/backlog_coverage_summary")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                format!(
+                    "{} 缺少 backlog_coverage_summary（重实现轮必须提供）",
+                    file_name
+                )
+            })?;
+        for key in ["total", "done", "blocked", "not_done"] {
+            if !summary
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|_| true)
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "{}.backlog_coverage_summary.{} 必须是数字",
+                    file_name, key
+                ));
+            }
         }
-        Ok((all_backlog, all_coverage))
+        Ok((backlog.to_vec(), coverage.to_vec()))
     }
 
     fn validate_implement_artifact(
@@ -2492,20 +2968,21 @@ impl EvolutionManager {
                 format!("未知 implement stage: {}", stage),
             )
         })?;
-        let value = read_json_file(cycle_dir, file_name)
+        let expected_stage_kind = implementation_stage_kind_for_stage(stage);
+        let value = read_json_file(cycle_dir, &file_name)
             .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
         let mut report = ValidationReport::default();
         // WI-003: 校验 $schema_version 与 stage 字段
         report.capture(ensure_schema_version(
-            file_name,
+            &file_name,
             &value,
             STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
         ));
-        report.capture(ensure_stage_field_matches(file_name, &value, stage));
+        report.capture(ensure_stage_field_matches(&file_name, &value, stage));
         if let Some(ctx) = validation_ctx {
-            report.capture(ensure_cycle_id_matches(file_name, &value, &ctx.cycle_id));
+            report.capture(ensure_cycle_id_matches(&file_name, &value, &ctx.cycle_id));
             report.capture(ensure_artifact_freshness(
-                file_name,
+                &file_name,
                 &value,
                 ctx.stage_started_at,
             ));
@@ -2570,11 +3047,18 @@ impl EvolutionManager {
                                         file_name, idx
                                     ));
                                 }
-                                if parsed.implementation_agent.trim() != stage {
-                                    report.push(format!(
-                                        "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
-                                        file_name, idx, stage
-                                    ));
+                                if let Some(expected_kind) = expected_stage_kind {
+                                    if ImplementationStageKind::parse(
+                                        &parsed.implementation_stage_kind,
+                                    ) != Some(expected_kind)
+                                    {
+                                        report.push(format!(
+                                            "{}.backlog_resolution_updates[{}].implementation_stage_kind 必须等于 {}",
+                                            file_name,
+                                            idx,
+                                            expected_kind.as_str()
+                                        ));
+                                    }
                                 }
                                 if normalize_backlog_status(&parsed.status).is_none() {
                                     report.push(format!(
@@ -2614,9 +3098,9 @@ impl EvolutionManager {
                 if item.id.trim().is_empty() {
                     report.push(format!("managed.backlog.jsonc.items[{}].id 不能为空", idx));
                 }
-                if !is_valid_implementation_agent(&item.implementation_agent) {
+                if !is_valid_implementation_stage_kind(&item.implementation_stage_kind) {
                     report.push(format!(
-                        "managed.backlog.jsonc.items[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
+                        "managed.backlog.jsonc.items[{}].implementation_stage_kind 必须是 general|visual|advanced|unknown",
                         idx
                     ));
                 }
@@ -2631,28 +3115,31 @@ impl EvolutionManager {
         }
 
         if verify_iteration > 0 && backlog_contract_version < 2 {
-            let (backlog, coverage) =
-                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)
-                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let (backlog, coverage) = Self::collect_reimplementation_backlog(
+                cycle_dir,
+                backlog_contract_version,
+                verify_iteration,
+            )
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             for (idx, item) in backlog.iter().enumerate() {
                 let Some(obj) = item.as_object() else {
                     report.push(format!("failure_backlog[{}] 必须是对象", idx));
                     continue;
                 };
                 let agent = obj
-                    .get("implementation_agent")
+                    .get("implementation_stage_kind")
                     .and_then(|v| v.as_str())
                     .map(|v| v.trim().to_ascii_lowercase());
                 let Some(agent) = agent else {
                     report.push(format!(
-                        "failure_backlog[{}].implementation_agent 缺失或非法",
+                        "failure_backlog[{}].implementation_stage_kind 缺失或非法",
                         idx
                     ));
                     continue;
                 };
-                if !is_valid_implementation_agent(agent.as_str()) {
+                if !is_valid_implementation_stage_kind(agent.as_str()) {
                     report.push(format!(
-                        "failure_backlog[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
+                        "failure_backlog[{}].implementation_stage_kind 必须是 general|visual|advanced|unknown",
                         idx
                     ));
                 }
@@ -2905,7 +3392,7 @@ impl EvolutionManager {
                         );
                         let work_item_id = id_from_value(requirement, &["work_item_id"]);
                         let raw_agent = requirement
-                            .get("implementation_agent")
+                            .get("implementation_stage_kind")
                             .and_then(|v| v.as_str());
 
                         let Some(source_criteria_id) = source_criteria_id else {
@@ -2942,20 +3429,20 @@ impl EvolutionManager {
                         }
 
                         let Some(raw_agent) = raw_agent else {
-                            report.push(format!("{}.implementation_agent 缺失", selector_label));
+                            report.push(format!("{}.implementation_stage_kind 缺失", selector_label));
                             continue;
                         };
                         if is_unknown_selector_value(raw_agent) {
                             report.push(format!(
-                                "{}.implementation_agent 不能为空且不能为 unknown",
+                                "{}.implementation_stage_kind 不能为空且不能为 unknown",
                                 selector_label
                             ));
                             continue;
                         }
-                        let Some(implementation_agent) = PlanImplementationAgent::parse(raw_agent)
+                        let Some(implementation_stage_kind) = ImplementationStageKind::parse(raw_agent)
                         else {
                             report.push(format!(
-                                "{}.implementation_agent 非法: {}",
+                                "{}.implementation_stage_kind 非法: {}",
                                 selector_label, raw_agent
                             ));
                             continue;
@@ -2966,7 +3453,7 @@ impl EvolutionManager {
                             &source_criteria_id,
                             &source_check_id,
                             &work_item_id,
-                            implementation_agent,
+                            implementation_stage_kind,
                             &tables,
                             &check_to_work_items,
                         ));
@@ -2997,9 +3484,12 @@ impl EvolutionManager {
         }
 
         if verify_iteration > 0 {
-            let (backlog, _) =
-                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)
-                    .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+            let (backlog, _) = Self::collect_reimplementation_backlog(
+                cycle_dir,
+                backlog_contract_version,
+                verify_iteration,
+            )
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")
                 .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
             let backlog_set: HashSet<String> = backlog_ids.iter().cloned().collect();
@@ -3224,7 +3714,14 @@ impl EvolutionManager {
         match stage {
             "direction" => Self::validate_direction_artifact(cycle_dir, validation_ctx),
             "plan" => Self::validate_plan_artifact(cycle_dir, validation_ctx),
-            "implement_general" | "implement_visual" | "implement_advanced" => {
+            "verify" => Self::validate_verify_artifact(
+                cycle_dir,
+                verify_iteration,
+                backlog_contract_version,
+                validation_ctx,
+            ),
+            "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
+            _ if is_runtime_implement_stage(stage) || is_runtime_reimplement_stage(stage) => {
                 Self::validate_implement_artifact(
                     stage,
                     cycle_dir,
@@ -3233,13 +3730,6 @@ impl EvolutionManager {
                     validation_ctx,
                 )
             }
-            "verify" => Self::validate_verify_artifact(
-                cycle_dir,
-                verify_iteration,
-                backlog_contract_version,
-                validation_ctx,
-            ),
-            "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
             _ => Ok(()),
         }
     }
@@ -3397,10 +3887,11 @@ impl EvolutionManager {
         Ok(())
     }
 
+    #[cfg(test)]
     fn map_failed_agents_from_results(
         cycle_dir: &Path,
         tables: &PlanRoutingTables,
-    ) -> Result<Option<HashSet<PlanImplementationAgent>>, String> {
+    ) -> Result<Option<HashSet<ImplementationStageKind>>, String> {
         let verify = read_json_file(cycle_dir, "verify.jsonc")?;
 
         let mut failed_criteria_ids: Vec<String> = Vec::new();
@@ -3456,7 +3947,7 @@ impl EvolutionManager {
             }
         }
 
-        let mut mapped_agents: HashSet<PlanImplementationAgent> = HashSet::new();
+        let mut mapped_agents: HashSet<ImplementationStageKind> = HashSet::new();
         let mut incomplete_mapping = false;
         let mut has_failure_signal = false;
 
@@ -3468,7 +3959,7 @@ impl EvolutionManager {
             };
             let mut mapped_in_this_criteria = false;
             for check_id in check_ids {
-                if let Some(agents) = tables.check_to_agents.get(check_id) {
+                if let Some(agents) = tables.check_to_stage_kinds.get(check_id) {
                     mapped_agents.extend(agents.iter().copied());
                     mapped_in_this_criteria = true;
                 } else {
@@ -3484,7 +3975,7 @@ impl EvolutionManager {
             has_failure_signal = true;
             let mut item_mapped = false;
 
-            if let Some(agents) = tables.check_to_agents.get(&item_id) {
+            if let Some(agents) = tables.check_to_stage_kinds.get(&item_id) {
                 mapped_agents.extend(agents.iter().copied());
                 item_mapped = true;
             }
@@ -3492,7 +3983,7 @@ impl EvolutionManager {
             if let Some(check_ids) = tables.criteria_to_checks.get(&item_id) {
                 let mut criteria_mapped = false;
                 for check_id in check_ids {
-                    if let Some(agents) = tables.check_to_agents.get(check_id) {
+                    if let Some(agents) = tables.check_to_stage_kinds.get(check_id) {
                         mapped_agents.extend(agents.iter().copied());
                         criteria_mapped = true;
                     } else {
@@ -3517,92 +4008,15 @@ impl EvolutionManager {
         Ok(Some(mapped_agents))
     }
 
-    fn resolve_implement_lanes(
-        cycle_dir: &Path,
-        verify_iteration: u32,
-    ) -> Result<Vec<ImplementLane>, String> {
-        if verify_iteration >= 2 {
-            return Ok(vec![ImplementLane::Advanced]);
-        }
-
-        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
-        let tables = parse_plan_routing_tables(&plan)?;
-
-        if verify_iteration == 0 {
-            // WI-006：首轮（verify_iteration=0）不允许 plan 产物通过 implement_advanced
-            // 任务把高级代理拉入主链路；Advanced lane 仅由系统调度（verify 失败后）触发。
-            let first_round_lanes = ordered_lanes_from_agent_presence(&tables.lane_presence)
-                .into_iter()
-                .filter(|lane| *lane != ImplementLane::Advanced)
-                .collect::<Vec<_>>();
-            return Ok(if first_round_lanes.is_empty() {
-                vec![ImplementLane::General]
-            } else {
-                first_round_lanes
-            });
-        }
-
-        let failed_agents = match Self::map_failed_agents_from_results(cycle_dir, &tables) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    "failed to map reimplementation categories, fallback to general: {}",
-                    err
-                );
-                None
-            }
-        };
-        if let Some(agents) = failed_agents {
-            // WI-006：verify_iteration=1 时，仅允许 general/visual lane，
-            // 不允许失败项映射结果中的 advanced（系统统一在 verify_iteration>=2 时调度）。
-            let filtered: Vec<ImplementLane> = ordered_lanes_from_agent_presence(&agents)
-                .into_iter()
-                .filter(|lane| *lane != ImplementLane::Advanced)
-                .collect();
-            return Ok(if filtered.is_empty() {
-                vec![ImplementLane::General]
-            } else {
-                filtered
-            });
-        }
-
-        // verify_iteration=1 且失败项无法完成映射：按约定回退为仅 general。
-        Ok(vec![ImplementLane::General])
-    }
-
-    fn lane_for_stage(stage: &str) -> Option<ImplementLane> {
-        match stage {
-            "implement_general" => Some(ImplementLane::General),
-            "implement_visual" => Some(ImplementLane::Visual),
-            "implement_advanced" => Some(ImplementLane::Advanced),
-            _ => None,
-        }
-    }
-
-    fn stage_for_lane(lane: ImplementLane) -> &'static str {
-        match lane {
-            ImplementLane::General => "implement_general",
-            ImplementLane::Visual => "implement_visual",
-            ImplementLane::Advanced => "implement_advanced",
-        }
-    }
-
-    fn should_execute_stage_for_lanes(stage: &str, lanes: &[ImplementLane]) -> bool {
-        let Some(target_lane) = Self::lane_for_stage(stage) else {
-            return true;
-        };
-        lanes.iter().any(|lane| *lane == target_lane)
-    }
-
     fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
         match stage {
             "direction" => vec![cycle_dir.join("direction.jsonc")],
             "plan" => vec![cycle_dir.join("plan.jsonc"), cycle_dir.join(PLAN_MARKDOWN_FILE)],
-            "implement_general" => vec![cycle_dir.join("implement_general.jsonc")],
-            "implement_visual" => vec![cycle_dir.join("implement_visual.jsonc")],
-            "implement_advanced" => vec![cycle_dir.join("implement_advanced.jsonc")],
             "verify" => vec![cycle_dir.join("verify.jsonc")],
-            _ => Vec::new(),
+            "auto_commit" => vec![cycle_dir.join("auto_commit.jsonc")],
+            other => stage_artifact_file(other)
+                .map(|file_name| vec![cycle_dir.join(file_name)])
+                .unwrap_or_default(),
         }
     }
 
@@ -3676,17 +4090,6 @@ impl EvolutionManager {
                     &plan_markdown_template(&cycle_id),
                 )?;
             }
-            "implement_general" | "implement_visual" | "implement_advanced" => {
-                Self::ensure_jsonc_template(
-                    &cycle_dir.join(format!("{}.jsonc", stage)),
-                    &implement_stage_template(
-                        stage,
-                        &cycle_id,
-                        verify_iteration,
-                        backlog_contract_version,
-                    ),
-                )?;
-            }
             "verify" => {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("verify.jsonc"),
@@ -3699,6 +4102,19 @@ impl EvolutionManager {
                     &auto_commit_stage_template(&cycle_id),
                 )?;
             }
+            _ if is_runtime_implement_stage(stage) || is_runtime_reimplement_stage(stage) => {
+                let artifact_file = stage_artifact_file(stage)
+                    .ok_or_else(|| format!("未知实现阶段: {}", stage))?;
+                Self::ensure_jsonc_template(
+                    &cycle_dir.join(artifact_file),
+                    &implement_stage_template(
+                        stage,
+                        &cycle_id,
+                        verify_iteration,
+                        backlog_contract_version,
+                    ),
+                )?;
+            }
             _ => {}
         }
 
@@ -3709,72 +4125,6 @@ impl EvolutionManager {
             )?;
         }
 
-        Ok(())
-    }
-
-    fn persist_empty_implement_result_file(
-        cycle_dir: &Path,
-        stage: &str,
-        verify_iteration: u32,
-        backlog_contract_version: u32,
-        status: &str,
-    ) -> Result<(), String> {
-        let Some(file_name) = Self::implement_result_file_for_stage(stage) else {
-            return Ok(());
-        };
-        let payload = serde_json::json!({
-            "$schema_version": "2.0",
-            "stage": stage,
-            "cycle_id": read_json_file(cycle_dir, "cycle.jsonc")
-                .ok()
-                .and_then(|v| v.get("cycle_id").and_then(|x| x.as_str()).map(|s| s.to_string()))
-                .unwrap_or_default(),
-            "status": status,
-            "verify_iteration": verify_iteration,
-            "backlog_contract_version": backlog_contract_version,
-            "summary": "",
-            "work_item_results": [],
-            "changed_files": [],
-            "commands_executed": [],
-            "quick_checks": [],
-            "updated_at": Utc::now().to_rfc3339(),
-            "backlog_resolution_updates": [],
-            "failure_backlog": [],
-            "backlog_coverage": [],
-            "backlog_coverage_summary": {
-                "total": 0,
-                "done": 0,
-                "blocked": 0,
-                "not_done": 0
-            },
-            "updated_at": Utc::now().to_rfc3339(),
-        });
-        write_json(&cycle_dir.join(file_name), &payload)
-    }
-
-    fn ensure_implement_result_placeholders(
-        cycle_dir: &Path,
-        verify_iteration: u32,
-        backlog_contract_version: u32,
-        selected_lanes: &[ImplementLane],
-    ) -> Result<(), String> {
-        for lane in [
-            ImplementLane::General,
-            ImplementLane::Visual,
-            ImplementLane::Advanced,
-        ] {
-            if selected_lanes.iter().any(|item| *item == lane) {
-                continue;
-            }
-            let stage = Self::stage_for_lane(lane);
-            Self::persist_empty_implement_result_file(
-                cycle_dir,
-                stage,
-                verify_iteration,
-                backlog_contract_version,
-                "skipped",
-            )?;
-        }
         Ok(())
     }
 
@@ -4065,16 +4415,9 @@ impl EvolutionManager {
     }
 
     fn supports_validation_reminder(stage: &str) -> bool {
-        matches!(
-            stage,
-            "direction"
-                | "plan"
-                | "implement_general"
-                | "implement_visual"
-                | "implement_advanced"
-                | "verify"
-                | "auto_commit"
-        )
+        matches!(stage, "direction" | "plan" | "verify" | "auto_commit")
+            || is_runtime_implement_stage(stage)
+            || is_runtime_reimplement_stage(stage)
     }
 
     fn should_retry_validation_with_reminder(stage: &str, err: &str) -> bool {
@@ -4094,21 +4437,12 @@ impl EvolutionManager {
         match normalized_stage.as_str() {
             "direction" => "direction.jsonc / cycle.jsonc".to_string(),
             "plan" => "plan.jsonc / plan.md / direction.jsonc".to_string(),
-            "implement_general" => {
-                "implement_general.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
-                    .to_string()
-            }
-            "implement_visual" => {
-                "implement_visual.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
-                    .to_string()
-            }
-            "implement_advanced" => {
-                "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc"
-                    .to_string()
-            }
             "verify" => "verify.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc".to_string(),
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
+                if let Some(file_name) = stage_artifact_file(stage) {
+                    return format!("{} / plan.jsonc / plan.md / managed.backlog.jsonc", file_name);
+                }
                 let stage_name = if normalized_stage.is_empty() {
                     "unknown".to_string()
                 } else {
@@ -4120,66 +4454,69 @@ impl EvolutionManager {
     }
 
     fn build_validation_fix_hint(stage: &str, error_message: &str) -> String {
-        let normalized_stage = stage.trim().to_ascii_lowercase();
         let normalized_error_message = error_message.trim();
-        let lane_name = match normalized_stage.as_str() {
-            "implement_general" => Some("implement_general"),
-            "implement_visual" => Some("implement_visual"),
-            "implement_advanced" => Some("implement_advanced"),
-            _ => None,
+        let expected_stage_kind =
+            implementation_stage_kind_for_stage(stage).map(|kind| kind.as_str().to_string());
+        let expected_selector_text = match stage.trim().to_ascii_lowercase().as_str() {
+            "implement_general" | "implement_visual" | "implement_advanced" => {
+                stage.trim().to_ascii_lowercase()
+            }
+            _ => expected_stage_kind.clone().unwrap_or_default(),
         };
+        let is_execution_stage =
+            expected_stage_kind.is_some() || is_runtime_reimplement_stage(stage);
 
-        if lane_name.is_some() && normalized_error_message.contains("quick_checks") {
+        if is_execution_stage && normalized_error_message.contains("quick_checks") {
             return "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"
                 .to_string();
         }
 
-        if lane_name.is_some()
+        if is_execution_stage
             && normalized_error_message.contains("backlog_resolution_updates")
             && normalized_error_message.contains("selector 字段不能为空")
         {
-            return "backlog_resolution_updates[*].selector 必须完整填写 source_criteria_id/source_check_id/work_item_id/implementation_agent。".to_string();
+            return "backlog_resolution_updates[*].selector 必须完整填写 source_criteria_id/source_check_id/work_item_id/implementation_stage_kind。".to_string();
         }
 
-        if lane_name.is_some()
+        if expected_stage_kind.is_some()
             && normalized_error_message.contains("backlog_resolution_updates")
-            && normalized_error_message.contains("implementation_agent")
+            && normalized_error_message.contains("implementation_stage_kind")
             && normalized_error_message.contains("必须等于")
         {
             return format!(
-                "backlog_resolution_updates[*].implementation_agent 必须等于当前 lane（{}）；不要复用其它 lane 的值。",
-                lane_name.unwrap_or_default()
+                "backlog_resolution_updates[*].implementation_stage_kind 必须等于当前实现阶段类型（{}）；不要复用其它类型的值。",
+                expected_selector_text
             );
         }
 
-        if lane_name.is_some()
+        if is_execution_stage
             && normalized_error_message.contains("backlog_resolution_updates")
             && (normalized_error_message.contains("缺失")
                 || normalized_error_message.contains("缺少")
                 || normalized_error_message.contains("必须是数组"))
         {
-            return "BACKLOG_CONTRACT_VERSION>=2 时必须输出 backlog_resolution_updates 数组；若本 lane 无需回填，也要写 []。".to_string();
+            return "BACKLOG_CONTRACT_VERSION>=2 时必须输出 backlog_resolution_updates 数组；若本阶段无需回填，也要写 []。".to_string();
         }
 
-        if lane_name.is_some()
+        if is_execution_stage
             && normalized_error_message.contains("backlog_resolution_updates")
             && normalized_error_message.contains("status 必须是 done|blocked|not_done")
         {
             return "backlog_resolution_updates[*].status 只能是 done、blocked 或 not_done；不要使用其它状态值。".to_string();
         }
 
-        if let Some(lane) = lane_name {
+        if !expected_selector_text.is_empty() {
             if normalized_error_message.contains("evo_backlog_mapping_missing") {
                 return format!(
-                    "无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent={} 的原始 selector 组合后再回填。",
-                    lane
+                    "无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_stage_kind={} 的原始 selector 组合后再回填。",
+                    expected_selector_text
                 );
             }
 
             if normalized_error_message.contains("evo_backlog_mapping_ambiguous") {
                 return format!(
-                    "selector 映射出现歧义，请在 backlog_resolution_updates 中使用与 managed.backlog.jsonc 一一对应且唯一的 selector（implementation_agent={}）。",
-                    lane
+                    "selector 映射出现歧义，请在 backlog_resolution_updates 中使用与 managed.backlog.jsonc 一一对应且唯一的 selector（implementation_stage_kind={}）。",
+                    expected_selector_text
                 );
             }
         }
@@ -4838,9 +5175,9 @@ impl EvolutionManager {
             }
             if ctx.verify_iteration > 0
                 && contract_version >= 2
-                && Self::lane_for_stage(stage).is_some()
+                && (is_runtime_implement_stage(stage) || is_runtime_reimplement_stage(stage))
             {
-                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)?;
+                Self::sync_managed_backlog_for_execution_stage(&cycle_dir, stage)?;
             }
             Self::validate_stage_artifacts_with_context(
                 stage,
@@ -5035,39 +5372,6 @@ impl EvolutionManager {
         }
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let implement_lanes = if Self::lane_for_stage(stage).is_some() {
-            let lanes = Self::resolve_implement_lanes(&cycle_dir, verify_iteration)?;
-            Self::ensure_implement_result_placeholders(
-                &cycle_dir,
-                verify_iteration,
-                backlog_contract_version,
-                &lanes,
-            )?;
-            Some(lanes)
-        } else {
-            None
-        };
-
-        if let Some(lanes) = implement_lanes.as_ref() {
-            if !Self::should_execute_stage_for_lanes(stage, lanes) {
-                self.reset_stage_tool_call_tracking(key, stage).await;
-                self.set_stage_status(key, stage, "skipped").await;
-                self.persist_stage_file(key, stage, "skipped", None, None)
-                    .await
-                    .ok();
-                Self::persist_empty_implement_result_file(
-                    &cycle_dir,
-                    stage,
-                    verify_iteration,
-                    backlog_contract_version,
-                    "skipped",
-                )?;
-                self.persist_cycle_file(key).await.ok();
-                self.broadcast_cycle_update(key, ctx, "orchestrator").await;
-                return Ok(false);
-            }
-        }
-
         Self::reset_stage_owned_artifacts(stage, &cycle_dir)?;
         Self::ensure_stage_templates(
             stage,
@@ -5597,79 +5901,60 @@ impl EvolutionManager {
             match stage {
                 "bootstrap" => next_stage = "direction".to_string(),
                 "direction" => next_stage = "plan".to_string(),
-                "plan" => next_stage = "implement_general".to_string(),
-                "implement_general" => {
-                    if should_force_advanced_reimplementation(entry.verify_iteration) {
-                        entry
-                            .stage_statuses
-                            .insert("implement_visual".to_string(), "skipped".to_string());
-                        entry
-                            .stage_tool_call_counts
-                            .insert("implement_visual".to_string(), 0);
-                        next_stage = "implement_advanced".to_string();
-                    } else {
-                        let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
+                "plan" => match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
+                    Ok(cycle_dir) => match Self::resolve_initial_implementation_stage_instances(
+                        &cycle_dir,
+                    ) {
+                        Ok(instances) => {
+                            for instance in &instances {
+                                Self::ensure_runtime_stage_state_pending(
+                                    &mut entry.stage_statuses,
+                                    &mut entry.stage_tool_call_counts,
+                                    &instance.stage,
+                                );
+                            }
+                            next_stage = instances
+                                .first()
+                                .map(|instance| instance.stage.clone())
+                                .unwrap_or_else(|| "verify".to_string());
+                        }
+                        Err(err) => {
+                            entry.status = "failed_system".to_string();
+                            entry.terminal_reason_code =
+                                Some("evo_initial_stage_resolution_failed".to_string());
+                            entry.terminal_error_message = Some(err);
+                            next_stage = previous.clone();
+                        }
+                    },
+                    Err(err) => {
+                        entry.status = "failed_system".to_string();
+                        entry.terminal_reason_code =
+                            Some("evo_initial_stage_resolution_failed".to_string());
+                        entry.terminal_error_message = Some(err);
+                        next_stage = previous.clone();
+                    }
+                },
+                _ if is_runtime_implement_stage(stage) => {
+                    match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
+                        Ok(cycle_dir) => {
+                            next_stage = Self::next_initial_implementation_stage(
+                                &cycle_dir,
+                                stage,
+                            )
                             .ok()
-                            .and_then(|dir| {
-                                Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
-                            })
-                            .unwrap_or_else(|| vec![ImplementLane::General, ImplementLane::Visual]);
-                        let has_visual = lanes.iter().any(|lane| *lane == ImplementLane::Visual);
-                        let has_advanced =
-                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                        if has_visual {
-                            next_stage = "implement_visual".to_string();
-                        } else if has_advanced {
-                            entry
-                                .stage_statuses
-                                .insert("implement_visual".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_visual".to_string(), 0);
-                            next_stage = "implement_advanced".to_string();
-                        } else {
-                            entry
-                                .stage_statuses
-                                .insert("implement_visual".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_visual".to_string(), 0);
-                            entry
-                                .stage_statuses
-                                .insert("implement_advanced".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_advanced".to_string(), 0);
-                            next_stage = "verify".to_string();
+                            .flatten()
+                            .unwrap_or_else(|| "verify".to_string());
+                        }
+                        Err(err) => {
+                            entry.status = "failed_system".to_string();
+                            entry.terminal_reason_code =
+                                Some("evo_initial_stage_resolution_failed".to_string());
+                            entry.terminal_error_message = Some(err);
+                            next_stage = previous.clone();
                         }
                     }
                 }
-                "implement_visual" => {
-                    if should_force_advanced_reimplementation(entry.verify_iteration) {
-                        next_stage = "implement_advanced".to_string();
-                    } else {
-                        let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
-                            .ok()
-                            .and_then(|dir| {
-                                Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
-                            })
-                            .unwrap_or_else(|| vec![ImplementLane::Visual]);
-                        let has_advanced =
-                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                        if has_advanced {
-                            next_stage = "implement_advanced".to_string();
-                        } else {
-                            entry
-                                .stage_statuses
-                                .insert("implement_advanced".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_advanced".to_string(), 0);
-                            next_stage = "verify".to_string();
-                        }
-                    }
-                }
-                "implement_advanced" => next_stage = "verify".to_string(),
+                _ if is_runtime_reimplement_stage(stage) => next_stage = "verify".to_string(),
                 "verify" => {
                     if verify_pass {
                         entry.terminal_reason_code = None;
@@ -5679,22 +5964,17 @@ impl EvolutionManager {
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;
                         entry.verify_iteration += 1;
-                        for stage_name in [
-                            "implement_general",
-                            "implement_visual",
-                            "implement_advanced",
+                        Self::ensure_runtime_stage_state_pending(
+                            &mut entry.stage_statuses,
+                            &mut entry.stage_tool_call_counts,
                             "verify",
-                        ] {
-                            entry
-                                .stage_statuses
-                                .insert(stage_name.to_string(), "pending".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert(stage_name.to_string(), 0);
-                            // WI-001：重置代理耗时归因，确保重实现轮只统计当前会话耗时，不累计前次
-                            entry.stage_started_ats.remove(stage_name);
-                            entry.stage_duration_ms.remove(stage_name);
-                        }
+                        );
+                        entry
+                            .stage_statuses
+                            .insert("verify".to_string(), "pending".to_string());
+                        entry.stage_tool_call_counts.insert("verify".to_string(), 0);
+                        entry.stage_started_ats.remove("verify");
+                        entry.stage_duration_ms.remove("verify");
                         if entry.backlog_contract_version >= 2 {
                             match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
                                 Ok(cycle_dir) => {
@@ -5733,62 +6013,21 @@ impl EvolutionManager {
                             }
                         }
                         if managed_backlog_generation_error.is_none() {
-                            if should_force_advanced_reimplementation(entry.verify_iteration) {
-                                entry
-                                    .stage_statuses
-                                    .insert("implement_general".to_string(), "skipped".to_string());
-                                entry
-                                    .stage_tool_call_counts
-                                    .insert("implement_general".to_string(), 0);
-                                entry
-                                    .stage_statuses
-                                    .insert("implement_visual".to_string(), "skipped".to_string());
-                                entry
-                                    .stage_tool_call_counts
-                                    .insert("implement_visual".to_string(), 0);
-                                next_stage = "implement_advanced".to_string();
-                            } else {
-                                let lanes = match cycle_dir_path(
-                                    &entry.workspace_root,
-                                    &entry.cycle_id,
-                                ) {
-                                    Ok(cycle_dir) => match Self::resolve_implement_lanes(
-                                        &cycle_dir,
-                                        entry.verify_iteration,
-                                    ) {
-                                        Ok(value) => value,
-                                        Err(err) => {
-                                            warn!(
-                                                "resolve implement lanes failed (project={}, workspace={}, verify_iteration={}): {}",
-                                                entry.project,
-                                                entry.workspace,
-                                                entry.verify_iteration,
-                                                err
-                                            );
-                                            vec![ImplementLane::General]
-                                        }
-                                    },
-                                    Err(err) => {
-                                        warn!(
-                                            "resolve cycle dir failed (project={}, workspace={}): {}",
-                                            entry.project, entry.workspace, err
-                                        );
-                                        vec![ImplementLane::General]
-                                    }
-                                };
-                                let has_general_or_visual = lanes.iter().any(|lane| {
-                                    matches!(lane, ImplementLane::General | ImplementLane::Visual)
-                                });
-                                let has_advanced =
-                                    lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                                if has_general_or_visual {
-                                    next_stage = "implement_general".to_string();
-                                } else if has_advanced {
-                                    next_stage = "implement_advanced".to_string();
-                                } else {
-                                    next_stage = "implement_general".to_string();
-                                }
-                            }
+                            let reimplement_stage = reimplement_stage_name(entry.verify_iteration);
+                            Self::ensure_runtime_stage_state_pending(
+                                &mut entry.stage_statuses,
+                                &mut entry.stage_tool_call_counts,
+                                &reimplement_stage,
+                            );
+                            entry
+                                .stage_statuses
+                                .insert(reimplement_stage.clone(), "pending".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert(reimplement_stage.clone(), 0);
+                            entry.stage_started_ats.remove(&reimplement_stage);
+                            entry.stage_duration_ms.remove(&reimplement_stage);
+                            next_stage = reimplement_stage;
                         }
                     } else {
                         entry.status = "failed_exhausted".to_string();
@@ -6447,7 +6686,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -6757,7 +6996,7 @@ mod tests {
             "artifact_contract_violation",
             "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
             &["evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0"],
-            &["无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。"],
+            &["无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_stage_kind=implement_advanced 的原始 selector 组合后再回填。"],
             "implement_advanced.jsonc / plan.jsonc / plan.md / managed.backlog.jsonc",
             &raw_error,
         );
@@ -6813,7 +7052,7 @@ mod tests {
         let plan = plan_stage_template("c-42");
         assert!(plan.contains("// 本轮验收标准，由 plan 阶段定义且必须可验证"));
         assert!(plan.contains("// 工作项列表，不能为空"));
-        assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
+        assert!(plan.contains("//   \"implementation_stage_kind\": \"general\""));
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
         assert!(plan.contains("// 验收标准与检查项的映射，必须完整覆盖 plan.acceptance_criteria"));
 
@@ -6825,9 +7064,9 @@ mod tests {
         assert!(plan_markdown.contains("## 验证计划"));
         assert!(plan_markdown.contains("### CHK-001 占位检查"));
 
-        let implement = implement_stage_template("implement_general", "c-42", 1, 2);
+        let implement = implement_stage_template("implement.general.1", "c-42", 1, 2);
         assert!(implement.contains("// backlog v2 回填数组。VERIFY_ITERATION>0 且 BACKLOG_CONTRACT_VERSION>=2 时必须按此结构填写。"));
-        assert!(implement.contains("//   \"implementation_agent\": \"implement_general\""));
+        assert!(implement.contains("//   \"implementation_stage_kind\": \"general\""));
 
         let verify = verify_stage_template("c-42", 1, 3);
         assert!(verify
@@ -6934,7 +7173,7 @@ mod tests {
             "definition_of_done": ["done"],
             "risk": "low",
             "rollback": "git restore",
-            "implementation_agent": "implement_general",
+            "implementation_stage_kind": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
         })]));
 
@@ -6957,7 +7196,7 @@ mod tests {
             "definition_of_done": ["done"],
             "risk": "low",
             "rollback": "git restore",
-            "implementation_agent": "implement_general",
+            "implementation_stage_kind": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
         })]));
         write_plan_markdown(dir.path());
@@ -6978,7 +7217,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "ac-1",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -6989,7 +7228,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "not_done",
                 "evidence": null,
                 "notes": "",
@@ -7003,7 +7242,7 @@ mod tests {
                     "source_criteria_id": "ac-x",
                     "source_check_id": "v-x",
                     "work_item_id": "w-x",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "done",
                     "evidence": {"proof": "x"},
                     "notes": "missing mapping"
@@ -7012,7 +7251,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "finished",
                     "evidence": {"proof": "bad status"},
                     "notes": "invalid status"
@@ -7242,7 +7481,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -7280,7 +7519,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -7331,7 +7570,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "ac-1",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -7342,7 +7581,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "done",
                 "evidence": null,
                 "notes": "",
@@ -7509,8 +7748,8 @@ mod tests {
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![
-                    serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"}),
-                    serde_json::json!({"id": "f-2", "implementation_agent": "implement_visual"}),
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                    serde_json::json!({"id": "f-2", "implementation_stage_kind": "implement_visual"}),
                 ],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
@@ -7536,7 +7775,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -7544,8 +7783,8 @@ mod tests {
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![
-                    serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"}),
-                    serde_json::json!({"id": "f-2", "implementation_agent": "implement_general"}),
+                    serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"}),
+                    serde_json::json!({"id": "f-2", "implementation_stage_kind": "implement_general"}),
                 ],
                 vec![
                     serde_json::json!({"id": "f-1", "status": "done"}),
@@ -7604,14 +7843,14 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
@@ -7657,14 +7896,14 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
@@ -7701,7 +7940,7 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
@@ -7717,7 +7956,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -7786,7 +8025,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -7799,7 +8038,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -7870,7 +8109,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -7883,7 +8122,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -7934,7 +8173,7 @@ mod tests {
                             "source_criteria_id": "ac-1",
                             "source_check_id": "v-1",
                             "work_item_id": "w-1",
-                            "implementation_agent": "implement_general"
+                            "implementation_stage_kind": "implement_general"
                         }
                     ]
                 }),
@@ -7961,7 +8200,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -7974,7 +8213,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8033,7 +8272,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8046,7 +8285,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8081,7 +8320,7 @@ mod tests {
                             "source_criteria_id": "ac-1",
                             "source_check_id": "v-1",
                             "work_item_id": "w-1",
-                            "implementation_agent": "implement_general"
+                            "implementation_stage_kind": "implement_general"
                         }
                     ]
                 },
@@ -8099,7 +8338,7 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
@@ -8115,7 +8354,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-1", "v-2"]
             })]),
         );
@@ -8172,7 +8411,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_plan_artifact_should_reject_missing_implementation_agent() {
+    fn validate_plan_artifact_should_reject_missing_implementation_stage_kind() {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
         write_plan_markdown(dir.path());
@@ -8192,8 +8431,8 @@ mod tests {
             })]),
         );
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
-            .expect_err("missing implementation_agent should fail");
-        assert!(err.contains("implementation_agent"));
+            .expect_err("missing implementation_stage_kind should fail");
+        assert!(err.contains("implementation_stage_kind"));
     }
 
     #[test]
@@ -8213,13 +8452,13 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "nonsense",
+                "implementation_stage_kind": "nonsense",
                 "linked_check_ids": ["v-1"]
             })]),
         );
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
-            .expect_err("invalid implementation_agent should fail");
-        assert!(err.contains("implementation_agent"));
+            .expect_err("invalid implementation_stage_kind should fail");
+        assert!(err.contains("implementation_stage_kind"));
     }
 
     #[test]
@@ -8239,13 +8478,13 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_advanced",
+                "implementation_stage_kind": "implement_advanced",
                 "linked_check_ids": ["v-1"]
             })]),
         );
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
-            .expect_err("advanced implementation_agent should fail");
-        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
+            .expect_err("advanced implementation_stage_kind should fail");
+        assert!(err.contains("仅允许 general 或 visual"));
     }
 
     #[test]
@@ -8265,7 +8504,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general"
+                "implementation_stage_kind": "implement_general"
             })]),
         );
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
@@ -8290,7 +8529,7 @@ mod tests {
                 "definition_of_done": ["done"],
                 "risk": "low",
                 "rollback": "git restore",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "linked_check_ids": ["v-404"]
             })]),
         );
@@ -8315,7 +8554,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8328,7 +8567,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8336,6 +8575,162 @@ mod tests {
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General]);
+    }
+
+    #[test]
+    fn resolve_initial_implementation_stage_instances_should_repeat_stage_kind_by_dependency_layer() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "通用基础改动",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "视觉层改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-1"],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "visual",
+                    "linked_check_ids": ["v-2"]
+                }),
+                serde_json::json!({
+                    "id": "w-3",
+                    "title": "通用收尾改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-2"],
+                    "targets": ["core/src/server/mod.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+            ]),
+        );
+
+        let instances = EvolutionManager::resolve_initial_implementation_stage_instances(dir.path())
+            .expect("stage instances should resolve");
+        let stages = instances
+            .iter()
+            .map(|item| item.stage.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stages,
+            vec!["implement.general.1", "implement.visual.1", "implement.general.2"]
+        );
+        assert_eq!(instances[0].work_item_ids, vec!["w-1"]);
+        assert_eq!(instances[1].work_item_ids, vec!["w-2"]);
+        assert_eq!(instances[2].work_item_ids, vec!["w-3"]);
+    }
+
+    #[test]
+    fn tasks_to_complete_for_stage_should_only_include_current_stage_items() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.jsonc"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "通用基础改动",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["完成基础抽象"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "视觉层改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-1"],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["完成视觉接入"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "visual",
+                    "linked_check_ids": ["v-2"]
+                }),
+                serde_json::json!({
+                    "id": "w-3",
+                    "title": "通用收尾改动",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": ["w-2"],
+                    "targets": ["core/src/server/mod.rs"],
+                    "definition_of_done": ["完成收尾"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_stage_kind": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+            ]),
+        );
+
+        let tasks = EvolutionManager::tasks_to_complete_for_stage(dir.path(), "implement.general.2")
+            .expect("tasks should resolve");
+        assert!(tasks.contains("### w-3 通用收尾改动"));
+        assert!(tasks.contains("- 实现阶段类型：general"));
+        assert!(!tasks.contains("### w-1 通用基础改动"));
+        assert!(!tasks.contains("### w-2 视觉层改动"));
+    }
+
+    #[test]
+    fn issues_to_fix_for_stage_should_render_verify_requirements_for_reimplement_stage() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("verify.jsonc"),
+            serde_json::json!({
+                "$schema_version": "2.0",
+                "stage": "verify",
+                "cycle_id": "c-1",
+                "status": "done",
+                "decision": {"result": "fail", "reason": "需要重实现"},
+                "acceptance_evaluation": [],
+                "carryover_verification": {"items": []},
+                "adjudication": {
+                    "criteria_judgement": [],
+                    "full_next_iteration_requirements": [
+                        {
+                            "requirement_id": "REQ-001",
+                            "description": "修复通用层接口遗漏",
+                            "source_criteria_id": "ac-1",
+                            "source_check_id": "v-1",
+                            "work_item_id": "w-1",
+                            "implementation_stage_kind": "general"
+                        }
+                    ]
+                },
+                "updated_at": "2026-03-08T00:00:00Z"
+            }),
+        );
+
+        let issues = EvolutionManager::issues_to_fix_for_stage(dir.path(), "reimplement.1")
+            .expect("issues should resolve");
+        assert!(issues.contains("### REQ-001（第 1 次重实现）"));
+        assert!(issues.contains("修复通用层接口遗漏"));
+        assert!(issues.contains("implementation_stage_kind：general"));
     }
 
     #[test]
@@ -8354,7 +8749,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8367,7 +8762,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8393,7 +8788,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8406,7 +8801,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8432,7 +8827,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8445,14 +8840,14 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_advanced",
+                    "implementation_stage_kind": "implement_advanced",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
         );
         let err = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
             .expect_err("advanced plan agent should be rejected");
-        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
+        assert!(err.contains("仅允许 general 或 visual"));
     }
 
     #[test]
@@ -8471,7 +8866,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8484,7 +8879,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8517,7 +8912,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8530,7 +8925,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8563,7 +8958,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8576,7 +8971,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8609,7 +9004,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8622,7 +9017,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_advanced",
+                    "implementation_stage_kind": "implement_advanced",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8636,7 +9031,7 @@ mod tests {
         );
         let err = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect_err("advanced plan agent should be rejected");
-        assert!(err.contains("仅允许 implement_general 或 implement_visual"));
+        assert!(err.contains("仅允许 general 或 visual"));
     }
 
     #[test]
@@ -8655,7 +9050,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -8668,7 +9063,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_visual",
+                    "implementation_stage_kind": "implement_visual",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -8706,13 +9101,13 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
-                vec![serde_json::json!({"id": "f-1", "implementation_agent": "advanced"})],
+                vec![serde_json::json!({"id": "f-1", "implementation_stage_kind": "nonsense"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
         let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1, 1)
-            .expect_err("invalid failure_backlog implementation_agent should fail");
-        assert!(err.contains("implementation_agent"));
+            .expect_err("invalid failure_backlog implementation_stage_kind should fail");
+        assert!(err.contains("implementation_stage_kind"));
     }
 
     #[test]
@@ -8727,7 +9122,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "ac-1",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -8738,7 +9133,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "done",
                 "evidence": null,
                 "notes": "",
@@ -8765,7 +9160,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "ac-1",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -8776,7 +9171,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "not_done",
                 "evidence": null,
                 "notes": "",
@@ -8789,7 +9184,7 @@ mod tests {
                     "source_criteria_id": "ac-404",
                     "source_check_id": "v-404",
                     "work_item_id": "w-x",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "done",
                     "evidence": {"proof": "x"},
                     "notes": "x"
@@ -8816,7 +9211,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "requirement_ref": "ac-1",
                     "description": "",
                     "created_at": "2026-03-02T00:00:00Z",
@@ -8827,7 +9222,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "requirement_ref": "ac-1",
                     "description": "",
                     "created_at": "2026-03-02T00:00:00Z",
@@ -8840,7 +9235,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "not_done",
                     "evidence": null,
                     "notes": "",
@@ -8851,7 +9246,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "not_done",
                     "evidence": null,
                     "notes": "",
@@ -8865,7 +9260,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "done",
                     "evidence": {"proof": "x"},
                     "notes": "x"
@@ -8891,7 +9286,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "ac-1",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -8902,7 +9297,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "not_done",
                 "evidence": null,
                 "notes": "",
@@ -8915,7 +9310,7 @@ mod tests {
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "done",
                     "evidence": {"proof": "done"},
                     "notes": "resolved"
@@ -8949,7 +9344,7 @@ mod tests {
                 "source_criteria_id": "AC-005",
                 "source_check_id": "check_unit_integration_tests",
                 "work_item_id": "wi_feature_tests_quality_004",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "NIR-AC005-TESTS-001",
                 "description": "",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -8960,7 +9355,7 @@ mod tests {
                 "source_criteria_id": "AC-005",
                 "source_check_id": "check_unit_integration_tests",
                 "work_item_id": "wi_feature_tests_quality_004",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "not_done",
                 "evidence": null,
                 "notes": "",
@@ -8973,7 +9368,7 @@ mod tests {
                     "source_criteria_id": "AC-005",
                     "source_check_id": "check_unit_integration_tests",
                     "work_item_id": "NIR-AC005-TESTS-001",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "status": "done",
                     "evidence": {"proof": "fixed"},
                     "notes": "resolved via requirement_ref"
@@ -9021,7 +9416,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -9034,7 +9429,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -9093,7 +9488,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -9106,7 +9501,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -9160,7 +9555,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -9173,7 +9568,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -9247,7 +9642,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -9260,7 +9655,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),
@@ -9274,7 +9669,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "requirement_ref": "legacy-ref",
                 "description": "old",
                 "created_at": "2026-03-02T00:00:00Z",
@@ -9285,7 +9680,7 @@ mod tests {
                 "source_criteria_id": "ac-1",
                 "source_check_id": "v-1",
                 "work_item_id": "w-1",
-                "implementation_agent": "implement_general",
+                "implementation_stage_kind": "implement_general",
                 "status": "not_done",
                 "evidence": null,
                 "notes": "",
@@ -9313,8 +9708,8 @@ mod tests {
         assert_eq!(item["source_check_id"], serde_json::json!("v-1"));
         assert_eq!(item["work_item_id"], serde_json::json!("w-1"));
         assert_eq!(
-            item["implementation_agent"],
-            serde_json::json!("implement_general")
+            item["implementation_stage_kind"],
+            serde_json::json!("general")
         );
     }
 
@@ -9338,7 +9733,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-1"]
                 }),
                 serde_json::json!({
@@ -9351,7 +9746,7 @@ mod tests {
                     "definition_of_done": ["done"],
                     "risk": "low",
                     "rollback": "git restore",
-                    "implementation_agent": "implement_general",
+                    "implementation_stage_kind": "implement_general",
                     "linked_check_ids": ["v-2"]
                 }),
             ]),

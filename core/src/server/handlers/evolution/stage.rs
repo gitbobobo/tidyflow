@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
 use crate::server::handlers::evolution_prompts::{
-    STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_ADVANCED_PROMPT,
-    STAGE_IMPLEMENT_GENERAL_PROMPT, STAGE_IMPLEMENT_VISUAL_PROMPT, STAGE_PLAN_PROMPT,
-    STAGE_VERIFY_PROMPT,
+    STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT,
+    STAGE_PLAN_PROMPT, STAGE_REIMPLEMENT_PROMPT, STAGE_VERIFY_PROMPT,
 };
 use crate::server::protocol::EvolutionAgentInfo;
 
-use super::STAGES;
+use super::consts::{
+    compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
+    ImplementationStageKind, STAGES,
+};
 
 fn runtime_extra_stages(stage_statuses: &HashMap<String, String>) -> Vec<String> {
     let mut stages: Vec<String> = stage_statuses
@@ -15,7 +17,7 @@ fn runtime_extra_stages(stage_statuses: &HashMap<String, String>) -> Vec<String>
         .filter(|stage| !STAGES.contains(&stage.as_str()))
         .cloned()
         .collect();
-    stages.sort();
+    stages.sort_by(|left, right| compare_runtime_stage_names(left, right));
     stages
 }
 
@@ -65,12 +67,19 @@ pub(super) fn build_agents(
 }
 
 pub(super) fn agent_name(stage: &str) -> &'static str {
+    if let Some((kind, _)) = parse_implement_stage_instance(stage) {
+        return match kind {
+            ImplementationStageKind::General => "ImplementGeneralAgent",
+            ImplementationStageKind::Visual => "ImplementVisualAgent",
+            ImplementationStageKind::Advanced => "ImplementAdvancedAgent",
+        };
+    }
+    if parse_reimplement_stage_instance(stage).is_some() {
+        return "ReimplementAgent";
+    }
     match stage {
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
-        "implement_general" => "ImplementGeneralAgent",
-        "implement_visual" => "ImplementVisualAgent",
-        "implement_advanced" => "ImplementAdvancedAgent",
         "verify" => "VerifyAgent",
         "auto_commit" => "AutoCommitAgent",
         _ => "UnknownAgent",
@@ -81,10 +90,6 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
-        "plan" => Some("implement_general"),
-        "implement_general" => Some("implement_visual"),
-        "implement_visual" => Some("verify"),
-        "implement_advanced" => Some("verify"),
         "verify" => Some("auto_commit"),
         "auto_commit" => Some("direction"),
         _ => None,
@@ -92,12 +97,15 @@ pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
 }
 
 pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
+    if parse_implement_stage_instance(stage).is_some() {
+        return Some(STAGE_IMPLEMENT_PROMPT);
+    }
+    if parse_reimplement_stage_instance(stage).is_some() {
+        return Some(STAGE_REIMPLEMENT_PROMPT);
+    }
     match stage {
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
-        "implement_general" => Some(STAGE_IMPLEMENT_GENERAL_PROMPT),
-        "implement_visual" => Some(STAGE_IMPLEMENT_VISUAL_PROMPT),
-        "implement_advanced" => Some(STAGE_IMPLEMENT_ADVANCED_PROMPT),
         "verify" => Some(STAGE_VERIFY_PROMPT),
         "auto_commit" => Some(STAGE_AUTO_COMMIT_PROMPT),
         _ => None,
@@ -106,12 +114,15 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
 
 #[allow(dead_code)]
 pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
+    if parse_implement_stage_instance(stage).is_some() {
+        return Some("builtin://evolution/stage.implement.prompt");
+    }
+    if parse_reimplement_stage_instance(stage).is_some() {
+        return Some("builtin://evolution/stage.reimplement.prompt");
+    }
     match stage {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
-        "implement_general" => Some("builtin://evolution/stage.implement_general.prompt"),
-        "implement_visual" => Some("builtin://evolution/stage.implement_visual.prompt"),
-        "implement_advanced" => Some("builtin://evolution/stage.implement_advanced.prompt"),
         "verify" => Some("builtin://evolution/stage.verify.prompt"),
         "auto_commit" => Some("builtin://evolution/stage.auto_commit.prompt"),
         _ => None,

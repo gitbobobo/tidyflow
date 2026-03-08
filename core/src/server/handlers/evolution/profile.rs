@@ -5,7 +5,7 @@ use crate::server::protocol::ai;
 use crate::server::protocol::EvolutionStageProfileInfo;
 use crate::workspace::state::{EvolutionModelSelection, EvolutionStageProfile};
 
-use super::STAGES;
+use super::consts::{stage_profile_stage, PROFILE_STAGES};
 
 pub(super) fn default_evolution_ai_tool() -> String {
     "codex".to_string()
@@ -29,7 +29,7 @@ pub(super) fn normalize_profiles(
             vec![normalized]
         };
         for stage in stages {
-            if STAGES.contains(&stage.as_str()) {
+            if PROFILE_STAGES.contains(&stage.as_str()) {
                 let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool).ok_or_else(|| {
                     format!("invalid ai_tool for stage '{}': {}", stage, profile.ai_tool)
                 })?;
@@ -47,8 +47,8 @@ pub(super) fn normalize_profiles(
         }
     }
 
-    let mut result = Vec::with_capacity(STAGES.len());
-    for stage in STAGES {
+    let mut result = Vec::with_capacity(PROFILE_STAGES.len());
+    for stage in PROFILE_STAGES {
         result.push(by_stage.remove(stage).unwrap_or(EvolutionStageProfileInfo {
             stage: stage.to_string(),
             ai_tool: default_evolution_ai_tool(),
@@ -78,7 +78,7 @@ pub(super) fn normalize_profiles_lenient(
             vec![normalized]
         };
         for stage in stages {
-            if !STAGES.contains(&stage.as_str()) {
+            if !PROFILE_STAGES.contains(&stage.as_str()) {
                 continue;
             }
             let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool)
@@ -96,7 +96,7 @@ pub(super) fn normalize_profiles_lenient(
         }
     }
 
-    STAGES
+    PROFILE_STAGES
         .iter()
         .map(|stage| {
             by_stage
@@ -122,7 +122,7 @@ pub(super) fn direction_model_label(profiles: &[EvolutionStageProfileInfo]) -> S
 }
 
 pub(super) fn default_stage_profiles() -> Vec<EvolutionStageProfileInfo> {
-    STAGES
+    PROFILE_STAGES
         .iter()
         .map(|stage| EvolutionStageProfileInfo {
             stage: stage.to_string(),
@@ -138,12 +138,13 @@ pub(super) fn profile_for_stage(
     profiles: &[EvolutionStageProfileInfo],
     stage: &str,
 ) -> EvolutionStageProfileInfo {
+    let normalized = stage_profile_stage(stage).unwrap_or_else(|| stage.trim().to_string());
     profiles
         .iter()
-        .find(|p| p.stage == stage)
+        .find(|p| p.stage == normalized)
         .cloned()
         .unwrap_or(EvolutionStageProfileInfo {
-            stage: stage.to_string(),
+            stage: normalized,
             ai_tool: default_evolution_ai_tool(),
             mode: None,
             model: None,
@@ -323,7 +324,7 @@ mod tests {
         ];
 
         let normalized = normalize_profiles(profiles).expect("normalize should succeed");
-        assert_eq!(normalized.len(), STAGES.len());
+        assert_eq!(normalized.len(), PROFILE_STAGES.len());
         assert_eq!(normalized[0].stage, "direction");
         assert!(normalized.iter().all(|item| item.stage != "bootstrap"));
     }
@@ -339,7 +340,7 @@ mod tests {
         }];
 
         let normalized = normalize_profiles_lenient(profiles);
-        assert_eq!(normalized.len(), STAGES.len());
+        assert_eq!(normalized.len(), PROFILE_STAGES.len());
         assert_eq!(normalized[0].stage, "direction");
         assert!(normalized.iter().all(|item| item.stage != "bootstrap"));
     }
