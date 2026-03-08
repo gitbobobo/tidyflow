@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 兼容旧 quality-gate 参数，底层迁移到新 e2e 链路。
+# 支持 --verify-only 直接运行证据校验而不重新执行测试。
 
 set -euo pipefail
 
@@ -14,6 +15,7 @@ cycle_id=""
 run_id=""
 step="all"
 dry_run=0
+verify_only=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -33,8 +35,12 @@ while [[ $# -gt 0 ]]; do
             dry_run=1
             shift
             ;;
+        --verify-only)
+            verify_only=1
+            shift
+            ;;
         -h|--help)
-            echo "用法: ./scripts/e2e/quality-gate.sh --cycle <cycle_id> [--run-id <run_id>] [--step all] [--dry-run]"
+            echo "用法: ./scripts/e2e/quality-gate.sh --cycle <cycle_id> [--run-id <run_id>] [--step all] [--dry-run] [--verify-only]"
             exit 0
             ;;
         *)
@@ -59,6 +65,16 @@ fi
 
 if [[ "$step" != "all" ]]; then
     echo "[quality-gate] 已迁移到统一 e2e，忽略旧 step=$step，仅执行 all"
+fi
+
+# --verify-only 跳过测试执行，仅运行证据校验
+if [[ $verify_only -eq 1 ]]; then
+    EVIDENCE_ROOT="${TF_EVIDENCE_ROOT:-$PROJECT_ROOT/.tidyflow/evidence}"
+    exec python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
+        --evidence-root "$EVIDENCE_ROOT" \
+        --run-id "$run_id" \
+        --require-devices iphone ipad mac \
+        --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION
 fi
 
 cmd=("$PROJECT_ROOT/scripts/e2e/main.sh" "--device" "all" "--run-id" "$run_id")

@@ -6,6 +6,10 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# 加载共享引导脚本（提供 tf_write_run_context / tf_prepare_device_dir / tf_export_test_env）
+# shellcheck source=scripts/e2e/fixtures/bootstrap.sh
+source "$PROJECT_ROOT/scripts/e2e/fixtures/bootstrap.sh"
+
 generate_run_id() {
     date -u +%Y%m%d-%H%M%S
 }
@@ -53,16 +57,10 @@ if [[ -z "$run_id" ]]; then
     echo "[e2e] 自动生成 run_id=$run_id"
 fi
 
-EVIDENCE_ROOT="${TF_EVIDENCE_ROOT:-$PROJECT_ROOT/.tidyflow/evidence}"
-mkdir -p "$EVIDENCE_ROOT/$device/e2e/$run_id"
-context_file="$EVIDENCE_ROOT/.run-context.json"
-cat > "$context_file" <<EOF
-{
-  "device_type": "$device",
-  "run_id": "$run_id",
-  "evidence_root": "$EVIDENCE_ROOT"
-}
-EOF
+# 使用 bootstrap 统一写入上下文并准备目录
+tf_write_run_context "$device" "$run_id"
+tf_prepare_device_dir "$device" "$run_id"
+tf_export_test_env "$device" "$run_id"
 
 iphone_destination="${TF_IPHONE_DESTINATION:-platform=iOS Simulator,name=iPhone 16,OS=18.6}"
 ipad_destination="${TF_IPAD_DESTINATION:-platform=iOS Simulator,name=iPad (A16),OS=18.6}"
@@ -90,9 +88,9 @@ esac
 echo "[e2e] device=$device run_id=$run_id"
 echo "[e2e] destination=$destination"
 echo "[e2e] SKIP_CORE_BUILD=$skip_core_build"
-echo "[e2e] context_file=$context_file"
+echo "[e2e] evidence_root=$TF_EVIDENCE_ROOT"
 
-TF_EVIDENCE_ROOT="$EVIDENCE_ROOT" \
+TF_EVIDENCE_ROOT="$TF_EVIDENCE_ROOT" \
 TF_E2E_RUN_ID="$run_id" \
 TF_DEVICE_TYPE="$device" \
 UI_TEST_MODE=1 \
