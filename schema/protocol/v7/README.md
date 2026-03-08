@@ -220,3 +220,52 @@ AI 会话列表 HTTP 读取接口统一为：
 ```
 
 Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Core 日志均写入相同的上下文字段，便于跨端关联同一问题。
+
+## 工作区缓存可观测性字段（v1.40+）
+
+### HTTP `GET /system_snapshot` 响应新增字段
+
+`system_snapshot` 响应新增 `cache_metrics` 数组，携带每个工作区的缓存可观测性快照。
+字段由 Core 权威计算，所有字段按 `(project, workspace)` 唯一键隔离。客户端只消费，不自行推导缓存预算。
+
+```json
+{
+  "type": "system_snapshot",
+  "core_version": "1.3.0",
+  "protocol_version": 7,
+  "workspace_items": [...],
+  "cache_metrics": [
+    {
+      "project": "myproject",
+      "workspace": "default",
+      "file_cache": {
+        "hit_count": 42,
+        "miss_count": 3,
+        "rebuild_count": 3,
+        "incremental_update_count": 10,
+        "eviction_count": 1,
+        "item_count": 850,
+        "last_eviction_reason": "ttl_expired"
+      },
+      "git_cache": {
+        "hit_count": 100,
+        "miss_count": 5,
+        "rebuild_count": 5,
+        "eviction_count": 2,
+        "item_count": 12,
+        "last_eviction_reason": "invalidated"
+      },
+      "budget_exceeded": false,
+      "last_eviction_reason": "ttl_expired"
+    }
+  ]
+}
+```
+
+### 字段语义约束
+
+- `cache_metrics` 数组元素的排序与 `workspace_items` 一致，按 `(project, workspace)` 字典序。
+- `budget_exceeded`：文件缓存与 Git 缓存总重建次数超过阈值时为 `true`，客户端可据此显示预警。
+- `last_eviction_reason`：可能的值包括 `ttl_expired`（TTL 到期）、`invalidated`（主动失效），由 Core 写入。
+- 不允许客户端本地推导 `budget_exceeded` 或淘汰原因；如需更多上下文，以 `cache_metrics` 字段为准。
+- 多项目场景下，同名工作区在不同项目的 `cache_metrics` 条目相互独立，不会合并。

@@ -16,6 +16,10 @@ print_usage() {
   dev
       本地联调（等价于 ./scripts/run-app.sh）
 
+  bench [args...]
+      运行 Core 性能基准测试（cargo bench --manifest-path core/Cargo.toml）
+      示例：./scripts/tidyflow bench workspace_cache
+
   test
       运行 Core 测试（cargo test --manifest-path core/Cargo.toml）
 
@@ -56,6 +60,9 @@ shift || true
 case "$cmd" in
     dev)
         exec ./scripts/run-app.sh "$@"
+        ;;
+    bench)
+        exec cargo bench --manifest-path core/Cargo.toml "$@"
         ;;
     test)
         exec cargo test --manifest-path core/Cargo.toml "$@"

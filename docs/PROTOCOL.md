@@ -593,3 +593,37 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `app/TidyFlow/Networking/ProtocolModels.swift`
   - 对应 handler 与 UI 调用方
   - `schema/protocol/v7/README.md`（错误契约部分）
+
+## 工作区缓存可观测性（v1.40+）
+
+### HTTP `GET /system_snapshot` 新增 `cache_metrics` 字段
+
+`system_snapshot` 响应新增 `cache_metrics` 数组，包含每个工作区的缓存可观测性快照。
+该字段由 Core 权威输出，客户端不得自行推导缓存预算判定或淘汰原因。
+
+**字段结构**（每个元素对应一个 `(project, workspace)` 唯一键）：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `project` | string | 项目名 |
+| `workspace` | string | 工作区名（含 `default` 虚拟工作区） |
+| `file_cache.hit_count` | u64 | 文件索引缓存命中次数 |
+| `file_cache.miss_count` | u64 | 文件索引缓存未命中次数 |
+| `file_cache.rebuild_count` | u64 | 文件索引全量重建次数 |
+| `file_cache.incremental_update_count` | u64 | 文件索引增量更新次数 |
+| `file_cache.eviction_count` | u64 | 文件索引缓存淘汰次数 |
+| `file_cache.item_count` | u64 | 当前缓存文件条目数 |
+| `file_cache.last_eviction_reason` | string? | 最近淘汰原因 |
+| `git_cache.hit_count` | u64 | Git 状态缓存命中次数 |
+| `git_cache.miss_count` | u64 | Git 状态缓存未命中次数 |
+| `git_cache.rebuild_count` | u64 | Git 状态重建次数 |
+| `git_cache.eviction_count` | u64 | Git 状态缓存淘汰次数 |
+| `git_cache.item_count` | u64 | Git 状态条目数 |
+| `git_cache.last_eviction_reason` | string? | 最近淘汰原因 |
+| `budget_exceeded` | bool | 重建次数是否超过预算阈值 |
+| `last_eviction_reason` | string? | 最近淘汰原因（文件或 Git 中的最新值） |
+
+**客户端消费约束**：
+1. `budget_exceeded` 和 `last_eviction_reason` 必须以 Core 输出为准，不得客户端自行计算。
+2. 多项目同名工作区的 `cache_metrics` 条目各自独立，不得以 workspace 名称作为唯一聚合键。
+3. macOS 与 iOS 对相同字段的处理语义必须一致（允许 UI 呈现不同）。
