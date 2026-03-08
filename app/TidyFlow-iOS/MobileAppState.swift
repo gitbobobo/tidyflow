@@ -373,6 +373,9 @@ final class MobileAppState: ObservableObject {
     /// AI 会话状态请求限流（key: project/workspace/tool/session）。
     private var aiSessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     private let aiSessionStatusMinInterval: TimeInterval = 1.2
+    /// WI-004：共享 AIMessageHandler 适配器，确保 iOS 通过统一协议入口接收所有 AI 消息，
+    /// 与 macOS 的 AppStateAIMessageHandlerAdapter 对称，不再依赖独立 wsClient.on* 闭包。
+    private var _aiHandlerAdapter: MobileAppStateAIMessageHandlerAdapter?
     /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
     private var aiPendingSendRequest: (
         projectName: String,
@@ -3440,7 +3443,7 @@ final class MobileAppState: ObservableObject {
         aiTool: AIChatTool,
         sessionId: String
     ) -> AISessionInfo? {
-        aiSessionIndexByKey["\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"]
+        aiSessionIndexByKey[AISessionSemantics.sessionKey(project: projectName, workspace: workspaceName, aiTool: aiTool, sessionId: sessionId)]
     }
 
     func cachedAISession(sessionId: String) -> AISessionInfo? {
@@ -4225,19 +4228,11 @@ final class MobileAppState: ObservableObject {
             }
         }
 
-        wsClient.onAITaskCancelled = { [weak self] result in
-            guard let self else { return }
-            // 按 project + workspace + operation_type 查找活跃任务并标记取消
-            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
-            let taskType: WorkspaceTaskType = result.operationType == "ai_merge" ? .aiMerge : .aiCommit
-            if let task = self.taskStore.allTasks(for: key).first(where: { $0.type == taskType && $0.status.isActive }) {
-                self.mutateTask(task.id) { t in
-                    t.status = .cancelled
-                    t.message = "已取消"
-                    t.completedAt = Date()
-                }
-            }
-        }
+        // WI-004：通过共享 AIMessageHandler 适配器接收所有 AI 消息，
+        // 与 macOS AppStateAIMessageHandlerAdapter 对称，不再依赖独立 wsClient.on* 闭包。
+        let aiAdapter = MobileAppStateAIMessageHandlerAdapter(appState: self)
+        _aiHandlerAdapter = aiAdapter
+        wsClient.aiMessageHandler = aiAdapter
 
         wsClient.onClientSettingsResult = { [weak self] settings in
             guard let self else { return }
@@ -4549,509 +4544,6 @@ final class MobileAppState: ObservableObject {
             )
         }
 
-        // AI Chat（结构化 message/part 流）
-        wsClient.onAISessionStarted = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-
-            self.aiCurrentSessionId = ev.sessionId
-            self.aiChatStore.setCurrentSessionId(ev.sessionId)
-            self.aiChatStore.addSubscription(ev.sessionId)
-            self.wsClient.requestAISessionSubscribe(
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                aiTool: ev.aiTool.rawValue,
-                sessionId: ev.sessionId
-            )
-            self.applyAISessionSelectionHint(
-                ev.selectionHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
-            self.wsClient.requestAISessionConfigOptions(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId
-            )
-            let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
-            let session = AISessionInfo(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                id: ev.sessionId,
-                title: ev.title,
-                updatedAt: updatedAt,
-                origin: ev.origin
-            )
-            self.upsertAISession(session, for: ev.aiTool)
-
-            if let pending = self.aiPendingSendRequest {
-                guard pending.projectName == ev.projectName,
-                      pending.workspaceName == ev.workspaceName,
-                      pending.aiTool == ev.aiTool else {
-                    self.aiPendingSendRequest = nil
-                    return
-                }
-                self.aiPendingSendRequest = nil
-                self.sendPendingAIRequest(
-                    pending.kind,
-                    sessionId: ev.sessionId,
-                    projectName: ev.projectName,
-                    workspaceName: ev.workspaceName,
-                    aiTool: ev.aiTool
-                )
-            }
-        }
-
-        wsClient.onAISessionList = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
-            let sessions = ev.sessions.map {
-                AISessionInfo(
-                    projectName: $0.projectName,
-                    workspaceName: $0.workspaceName,
-                    aiTool: $0.aiTool,
-                    id: $0.id,
-                    title: $0.title,
-                    updatedAt: $0.updatedAt,
-                    origin: $0.origin
-                )
-            }
-            let sorted = sessions.sorted {
-                if $0.updatedAt != $1.updatedAt {
-                    return $0.updatedAt > $1.updatedAt
-                }
-                if $0.aiTool != $1.aiTool {
-                    return $0.aiTool.rawValue < $1.aiTool.rawValue
-                }
-                return $0.id < $1.id
-            }
-            let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
-            var pageState = self.sessionListPageState(for: filter)
-            let orderedMergedSessions: [AISessionInfo]
-            if pageState.isLoadingNextPage {
-                let merged = (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
-                    result[session.sessionKey] = session
-                }
-                let orderedKeys = (pageState.sessions + sorted).map(\.sessionKey)
-                var seen = Set<String>()
-                orderedMergedSessions = orderedKeys.compactMap { key in
-                    guard seen.insert(key).inserted else { return nil }
-                    return merged[key]
-                }
-            } else {
-                orderedMergedSessions = sorted
-            }
-            pageState.sessions = orderedMergedSessions
-            pageState.hasMore = ev.hasMore
-            pageState.nextCursor = ev.nextCursor
-            pageState.isLoadingInitial = false
-            pageState.isLoadingNextPage = false
-            self.updateSessionListPageState(
-                pageState,
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                filter: filter
-            )
-            self.mergeKnownAISessions(orderedMergedSessions)
-        }
-
-        wsClient.onAISessionMessages = { [weak self] ev in
-            guard let self else { return }
-            // iOS 没有独立的进化回放视图，使用主聊天视图展示；
-            // 不提前 return，让消息同时流入主聊天。
-            _ = self.consumeEvolutionReplayMessagesIfNeeded(ev)
-            if self.consumeSubAgentViewerMessagesIfNeeded(ev) {
-                return
-            }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-
-            self.aiChatStore.replaceMessages(ev.toChatMessages())
-            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
-                sessionId: ev.sessionId,
-                messages: ev.messages
-            )
-            self.aiChatStore.replaceQuestionRequests(restoredQuestions)
-            self.aiChatStore.updateHistoryPagination(
-                hasMore: ev.hasMore,
-                nextBeforeMessageId: ev.nextBeforeMessageId
-            )
-            let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(ev.messages)
-            let effectiveHint = AISessionSemantics.mergedSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
-            self.applyAISessionSelectionHint(
-                effectiveHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
-            self.wsClient.requestAISessionConfigOptions(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId
-            )
-        }
-
-        wsClient.onAISessionMessagesUpdate = { [weak self] ev in
-            guard let self else { return }
-            _ = self.consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-            if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
-
-            if let messages = ev.messages {
-                guard self.aiChatStore.shouldApplySessionCacheRevision(
-                    ev.cacheRevision,
-                    sessionId: ev.sessionId
-                ) else { return }
-                self.aiChatStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
-                    sessionId: ev.sessionId,
-                    messages: messages
-                )
-                self.aiChatStore.replaceQuestionRequests(restoredQuestions)
-                let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(messages)
-                let effectiveHint = AISessionSemantics.mergedSelectionHint(
-                    primary: ev.selectionHint,
-                    fallback: inferredHint
-                )
-                self.applyAISessionSelectionHint(
-                    effectiveHint,
-                    sessionId: ev.sessionId,
-                    for: ev.aiTool
-                )
-                return
-            }
-
-            if let ops = ev.ops {
-                guard self.aiChatStore.shouldApplySessionCacheRevision(
-                    ev.cacheRevision,
-                    sessionId: ev.sessionId
-                ) else { return }
-                self.aiChatStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
-                if let hint = ev.selectionHint {
-                    self.applyAISessionSelectionHint(
-                        hint,
-                        sessionId: ev.sessionId,
-                        for: ev.aiTool
-                    )
-                }
-                return
-            }
-
-            if !ev.isStreaming {
-                guard self.aiChatStore.shouldApplySessionCacheRevision(
-                    ev.cacheRevision,
-                    sessionId: ev.sessionId
-                ) else { return }
-                self.aiChatStore.applySessionCacheOps([], isStreaming: false)
-            }
-            if let hint = ev.selectionHint {
-                self.applyAISessionSelectionHint(
-                    hint,
-                    sessionId: ev.sessionId,
-                    for: ev.aiTool
-                )
-            }
-        }
-
-        wsClient.onAISessionStatusResult = { [weak self] ev in
-            guard let self else { return }
-            self.upsertAISessionStatus(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status,
-                errorMessage: ev.status.errorMessage,
-                contextRemainingPercent: ev.status.contextRemainingPercent
-            )
-            if self.aiActiveProject == ev.projectName,
-               self.aiActiveWorkspace == ev.workspaceName,
-               self.aiChatTool == ev.aiTool,
-               self.aiCurrentSessionId == ev.sessionId,
-               !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
-                self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
-            }
-        }
-
-        wsClient.onAISessionStatusUpdate = { [weak self] ev in
-            guard let self else { return }
-            self.upsertAISessionStatus(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status,
-                errorMessage: ev.status.errorMessage,
-                contextRemainingPercent: ev.status.contextRemainingPercent
-            )
-            if self.aiActiveProject == ev.projectName,
-               self.aiActiveWorkspace == ev.workspaceName,
-               self.aiChatTool == ev.aiTool,
-               self.aiCurrentSessionId == ev.sessionId,
-               !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
-                self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
-            }
-        }
-
-        wsClient.onAIChatDone = { [weak self] ev in
-            guard let self else { return }
-            self.consumeSubAgentViewerDoneIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            // WI-002：与 macOS 一致，先无条件清 abort-pending，再用订阅集合守卫，
-            // 避免旧会话 done 事件在切换后仍写入当前 UI。
-            self.aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-            self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
-            self.applyAISessionSelectionHint(
-                ev.selectionHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
-        }
-
-        wsClient.onAIChatError = { [weak self] ev in
-            guard let self else { return }
-            self.consumeSubAgentViewerErrorIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            // WI-002：与 macOS 一致，先无条件清 abort-pending，再用订阅集合守卫。
-            self.aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-            self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
-        }
-
-        wsClient.onAIProviderList = { [weak self] ev in
-            guard let self else { return }
-            let providers = ev.providers.map { p in
-                AIProviderInfo(
-                    id: p.id,
-                    name: p.name,
-                    models: p.models.map { m in
-                        AIModelInfo(
-                            id: m.id,
-                            name: m.name,
-                            providerID: m.providerID.isEmpty ? p.id : m.providerID,
-                            supportsImageInput: m.supportsImageInput
-                        )
-                    }
-                )
-            }
-            self.setEvolutionProviders(
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                aiTool: ev.aiTool,
-                providers: providers
-            )
-            self.markEvolutionProviderListLoaded(
-                project: ev.projectName,
-                workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
-                aiTool: ev.aiTool
-            )
-            if self.shouldAcceptSettingsSelectorEvent(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                kind: .providerList
-            ) {
-                self.consumeSettingsSelectorEventIfNeeded(
-                    projectName: ev.projectName,
-                    workspaceName: ev.workspaceName,
-                    aiTool: ev.aiTool,
-                    kind: .providerList
-                )
-            }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiProviders = providers
-            // 验证当前选中的模型在新 provider 列表中是否仍然有效；
-            // 若已失效则清除选择，避免发送时携带不存在的模型导致请求出错。
-            if let selectedModel = self.aiSelectedModel {
-                let allModels = providers.flatMap { $0.models }
-                let stillValid = allModels.contains(where: {
-                    $0.id == selectedModel.modelID && $0.providerID == selectedModel.providerID
-                })
-                if !stillValid {
-                    self.aiSelectedModel = nil
-                }
-            }
-            self.isAILoadingModels = false
-            self.wsClient.requestAISessionConfigOptions(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: self.aiCurrentSessionId
-            )
-            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
-        }
-
-        wsClient.onAIAgentList = { [weak self] ev in
-            guard let self else { return }
-            let agents = ev.agents.map { a in
-                AIAgentInfo(
-                    name: a.name,
-                    description: a.description,
-                    mode: a.mode,
-                    color: a.color,
-                    defaultProviderID: a.defaultProviderID,
-                    defaultModelID: a.defaultModelID
-                )
-            }
-            self.setEvolutionAgents(
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                aiTool: ev.aiTool,
-                agents: agents
-            )
-            self.markEvolutionAgentListLoaded(
-                project: ev.projectName,
-                workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
-                aiTool: ev.aiTool
-            )
-            if self.shouldAcceptSettingsSelectorEvent(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                kind: .agentList
-            ) {
-                self.consumeSettingsSelectorEventIfNeeded(
-                    projectName: ev.projectName,
-                    workspaceName: ev.workspaceName,
-                    aiTool: ev.aiTool,
-                    kind: .agentList
-                )
-            }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiAgents = agents
-            self.isAILoadingAgents = false
-            if self.aiSelectedAgent == nil {
-                let first = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" }) ?? self.aiAgents.first
-                self.aiSelectedAgent = first?.name
-                self.applyAgentDefaultModel(first)
-            }
-            self.wsClient.requestAISessionConfigOptions(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: self.aiCurrentSessionId
-            )
-            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
-        }
-
-        wsClient.onAISlashCommands = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
-            let commands = ev.commands.map {
-                AISlashCommandInfo(
-                    name: $0.name,
-                    description: $0.description,
-                    action: $0.action,
-                    inputHint: $0.inputHint
-                )
-            }
-            self.setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
-        }
-
-        wsClient.onAISlashCommandsUpdate = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
-            let commands = ev.commands.map {
-                AISlashCommandInfo(
-                    name: $0.name,
-                    description: $0.description,
-                    action: $0.action,
-                    inputHint: $0.inputHint
-                )
-            }
-            self.setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
-        }
-
-        wsClient.onAISessionConfigOptions = { [weak self] ev in
-            guard let self else { return }
-            guard self.shouldAcceptAISessionConfigOptionsEvent(
-                project: ev.projectName,
-                workspace: ev.workspaceName
-            ) else { return }
-            self.setAISessionConfigOptions(ev.options, for: ev.aiTool)
-            if self.aiActiveProject == ev.projectName, self.aiActiveWorkspace == ev.workspaceName {
-                self.retryPendingAISessionSelectionHint(for: ev.aiTool)
-            }
-        }
-
-        wsClient.onAIQuestionAsked = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            // WI-002：与 macOS 一致，使用 subscribedSessionIds 守卫，阻断旧会话问题事件。
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-            self.aiChatStore.upsertQuestionRequest(ev.request)
-        }
-
-        wsClient.onAIQuestionCleared = { [weak self] ev in
-            guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            // WI-002：与 macOS 一致，使用 subscribedSessionIds 守卫。
-            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
-            self.completeAIQuestionRequestLocally(requestId: ev.requestId)
-        }
-
-        wsClient.onAISessionRenameResult = { [weak self] ev in
-            guard let self,
-                  let tool = AIChatTool(rawValue: ev.aiTool) else { return }
-            guard let old = (self.aiSessionsByTool[tool] ?? []).first(where: { $0.id == ev.sessionId })
-                ?? self.cachedAISession(
-                    projectName: ev.projectName,
-                    workspaceName: ev.workspaceName,
-                    aiTool: tool,
-                    sessionId: ev.sessionId
-                ) else { return }
-
-            let updated = AISessionInfo(
-                projectName: old.projectName,
-                workspaceName: old.workspaceName,
-                aiTool: old.aiTool,
-                id: old.id,
-                title: ev.title,
-                updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt,
-                origin: old.origin
-            )
-
-            if var sessions = self.aiSessionsByTool[tool],
-               let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) {
-                sessions[idx] = updated
-                self.setAISessions(sessions, for: tool)
-            }
-            self.aiSessionIndexByKey[updated.sessionKey] = updated
-            self.aiSessionListPageStates = self.aiSessionListPageStates.mapValues { state in
-                var pageState = state
-                if let pageIndex = pageState.sessions.firstIndex(where: { $0.sessionKey == updated.sessionKey }) {
-                    pageState.sessions[pageIndex] = updated
-                }
-                return pageState
-            }
-        }
 
         // v1.40: 工作流模板回调
         wsClient.onTemplatesList = { [weak self] result in
@@ -5512,4 +5004,522 @@ extension MobileAppState {
     func createWorkspace(projectName: String, fromBranch: String? = nil, templateId: String? = nil) {
         wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch, templateId: templateId)
     }
+}
+
+// MARK: - WI-004 iOS AI 消息处理器方法
+//
+// 以 project/workspace/aiTool/sessionId 四元组为边界统一处理 AI 消息，
+// 与 macOS AppState+CoreWS+AIEvolutionHandlers.swift 保持对称语义。
+// MobileAppStateAIMessageHandlerAdapter 通过弱引用持有 MobileAppState，
+// 由 wsClient.aiMessageHandler 统一分发，不再依赖独立的 wsClient.on* 闭包。
+
+extension MobileAppState {
+    func handleAITaskCancelled(_ result: AITaskCancelled) {
+        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        let taskType: WorkspaceTaskType = result.operationType == "ai_merge" ? .aiMerge : .aiCommit
+        if let task = taskStore.allTasks(for: key).first(where: { $0.type == taskType && $0.status.isActive }) {
+            mutateTask(task.id) { t in
+                t.status = .cancelled
+                t.message = "已取消"
+                t.completedAt = Date()
+            }
+        }
+    }
+
+    func handleAISessionStarted(_ ev: AISessionStartedV2) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+
+        aiCurrentSessionId = ev.sessionId
+        aiChatStore.setCurrentSessionId(ev.sessionId)
+        aiChatStore.addSubscription(ev.sessionId)
+        wsClient.requestAISessionSubscribe(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool.rawValue,
+            sessionId: ev.sessionId
+        )
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        )
+        let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
+        let session = AISessionInfo(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            id: ev.sessionId,
+            title: ev.title,
+            updatedAt: updatedAt,
+            origin: ev.origin
+        )
+        upsertAISession(session, for: ev.aiTool)
+
+        if let pending = aiPendingSendRequest {
+            guard pending.projectName == ev.projectName,
+                  pending.workspaceName == ev.workspaceName,
+                  pending.aiTool == ev.aiTool else {
+                aiPendingSendRequest = nil
+                return
+            }
+            aiPendingSendRequest = nil
+            sendPendingAIRequest(
+                pending.kind,
+                sessionId: ev.sessionId,
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool
+            )
+        }
+    }
+
+    func handleAISessionList(_ ev: AISessionListV2) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName else { return }
+        let sessions = ev.sessions.map {
+            AISessionInfo(
+                projectName: $0.projectName,
+                workspaceName: $0.workspaceName,
+                aiTool: $0.aiTool,
+                id: $0.id,
+                title: $0.title,
+                updatedAt: $0.updatedAt,
+                origin: $0.origin
+            )
+        }
+        let sorted = sessions.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            if $0.aiTool != $1.aiTool { return $0.aiTool.rawValue < $1.aiTool.rawValue }
+            return $0.id < $1.id
+        }
+        let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
+        var pageState = sessionListPageState(for: filter)
+        let orderedMergedSessions: [AISessionInfo]
+        if pageState.isLoadingNextPage {
+            let merged = (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
+                result[session.sessionKey] = session
+            }
+            let orderedKeys = (pageState.sessions + sorted).map(\.sessionKey)
+            var seen = Set<String>()
+            orderedMergedSessions = orderedKeys.compactMap { key in
+                guard seen.insert(key).inserted else { return nil }
+                return merged[key]
+            }
+        } else {
+            orderedMergedSessions = sorted
+        }
+        pageState.sessions = orderedMergedSessions
+        pageState.hasMore = ev.hasMore
+        pageState.nextCursor = ev.nextCursor
+        pageState.isLoadingInitial = false
+        pageState.isLoadingNextPage = false
+        updateSessionListPageState(
+            pageState,
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            filter: filter
+        )
+        mergeKnownAISessions(orderedMergedSessions)
+    }
+
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) {
+        _ = consumeEvolutionReplayMessagesIfNeeded(ev)
+        if consumeSubAgentViewerMessagesIfNeeded(ev) { return }
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        guard aiCurrentSessionId == ev.sessionId else { return }
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+
+        aiChatStore.replaceMessages(ev.toChatMessages())
+        // 共享消息流归一化入口
+        let normalized = AISessionSemantics.normalizeMessageStream(
+            sessionId: ev.sessionId,
+            messages: ev.messages,
+            primarySelectionHint: ev.selectionHint
+        )
+        aiChatStore.replaceQuestionRequests(normalized.pendingQuestionRequests)
+        aiChatStore.updateHistoryPagination(
+            hasMore: ev.hasMore,
+            nextBeforeMessageId: ev.nextBeforeMessageId
+        )
+        applyAISessionSelectionHint(
+            normalized.effectiveSelectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        )
+    }
+
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
+        _ = consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        guard aiCurrentSessionId == ev.sessionId else { return }
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        if aiChatStore.isAbortPending(for: ev.sessionId) { return }
+
+        if let messages = ev.messages {
+            guard aiChatStore.shouldApplySessionCacheRevision(
+                ev.cacheRevision,
+                sessionId: ev.sessionId
+            ) else { return }
+            // 共享消息流归一化入口，与 ai_session_messages 走同一链路
+            let normalized = AISessionSemantics.normalizeMessageStream(
+                sessionId: ev.sessionId,
+                messages: messages,
+                primarySelectionHint: ev.selectionHint
+            )
+            aiChatStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+            aiChatStore.replaceQuestionRequests(normalized.pendingQuestionRequests)
+            applyAISessionSelectionHint(
+                normalized.effectiveSelectionHint,
+                sessionId: ev.sessionId,
+                for: ev.aiTool
+            )
+            return
+        }
+
+        if let ops = ev.ops {
+            guard aiChatStore.shouldApplySessionCacheRevision(
+                ev.cacheRevision,
+                sessionId: ev.sessionId
+            ) else { return }
+            aiChatStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+            if let hint = ev.selectionHint {
+                applyAISessionSelectionHint(hint, sessionId: ev.sessionId, for: ev.aiTool)
+            }
+            return
+        }
+
+        if !ev.isStreaming {
+            guard aiChatStore.shouldApplySessionCacheRevision(
+                ev.cacheRevision,
+                sessionId: ev.sessionId
+            ) else { return }
+            aiChatStore.applySessionCacheOps([], isStreaming: false)
+        }
+        if let hint = ev.selectionHint {
+            applyAISessionSelectionHint(hint, sessionId: ev.sessionId, for: ev.aiTool)
+        }
+    }
+
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            contextRemainingPercent: ev.status.contextRemainingPercent
+        )
+        if aiActiveProject == ev.projectName,
+           aiActiveWorkspace == ev.workspaceName,
+           aiChatTool == ev.aiTool,
+           aiCurrentSessionId == ev.sessionId,
+           !AISessionStatusSnapshot(
+               status: ev.status.status,
+               errorMessage: ev.status.errorMessage,
+               contextRemainingPercent: ev.status.contextRemainingPercent
+           ).isActive {
+            aiChatStore.handleChatDone(sessionId: ev.sessionId)
+        }
+    }
+
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            contextRemainingPercent: ev.status.contextRemainingPercent
+        )
+        if aiActiveProject == ev.projectName,
+           aiActiveWorkspace == ev.workspaceName,
+           aiChatTool == ev.aiTool,
+           aiCurrentSessionId == ev.sessionId,
+           !AISessionStatusSnapshot(
+               status: ev.status.status,
+               errorMessage: ev.status.errorMessage,
+               contextRemainingPercent: ev.status.contextRemainingPercent
+           ).isActive {
+            aiChatStore.handleChatDone(sessionId: ev.sessionId)
+        }
+    }
+
+    func handleAIChatDone(_ ev: AIChatDoneV2) {
+        consumeSubAgentViewerDoneIfNeeded(ev)
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        aiChatStore.handleChatDone(sessionId: ev.sessionId)
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
+    }
+
+    func handleAIChatError(_ ev: AIChatErrorV2) {
+        consumeSubAgentViewerErrorIfNeeded(ev)
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+    }
+
+    func handleAIProviderList(_ ev: AIProviderListResult) {
+        let providers = ev.providers.map { p in
+            AIProviderInfo(
+                id: p.id,
+                name: p.name,
+                models: p.models.map { m in
+                    AIModelInfo(
+                        id: m.id,
+                        name: m.name,
+                        providerID: m.providerID.isEmpty ? p.id : m.providerID,
+                        supportsImageInput: m.supportsImageInput
+                    )
+                }
+            )
+        }
+        setEvolutionProviders(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            providers: providers
+        )
+        markEvolutionProviderListLoaded(
+            project: ev.projectName,
+            workspace: normalizeEvolutionWorkspaceName(ev.workspaceName),
+            aiTool: ev.aiTool
+        )
+        if shouldAcceptSettingsSelectorEvent(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .providerList
+        ) {
+            consumeSettingsSelectorEventIfNeeded(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                kind: .providerList
+            )
+        }
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        aiProviders = providers
+        if let selectedModel = aiSelectedModel {
+            let allModels = providers.flatMap { $0.models }
+            let stillValid = allModels.contains(where: {
+                $0.id == selectedModel.modelID && $0.providerID == selectedModel.providerID
+            })
+            if !stillValid { aiSelectedModel = nil }
+        }
+        isAILoadingModels = false
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: aiCurrentSessionId
+        )
+        retryPendingAISessionSelectionHint(for: ev.aiTool)
+    }
+
+    func handleAIAgentList(_ ev: AIAgentListResult) {
+        let agents = ev.agents.map { a in
+            AIAgentInfo(
+                name: a.name,
+                description: a.description,
+                mode: a.mode,
+                color: a.color,
+                defaultProviderID: a.defaultProviderID,
+                defaultModelID: a.defaultModelID
+            )
+        }
+        setEvolutionAgents(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            agents: agents
+        )
+        markEvolutionAgentListLoaded(
+            project: ev.projectName,
+            workspace: normalizeEvolutionWorkspaceName(ev.workspaceName),
+            aiTool: ev.aiTool
+        )
+        if shouldAcceptSettingsSelectorEvent(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .agentList
+        ) {
+            consumeSettingsSelectorEventIfNeeded(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                kind: .agentList
+            )
+        }
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        aiAgents = agents
+        isAILoadingAgents = false
+        if aiSelectedAgent == nil {
+            let first = aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" }) ?? aiAgents.first
+            aiSelectedAgent = first?.name
+            applyAgentDefaultModel(first)
+        }
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: aiCurrentSessionId
+        )
+        retryPendingAISessionSelectionHint(for: ev.aiTool)
+    }
+
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName else { return }
+        let commands = ev.commands.map {
+            AISlashCommandInfo(
+                name: $0.name,
+                description: $0.description,
+                action: $0.action,
+                inputHint: $0.inputHint
+            )
+        }
+        setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
+    }
+
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName else { return }
+        let commands = ev.commands.map {
+            AISlashCommandInfo(
+                name: $0.name,
+                description: $0.description,
+                action: $0.action,
+                inputHint: $0.inputHint
+            )
+        }
+        setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
+    }
+
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {
+        guard shouldAcceptAISessionConfigOptionsEvent(
+            project: ev.projectName,
+            workspace: ev.workspaceName
+        ) else { return }
+        setAISessionConfigOptions(ev.options, for: ev.aiTool)
+        if aiActiveProject == ev.projectName, aiActiveWorkspace == ev.workspaceName {
+            retryPendingAISessionSelectionHint(for: ev.aiTool)
+        }
+    }
+
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        aiChatStore.upsertQuestionRequest(ev.request)
+    }
+
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {
+        guard aiActiveProject == ev.projectName,
+              aiActiveWorkspace == ev.workspaceName,
+              aiChatTool == ev.aiTool else { return }
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        completeAIQuestionRequestLocally(requestId: ev.requestId)
+    }
+
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
+        guard let tool = AIChatTool(rawValue: ev.aiTool) else { return }
+        guard let old = (aiSessionsByTool[tool] ?? []).first(where: { $0.id == ev.sessionId })
+            ?? cachedAISession(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: tool,
+                sessionId: ev.sessionId
+            ) else { return }
+        let updated = AISessionInfo(
+            projectName: old.projectName,
+            workspaceName: old.workspaceName,
+            aiTool: old.aiTool,
+            id: old.id,
+            title: ev.title,
+            updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt,
+            origin: old.origin
+        )
+        if var sessions = aiSessionsByTool[tool],
+           let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) {
+            sessions[idx] = updated
+            setAISessions(sessions, for: tool)
+        }
+        aiSessionIndexByKey[updated.sessionKey] = updated
+        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
+            var pageState = state
+            if let pageIndex = pageState.sessions.firstIndex(where: { $0.sessionKey == updated.sessionKey }) {
+                pageState.sessions[pageIndex] = updated
+            }
+            return pageState
+        }
+    }
+}
+
+// MARK: - MobileAppStateAIMessageHandlerAdapter
+
+/// iOS 端 AI 消息处理适配器，与 macOS AppStateAIMessageHandlerAdapter 对称。
+/// 持有对 MobileAppState 的弱引用，由 wsClient.aiMessageHandler 统一分发事件。
+/// 所有 AI 消息经此单一入口路由，确保 macOS/iOS 共享相同的消息边界与协议语义。
+@MainActor
+final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
+    weak var appState: MobileAppState?
+
+    init(appState: MobileAppState) {
+        self.appState = appState
+    }
+
+    func handleAITaskCancelled(_ result: AITaskCancelled) { appState?.handleAITaskCancelled(result) }
+    func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
+    func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { appState?.handleAISessionMessagesUpdate(ev) }
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { appState?.handleAISessionStatusResult(ev) }
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { appState?.handleAISessionStatusUpdate(ev) }
+    func handleAIChatDone(_ ev: AIChatDoneV2) { appState?.handleAIChatDone(ev) }
+    func handleAIChatError(_ ev: AIChatErrorV2) { appState?.handleAIChatError(ev) }
+    func handleAIProviderList(_ ev: AIProviderListResult) { appState?.handleAIProviderList(ev) }
+    func handleAIAgentList(_ ev: AIAgentListResult) { appState?.handleAIAgentList(ev) }
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { appState?.handleAISlashCommandsUpdate(ev) }
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { appState?.handleAISessionConfigOptions(ev) }
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { appState?.handleAIQuestionAsked(ev) }
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { appState?.handleAIQuestionCleared(ev) }
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { appState?.handleAISessionRenameResult(ev) }
 }

@@ -597,11 +597,16 @@ struct AISessionInfo: Identifiable, Equatable {
     }
 
     var sessionKey: String {
-        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(id)"
+        AISessionSemantics.sessionKey(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool,
+            sessionId: id
+        )
     }
 
     var isVisibleInDefaultSessionList: Bool {
-        origin != .evolutionSystem
+        AISessionSemantics.isSessionVisibleInDefaultList(origin: origin)
     }
 
     var displayTitle: String {

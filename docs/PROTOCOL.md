@@ -139,6 +139,54 @@
 - Git 能力（状态、diff、stage/unstage、commit、branch、rebase、merge、log、show）
 - 客户端设置同步与文件系统监听
 
+## 共享 AI 会话语义层（客户端实现约束）
+
+以下约束描述客户端如何统一处理 AI 会话标识与消息流，macOS 与 iOS 必须共享相同规则，不允许各自维护独立推导逻辑。
+
+### 会话键格式（`sessionKey`）
+
+每个 AI 会话由四元组唯一标识：
+
+```
+{project}::{workspace}::{ai_tool}::{session_id}
+```
+
+- 双冒号 `::` 作为分隔符。
+- `ai_tool` 使用工具的 `rawValue`（如 `codex`、`claude`）。
+- 会话键由 `AISessionSemantics.sessionKey(project:workspace:aiTool:sessionId:)` 统一生成，不允许各调用点自行拼接字符串。
+- 该四元组默认兼容多项目、多工作区并行场景，不依赖单工作区单例状态。
+
+### 列表可见性规则
+
+- `origin=evolution_system` 的会话不出现在默认会话列表中（由自动化循环创建）。
+- `origin=user`（或字段缺失时的默认值）的会话在默认列表中可见。
+- 规则由 `AISessionSemantics.isSessionVisibleInDefaultList(origin:)` 统一判断，macOS/iOS 不各自判断。
+
+### 消息流归一化链路
+
+`ai_session_messages`（历史加载）与 `ai_session_messages_update`（流式快照分支）共用同一归一化入口：
+
+```
+AISessionSemantics.normalizeMessageStream(sessionId:messages:primarySelectionHint:)
+```
+
+归一化入口负责：
+
+1. **Pending question 重建**：从 `messages` 中扫描 `tool_view.question` 字段，重建尚未回答的 `AIQuestionRequestInfo` 列表（`pendingQuestionRequests`）。
+2. **Selection hint 合并**：协议层传入的 `selectionHint` 与消息内嵌 hint 按优先级合并为 `effectiveSelectionHint`，交给上层决定是否应用。
+3. **多工作区边界**：归一化本身不感知当前激活的 project/workspace，调用方负责在调用前做四元组过滤，保证多工作区并行时不串数据。
+
+`ai_session_messages_update` 的增量 ops 分支（`ev.ops != nil`）不经过此归一化入口；selection hint 更新仍走 `applyAISessionSelectionHint`。
+
+### 双端消息处理路由
+
+macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 AI WS 事件：
+
+- macOS：`AppStateAIMessageHandlerAdapter`（`AppState+CoreWS+MessageHandlers.swift`）
+- iOS：`MobileAppStateAIMessageHandlerAdapter`（`MobileAppState.swift`）
+
+适配器通过弱引用持有各自的 `AppState`/`MobileAppState`，由 `WSClient.aiMessageHandler` 统一分发，不再使用独立的 `wsClient.onAI*` 闭包。
+
 ## AI 会话列表分页（HTTP `.../sessions`）
 
 - 客户端请求：

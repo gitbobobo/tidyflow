@@ -1000,7 +1000,7 @@ class AppState: ObservableObject {
         aiTool: AIChatTool,
         sessionId: String
     ) -> AISessionInfo? {
-        aiSessionIndexByKey["\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"]
+        aiSessionIndexByKey[AISessionSemantics.sessionKey(project: projectName, workspace: workspaceName, aiTool: aiTool, sessionId: sessionId)]
     }
 
     func cachedAISession(sessionId: String) -> AISessionInfo? {

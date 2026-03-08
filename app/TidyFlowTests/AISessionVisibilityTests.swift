@@ -101,3 +101,220 @@ final class AISessionVisibilityTests: XCTestCase {
         )
     }
 }
+
+// MARK: - WI-001/WI-005 共享语义层回归测试
+
+final class AISessionSemanticsTests: XCTestCase {
+
+    // MARK: sessionKey 格式
+
+    func testSessionKeyFormat() {
+        let key = AISessionSemantics.sessionKey(
+            project: "myproject",
+            workspace: "main",
+            aiTool: .codex,
+            sessionId: "s-abc"
+        )
+        XCTAssertEqual(key, "myproject::main::codex::s-abc")
+    }
+
+    func testSessionKeyIsolatesAcrossProjects() {
+        let key1 = AISessionSemantics.sessionKey(project: "p1", workspace: "ws", aiTool: .codex, sessionId: "s")
+        let key2 = AISessionSemantics.sessionKey(project: "p2", workspace: "ws", aiTool: .codex, sessionId: "s")
+        XCTAssertNotEqual(key1, key2, "同 session_id 但不同 project 的会话键必须不同")
+    }
+
+    func testSessionKeyIsolatesAcrossWorkspaces() {
+        let key1 = AISessionSemantics.sessionKey(project: "p", workspace: "ws1", aiTool: .codex, sessionId: "s")
+        let key2 = AISessionSemantics.sessionKey(project: "p", workspace: "ws2", aiTool: .codex, sessionId: "s")
+        XCTAssertNotEqual(key1, key2, "同 session_id 但不同 workspace 的会话键必须不同")
+    }
+
+    func testSessionKeyIsolatesAcrossAITools() {
+        let key1 = AISessionSemantics.sessionKey(project: "p", workspace: "ws", aiTool: .codex, sessionId: "s")
+        let key2 = AISessionSemantics.sessionKey(project: "p", workspace: "ws", aiTool: .claude, sessionId: "s")
+        XCTAssertNotEqual(key1, key2, "同 session_id 但不同 ai_tool 的会话键必须不同")
+    }
+
+    func testAISessionInfoSessionKeyMatchesSemantics() {
+        let session = AISessionInfo(
+            projectName: "proj",
+            workspaceName: "ws",
+            aiTool: .codex,
+            id: "sid",
+            title: "T",
+            updatedAt: 0,
+            origin: .user
+        )
+        let expected = AISessionSemantics.sessionKey(project: "proj", workspace: "ws", aiTool: .codex, sessionId: "sid")
+        XCTAssertEqual(session.sessionKey, expected)
+    }
+
+    // MARK: 列表可见性
+
+    func testUserOriginIsVisible() {
+        XCTAssertTrue(AISessionSemantics.isSessionVisibleInDefaultList(origin: .user))
+    }
+
+    func testEvolutionSystemOriginIsHidden() {
+        XCTAssertFalse(AISessionSemantics.isSessionVisibleInDefaultList(origin: .evolutionSystem))
+    }
+
+    func testAISessionInfoVisibilityDelegatesToSemantics() {
+        let userSession = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "1", title: "", updatedAt: 0, origin: .user)
+        let sysSession = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "2", title: "", updatedAt: 0, origin: .evolutionSystem)
+        XCTAssertTrue(userSession.isVisibleInDefaultSessionList)
+        XCTAssertFalse(sysSession.isVisibleInDefaultSessionList)
+    }
+
+    // MARK: normalizeMessageStream — pending question 重建
+
+    func testNormalizeEmptyMessagesProducesNoRequests() {
+        let output = AISessionSemantics.normalizeMessageStream(
+            sessionId: "s",
+            messages: [],
+            primarySelectionHint: nil
+        )
+        XCTAssertTrue(output.pendingQuestionRequests.isEmpty)
+    }
+
+    func testNormalizeExtractsPendingQuestionFromToolView() {
+        let questionInfo = AIQuestionInfo(
+            question: "确认继续？",
+            header: "",
+            options: [],
+            multiple: false,
+            custom: false
+        )
+        let toolViewQuestion = AIToolViewQuestion(
+            requestID: "req-1",
+            toolMessageID: "tm-1",
+            promptItems: [questionInfo],
+            interactive: true,
+            answers: nil
+        )
+        let toolView = AIToolView(
+            status: .running,
+            displayTitle: "question",
+            statusText: "running",
+            summary: nil,
+            headerCommandSummary: nil,
+            durationMs: nil,
+            sections: [],
+            locations: [],
+            question: toolViewQuestion,
+            linkedSession: nil
+        )
+        let part = AIProtocolPartInfo(
+            id: "p-1",
+            partType: "tool",
+            text: nil,
+            mime: nil,
+            filename: nil,
+            url: nil,
+            synthetic: nil,
+            ignored: nil,
+            source: nil,
+            toolName: "question",
+            toolCallId: "tc-1",
+            toolKind: nil,
+            toolView: toolView
+        )
+        let message = AIProtocolMessageInfo(
+            id: "m-1",
+            role: "assistant",
+            createdAt: nil,
+            agent: nil,
+            modelProviderID: nil,
+            modelID: nil,
+            parts: [part]
+        )
+
+        let output = AISessionSemantics.normalizeMessageStream(
+            sessionId: "s",
+            messages: [message],
+            primarySelectionHint: nil
+        )
+
+        XCTAssertEqual(output.pendingQuestionRequests.count, 1)
+        XCTAssertEqual(output.pendingQuestionRequests.first?.id, "req-1")
+    }
+
+    func testNormalizeSkipsCompletedQuestion() {
+        let questionInfo = AIQuestionInfo(
+            question: "是否继续？",
+            header: "",
+            options: [],
+            multiple: false,
+            custom: false
+        )
+        let toolViewQuestion = AIToolViewQuestion(
+            requestID: "req-2",
+            toolMessageID: "tm-2",
+            promptItems: [questionInfo],
+            interactive: true,
+            answers: [["OK"]]
+        )
+        let toolView = AIToolView(
+            status: .completed,
+            displayTitle: "question",
+            statusText: "completed",
+            summary: nil,
+            headerCommandSummary: nil,
+            durationMs: nil,
+            sections: [],
+            locations: [],
+            question: toolViewQuestion,
+            linkedSession: nil
+        )
+        let part = AIProtocolPartInfo(
+            id: "p-2",
+            partType: "tool",
+            text: nil,
+            mime: nil,
+            filename: nil,
+            url: nil,
+            synthetic: nil,
+            ignored: nil,
+            source: nil,
+            toolName: "question",
+            toolCallId: "tc-2",
+            toolKind: nil,
+            toolView: toolView
+        )
+        let message = AIProtocolMessageInfo(
+            id: "m-2",
+            role: "assistant",
+            createdAt: nil,
+            agent: nil,
+            modelProviderID: nil,
+            modelID: nil,
+            parts: [part]
+        )
+
+        let output = AISessionSemantics.normalizeMessageStream(
+            sessionId: "s",
+            messages: [message],
+            primarySelectionHint: nil
+        )
+
+        XCTAssertTrue(output.pendingQuestionRequests.isEmpty, "completed 状态的 question 不应重建为 pending request")
+    }
+
+    // MARK: normalizeMessageStream — 多工作区数据隔离
+
+    func testMultiWorkspaceSessionKeysAreIndependent() {
+        let appState = AppState()
+        let ws1Session = AISessionInfo(projectName: "proj", workspaceName: "ws1", aiTool: .codex, id: "s-shared", title: "A", updatedAt: 10, origin: .user)
+        let ws2Session = AISessionInfo(projectName: "proj", workspaceName: "ws2", aiTool: .codex, id: "s-shared", title: "B", updatedAt: 20, origin: .user)
+        appState.upsertAISession(ws1Session, for: .codex)
+        appState.upsertAISession(ws2Session, for: .codex)
+
+        // 两个工作区的同名 session_id 应互不干扰
+        let fetched1 = appState.cachedAISession(projectName: "proj", workspaceName: "ws1", aiTool: .codex, sessionId: "s-shared")
+        let fetched2 = appState.cachedAISession(projectName: "proj", workspaceName: "ws2", aiTool: .codex, sessionId: "s-shared")
+        XCTAssertEqual(fetched1?.title, "A")
+        XCTAssertEqual(fetched2?.title, "B")
+        XCTAssertNotEqual(fetched1?.sessionKey, fetched2?.sessionKey)
+    }
+}

@@ -219,31 +219,32 @@ extension AppState {
                 }
                 return
             }
-            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
+            // 共享消息流归一化入口：同时重建 pending questions + 合并 selection hint，
+            // 确保 ai_session_messages 与 ai_session_messages_update 走同一链路。
+            let normalized = AISessionSemantics.normalizeMessageStream(
                 sessionId: ev.sessionId,
-                messages: ev.messages
+                messages: ev.messages,
+                primarySelectionHint: ev.selectionHint
             )
-            let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(ev.messages)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 store.replaceMessages(mapped)
-                store.replaceQuestionRequests(restoredQuestions)
+                store.replaceQuestionRequests(normalized.pendingQuestionRequests)
                 store.updateHistoryPagination(
                     hasMore: ev.hasMore,
                     nextBeforeMessageId: ev.nextBeforeMessageId
                 )
-                let effectiveHint = AISessionSemantics.mergedSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
                 self.sendAISelectionPipelineLog(
                     event: "session_messages_received",
                     tool: ev.aiTool,
                     sessionId: ev.sessionId,
                     primaryHint: ev.selectionHint,
-                    inferredHint: inferredHint,
-                    effectiveHint: effectiveHint,
+                    inferredHint: nil,
+                    effectiveHint: normalized.effectiveSelectionHint,
                     messagesCount: ev.messages.count
                 )
                 self.applyAISessionSelectionHint(
-                    effectiveHint,
+                    normalized.effectiveSelectionHint,
                     sessionId: ev.sessionId,
                     for: ev.aiTool,
                     trigger: "session_messages"
@@ -255,7 +256,7 @@ extension AppState {
                     sessionId: ev.sessionId
                 )
                 TFLog.app.info(
-                    "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
+                    "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(normalized.pendingQuestionRequests.count)"
                 )
             }
         }
@@ -273,10 +274,11 @@ extension AppState {
 
         if let messages = ev.messages {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let inferredHint = AISessionSemantics.inferSelectionHintFromMessages(messages)
-                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
+                // 共享消息流归一化入口：与 ai_session_messages 走同一链路，避免分叉。
+                let normalized = AISessionSemantics.normalizeMessageStream(
                     sessionId: ev.sessionId,
-                    messages: messages
+                    messages: messages,
+                    primarySelectionHint: ev.selectionHint
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -290,22 +292,18 @@ extension AppState {
                         return
                     }
                     store.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-                    store.replaceQuestionRequests(restoredQuestions)
-                    let effectiveHint = AISessionSemantics.mergedSelectionHint(
-                        primary: ev.selectionHint,
-                        fallback: inferredHint
-                    )
+                    store.replaceQuestionRequests(normalized.pendingQuestionRequests)
                     self.sendAISelectionPipelineLog(
                         event: "session_messages_update_snapshot_received",
                         tool: ev.aiTool,
                         sessionId: ev.sessionId,
                         primaryHint: ev.selectionHint,
-                        inferredHint: inferredHint,
-                        effectiveHint: effectiveHint,
+                        inferredHint: nil,
+                        effectiveHint: normalized.effectiveSelectionHint,
                         messagesCount: messages.count
                     )
                     self.applyAISessionSelectionHint(
-                        effectiveHint,
+                        normalized.effectiveSelectionHint,
                         sessionId: ev.sessionId,
                         for: ev.aiTool,
                         trigger: "session_messages_update_snapshot"

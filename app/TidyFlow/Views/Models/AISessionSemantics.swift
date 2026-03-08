@@ -13,6 +13,60 @@ enum AISessionSemantics {
     /// 双端统一默认分页大小，历史加载和流式快照均使用此值。
     static let defaultMessagesPageSize: Int = 50
 
+    // MARK: - 会话键
+
+    /// 统一四元组会话键：`project::workspace::aiTool::sessionId`。
+    /// macOS 与 iOS 必须通过此工厂方法生成会话键，确保双端格式完全一致。
+    static func sessionKey(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> String {
+        "\(project)::\(workspace)::\(aiTool.rawValue)::\(sessionId)"
+    }
+
+    // MARK: - 列表可见性
+
+    /// 判断会话是否应出现在默认会话列表中。
+    /// `evolutionSystem` 来源的会话隐藏（由自动化循环创建），其他来源（`user`）可见。
+    /// 双端共用同一规则，不在视图层各自判断。
+    static func isSessionVisibleInDefaultList(origin: AISessionOrigin) -> Bool {
+        origin != .evolutionSystem
+    }
+
+    // MARK: - 消息流归一化
+
+    /// 共享消息流归一化结果，供历史加载（`ai_session_messages`）与
+    /// 流式快照（`ai_session_messages_update` 含 messages）统一复用。
+    struct MessageStreamNormalizationOutput {
+        /// 从消息列表重建的未完成 pending question requests
+        let pendingQuestionRequests: [AIQuestionRequestInfo]
+        /// 合并后的 selection hint（primary 优先，推导值兜底）
+        let effectiveSelectionHint: AISessionSelectionHint?
+    }
+
+    /// 共享消息流归一化入口：
+    /// 1. 重建 pending question requests（跳过 completed/error 状态）
+    /// 2. 从消息列表推导 selection hint
+    /// 3. 将协议携带的 primarySelectionHint 与推导值合并（primary 优先）
+    ///
+    /// `ai_session_messages`、`ai_session_messages_update`（含 messages 快照）
+    /// 都必须经过此入口，不再各自做三步重复操作。
+    static func normalizeMessageStream(
+        sessionId: String,
+        messages: [AIProtocolMessageInfo],
+        primarySelectionHint: AISessionSelectionHint?
+    ) -> MessageStreamNormalizationOutput {
+        let pendingQuestions = rebuildPendingQuestionRequests(sessionId: sessionId, messages: messages)
+        let inferredHint = inferSelectionHintFromMessages(messages)
+        let effectiveHint = mergedSelectionHint(primary: primarySelectionHint, fallback: inferredHint)
+        return MessageStreamNormalizationOutput(
+            pendingQuestionRequests: pendingQuestions,
+            effectiveSelectionHint: effectiveHint
+        )
+    }
+
     // MARK: - Selection Hint 合并
 
     /// 合并两个 selection hint：primary 优先，fallback 补全缺失字段。
