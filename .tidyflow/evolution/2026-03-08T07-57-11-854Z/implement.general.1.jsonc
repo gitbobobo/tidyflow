@@ -29,7 +29,7 @@
     {
       "work_item_id": "WI-002",
       "status": "done",
-      "summary": "schema/protocol/v7/README.md 补充工作区生命周期状态机与多项目约束；docs/PROTOCOL.md 新增"项目与工作区生命周期"章节；action_table.rs 重新生成消除格式漂移；check 通过。",
+      "summary": "schema/protocol/v7/README.md 补充工作区生命周期状态机与多项目约束；docs/PROTOCOL.md 新增[项目与工作区生命周期]章节；action_table.rs 重新生成消除格式漂移；check 通过。",
       "evidence_paths": [
         "schema/protocol/v7/README.md",
         "docs/PROTOCOL.md",
