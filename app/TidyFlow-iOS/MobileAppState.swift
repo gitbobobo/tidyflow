@@ -206,6 +206,8 @@ final class MobileAppState: ObservableObject {
     @Published var keybindings: [KeybindingConfig] = KeybindingConfig.defaultKeybindings()
     // v1.40: 工作流模板
     @Published var templates: [TemplateInfo] = []
+    // v1.40: 冲突向导缓存（key = "project:workspace" 或 "project:integration"）
+    @Published var conflictWizardCache: [String: ConflictWizardCache] = [:]
     // 资源管理器（按 project/workspace/path 分桶）
     @Published var explorerFileListCache: [String: FileListCache] = [:]
     @Published var explorerDirectoryExpandState: [String: Bool] = [:]

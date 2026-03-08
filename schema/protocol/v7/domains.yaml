@@ -25,3 +25,8 @@ domains:
     action_rule: prefix("evidence_")
   - id: evolution
     action_rule: prefix("evo_")
+  # v1.40: 冲突向导（Git conflict wizard）
+  # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
+  # git_conflict_accept_both / git_conflict_mark_resolved
+  # 所有动作都以 git_ 前缀路由到 git 域（已由 git 域规则覆盖）
+

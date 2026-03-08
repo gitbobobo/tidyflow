@@ -10,6 +10,7 @@ import AppKit
 
 /// 按照 VSCode 源代码管理面板布局设计的 Git 面板
 /// 布局：顶部固定（标题 + 提交区）→ 中间可滚动（暂存 + 更改）→ 底部固定（图形，可折叠）
+/// 冲突状态下自动切换为 GitConflictWizardView，恢复正常后还原。
 struct NativeGitPanelView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
@@ -21,6 +22,21 @@ struct NativeGitPanelView: View {
     @State private var aiReviewSessionId: String? = nil
 
     var body: some View {
+        // 冲突向导优先：工作区冲突或集成工作树冲突时切换到向导模式
+        if let (ws, ctx) = activeConflictContext {
+            GitConflictWizardView(
+                project: appState.selectedProjectName,
+                workspace: ws,
+                context: ctx
+            )
+            .environmentObject(appState)
+            .environmentObject(gitCache)
+        } else {
+            normalPanelView
+        }
+    }
+
+    private var normalPanelView: some View {
         VStack(spacing: 0) {
             // ── 顶部固定区域 ──
             // 1. 顶部工具栏（源代码管理）
@@ -193,6 +209,25 @@ struct NativeGitPanelView: View {
     private var hasStagedChangesInWorkspace: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
         return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasStagedChanges
+    }
+
+    /// 检测当前项目/工作区是否处于冲突状态；返回 (workspaceKey, context) 或 nil
+    /// 优先检测工作区冲突，再检测集成工作树冲突
+    private var activeConflictContext: (workspace: String, context: String)? {
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        // 工作区 rebase 或 merge 冲突
+        let opCache = gitCache.getGitOpStatusCache(workspaceKey: ws)
+        if let op = opCache, !op.conflictFiles.isEmpty {
+            return (ws, "workspace")
+        }
+        // 集成工作树冲突（merge_conflict 或 rebase_conflict）
+        let integrationCache = gitCache.getGitIntegrationStatusCache(workspaceKey: ws)
+        if let intg = integrationCache,
+           (intg.state == .conflict || intg.state == .rebaseConflict),
+           !intg.conflictFiles.isEmpty {
+            return (ws, "integration")
+        }
+        return nil
     }
 }
 

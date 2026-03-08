@@ -234,9 +234,21 @@ extension GitCacheState {
         if result.state == "conflict" {
             cache.state = .rebasing
             cache.conflicts = result.conflicts
+            cache.conflictFiles = result.conflictFiles
+            // 同步更新冲突向导缓存快照
+            let wizardKey = conflictWizardKey(project: result.project, workspace: result.workspace, context: "workspace")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
         } else if result.state == "completed" || result.state == "aborted" {
             cache.state = .normal
             cache.conflicts = []
+            cache.conflictFiles = []
         }
         gitOpStatusCache[wsCacheKey] = cache
         fetchGitStatus(workspaceKey: result.workspace)
@@ -247,9 +259,22 @@ extension GitCacheState {
         var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
         cache.state = result.state
         cache.conflicts = result.conflicts
+        cache.conflictFiles = result.conflictFiles
         cache.isLoading = false
         cache.updatedAt = Date()
         gitOpStatusCache[wsCacheKey] = cache
+        // 同步更新冲突向导缓存快照
+        if result.state != .normal && !result.conflictFiles.isEmpty {
+            let wizardKey = conflictWizardKey(project: result.project, workspace: result.workspace, context: "workspace")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
     }
 
     func gitFetch(workspaceKey: String) {
@@ -326,9 +351,21 @@ extension GitCacheState {
         if result.state == .conflict {
             cache.state = .conflict
             cache.conflicts = result.conflicts
+            cache.conflictFiles = result.conflictFiles
+            // 同步更新冲突向导缓存快照（集成工作树上下文）
+            let wizardKey = conflictWizardKey(project: result.project, workspace: "", context: "integration")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "integration",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
         } else if result.state == .completed || result.state == .idle {
             cache.state = .idle
             cache.conflicts = []
+            cache.conflictFiles = []
         }
         gitIntegrationStatusCache[result.project] = cache
         if selectedProjectName == result.project,
@@ -341,12 +378,25 @@ extension GitCacheState {
         var cache = gitIntegrationStatusCache[result.project] ?? GitIntegrationStatusCache.empty()
         cache.state = result.state
         cache.conflicts = result.conflicts
+        cache.conflictFiles = result.conflictFiles
         cache.isLoading = false
         cache.updatedAt = Date()
         cache.branchAheadBy = result.branchAheadBy
         cache.branchBehindBy = result.branchBehindBy
         cache.comparedBranch = result.comparedBranch
         gitIntegrationStatusCache[result.project] = cache
+        // 同步更新冲突向导缓存快照
+        if result.state == .conflict && !result.conflictFiles.isEmpty {
+            let wizardKey = conflictWizardKey(project: result.project, workspace: "", context: "integration")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "integration",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
     }
 
     func gitMergeToDefault(workspaceKey: String, defaultBranch: String = "main") {
@@ -496,5 +546,82 @@ extension GitCacheState {
             project: selectedProjectName,
             workspace: workspace
         )
+    }
+
+    // MARK: - v1.40: 冲突向导 API
+
+    /// 构造冲突向导缓存键
+    /// - context: "workspace" 或 "integration"
+    /// - workspace 为空字符串表示 integration 上下文
+    func conflictWizardKey(project: String, workspace: String, context: String) -> String {
+        if context == "integration" {
+            return "\(project):integration"
+        }
+        return "\(project):\(workspace)"
+    }
+
+    /// 接收冲突文件四路对比详情
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) {
+        let key = conflictWizardKey(project: result.project, workspace: result.workspace, context: result.context)
+        var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+        wizard.currentDetail = GitConflictDetailResultCache(from: result)
+        wizard.selectedFilePath = result.path
+        wizard.isLoading = false
+        wizard.updatedAt = Date()
+        conflictWizardCache[key] = wizard
+    }
+
+    /// 接收冲突解决动作结果，更新快照
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) {
+        let key = conflictWizardKey(project: result.project, workspace: result.workspace, context: result.context)
+        var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+        wizard.snapshot = result.snapshot
+        wizard.isLoading = false
+        wizard.updatedAt = Date()
+        // 如果当前选中文件已解决，清空详情
+        if result.ok, result.path == wizard.selectedFilePath {
+            wizard.currentDetail = nil
+        }
+        conflictWizardCache[key] = wizard
+    }
+
+    /// 主动请求单文件冲突详情
+    func fetchConflictDetail(project: String, workspace: String, path: String, context: String) {
+        guard connectionState == .connected else { return }
+        let key = conflictWizardKey(project: project, workspace: workspace, context: context)
+        var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+        wizard.isLoading = true
+        conflictWizardCache[key] = wizard
+        wsClient?.requestGitConflictDetail(project: project, workspace: workspace, path: path, context: context)
+    }
+
+    /// 接受我方版本（ours）解决冲突
+    func conflictAcceptOurs(project: String, workspace: String, path: String, context: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitConflictAcceptOurs(project: project, workspace: workspace, path: path, context: context)
+    }
+
+    /// 接受对方版本（theirs）解决冲突
+    func conflictAcceptTheirs(project: String, workspace: String, path: String, context: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitConflictAcceptTheirs(project: project, workspace: workspace, path: path, context: context)
+    }
+
+    /// 保留双方内容（both）解决冲突
+    func conflictAcceptBoth(project: String, workspace: String, path: String, context: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitConflictAcceptBoth(project: project, workspace: workspace, path: path, context: context)
+    }
+
+    /// 手动标记文件已解决
+    func conflictMarkResolved(project: String, workspace: String, path: String, context: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitConflictMarkResolved(project: project, workspace: workspace, path: path, context: context)
+    }
+
+    /// 查询冲突向导缓存（快照 + 选中文件 + 详情）
+    func getConflictWizardCache(project: String, workspace: String, context: String) -> ConflictWizardCache {
+        let key = conflictWizardKey(project: project, workspace: workspace, context: context)
+        return conflictWizardCache[key] ?? ConflictWizardCache.empty()
     }
 }

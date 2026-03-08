@@ -26,6 +26,9 @@ final class MobileAppStateGitMessageHandlerAdapter: GitMessageHandler {
     func handleGitAIMergeResult(_ result: GitAIMergeResult) { dispatchToMain { $0.handleGitAIMergeResult(result) } }
     func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) { dispatchToMain { $0.handleGitMergeToDefaultResult(result) } }
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) { dispatchToMain { $0.handleGitStatusChanged(notification) } }
+    // v1.40: 冲突向导
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { dispatchToMain { $0.handleGitConflictDetailResult(result) } }
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) { dispatchToMain { $0.handleGitConflictActionResult(result) } }
 }
 
 final class MobileAppStateProjectMessageHandlerAdapter: ProjectMessageHandler {

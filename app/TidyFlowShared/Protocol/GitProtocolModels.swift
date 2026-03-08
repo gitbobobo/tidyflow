@@ -1164,6 +1164,8 @@ public struct GitRebaseResult {
     public let state: String  // "completed", "conflict", "aborted", "error"
     public let message: String?
     public let conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public let conflictFiles: [ConflictFileEntry]
 
     public static func from(json: [String: Any]) -> GitRebaseResult? {
         guard let project = json["project"] as? String,
@@ -1174,23 +1176,26 @@ public struct GitRebaseResult {
         }
         let message = json["message"] as? String
         let conflicts = json["conflicts"] as? [String] ?? []
+        let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         return GitRebaseResult(
             project: project,
             workspace: workspace,
             ok: ok,
             state: state,
             message: message,
-            conflicts: conflicts
+            conflicts: conflicts,
+            conflictFiles: conflictFiles
         )
     }
 
-    public init(project: String, workspace: String, ok: Bool, state: String, message: String?, conflicts: [String]) {
+    public init(project: String, workspace: String, ok: Bool, state: String, message: String?, conflicts: [String], conflictFiles: [ConflictFileEntry] = []) {
         self.project = project
         self.workspace = workspace
         self.ok = ok
         self.state = state
         self.message = message
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
     }
 }
 
@@ -1200,6 +1205,8 @@ public struct GitOpStatusResult {
     public let workspace: String
     public let state: GitOpState
     public let conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public let conflictFiles: [ConflictFileEntry]
     public let head: String?
     public let onto: String?
 
@@ -1211,6 +1218,7 @@ public struct GitOpStatusResult {
         }
         let state = GitOpState(rawValue: stateStr) ?? .normal
         let conflicts = json["conflicts"] as? [String] ?? []
+        let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         let head = json["head"] as? String
         let onto = json["onto"] as? String
         return GitOpStatusResult(
@@ -1218,16 +1226,18 @@ public struct GitOpStatusResult {
             workspace: workspace,
             state: state,
             conflicts: conflicts,
+            conflictFiles: conflictFiles,
             head: head,
             onto: onto
         )
     }
 
-    public init(project: String, workspace: String, state: GitOpState, conflicts: [String], head: String?, onto: String?) {
+    public init(project: String, workspace: String, state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], head: String?, onto: String?) {
         self.project = project
         self.workspace = workspace
         self.state = state
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.head = head
         self.onto = onto
     }
@@ -1237,6 +1247,8 @@ public struct GitOpStatusResult {
 public struct GitOpStatusCache {
     public var state: GitOpState
     public var conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public var conflictFiles: [ConflictFileEntry]
     public var isLoading: Bool
     public var updatedAt: Date
 
@@ -1244,14 +1256,16 @@ public struct GitOpStatusCache {
         GitOpStatusCache(
             state: .normal,
             conflicts: [],
+            conflictFiles: [],
             isLoading: false,
             updatedAt: .distantPast
         )
     }
 
-    public init(state: GitOpState, conflicts: [String], isLoading: Bool, updatedAt: Date) {
+    public init(state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], isLoading: Bool, updatedAt: Date) {
         self.state = state
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.isLoading = isLoading
         self.updatedAt = updatedAt
     }
@@ -1306,6 +1320,8 @@ public struct GitMergeToDefaultResult {
     public let state: IntegrationState
     public let message: String?
     public let conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public let conflictFiles: [ConflictFileEntry]
     public let headSha: String?
     public let integrationPath: String?
 
@@ -1318,6 +1334,7 @@ public struct GitMergeToDefaultResult {
         let state = IntegrationState(rawValue: stateStr) ?? .failed
         let message = json["message"] as? String
         let conflicts = json["conflicts"] as? [String] ?? []
+        let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         let headSha = json["head_sha"] as? String
         let integrationPath = json["integration_path"] as? String
         return GitMergeToDefaultResult(
@@ -1326,17 +1343,19 @@ public struct GitMergeToDefaultResult {
             state: state,
             message: message,
             conflicts: conflicts,
+            conflictFiles: conflictFiles,
             headSha: headSha,
             integrationPath: integrationPath
         )
     }
 
-    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], headSha: String?, integrationPath: String?) {
+    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], headSha: String?, integrationPath: String?) {
         self.project = project
         self.ok = ok
         self.state = state
         self.message = message
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.headSha = headSha
         self.integrationPath = integrationPath
     }
@@ -1347,6 +1366,8 @@ public struct GitIntegrationStatusResult {
     public let project: String
     public let state: IntegrationState
     public let conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public let conflictFiles: [ConflictFileEntry]
     public let head: String?
     public let defaultBranch: String
     public let path: String
@@ -1366,6 +1387,7 @@ public struct GitIntegrationStatusResult {
         }
         let state = IntegrationState(rawValue: stateStr) ?? .idle
         let conflicts = json["conflicts"] as? [String] ?? []
+        let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         let head = json["head"] as? String
         // UX-6: Parse branch divergence fields
         let branchAheadBy = json["branch_ahead_by"] as? Int
@@ -1375,6 +1397,7 @@ public struct GitIntegrationStatusResult {
             project: project,
             state: state,
             conflicts: conflicts,
+            conflictFiles: conflictFiles,
             head: head,
             defaultBranch: defaultBranch,
             path: path,
@@ -1385,10 +1408,11 @@ public struct GitIntegrationStatusResult {
         )
     }
 
-    public init(project: String, state: IntegrationState, conflicts: [String], head: String?, defaultBranch: String, path: String, isClean: Bool, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
+    public init(project: String, state: IntegrationState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], head: String?, defaultBranch: String, path: String, isClean: Bool, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
         self.project = project
         self.state = state
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.head = head
         self.defaultBranch = defaultBranch
         self.path = path
@@ -1403,6 +1427,8 @@ public struct GitIntegrationStatusResult {
 public struct GitIntegrationStatusCache {
     public var state: IntegrationState
     public var conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public var conflictFiles: [ConflictFileEntry]
     public var isLoading: Bool
     public var updatedAt: Date
     public var integrationPath: String?
@@ -1416,6 +1442,7 @@ public struct GitIntegrationStatusCache {
         GitIntegrationStatusCache(
             state: .idle,
             conflicts: [],
+            conflictFiles: [],
             isLoading: false,
             updatedAt: .distantPast,
             integrationPath: nil,
@@ -1426,9 +1453,10 @@ public struct GitIntegrationStatusCache {
         )
     }
 
-    public init(state: IntegrationState, conflicts: [String], isLoading: Bool, updatedAt: Date, integrationPath: String?, defaultBranch: String, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
+    public init(state: IntegrationState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], isLoading: Bool, updatedAt: Date, integrationPath: String?, defaultBranch: String, branchAheadBy: Int?, branchBehindBy: Int?, comparedBranch: String?) {
         self.state = state
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.isLoading = isLoading
         self.updatedAt = updatedAt
         self.integrationPath = integrationPath
@@ -1448,6 +1476,8 @@ public struct GitRebaseOntoDefaultResult {
     public let state: IntegrationState
     public let message: String?
     public let conflicts: [String]
+    /// 语义化冲突文件列表（v1.40+）
+    public let conflictFiles: [ConflictFileEntry]
     public let headSha: String?
     public let integrationPath: String?
 
@@ -1460,6 +1490,7 @@ public struct GitRebaseOntoDefaultResult {
         let state = IntegrationState(rawValue: stateStr) ?? .failed
         let message = json["message"] as? String
         let conflicts = json["conflicts"] as? [String] ?? []
+        let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         let headSha = json["head_sha"] as? String
         let integrationPath = json["integration_path"] as? String
         return GitRebaseOntoDefaultResult(
@@ -1468,17 +1499,19 @@ public struct GitRebaseOntoDefaultResult {
             state: state,
             message: message,
             conflicts: conflicts,
+            conflictFiles: conflictFiles,
             headSha: headSha,
             integrationPath: integrationPath
         )
     }
 
-    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], headSha: String?, integrationPath: String?) {
+    public init(project: String, ok: Bool, state: IntegrationState, message: String?, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], headSha: String?, integrationPath: String?) {
         self.project = project
         self.ok = ok
         self.state = state
         self.message = message
         self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
         self.headSha = headSha
         self.integrationPath = integrationPath
     }
@@ -1669,5 +1702,225 @@ public struct TaskSnapshotEntry {
         self.message = message
         self.startedAt = startedAt
         self.completedAt = completedAt
+    }
+}
+
+// MARK: - v1.40: Git 冲突向导协议模型
+
+/// 单个冲突文件条目（语义化，替代裸路径字符串）
+public struct ConflictFileEntry: Equatable {
+    /// 文件路径（相对工作区根）
+    public let path: String
+    /// 冲突类型：content | add_add | delete_modify | modify_delete
+    public let conflictType: String
+    /// 是否已暂存（标记为已解决）
+    public let staged: Bool
+
+    public init(path: String, conflictType: String, staged: Bool) {
+        self.path = path
+        self.conflictType = conflictType
+        self.staged = staged
+    }
+
+    public static func from(dict: [String: Any]) -> ConflictFileEntry? {
+        guard let path = dict["path"] as? String,
+              let conflictType = dict["conflict_type"] as? String else {
+            return nil
+        }
+        let staged = dict["staged"] as? Bool ?? false
+        return ConflictFileEntry(path: path, conflictType: conflictType, staged: staged)
+    }
+
+    /// 从 JSON any 值中解析列表（兼容 nil/空）
+    public static func listFrom(json: Any?) -> [ConflictFileEntry] {
+        guard let arr = json as? [[String: Any]] else { return [] }
+        return arr.compactMap { ConflictFileEntry.from(dict: $0) }
+    }
+}
+
+/// 冲突快照（整个上下文的冲突状态摘要）
+public struct ConflictSnapshot: Equatable {
+    /// 上下文来源：workspace | integration
+    public let context: String
+    /// 当前冲突文件列表
+    public let files: [ConflictFileEntry]
+    /// 是否所有冲突已解决
+    public let allResolved: Bool
+
+    public init(context: String, files: [ConflictFileEntry], allResolved: Bool) {
+        self.context = context
+        self.files = files
+        self.allResolved = allResolved
+    }
+
+    public static func from(dict: [String: Any]) -> ConflictSnapshot? {
+        guard let context = dict["context"] as? String else { return nil }
+        let files = ConflictFileEntry.listFrom(json: dict["files"])
+        let allResolved = dict["all_resolved"] as? Bool ?? files.isEmpty
+        return ConflictSnapshot(context: context, files: files, allResolved: allResolved)
+    }
+}
+
+/// 单文件冲突详情（四路对比内容）
+public struct GitConflictDetailResult {
+    public let project: String
+    public let workspace: String
+    /// 上下文来源：workspace | integration
+    public let context: String
+    public let path: String
+    public let baseContent: String?
+    public let oursContent: String?
+    public let theirsContent: String?
+    public let currentContent: String
+    public let conflictMarkersCount: Int
+    public let isBinary: Bool
+
+    public static func from(json: [String: Any]) -> GitConflictDetailResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let context = json["context"] as? String,
+              let path = json["path"] as? String,
+              let currentContent = json["current_content"] as? String else {
+            return nil
+        }
+        return GitConflictDetailResult(
+            project: project,
+            workspace: workspace,
+            context: context,
+            path: path,
+            baseContent: json["base_content"] as? String,
+            oursContent: json["ours_content"] as? String,
+            theirsContent: json["theirs_content"] as? String,
+            currentContent: currentContent,
+            conflictMarkersCount: json["conflict_markers_count"] as? Int ?? 0,
+            isBinary: json["is_binary"] as? Bool ?? false
+        )
+    }
+
+    public init(project: String, workspace: String, context: String, path: String, baseContent: String?, oursContent: String?, theirsContent: String?, currentContent: String, conflictMarkersCount: Int, isBinary: Bool) {
+        self.project = project
+        self.workspace = workspace
+        self.context = context
+        self.path = path
+        self.baseContent = baseContent
+        self.oursContent = oursContent
+        self.theirsContent = theirsContent
+        self.currentContent = currentContent
+        self.conflictMarkersCount = conflictMarkersCount
+        self.isBinary = isBinary
+    }
+}
+
+/// 冲突解决动作结果（含最新快照）
+public struct GitConflictActionResult {
+    public let project: String
+    public let workspace: String
+    /// 上下文来源：workspace | integration
+    public let context: String
+    public let path: String
+    /// 已执行动作：accept_ours | accept_theirs | accept_both | mark_resolved
+    public let action: String
+    public let ok: Bool
+    public let message: String?
+    /// 操作后的冲突快照
+    public let snapshot: ConflictSnapshot
+
+    public static func from(json: [String: Any]) -> GitConflictActionResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let context = json["context"] as? String,
+              let path = json["path"] as? String,
+              let action = json["action"] as? String,
+              let ok = json["ok"] as? Bool,
+              let snapshotDict = json["snapshot"] as? [String: Any],
+              let snapshot = ConflictSnapshot.from(dict: snapshotDict) else {
+            return nil
+        }
+        return GitConflictActionResult(
+            project: project,
+            workspace: workspace,
+            context: context,
+            path: path,
+            action: action,
+            ok: ok,
+            message: json["message"] as? String,
+            snapshot: snapshot
+        )
+    }
+
+    public init(project: String, workspace: String, context: String, path: String, action: String, ok: Bool, message: String?, snapshot: ConflictSnapshot) {
+        self.project = project
+        self.workspace = workspace
+        self.context = context
+        self.path = path
+        self.action = action
+        self.ok = ok
+        self.message = message
+        self.snapshot = snapshot
+    }
+}
+
+/// 冲突向导缓存（按 project:workspace 或 project 作为键）
+public struct ConflictWizardCache: Equatable {
+    /// 当前冲突快照
+    public var snapshot: ConflictSnapshot?
+    /// 当前选中的冲突文件路径
+    public var selectedFilePath: String?
+    /// 最后一次读取的冲突详情
+    public var currentDetail: GitConflictDetailResultCache?
+    /// 是否正在加载
+    public var isLoading: Bool
+    public var updatedAt: Date
+
+    public static func empty() -> ConflictWizardCache {
+        ConflictWizardCache(
+            snapshot: nil,
+            selectedFilePath: nil,
+            currentDetail: nil,
+            isLoading: false,
+            updatedAt: .distantPast
+        )
+    }
+
+    public init(snapshot: ConflictSnapshot?, selectedFilePath: String?, currentDetail: GitConflictDetailResultCache?, isLoading: Bool, updatedAt: Date) {
+        self.snapshot = snapshot
+        self.selectedFilePath = selectedFilePath
+        self.currentDetail = currentDetail
+        self.isLoading = isLoading
+        self.updatedAt = updatedAt
+    }
+
+    /// 是否有活跃冲突（有 snapshot 且未全部解决）
+    public var hasActiveConflicts: Bool {
+        guard let snapshot = snapshot else { return false }
+        return !snapshot.allResolved && !snapshot.files.isEmpty
+    }
+
+    /// 可用的冲突文件数
+    public var conflictFileCount: Int {
+        snapshot?.files.count ?? 0
+    }
+}
+
+/// 冲突详情缓存（存储最后读取的四路内容）
+public struct GitConflictDetailResultCache: Equatable {
+    public let path: String
+    public let context: String
+    public let baseContent: String?
+    public let oursContent: String?
+    public let theirsContent: String?
+    public let currentContent: String
+    public let conflictMarkersCount: Int
+    public let isBinary: Bool
+
+    public init(from result: GitConflictDetailResult) {
+        self.path = result.path
+        self.context = result.context
+        self.baseContent = result.baseContent
+        self.oursContent = result.oursContent
+        self.theirsContent = result.theirsContent
+        self.currentContent = result.currentContent
+        self.conflictMarkersCount = result.conflictMarkersCount
+        self.isBinary = result.isBinary
     }
 }

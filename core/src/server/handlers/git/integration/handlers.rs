@@ -6,6 +6,7 @@ mod status;
 pub(crate) use fetch::handle_git_fetch;
 
 pub(crate) use merge::{
+    handle_git_conflict_action, handle_git_conflict_detail,
     handle_git_ensure_integration_worktree, handle_git_merge_abort, handle_git_merge_continue,
     handle_git_merge_to_default, handle_git_reset_integration_worktree,
 };

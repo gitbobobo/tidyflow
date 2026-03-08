@@ -312,4 +312,67 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertEqual(empty.totalAdditions, 0)
         XCTAssertEqual(empty.totalDeletions, 0)
     }
+
+    // MARK: - 9. 冲突状态下快照的 hasStagedChanges（WI-006）
+    //
+    // 验证冲突文件在 staged=true 后被计入 stagedCount，语义层不因冲突状态而失效。
+
+    func test_conflictResolved_stagedItemCountsCorrectly() {
+        // 冲突文件在标记解决（staged=true）后应被纳入 staged 分组
+        let items = [
+            makeItem(path: "conflict.swift", status: "U", staged: true),  // 已解决并暂存
+            makeItem(path: "clean.swift", status: "M", staged: false),
+        ]
+        let cache = makeCache(items: items)
+        let snapshot = cache.semanticSnapshot
+
+        XCTAssertTrue(snapshot.hasStagedChanges, "冲突解决并暂存后 hasStagedChanges 应为 true")
+        XCTAssertEqual(snapshot.stagedItems.count, 1)
+        XCTAssertEqual(snapshot.stagedItems.first?.path, "conflict.swift")
+    }
+
+    // MARK: - 10. 多工作区下冲突向导缓存独立（WI-006）
+
+    func test_conflictWizardCache_multiWorkspaceIsolation() {
+        let state = GitCacheState()
+
+        // 注入工作区 A 的冲突详情
+        let detailA = GitConflictDetailResult(
+            project: "proj",
+            workspace: "ws-a",
+            context: "workspace",
+            path: "src/feature_a.rs",
+            baseContent: nil,
+            oursContent: "a_ours",
+            theirsContent: "a_theirs",
+            currentContent: "<<<<<<< HEAD\na_ours\n=======\na_theirs\n>>>>>>> branch\n",
+            conflictMarkersCount: 1,
+            isBinary: false
+        )
+        state.handleGitConflictDetailResult(detailA)
+
+        // 注入工作区 B 的冲突详情
+        let detailB = GitConflictDetailResult(
+            project: "proj",
+            workspace: "ws-b",
+            context: "workspace",
+            path: "src/feature_b.rs",
+            baseContent: nil,
+            oursContent: "b_ours",
+            theirsContent: "b_theirs",
+            currentContent: "<<<<<<< HEAD\nb_ours\n=======\nb_theirs\n>>>>>>> branch\n",
+            conflictMarkersCount: 1,
+            isBinary: false
+        )
+        state.handleGitConflictDetailResult(detailB)
+
+        let wizardA = state.getConflictWizardCache(project: "proj", workspace: "ws-a", context: "workspace")
+        let wizardB = state.getConflictWizardCache(project: "proj", workspace: "ws-b", context: "workspace")
+
+        // 两个工作区的冲突向导缓存完全独立
+        XCTAssertEqual(wizardA.currentDetail?.path, "src/feature_a.rs")
+        XCTAssertEqual(wizardB.currentDetail?.path, "src/feature_b.rs")
+        XCTAssertEqual(wizardA.currentDetail?.oursContent, "a_ours")
+        XCTAssertEqual(wizardB.currentDetail?.oursContent, "b_ours")
+    }
 }

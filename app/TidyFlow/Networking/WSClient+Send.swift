@@ -189,6 +189,7 @@ extension WSClient {
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
+        ("git", "git_conflict_"),
         ]
     }
 
@@ -680,6 +681,63 @@ extension WSClient {
             "type": "git_check_branch_up_to_date",
             "project": project,
             "workspace": workspace
+        ])
+    }
+
+    // v1.40: 冲突向导请求方法
+
+    /// 读取单文件四路对比内容
+    func requestGitConflictDetail(project: String, workspace: String, path: String, context: String) {
+        send([
+            "type": "git_conflict_detail",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "context": context
+        ])
+    }
+
+    /// 接受我方版本（ours）解决冲突
+    func requestGitConflictAcceptOurs(project: String, workspace: String, path: String, context: String) {
+        send([
+            "type": "git_conflict_accept_ours",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "context": context
+        ])
+    }
+
+    /// 接受对方版本（theirs）解决冲突
+    func requestGitConflictAcceptTheirs(project: String, workspace: String, path: String, context: String) {
+        send([
+            "type": "git_conflict_accept_theirs",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "context": context
+        ])
+    }
+
+    /// 保留双方内容（both）解决冲突
+    func requestGitConflictAcceptBoth(project: String, workspace: String, path: String, context: String) {
+        send([
+            "type": "git_conflict_accept_both",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "context": context
+        ])
+    }
+
+    /// 手动标记文件已解决
+    func requestGitConflictMarkResolved(project: String, workspace: String, path: String, context: String) {
+        send([
+            "type": "git_conflict_mark_resolved",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "context": context
         ])
     }
 

@@ -141,6 +141,43 @@ pub enum GitRequest {
         workspace: String,
         sha: String,
     },
+    // v1.40: 冲突向导
+    /// 读取单个冲突文件的四路对比内容
+    GitConflictDetail {
+        project: String,
+        workspace: String,
+        path: String,
+        /// 上下文来源：workspace | integration
+        context: String,
+    },
+    /// 接受我方版本并暂存
+    GitConflictAcceptOurs {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 接受对方版本并暂存
+    GitConflictAcceptTheirs {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 合并双方版本（ours 在前，theirs 在后）并暂存
+    GitConflictAcceptBoth {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 手工编辑后标记已解决（git add）
+    GitConflictMarkResolved {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
 }
 
 /// Git 相关的服务端消息
@@ -215,6 +252,9 @@ pub enum GitResponse {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
     },
     GitOpStatusResult {
         project: String,
@@ -222,6 +262,9 @@ pub enum GitResponse {
         state: String,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,6 +278,9 @@ pub enum GitResponse {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head_sha: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,6 +291,9 @@ pub enum GitResponse {
         state: String,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head: Option<String>,
         default_branch: String,
@@ -265,6 +314,9 @@ pub enum GitResponse {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head_sha: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,5 +349,37 @@ pub enum GitResponse {
     GitStatusChanged {
         project: String,
         workspace: String,
+    },
+    // v1.40: 冲突向导响应
+    /// 单文件冲突详情（四路对比内容）
+    GitConflictDetailResult {
+        project: String,
+        workspace: String,
+        /// 上下文来源：workspace | integration
+        context: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ours_content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        theirs_content: Option<String>,
+        current_content: String,
+        conflict_markers_count: usize,
+        is_binary: bool,
+    },
+    /// 冲突解决动作结果（含最新快照）
+    GitConflictActionResult {
+        project: String,
+        workspace: String,
+        context: String,
+        path: String,
+        /// 已执行的动作：accept_ours | accept_theirs | accept_both | mark_resolved
+        action: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        /// 操作后的冲突快照
+        snapshot: super::ConflictSnapshotInfo,
     },
 }

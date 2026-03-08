@@ -30,6 +30,11 @@ fn get_integration_worktree_path(project_name: &str) -> PathBuf {
         .join("__integration")
 }
 
+/// 公开访问集成工作树路径（用于冲突向导等需要直接操作工作树的场景）
+pub fn get_integration_worktree_root(project_name: &str) -> std::path::PathBuf {
+    get_integration_worktree_path(project_name)
+}
+
 /// Check if integration worktree exists
 fn integration_worktree_exists(path: &Path) -> bool {
     path.exists() && path.join(".git").exists()
@@ -175,6 +180,7 @@ pub fn integration_status(
         return Ok(IntegrationStatusResult {
             state: IntegrationState::Idle,
             conflicts: vec![],
+            conflict_files: vec![],
             head: None,
             default_branch: default_branch.to_string(),
             path: integration_path.to_string_lossy().to_string(),
@@ -210,12 +216,19 @@ pub fn integration_status(
         vec![]
     };
 
+    let conflict_files = if state != IntegrationState::Idle {
+        get_conflict_file_entries(&integration_path)
+    } else {
+        vec![]
+    };
+
     let head = get_short_head_sha(&integration_path);
     let is_clean = is_integration_clean(&integration_path);
 
     Ok(IntegrationStatusResult {
         state,
         conflicts,
+        conflict_files,
         head,
         default_branch: default_branch.to_string(),
         path: integration_path.to_string_lossy().to_string(),
@@ -257,6 +270,7 @@ pub fn merge_to_default(
             state: "failed".to_string(),
             message: Some(format!("Branch '{}' not found", source_branch)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path_str),
         });
@@ -277,6 +291,7 @@ pub fn merge_to_default(
             state: "completed".to_string(),
             message: Some(format!("Merged {} into {}", source_branch, default_branch)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha,
             integration_path: Some(integration_path_str),
         })
@@ -284,11 +299,13 @@ pub fn merge_to_default(
         // Check if we're in a conflict state
         if is_merging(&integration_path) {
             let conflicts = get_conflict_files(&integration_path);
+            let conflict_files = get_conflict_file_entries(&integration_path);
             Ok(MergeToDefaultResult {
                 ok: false,
                 state: "conflict".to_string(),
                 message: Some("Merge has conflicts".to_string()),
                 conflicts,
+                conflict_files,
                 head_sha: None,
                 integration_path: Some(integration_path_str),
             })
@@ -305,6 +322,7 @@ pub fn merge_to_default(
                     stderr
                 }),
                 conflicts: vec![],
+                conflict_files: vec![],
                 head_sha: None,
                 integration_path: Some(integration_path_str),
             })
@@ -322,6 +340,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
             state: "failed".to_string(),
             message: Some("Integration worktree does not exist".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: None,
         });
@@ -333,6 +352,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
             state: "idle".to_string(),
             message: Some("No merge in progress".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -341,6 +361,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
     // Check if there are still conflicts
     let conflicts = get_conflict_files(&integration_path);
     if !conflicts.is_empty() {
+        let conflict_files = get_conflict_file_entries(&integration_path);
         return Ok(MergeToDefaultResult {
             ok: false,
             state: "conflict".to_string(),
@@ -348,6 +369,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
                 "Conflicts remain. Resolve and stage files before continuing.".to_string(),
             ),
             conflicts,
+            conflict_files,
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -369,6 +391,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
             state: "failed".to_string(),
             message: Some(format!("Failed to stage changes: {}", stderr)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -388,6 +411,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
             state: "completed".to_string(),
             message: Some("Merge completed".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         })
@@ -398,6 +422,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
         // Check if still in merge state (might have more conflicts)
         if is_merging(&integration_path) {
             let conflicts = get_conflict_files(&integration_path);
+            let conflict_files = get_conflict_file_entries(&integration_path);
             Ok(MergeToDefaultResult {
                 ok: false,
                 state: "conflict".to_string(),
@@ -407,6 +432,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
                     stderr
                 }),
                 conflicts,
+                conflict_files,
                 head_sha: None,
                 integration_path: Some(integration_path.to_string_lossy().to_string()),
             })
@@ -420,6 +446,7 @@ pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitErr
                     stderr
                 }),
                 conflicts: vec![],
+                conflict_files: vec![],
                 head_sha: None,
                 integration_path: Some(integration_path.to_string_lossy().to_string()),
             })
@@ -437,6 +464,7 @@ pub fn merge_abort(project_name: &str) -> Result<MergeToDefaultResult, GitError>
             state: "failed".to_string(),
             message: Some("Integration worktree does not exist".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: None,
         });
@@ -448,6 +476,7 @@ pub fn merge_abort(project_name: &str) -> Result<MergeToDefaultResult, GitError>
             state: "idle".to_string(),
             message: Some("No merge in progress".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -465,6 +494,7 @@ pub fn merge_abort(project_name: &str) -> Result<MergeToDefaultResult, GitError>
             state: "idle".to_string(),
             message: Some("Merge aborted".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         })
@@ -479,6 +509,7 @@ pub fn merge_abort(project_name: &str) -> Result<MergeToDefaultResult, GitError>
                 stderr
             }),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         })
@@ -525,6 +556,7 @@ pub fn rebase_onto_default(
             state: "failed".to_string(),
             message: Some(format!("Branch '{}' not found", source_branch)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path_str),
         });
@@ -546,6 +578,7 @@ pub fn rebase_onto_default(
             state: "failed".to_string(),
             message: Some(format!("Failed to checkout {}: {}", source_branch, stderr)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path_str),
         });
@@ -567,6 +600,7 @@ pub fn rebase_onto_default(
             state: "failed".to_string(),
             message: Some(format!("Failed to fetch: {}", stderr)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path_str),
         });
@@ -588,6 +622,7 @@ pub fn rebase_onto_default(
             state: "completed".to_string(),
             message: Some(format!("Rebased {} onto {}", source_branch, rebase_target)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha,
             integration_path: Some(integration_path_str),
         })
@@ -595,11 +630,13 @@ pub fn rebase_onto_default(
         // Check if we're in a rebase conflict state
         if is_rebasing_in_worktree(&integration_path) {
             let conflicts = get_conflict_files(&integration_path);
+            let conflict_files = get_conflict_file_entries(&integration_path);
             Ok(RebaseOntoDefaultResult {
                 ok: false,
                 state: "rebase_conflict".to_string(),
                 message: Some("Rebase has conflicts".to_string()),
                 conflicts,
+                conflict_files,
                 head_sha: None,
                 integration_path: Some(integration_path_str),
             })
@@ -616,6 +653,7 @@ pub fn rebase_onto_default(
                     stderr
                 }),
                 conflicts: vec![],
+                conflict_files: vec![],
                 head_sha: None,
                 integration_path: Some(integration_path_str),
             })
@@ -635,6 +673,7 @@ pub fn rebase_onto_default_continue(
             state: "failed".to_string(),
             message: Some("Integration worktree does not exist".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: None,
         });
@@ -646,6 +685,7 @@ pub fn rebase_onto_default_continue(
             state: "idle".to_string(),
             message: Some("No rebase in progress".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -654,6 +694,7 @@ pub fn rebase_onto_default_continue(
     // Check if there are still conflicts
     let conflicts = get_conflict_files(&integration_path);
     if !conflicts.is_empty() {
+        let conflict_files = get_conflict_file_entries(&integration_path);
         return Ok(RebaseOntoDefaultResult {
             ok: false,
             state: "rebase_conflict".to_string(),
@@ -661,6 +702,7 @@ pub fn rebase_onto_default_continue(
                 "Conflicts remain. Resolve and stage files before continuing.".to_string(),
             ),
             conflicts,
+            conflict_files,
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -682,6 +724,7 @@ pub fn rebase_onto_default_continue(
             state: "failed".to_string(),
             message: Some(format!("Failed to stage changes: {}", stderr)),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -706,15 +749,18 @@ pub fn rebase_onto_default_continue(
                     state: "rebasing".to_string(),
                     message: Some("Rebase continuing...".to_string()),
                     conflicts: vec![],
+                    conflict_files: vec![],
                     head_sha: None,
                     integration_path: Some(integration_path.to_string_lossy().to_string()),
                 })
             } else {
+                let conflict_files = get_conflict_file_entries(&integration_path);
                 Ok(RebaseOntoDefaultResult {
                     ok: false,
                     state: "rebase_conflict".to_string(),
                     message: Some("More conflicts to resolve".to_string()),
                     conflicts,
+                    conflict_files,
                     head_sha: None,
                     integration_path: Some(integration_path.to_string_lossy().to_string()),
                 })
@@ -726,6 +772,7 @@ pub fn rebase_onto_default_continue(
                 state: "completed".to_string(),
                 message: Some("Rebase completed".to_string()),
                 conflicts: vec![],
+                conflict_files: vec![],
                 head_sha,
                 integration_path: Some(integration_path.to_string_lossy().to_string()),
             })
@@ -737,6 +784,7 @@ pub fn rebase_onto_default_continue(
         // Check if still in rebase state (might have more conflicts)
         if is_rebasing_in_worktree(&integration_path) {
             let conflicts = get_conflict_files(&integration_path);
+            let conflict_files = get_conflict_file_entries(&integration_path);
             Ok(RebaseOntoDefaultResult {
                 ok: false,
                 state: "rebase_conflict".to_string(),
@@ -746,6 +794,7 @@ pub fn rebase_onto_default_continue(
                     stderr
                 }),
                 conflicts,
+                conflict_files,
                 head_sha: None,
                 integration_path: Some(integration_path.to_string_lossy().to_string()),
             })
@@ -759,6 +808,7 @@ pub fn rebase_onto_default_continue(
                     stderr
                 }),
                 conflicts: vec![],
+                conflict_files: vec![],
                 head_sha: None,
                 integration_path: Some(integration_path.to_string_lossy().to_string()),
             })
@@ -776,6 +826,7 @@ pub fn rebase_onto_default_abort(project_name: &str) -> Result<RebaseOntoDefault
             state: "failed".to_string(),
             message: Some("Integration worktree does not exist".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: None,
         });
@@ -787,6 +838,7 @@ pub fn rebase_onto_default_abort(project_name: &str) -> Result<RebaseOntoDefault
             state: "idle".to_string(),
             message: Some("No rebase in progress".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         });
@@ -804,6 +856,7 @@ pub fn rebase_onto_default_abort(project_name: &str) -> Result<RebaseOntoDefault
             state: "idle".to_string(),
             message: Some("Rebase aborted".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         })
@@ -818,6 +871,7 @@ pub fn rebase_onto_default_abort(project_name: &str) -> Result<RebaseOntoDefault
                 stderr
             }),
             conflicts: vec![],
+            conflict_files: vec![],
             head_sha: None,
             integration_path: Some(integration_path.to_string_lossy().to_string()),
         })

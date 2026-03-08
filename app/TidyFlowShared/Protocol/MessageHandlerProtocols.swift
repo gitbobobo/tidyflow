@@ -19,6 +19,9 @@ public protocol GitMessageHandler: AnyObject {
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult)
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification)
     func handleGitAIMergeResult(_ result: GitAIMergeResult)
+    // v1.40: 冲突向导响应
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult)
+    func handleGitConflictActionResult(_ result: GitConflictActionResult)
 }
 
 /// 默认空实现，子类只需 override 关心的方法
@@ -38,6 +41,9 @@ public extension GitMessageHandler {
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) {}
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {}
     func handleGitAIMergeResult(_ result: GitAIMergeResult) {}
+    // v1.40: 冲突向导响应默认空实现
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) {}
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) {}
 }
 
 public protocol ProjectMessageHandler: AnyObject {

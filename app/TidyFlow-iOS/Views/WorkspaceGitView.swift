@@ -11,6 +11,7 @@ struct WorkspaceGitView: View {
     @State private var showDiscardAllConfirm: Bool = false
     @State private var discardTargetPath: String? = nil
     @State private var showDiscardConfirm: Bool = false
+    @State private var showConflictWizard: Bool = false
 
     private var gitState: MobileWorkspaceGitDetailState {
         appState.gitDetailStateForWorkspace(project: project, workspace: workspace)
@@ -20,8 +21,26 @@ struct WorkspaceGitView: View {
         gitState.semanticSnapshot
     }
 
+    /// 检测当前工作区或集成工作树是否有未解决冲突
+    private var activeConflictContext: (workspace: String, context: String)? {
+        let wsKey = "\(project):\(workspace)"
+        if let wiz = appState.conflictWizardCache[wsKey], wiz.hasActiveConflicts {
+            return (workspace, "workspace")
+        }
+        let intKey = "\(project):integration"
+        if let wiz = appState.conflictWizardCache[intKey], wiz.hasActiveConflicts {
+            return (workspace, "integration")
+        }
+        return nil
+    }
+
     var body: some View {
         List {
+            // MARK: - 冲突横幅（有冲突时优先展示）
+            if activeConflictContext != nil {
+                conflictBannerSection
+            }
+
             // MARK: - 当前分支
             branchSection
 
@@ -46,7 +65,7 @@ struct WorkspaceGitView: View {
                     untrackedSection
                 }
 
-                if snapshot.isEmpty {
+                if snapshot.isEmpty && activeConflictContext == nil {
                     Section {
                         Label("工作区干净，无需提交", systemImage: "checkmark.circle")
                             .foregroundColor(.secondary)
@@ -100,12 +119,58 @@ struct WorkspaceGitView: View {
             }
             Button("取消", role: .cancel) {}
         }
+        .sheet(isPresented: $showConflictWizard) {
+            if let (ws, ctx) = activeConflictContext {
+                GitConflictWizardSheet(project: project, workspace: ws, context: ctx)
+                    .environmentObject(appState)
+            }
+        }
         .onAppear {
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
         }
         .refreshable {
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
         }
+    }
+
+    // MARK: - 冲突横幅区域
+
+    private var conflictBannerSection: some View {
+        Section {
+            Button(action: { showConflictWizard = true }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("git.conflict.header".localized)
+                            .font(.subheadline.bold())
+                        if let (_, _) = activeConflictContext,
+                           let count = activeConflictCount {
+                            Text(String(format: "git.conflict.filesCount".localized, count))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.orange.opacity(0.08))
+        } header: {
+            Text("git.conflict.sectionHeader".localized)
+        }
+    }
+
+    private var activeConflictCount: Int? {
+        if let (ws, ctx) = activeConflictContext {
+            let key = ctx == "integration" ? "\(project):integration" : "\(project):\(ws)"
+            return appState.conflictWizardCache[key]?.conflictFileCount
+        }
+        return nil
     }
 
     // MARK: - 分支区域

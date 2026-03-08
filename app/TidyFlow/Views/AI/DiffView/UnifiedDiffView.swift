@@ -144,3 +144,50 @@ struct UnifiedDiffView: View {
         return String(repeating: " ", count: 4 - raw.count) + raw
     }
 }
+
+// MARK: - 冲突内容侧边对比视图
+
+/// 并排展示冲突的 ours/theirs 内容（供 GitConflictWizardView 中的 base 视图使用）
+/// 若 diff 不可用，则直接渲染原始文本
+struct ConflictSideBySideView: View {
+    let leftLabel: String
+    let rightLabel: String
+    let leftContent: String?
+    let rightContent: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            pane(label: leftLabel, content: leftContent, background: Color.blue.opacity(0.06))
+            Divider()
+            pane(label: rightLabel, content: rightContent, background: Color.purple.opacity(0.06))
+        }
+    }
+
+    private func pane(label: String, content: String?, background: Color) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(background)
+            Divider()
+            ScrollView {
+                if let text = content {
+                    Text(text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("git.conflict.noContent".localized)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}

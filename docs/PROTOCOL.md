@@ -627,3 +627,105 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 1. `budget_exceeded` 和 `last_eviction_reason` 必须以 Core 输出为准，不得客户端自行计算。
 2. 多项目同名工作区的 `cache_metrics` 条目各自独立，不得以 workspace 名称作为唯一聚合键。
 3. macOS 与 iOS 对相同字段的处理语义必须一致（允许 UI 呈现不同）。
+
+---
+
+## v1.40: Git 冲突向导（Conflict Wizard）
+
+### 概述
+
+在 merge/rebase 冲突场景下，原有协议只返回 `conflicts: [String]`（文件路径列表），语义弱、客户端各自推导状态。v1.40 引入冲突向导协议，提供语义化冲突快照与五类解决动作，供双端统一消费。
+
+### 新增字段（已有响应扩展）
+
+以下响应新增 `conflict_files` 字段（向后兼容，旧版客户端忽略此字段）：
+
+- `git_rebase_result`
+- `git_op_status_result`
+- `git_merge_to_default_result`
+- `git_integration_status_result`
+- `git_rebase_onto_default_result`
+
+```jsonc
+// ConflictFileEntry 结构
+{
+  "path": "src/main.rs",
+  "conflict_type": "content",  // content | add_add | delete_modify | modify_delete
+  "staged": false               // true 表示已标记为已解决
+}
+```
+
+### 新增动作
+
+#### git_conflict_detail（读取单文件四路对比内容）
+
+**请求**：
+```jsonc
+{
+  "type": "git_conflict_detail",
+  "project": "myproject",
+  "workspace": "default",
+  "path": "src/main.rs",
+  "context": "workspace"  // workspace | integration
+}
+```
+
+**响应** (`git_conflict_detail_result`)：
+```jsonc
+{
+  "project": "myproject",
+  "workspace": "default",
+  "context": "workspace",
+  "path": "src/main.rs",
+  "base_content": "...",    // 公共祖先（:1:<path>），可为 null
+  "ours_content": "...",    // 我方 HEAD（:2:<path>），可为 null
+  "theirs_content": "...",  // 对方（:3:<path>），可为 null
+  "current_content": "...", // 当前工作树文件（含冲突标记）
+  "conflict_markers_count": 2,
+  "is_binary": false
+}
+```
+
+#### git_conflict_accept_ours / git_conflict_accept_theirs / git_conflict_accept_both / git_conflict_mark_resolved（冲突解决动作）
+
+**请求示例**（四个动作结构相同，type 不同）：
+```jsonc
+{
+  "type": "git_conflict_accept_ours",  // 或 accept_theirs / accept_both / mark_resolved
+  "project": "myproject",
+  "workspace": "default",
+  "path": "src/main.rs",
+  "context": "workspace"
+}
+```
+
+**响应** (`git_conflict_action_result`)：
+```jsonc
+{
+  "project": "myproject",
+  "workspace": "default",
+  "context": "workspace",
+  "path": "src/main.rs",
+  "action": "accept_ours",
+  "ok": true,
+  "message": null,
+  "snapshot": {
+    "context": "workspace",
+    "files": [],         // 操作后剩余冲突文件列表
+    "all_resolved": true
+  }
+}
+```
+
+### 上下文隔离规则
+
+- `context: "workspace"` 操作在指定 `(project, workspace)` 的工作目录下执行。
+- `context: "integration"` 操作在该 project 对应的集成工作树（`~/.tidyflow/worktrees/<project>/__integration`）下执行。
+- 两种上下文完全隔离，不会因切换项目或工作区而相互影响。
+- `continue`/`abort` 门禁同样受 context 隔离约束（普通 workspace rebase 与 integration rebase 分别由对应 git 状态机控制）。
+
+### 客户端消费约束
+
+1. `conflict_files` 是 `conflicts`（路径列表）的语义增强替代，客户端应优先使用 `conflict_files`。
+2. 冲突向导 UI 状态（当前选中文件、可用动作、continue/abort 可用条件）必须以 Core 下发的 snapshot 为权威，不得客户端自行推导。
+3. macOS 与 iOS 必须使用同一套共享冲突向导语义模型，禁止各自独立维护 conflicts 推导规则。

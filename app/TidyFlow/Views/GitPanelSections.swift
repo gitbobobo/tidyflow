@@ -422,3 +422,16 @@ struct GitStatusRow: View {
         gitCache.gitDiscard(workspaceKey: ws, path: item.path, scope: "file")
     }
 }
+
+// MARK: - 冲突横幅区域（Git 面板内嵌，不替换整个面板）
+
+/// 冲突横幅：仅用于在普通 Git 面板中出现少量冲突时的轻量提示。
+/// 超过 1 个冲突文件时由 NativeGitPanelView 自动切换到 GitConflictWizardView 全屏向导。
+struct GitConflictBannerSection: View {
+    @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
+
+    var body: some View {
+        EmptyView()
+    }
+}

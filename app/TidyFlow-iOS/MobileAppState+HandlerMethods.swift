@@ -80,11 +80,51 @@ extension MobileAppState {
             task.message = result.message ?? (success ? "完成" : "失败")
             task.completedAt = Date()
         }
+        // 同步更新冲突向导缓存（integration 上下文）
+        if result.state == .conflict && !result.conflictFiles.isEmpty {
+            let key = "\(result.project):integration"
+            var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "integration",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[key] = wizard
+        }
     }
 
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {
         wsClient.requestGitStatus(project: notification.project, workspace: notification.workspace)
         wsClient.requestGitBranches(project: notification.project, workspace: notification.workspace)
+    }
+
+    // v1.40: 冲突向导 handler（与 macOS GitCacheState+Operations 语义对齐）
+
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) {
+        let key = result.context == "integration"
+            ? "\(result.project):integration"
+            : "\(result.project):\(result.workspace)"
+        var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+        wizard.currentDetail = GitConflictDetailResultCache(from: result)
+        wizard.selectedFilePath = result.path
+        wizard.isLoading = false
+        wizard.updatedAt = Date()
+        conflictWizardCache[key] = wizard
+    }
+
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) {
+        let key = result.context == "integration"
+            ? "\(result.project):integration"
+            : "\(result.project):\(result.workspace)"
+        var wizard = conflictWizardCache[key] ?? ConflictWizardCache.empty()
+        wizard.snapshot = result.snapshot
+        wizard.isLoading = false
+        wizard.updatedAt = Date()
+        if result.ok, result.path == wizard.selectedFilePath {
+            wizard.currentDetail = nil
+        }
+        conflictWizardCache[key] = wizard
     }
 
     // MARK: - Project

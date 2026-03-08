@@ -52,6 +52,9 @@ class GitCacheState: ObservableObject {
     // Phase UX-4: Rebase onto default in-flight (workspace key -> true)
     @Published var rebaseOntoDefaultInFlight: [String: Bool] = [:]
 
+    // v1.40: 冲突向导缓存（key = "project:workspace" 或 "project:integration"）
+    @Published var conflictWizardCache: [String: ConflictWizardCache] = [:]
+
     // Git 状态索引缓存（资源管理器用，workspace key -> GitStatusIndex）
     var gitStatusIndexCache: [String: GitStatusIndex] = [:]
 

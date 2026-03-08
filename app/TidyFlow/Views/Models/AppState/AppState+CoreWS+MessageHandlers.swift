@@ -25,6 +25,9 @@ final class AppStateGitMessageHandlerAdapter: GitMessageHandler {
         appState?.gitCache.fetchGitBranches(workspaceKey: notification.workspace)
     }
     func handleGitAIMergeResult(_ result: GitAIMergeResult) { appState?.handleGitAIMergeResult(result) }
+    // v1.40: 冲突向导
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { appState?.gitCache.handleGitConflictDetailResult(result) }
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) { appState?.gitCache.handleGitConflictActionResult(result) }
 }
 
 final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {

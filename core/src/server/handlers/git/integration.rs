@@ -98,6 +98,52 @@ pub async fn handle_message(
                 .await
         }
 
+        // v1.40: 冲突向导动作
+        ClientMessage::GitConflictDetail {
+            project,
+            workspace,
+            path,
+            context,
+        } => {
+            handlers::handle_git_conflict_detail(project, workspace, path, context, socket, app_state).await
+        }
+
+        ClientMessage::GitConflictAcceptOurs {
+            project,
+            workspace,
+            path,
+            context,
+        } => {
+            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_ours", socket, app_state).await
+        }
+
+        ClientMessage::GitConflictAcceptTheirs {
+            project,
+            workspace,
+            path,
+            context,
+        } => {
+            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_theirs", socket, app_state).await
+        }
+
+        ClientMessage::GitConflictAcceptBoth {
+            project,
+            workspace,
+            path,
+            context,
+        } => {
+            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_both", socket, app_state).await
+        }
+
+        ClientMessage::GitConflictMarkResolved {
+            project,
+            workspace,
+            path,
+            context,
+        } => {
+            handlers::handle_git_conflict_action(project, workspace, path, context, "mark_resolved", socket, app_state).await
+        }
+
         ClientMessage::GitAIMerge {
             project,
             workspace,

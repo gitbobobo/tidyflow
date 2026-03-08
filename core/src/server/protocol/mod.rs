@@ -314,6 +314,44 @@ pub enum ClientMessage {
         sha: String,
     },
 
+    // v1.40: 冲突向导动作
+    /// 读取单个冲突文件的四路对比内容
+    GitConflictDetail {
+        project: String,
+        workspace: String,
+        path: String,
+        /// 上下文来源：workspace | integration
+        context: String,
+    },
+    /// 接受我方版本并暂存
+    GitConflictAcceptOurs {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 接受对方版本并暂存
+    GitConflictAcceptTheirs {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 合并双方版本（ours 在前，theirs 在后）并暂存
+    GitConflictAcceptBoth {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+    /// 手工编辑后标记已解决（git add）
+    GitConflictMarkResolved {
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+    },
+
     // v1.21: Client settings
     GetClientSettings,
     SaveClientSettings {
@@ -1011,6 +1049,9 @@ pub enum ServerMessage {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
     },
 
     // v1.11: Git operation status result (UX-3a)
@@ -1020,6 +1061,9 @@ pub enum ServerMessage {
         state: String, // "normal", "rebasing", "merging"
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1035,6 +1079,9 @@ pub enum ServerMessage {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head_sha: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1047,6 +1094,9 @@ pub enum ServerMessage {
         state: String, // "idle", "merging", "conflict", "rebasing", "rebase_conflict"
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head: Option<String>,
         default_branch: String,
@@ -1070,6 +1120,9 @@ pub enum ServerMessage {
         message: Option<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        /// 语义化冲突文件列表（v1.40+）
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         head_sha: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1189,6 +1242,39 @@ pub enum ServerMessage {
     GitStatusChanged {
         project: String,
         workspace: String,
+    },
+
+    // v1.40: 冲突向导响应
+    /// 单文件冲突详情（四路对比内容）
+    GitConflictDetailResult {
+        project: String,
+        workspace: String,
+        /// 上下文来源：workspace | integration
+        context: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ours_content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        theirs_content: Option<String>,
+        current_content: String,
+        conflict_markers_count: usize,
+        is_binary: bool,
+    },
+    /// 冲突解决动作结果（含最新冲突快照）
+    GitConflictActionResult {
+        project: String,
+        workspace: String,
+        context: String,
+        path: String,
+        /// 已执行的动作：accept_ours | accept_theirs | accept_both | mark_resolved
+        action: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        /// 操作后的冲突快照
+        snapshot: ConflictSnapshotInfo,
     },
 
     // v1.23: File rename/delete results
@@ -1911,6 +1997,30 @@ pub struct GitShowFileInfo {
     pub old_path: Option<String>,
 }
 
+/// 冲突文件条目信息（v1.40: 冲突向导协议 DTO）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictFileEntryInfo {
+    /// 文件路径（相对工作区根）
+    pub path: String,
+    /// 冲突类型：content | add_add | delete_modify | modify_delete
+    pub conflict_type: String,
+    /// 是否已暂存（标记为已解决）
+    pub staged: bool,
+}
+
+/// 冲突快照信息（v1.40: 冲突向导协议 DTO）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictSnapshotInfo {
+    /// 上下文来源：workspace | integration
+    pub context: String,
+    /// 当前冲突文件列表
+    pub files: Vec<ConflictFileEntryInfo>,
+    /// 是否所有冲突已解决
+    pub all_resolved: bool,
+}
+
+
+
 /// 自定义命令信息（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomCommandInfo {
@@ -2209,6 +2319,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_rebase".to_string(),
         "git_merge_integration".to_string(),
         "git_branch_divergence".to_string(),
+        "git_conflict_wizard".to_string(),
         "project_import".to_string(),
         "file_watch".to_string(),
         "file_rename_delete".to_string(),

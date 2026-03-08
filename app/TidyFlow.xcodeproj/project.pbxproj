@@ -184,6 +184,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		SPL0000E /* WSClient+Receive+DomainAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00019 /* WSClient+Receive+DomainAI.swift */; };
 		SPL00006 /* FloatingPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00021 /* FloatingPanelController.swift */; };
 		SPL00007 /* GitPanelSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00022 /* GitPanelSections.swift */; };
+SPL00046 /* GitConflictWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00045 /* GitConflictWizardView.swift */; };
+MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00062 /* GitConflictWizardSheet.swift */; };
 		SPL00008 /* GitGraphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00023 /* GitGraphViews.swift */; };
 		SPL00009 /* ExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00024 /* ExplorerView.swift */; };
 		SPL0000A /* FileDialogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00025 /* FileDialogViews.swift */; };
@@ -233,6 +235,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 			TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */; };
 			TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002D /* WorkspaceVisualSemanticsTests.swift */; };
 		TST10036 /* GitPanelSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002E /* GitPanelSemanticLayerTests.swift */; };
+		TST10037 /* GitConflictWizardSemanticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002F /* GitConflictWizardSemanticTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -324,6 +327,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 			TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEvidenceTabPresentationTests.swift; sourceTree = "<group>"; };
 			TST1002D /* WorkspaceVisualSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceVisualSemanticsTests.swift; sourceTree = "<group>"; };
 		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
+		TST1002F /* GitConflictWizardSemanticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSemanticTests.swift; sourceTree = "<group>"; };
 		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
 		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -442,6 +446,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SPL00019 /* WSClient+Receive+DomainAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainAI.swift"; sourceTree = "<group>"; };
 		SPL00021 /* FloatingPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanelController.swift; sourceTree = "<group>"; };
 		SPL00022 /* GitPanelSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSections.swift; sourceTree = "<group>"; };
+		SPL00045 /* GitConflictWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardView.swift; sourceTree = "<group>"; };
+		MOB00062 /* GitConflictWizardSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSheet.swift; sourceTree = "<group>"; };
 		SPL00023 /* GitGraphViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitGraphViews.swift; sourceTree = "<group>"; };
 		SPL00024 /* ExplorerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerView.swift; sourceTree = "<group>"; };
 		SPL00025 /* FileDialogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDialogViews.swift; sourceTree = "<group>"; };
@@ -550,6 +556,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SPL00032 /* GitCacheState+Operations.swift */,
 				SPL00023 /* GitGraphViews.swift */,
 				SPL00022 /* GitPanelSections.swift */,
+				SPL00045 /* GitConflictWizardView.swift */,
 				B3A00012 /* KeybindingHandler.swift */,
 				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
 				MDL000201 /* Models */,
@@ -614,6 +621,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				MOB00016 /* ProjectListView.swift */,
 				MOB00017 /* WorkspaceListView.swift */,
 				MOB00041 /* WorkspaceDetailView.swift */,
+				MOB00062 /* GitConflictWizardSheet.swift */,
 				MOB00042 /* WorkspaceTasksView.swift */,
 				MOB00014 /* MobileTerminalView.swift */,
 				MOB00033 /* SwiftTermTerminalView.swift */,
@@ -704,6 +712,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */,
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
+					TST1002F /* GitConflictWizardSemanticTests.swift */,
 					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
@@ -1034,6 +1043,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				MOB00026 /* ProjectListView.swift in Sources */,
 				MOB00027 /* WorkspaceListView.swift in Sources */,
 				MOB00051 /* WorkspaceDetailView.swift in Sources */,
+		MOB00063 /* GitConflictWizardSheet.swift in Sources */,
 				MOB00052 /* WorkspaceTasksView.swift in Sources */,
 				MOB00053 /* MobileCommandIconView.swift in Sources */,
 				MOB00055 /* DisconnectBannerView.swift in Sources */,
@@ -1130,6 +1140,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
 				SPL00006 /* FloatingPanelController.swift in Sources */,
 				SPL00007 /* GitPanelSections.swift in Sources */,
+		SPL00046 /* GitConflictWizardView.swift in Sources */,
 				SPL00008 /* GitGraphViews.swift in Sources */,
 				B3A00009 /* BranchPickerView.swift in Sources */,
 				SET00001 /* SettingsView.swift in Sources */,
@@ -1197,6 +1208,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */,
 				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
+				TST10037 /* GitConflictWizardSemanticTests.swift in Sources */,
 				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,

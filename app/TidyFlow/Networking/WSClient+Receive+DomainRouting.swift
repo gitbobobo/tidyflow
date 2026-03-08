@@ -36,6 +36,7 @@ extension WSClient {
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
+        ("git", "git_conflict_"),
         ]
     }
 

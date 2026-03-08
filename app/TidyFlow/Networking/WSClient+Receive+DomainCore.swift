@@ -227,6 +227,17 @@ extension WSClient {
                 }
             }
             return true
+        // v1.40: 冲突向导响应
+        case "git_conflict_detail_result":
+            if let result = GitConflictDetailResult.from(json: json) {
+                gitMessageHandler?.handleGitConflictDetailResult(result)
+            }
+            return true
+        case "git_conflict_action_result":
+            if let result = GitConflictActionResult.from(json: json) {
+                gitMessageHandler?.handleGitConflictActionResult(result)
+            }
+            return true
         default:
             return false
         }

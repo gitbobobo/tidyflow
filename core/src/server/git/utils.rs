@@ -103,6 +103,7 @@ pub struct GitRebaseResult {
     pub state: String, // "completed", "conflict", "aborted", "error"
     pub message: Option<String>,
     pub conflicts: Vec<String>,
+    pub conflict_files: Vec<ConflictFileEntry>,
 }
 
 /// Git operation status result
@@ -110,6 +111,7 @@ pub struct GitRebaseResult {
 pub struct GitOpStatusResult {
     pub state: GitOpState,
     pub conflicts: Vec<String>,
+    pub conflict_files: Vec<ConflictFileEntry>,
     pub head: Option<String>,
     pub onto: Option<String>,
 }
@@ -177,6 +179,7 @@ impl IntegrationState {
 pub struct IntegrationStatusResult {
     pub state: IntegrationState,
     pub conflicts: Vec<String>,
+    pub conflict_files: Vec<ConflictFileEntry>,
     pub head: Option<String>,
     pub default_branch: String,
     pub path: String,
@@ -202,6 +205,7 @@ pub struct MergeToDefaultResult {
     pub state: String, // "idle", "merging", "conflict", "completed", "failed"
     pub message: Option<String>,
     pub conflicts: Vec<String>,
+    pub conflict_files: Vec<ConflictFileEntry>,
     pub head_sha: Option<String>,
     pub integration_path: Option<String>,
 }
@@ -213,6 +217,7 @@ pub struct RebaseOntoDefaultResult {
     pub state: String, // "idle", "rebasing", "rebase_conflict", "completed", "failed"
     pub message: Option<String>,
     pub conflicts: Vec<String>,
+    pub conflict_files: Vec<ConflictFileEntry>,
     pub head_sha: Option<String>,
     pub integration_path: Option<String>,
 }
@@ -343,6 +348,119 @@ pub fn get_conflict_files(workspace_root: &Path) -> Vec<String> {
             .map(|it| it.path)
             .collect(),
         Err(_) => vec![],
+    }
+}
+
+/// 冲突文件条目（语义化快照，用于冲突向导）
+#[derive(Debug, Clone)]
+pub struct ConflictFileEntry {
+    /// 文件路径（相对于工作区根）
+    pub path: String,
+    /// 冲突类型：content | add_add | delete_modify | modify_delete
+    pub conflict_type: String,
+    /// 是否已暂存（标记为已解决）
+    pub staged: bool,
+}
+
+/// 冲突文件详情（四路对比数据）
+#[derive(Debug)]
+pub struct ConflictFileDetail {
+    /// 文件路径
+    pub path: String,
+    /// 上下文来源：workspace | integration
+    pub context: String,
+    /// 公共祖先内容（:1:<path>）
+    pub base_content: Option<String>,
+    /// 我方内容（:2:<path>，HEAD）
+    pub ours_content: Option<String>,
+    /// 对方内容（:3:<path>，MERGE_HEAD/REBASE_HEAD）
+    pub theirs_content: Option<String>,
+    /// 当前工作区文件内容（含冲突标记）
+    pub current_content: String,
+    /// 冲突标记组数
+    pub conflict_markers_count: usize,
+    /// 是否为二进制文件
+    pub is_binary: bool,
+}
+
+/// 冲突快照（整个上下文的冲突状态）
+#[derive(Debug, Clone)]
+pub struct ConflictSnapshot {
+    /// 上下文来源：workspace | integration
+    pub context: String,
+    /// 冲突文件列表
+    pub files: Vec<ConflictFileEntry>,
+    /// 是否所有冲突已解决（files 中 staged 全为 true 或 files 为空）
+    pub all_resolved: bool,
+}
+
+/// 冲突解决动作结果
+#[derive(Debug)]
+pub struct ConflictActionResult {
+    pub ok: bool,
+    pub action: String, // "accept_ours" | "accept_theirs" | "accept_both" | "mark_resolved"
+    pub message: Option<String>,
+    pub snapshot: ConflictSnapshot,
+}
+
+/// 根据 git status 获取语义化冲突文件条目列表
+pub fn get_conflict_file_entries(workspace_root: &Path) -> Vec<ConflictFileEntry> {
+    use std::process::Command;
+
+    // 使用 git status --porcelain 获取冲突信息（XY 编码判断冲突类型）
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "-z"])
+        .current_dir(workspace_root)
+        .output();
+
+    let Ok(out) = output else {
+        return vec![];
+    };
+    if !out.status.success() {
+        return vec![];
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut entries = Vec::new();
+
+    for record in stdout.split('\0') {
+        let record = record.trim_end_matches('\0');
+        if record.len() < 3 {
+            continue;
+        }
+        let xy = &record[..2];
+        let path = record[3..].to_string();
+        if path.is_empty() {
+            continue;
+        }
+
+        // XY 为 UU/AA/DD/AU/UA/DU/UD 时为冲突
+        let conflict_type = match xy {
+            "UU" => "content",
+            "AA" => "add_add",
+            "DD" => "delete_delete",
+            "AU" | "UA" => "add_modify",
+            "DU" | "UD" => "delete_modify",
+            _ => continue, // 非冲突状态，跳过
+        };
+
+        entries.push(ConflictFileEntry {
+            path,
+            conflict_type: conflict_type.to_string(),
+            staged: false,
+        });
+    }
+    entries
+}
+
+/// 获取冲突快照（填充 all_resolved 字段）
+pub fn build_conflict_snapshot(workspace_root: &Path, context: &str) -> ConflictSnapshot {
+    let files = get_conflict_file_entries(workspace_root);
+    let all_resolved = files.is_empty();
+    ConflictSnapshot {
+        context: context.to_string(),
+        files,
+        all_resolved,
     }
 }
 
@@ -502,6 +620,7 @@ mod tests {
             state: "completed".to_string(),
             message: Some("Rebased onto main".to_string()),
             conflicts: vec![],
+            conflict_files: vec![],
         };
         assert!(completed.ok);
         assert!(completed.conflicts.is_empty());
@@ -511,6 +630,7 @@ mod tests {
             state: "conflict".to_string(),
             message: Some("Rebase paused due to conflicts".to_string()),
             conflicts: vec!["src/main.rs".to_string()],
+            conflict_files: vec![],
         };
         assert!(!conflict.ok);
         assert_eq!(conflict.conflicts.len(), 1);
@@ -558,5 +678,215 @@ mod tests {
         assert_eq!(result.ahead_by, 3);
         assert_eq!(result.behind_by, 1);
         assert_eq!(result.compared_branch, "main");
+    }
+
+    // MARK: - WI-006 冲突向导回归护栏
+
+    #[test]
+    fn test_conflict_file_entry_construction() {
+        let entry = ConflictFileEntry {
+            path: "src/main.rs".to_string(),
+            conflict_type: "content".to_string(),
+            staged: false,
+        };
+        assert_eq!(entry.path, "src/main.rs");
+        assert_eq!(entry.conflict_type, "content");
+        assert!(!entry.staged);
+    }
+
+    #[test]
+    fn test_conflict_file_entry_staged_true() {
+        let entry = ConflictFileEntry {
+            path: "src/lib.rs".to_string(),
+            conflict_type: "add_add".to_string(),
+            staged: true,
+        };
+        assert!(entry.staged);
+        assert_eq!(entry.conflict_type, "add_add");
+    }
+
+    #[test]
+    fn test_conflict_snapshot_all_resolved_when_empty() {
+        // 没有冲突文件时，快照应标记为全部已解决
+        let snapshot = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: vec![],
+            all_resolved: true,
+        };
+        assert!(snapshot.all_resolved);
+        assert!(snapshot.files.is_empty());
+    }
+
+    #[test]
+    fn test_conflict_snapshot_not_resolved_when_files_exist() {
+        // 有未暂存的冲突文件时，快照标记为未全部解决
+        let files = vec![
+            ConflictFileEntry {
+                path: "src/a.rs".to_string(),
+                conflict_type: "content".to_string(),
+                staged: false,
+            },
+            ConflictFileEntry {
+                path: "src/b.rs".to_string(),
+                conflict_type: "add_add".to_string(),
+                staged: false,
+            },
+        ];
+        let snapshot = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: files.clone(),
+            all_resolved: false,
+        };
+        assert!(!snapshot.all_resolved);
+        assert_eq!(snapshot.files.len(), 2);
+    }
+
+    #[test]
+    fn test_conflict_snapshot_context_workspace_vs_integration() {
+        // workspace 与 integration 上下文应独立存在
+        let ws_snap = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: vec![],
+            all_resolved: true,
+        };
+        let int_snap = ConflictSnapshot {
+            context: "integration".to_string(),
+            files: vec![ConflictFileEntry {
+                path: "x.rs".to_string(),
+                conflict_type: "content".to_string(),
+                staged: false,
+            }],
+            all_resolved: false,
+        };
+        assert_eq!(ws_snap.context, "workspace");
+        assert_eq!(int_snap.context, "integration");
+        // 两者互不干扰
+        assert!(ws_snap.all_resolved);
+        assert!(!int_snap.all_resolved);
+    }
+
+    #[test]
+    fn test_conflict_action_result_fields() {
+        // 验证 accept_ours 动作结果结构正确构造
+        let snapshot = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: vec![],
+            all_resolved: true,
+        };
+        let result = ConflictActionResult {
+            ok: true,
+            action: "accept_ours".to_string(),
+            message: Some("Applied ours".to_string()),
+            snapshot: snapshot.clone(),
+        };
+        assert!(result.ok);
+        assert_eq!(result.action, "accept_ours");
+        assert!(result.snapshot.all_resolved);
+    }
+
+    #[test]
+    fn test_conflict_action_result_accept_theirs() {
+        let snapshot = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: vec![],
+            all_resolved: true,
+        };
+        let result = ConflictActionResult {
+            ok: true,
+            action: "accept_theirs".to_string(),
+            message: None,
+            snapshot,
+        };
+        assert_eq!(result.action, "accept_theirs");
+        assert!(result.message.is_none());
+    }
+
+    #[test]
+    fn test_conflict_action_result_mark_resolved() {
+        // mark_resolved 标记后 snapshot 仍可更新冲突列表
+        let remaining = ConflictFileEntry {
+            path: "src/c.rs".to_string(),
+            conflict_type: "delete_modify".to_string(),
+            staged: false,
+        };
+        let snapshot = ConflictSnapshot {
+            context: "workspace".to_string(),
+            files: vec![remaining],
+            all_resolved: false,
+        };
+        let result = ConflictActionResult {
+            ok: true,
+            action: "mark_resolved".to_string(),
+            message: None,
+            snapshot,
+        };
+        assert!(!result.snapshot.all_resolved);
+        assert_eq!(result.snapshot.files.len(), 1);
+    }
+
+    #[test]
+    fn test_integration_state_conflict_variants_exhaustive() {
+        // 验证所有冲突相关 IntegrationState 变体的字符串编码
+        assert_eq!(IntegrationState::Conflict.as_str(), "conflict");
+        assert_eq!(IntegrationState::RebaseConflict.as_str(), "rebase_conflict");
+        // 非冲突状态仍需一致
+        assert_eq!(IntegrationState::Idle.as_str(), "idle");
+        assert_eq!(IntegrationState::Merging.as_str(), "merging");
+        assert_eq!(IntegrationState::Rebasing.as_str(), "rebasing");
+    }
+
+    #[test]
+    fn test_build_conflict_snapshot_returns_workspace_context() {
+        // build_conflict_snapshot 在空目录上应返回 context 正确、all_resolved=true 的快照
+        let tmp = std::env::temp_dir();
+        let snap = build_conflict_snapshot(&tmp, "workspace");
+        assert_eq!(snap.context, "workspace");
+        // temp_dir 不是 git 仓库，因此 files 为空，all_resolved 应为 true
+        assert!(snap.all_resolved);
+    }
+
+    #[test]
+    fn test_build_conflict_snapshot_integration_context() {
+        let tmp = std::env::temp_dir();
+        let snap = build_conflict_snapshot(&tmp, "integration");
+        assert_eq!(snap.context, "integration");
+        assert!(snap.all_resolved);
+    }
+
+    #[test]
+    fn test_conflict_file_detail_binary_flag() {
+        // 确认 ConflictFileDetail 的 is_binary 字段语义
+        let detail = ConflictFileDetail {
+            path: "assets/image.png".to_string(),
+            context: "workspace".to_string(),
+            base_content: None,
+            ours_content: None,
+            theirs_content: None,
+            current_content: String::new(),
+            conflict_markers_count: 0,
+            is_binary: true,
+        };
+        assert!(detail.is_binary);
+        assert_eq!(detail.conflict_markers_count, 0);
+    }
+
+    #[test]
+    fn test_conflict_file_detail_text_with_markers() {
+        // 文本冲突文件应正确记录标记组数
+        let detail = ConflictFileDetail {
+            path: "src/main.rs".to_string(),
+            context: "workspace".to_string(),
+            base_content: Some("base".to_string()),
+            ours_content: Some("ours".to_string()),
+            theirs_content: Some("theirs".to_string()),
+            current_content: "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n".to_string(),
+            conflict_markers_count: 1,
+            is_binary: false,
+        };
+        assert!(!detail.is_binary);
+        assert_eq!(detail.conflict_markers_count, 1);
+        assert!(detail.base_content.is_some());
+        assert!(detail.ours_content.is_some());
+        assert!(detail.theirs_content.is_some());
     }
 }

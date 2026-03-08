@@ -36,8 +36,33 @@ struct WorkspaceDetailView: View {
         appState.projectCommands(for: project)
     }
 
+    /// 是否有未解决冲突（工作区或集成工作树）
+    private var hasActiveConflicts: Bool {
+        let wsKey = "\(project):\(workspace)"
+        let intKey = "\(project):integration"
+        return (appState.conflictWizardCache[wsKey]?.hasActiveConflicts == true) ||
+               (appState.conflictWizardCache[intKey]?.hasActiveConflicts == true)
+    }
+
     var body: some View {
         List {
+            // 冲突提示行（有冲突时在代码变更区顶部展示）
+            if hasActiveConflicts {
+                Section {
+                    NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("git.conflict.header".localized)
+                                .font(.subheadline.bold())
+                                .foregroundColor(.orange)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .listRowBackground(Color.orange.opacity(0.08))
+                }
+            }
+
             Section("代码变更") {
                 NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
                     HStack(spacing: 16) {
