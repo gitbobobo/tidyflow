@@ -164,6 +164,7 @@ struct FileTreeView: View {
 }
 
 /// 文件列表内容（递归）
+/// 通过 `fileCache`（独立 ObservableObject）驱动，避免文件列表变化触发全局视图刷新。
 struct FileListContent: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var fileCache: FileCacheState
@@ -171,19 +172,13 @@ struct FileListContent: View {
     let path: String
     let depth: Int
 
-    private var cacheKey: String {
-        "\(workspaceKey):\(path)"
-    }
-
     private var cache: FileListCache? {
-        // 直接从 fileCache 读取，确保文件缓存变化时触发重绘
         appState.getFileListCache(workspaceKey: workspaceKey, path: path)
     }
-    
+
     var body: some View {
         if let cache = cache {
             if let error = cache.error, cache.items.isEmpty {
-                // 错误状态
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundColor(.orange)
@@ -194,7 +189,6 @@ struct FileListContent: View {
                 .padding(.vertical, 4)
                 .padding(.leading, CGFloat(depth * 16 + 8))
             } else {
-                // 显示文件列表
                 ForEach(cache.items) { item in
                     FileRowView(
                         workspaceKey: workspaceKey,
@@ -205,7 +199,6 @@ struct FileListContent: View {
                 }
             }
         } else {
-            // 未加载
             EmptyView()
         }
     }

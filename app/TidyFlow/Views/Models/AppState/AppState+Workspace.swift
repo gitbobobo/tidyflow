@@ -5,12 +5,22 @@ extension AppState {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
-        // 先切项目名，再切工作空间，避免同名 workspace 跨项目切换时上下文短暂错位。
+        // 性能追踪：工作区切换
+        let projectName: String
         if let project = projects.first(where: { $0.id == projectId }) {
-            selectedProjectName = project.name
+            projectName = project.name
         } else {
+            projectName = selectedProjectName
             TFLog.app.error("selectWorkspace failed: project not found for id=\(projectId.uuidString, privacy: .public)")
         }
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: .workspaceSwitch,
+            project: projectName,
+            workspace: workspaceName
+        ))
+
+        // 先切项目名，再切工作空间，避免同名 workspace 跨项目切换时上下文短暂错位。
+        selectedProjectName = projectName
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
         // 选中工作空间时关闭项目配置页面
@@ -46,8 +56,11 @@ extension AppState {
 
         // 切换到此工作空间后清除侧边栏“任务完成”铃铛提示
         taskManager.clearUnseenCompletion(for: globalKey)
+
+        // 性能追踪：工作区切换结束
+        performanceTracer.end(perfTraceId)
     }
-    
+
     /// 生成全局唯一的工作空间键（包含项目名称）
     /// 用于所有需要区分不同项目同名工作空间的缓存
     func globalWorkspaceKey(projectName: String, workspaceName: String) -> String {

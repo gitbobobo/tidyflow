@@ -1,19 +1,19 @@
 import SwiftUI
 
-/// iOS 端会话列表 Sheet，顶部支持“全部/单工具”筛选
+/// iOS 端会话列表 Sheet，顶部支持"全部/单工具"筛选。
+/// 筛选状态使用 `appState.sessionListFilter` 而非视图本地 @State，
+/// 确保切换工作区时共享状态清理逻辑能统一生效。
 struct MobileSessionListSheet: View {
     @EnvironmentObject var appState: MobileAppState
     @Binding var showSessionList: Bool
     var onLoadSession: (AISessionInfo) -> Void
     var onCreateNewSession: () -> Void
 
-    @State private var filter: AISessionListFilter = .all
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 工具筛选 Picker
-                Picker("AI 工具", selection: $filter) {
+                // 工具筛选 Picker（绑定到共享状态而非本地 @State）
+                Picker("AI 工具", selection: $appState.sessionListFilter) {
                     ForEach(AISessionListFilter.allOptions) { currentFilter in
                         HStack(spacing: 6) {
                             if let iconAssetName = currentFilter.iconAssetName {
@@ -33,7 +33,7 @@ struct MobileSessionListSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
 
-                let pageState = appState.sessionListPageState(for: filter)
+                let pageState = appState.sessionListPageState(for: appState.sessionListFilter)
                 let sessions = pageState.sessions
                 let isLoadingSessions = pageState.isLoadingInitial
                 if isLoadingSessions && sessions.isEmpty {
@@ -85,7 +85,11 @@ struct MobileSessionListSheet: View {
                                         }
                                     }
                                     Spacer()
-                                    if session.id == appState.aiCurrentSessionId && session.aiTool == appState.aiChatTool {
+                                    if AISessionListSemantics.isSessionSelected(
+                                        session: session,
+                                        currentSessionId: appState.aiCurrentSessionId,
+                                        currentTool: appState.aiChatTool
+                                    ) {
                                         Image(systemName: "checkmark")
                                             .foregroundStyle(Color.accentColor)
                                     }
@@ -107,7 +111,7 @@ struct MobileSessionListSheet: View {
                             }
                             .padding(.vertical, 8)
                             .onAppear {
-                                _ = appState.loadNextAISessionListPage(for: filter)
+                                _ = appState.loadNextAISessionListPage(for: appState.sessionListFilter)
                             }
                         }
                     }
@@ -151,10 +155,10 @@ struct MobileSessionListSheet: View {
             }
         }
         .onAppear {
-            filter = .all
-            requestSessionList(for: filter)
+            appState.sessionListFilter = .all
+            requestSessionList(for: appState.sessionListFilter)
         }
-        .onChange(of: filter) { _, newFilter in
+        .onChange(of: appState.sessionListFilter) { _, newFilter in
             requestSessionList(for: newFilter)
         }
         .accessibilityIdentifier("tf.ios.ai.sessions-panel")

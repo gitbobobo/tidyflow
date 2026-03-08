@@ -138,3 +138,154 @@ final class WorkspaceVisualSemanticsTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 工作区切换回归检查
+
+final class WorkspaceSwitchRegressionTests: XCTestCase {
+
+    func testWorkspaceKeyIsolation_sameNameDifferentProjects() {
+        let key1 = WorkspaceKeySemantics.globalKey(project: "projectA", workspace: "default")
+        let key2 = WorkspaceKeySemantics.globalKey(project: "projectB", workspace: "default")
+        XCTAssertNotEqual(key1, key2, "不同项目下同名工作区的全局键必须不同")
+    }
+
+    func testWorkspaceKeyStability_sameInputSameOutput() {
+        let key1 = WorkspaceKeySemantics.globalKey(project: "proj", workspace: "ws")
+        let key2 = WorkspaceKeySemantics.globalKey(project: "proj", workspace: "ws")
+        XCTAssertEqual(key1, key2, "相同输入必须产生相同全局键")
+    }
+
+    func testSessionPageKeyIsolation_acrossWorkspaces() {
+        let key1 = AISessionListSemantics.pageKey(project: "p", workspace: "ws1", filter: .all)
+        let key2 = AISessionListSemantics.pageKey(project: "p", workspace: "ws2", filter: .all)
+        XCTAssertNotEqual(key1, key2, "不同工作区的会话分页键必须不同")
+    }
+
+    func testFileCacheKeyIsolation_acrossProjects() {
+        let key1 = WorkspaceKeySemantics.fileCacheKey(project: "pA", workspace: "default", path: "src")
+        let key2 = WorkspaceKeySemantics.fileCacheKey(project: "pB", workspace: "default", path: "src")
+        XCTAssertNotEqual(key1, key2, "不同项目同名工作区同一路径的文件缓存键必须不同")
+    }
+}
+
+// MARK: - 文件树渲染回归检查
+
+final class FileTreeRenderRegressionTests: XCTestCase {
+
+    func testExplorerResolverDeterminism() {
+        let entry = FileEntry(name: "main.swift", path: "main.swift", isDir: false, size: 100, isIgnored: false, isSymlink: false)
+        let p1 = ExplorerSemanticResolver.resolve(entry: entry, gitIndex: GitStatusIndex(), isExpanded: false, isSelected: false)
+        let p2 = ExplorerSemanticResolver.resolve(entry: entry, gitIndex: GitStatusIndex(), isExpanded: false, isSelected: false)
+        XCTAssertEqual(p1.iconName, p2.iconName, "相同输入的解析结果必须确定性一致")
+        XCTAssertEqual(p1.hasSpecialIcon, p2.hasSpecialIcon)
+    }
+
+    func testExplorerResolverDirectoryExpandedState() {
+        let dir = FileEntry(name: "src", path: "src", isDir: true, size: 0, isIgnored: false, isSymlink: false)
+        let collapsed = ExplorerSemanticResolver.resolve(entry: dir, gitIndex: GitStatusIndex(), isExpanded: false, isSelected: false)
+        let expanded = ExplorerSemanticResolver.resolve(entry: dir, gitIndex: GitStatusIndex(), isExpanded: true, isSelected: false)
+        XCTAssertNotEqual(collapsed.iconName, expanded.iconName, "展开/折叠状态应产生不同图标")
+    }
+
+    func testFileCacheKeyScopedByPath() {
+        let rootKey = WorkspaceKeySemantics.fileCacheKey(project: "p", workspace: "ws", path: ".")
+        let subKey = WorkspaceKeySemantics.fileCacheKey(project: "p", workspace: "ws", path: "src")
+        XCTAssertNotEqual(rootKey, subKey, "不同路径的缓存键必须不同")
+    }
+}
+
+// MARK: - AI 会话列表回归检查
+
+final class AISessionListRegressionTests: XCTestCase {
+
+    func testSessionVisibility_userOriginVisible() {
+        XCTAssertTrue(AISessionSemantics.isSessionVisibleInDefaultList(origin: .user))
+    }
+
+    func testSessionVisibility_evolutionSystemHidden() {
+        XCTAssertFalse(AISessionSemantics.isSessionVisibleInDefaultList(origin: .evolutionSystem))
+    }
+
+    func testSessionSelectionDelegatesToSemantics() {
+        let session = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "s", title: "T", updatedAt: 0, origin: .user)
+        let selected = AISessionListSemantics.isSessionSelected(session: session, currentSessionId: "s", currentTool: .codex)
+        let notSelected = AISessionListSemantics.isSessionSelected(session: session, currentSessionId: "other", currentTool: .codex)
+        XCTAssertTrue(selected)
+        XCTAssertFalse(notSelected)
+    }
+
+    func testPageKeyConsistency_macOS_iOS_shared() {
+        // 验证共享语义层生成的 pageKey 格式一致
+        let sharedKey = AISessionListSemantics.pageKey(project: "p", workspace: "ws", filter: .all)
+        XCTAssertEqual(sharedKey, "p::ws::all", "pageKey 应遵循 project::workspace::filterId 格式")
+    }
+}
+
+// MARK: - 性能追踪器回归检查
+
+final class PerformanceTracerRegressionTests: XCTestCase {
+
+    func testTracerDisabledByDefault() {
+        let tracer = TFPerformanceTracer()
+        XCTAssertFalse(tracer.enabled, "追踪器默认应关闭")
+    }
+
+    func testTracerBeginReturnEmptyWhenDisabled() {
+        let tracer = TFPerformanceTracer()
+        let id = tracer.begin(TFPerformanceContext(event: .workspaceSwitch, project: "p", workspace: "w"))
+        XCTAssertTrue(id.isEmpty, "禁用时 begin 应返回空字符串")
+        XCTAssertTrue(tracer.snapshots.isEmpty, "禁用时不应产生快照")
+    }
+
+    func testTracerRecordsSnapshotWhenEnabled() {
+        let tracer = TFPerformanceTracer()
+        tracer.enabled = true
+        let id = tracer.begin(TFPerformanceContext(event: .workspaceSwitch, project: "p", workspace: "w"))
+        XCTAssertFalse(id.isEmpty)
+        tracer.end(id)
+        XCTAssertEqual(tracer.snapshots.count, 1)
+        XCTAssertNotNil(tracer.snapshots.first?.durationMs)
+    }
+
+    func testTracerSnapshotContainsContext() {
+        let tracer = TFPerformanceTracer()
+        tracer.enabled = true
+        let ctx = TFPerformanceContext(event: .fileTreeRequest, project: "proj", workspace: "ws", metadata: ["path": "."])
+        let id = tracer.begin(ctx)
+        tracer.end(id)
+        let snapshot = tracer.snapshots.first
+        XCTAssertEqual(snapshot?.context.event, .fileTreeRequest)
+        XCTAssertEqual(snapshot?.context.project, "proj")
+        XCTAssertEqual(snapshot?.context.workspace, "ws")
+        XCTAssertEqual(snapshot?.context.metadata["path"], ".")
+    }
+
+    func testTracerReset() {
+        let tracer = TFPerformanceTracer()
+        tracer.enabled = true
+        let id = tracer.begin(TFPerformanceContext(event: .workspaceSwitch, project: "p", workspace: "w"))
+        tracer.end(id)
+        XCTAssertFalse(tracer.snapshots.isEmpty)
+        tracer.reset()
+        XCTAssertTrue(tracer.snapshots.isEmpty, "reset 后快照应为空")
+    }
+
+    func testTracerCapLimit() {
+        let tracer = TFPerformanceTracer()
+        tracer.enabled = true
+        for i in 0..<150 {
+            let id = tracer.begin(TFPerformanceContext(event: .workspaceSwitch, project: "p\(i)", workspace: "w"))
+            tracer.end(id)
+        }
+        XCTAssertLessThanOrEqual(tracer.snapshots.count, 100, "快照数量不应超过上限")
+    }
+
+    func testAllPerformanceEventsCovered() {
+        // 确保每种性能事件都有定义
+        XCTAssertGreaterThanOrEqual(TFPerformanceEvent.allCases.count, 5, "至少应有 5 种性能事件")
+        for event in TFPerformanceEvent.allCases {
+            XCTAssertFalse(event.rawValue.isEmpty, "事件 rawValue 不应为空")
+            XCTAssertEqual(event.category, "perf", "所有性能事件 category 应为 perf")
+        }
+    }
+}

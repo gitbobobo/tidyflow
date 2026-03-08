@@ -360,6 +360,9 @@ final class MobileAppState: ObservableObject {
     /// 置顶状态、attach/detach 请求时间和输出 ACK 计数，与 macOS 共享语义。
     let terminalSessionStore = TerminalSessionStore()
 
+    /// 共享性能追踪器，与 macOS 暴露同一套观测语义。
+    let performanceTracer = TFPerformanceTracer()
+
     /// 原生终端输出目标（SwiftTerm）
     private weak var terminalSink: MobileTerminalOutputSink?
     /// 终端未 ready 或尚未绑定 sink 时暂存输出，避免首屏丢数据
@@ -718,10 +721,16 @@ final class MobileAppState: ObservableObject {
 
     /// 工作空间详情页刷新
     func refreshWorkspaceDetail(project: String, workspace: String) {
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: .workspaceSwitch,
+            project: project,
+            workspace: workspace
+        ))
         wsClient.requestTermList()
         wsClient.requestGitStatus(project: project, workspace: workspace)
         wsClient.requestGitBranches(project: project, workspace: workspace)
         fetchExplorerFileList(project: project, workspace: workspace, path: ".")
+        performanceTracer.end(perfTraceId)
     }
 
     /// 懒加载项目工作空间
@@ -2159,13 +2168,29 @@ final class MobileAppState: ObservableObject {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else {
             return false
         }
+
+        // 性能追踪：AI 会话列表请求
+        let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: perfEvent,
+            project: aiActiveProject,
+            workspace: aiActiveWorkspace,
+            metadata: ["filter": filter.id, "append": String(append)]
+        ))
+
         let pageKey = sessionListPageKey(project: aiActiveProject, workspace: aiActiveWorkspace, filter: filter)
         var pageState = aiSessionListPageStates[pageKey] ?? .empty()
         if append {
-            guard !pageState.isLoadingNextPage else { return false }
+            guard !pageState.isLoadingNextPage else {
+                performanceTracer.end(perfTraceId)
+                return false
+            }
             pageState.isLoadingNextPage = true
         } else {
-            guard !pageState.isLoadingInitial else { return false }
+            guard !pageState.isLoadingInitial else {
+                performanceTracer.end(perfTraceId)
+                return false
+            }
             if cursor == nil {
                 pageState = .empty()
             }
@@ -2180,6 +2205,7 @@ final class MobileAppState: ObservableObject {
             cursor: cursor,
             limit: limit
         )
+        performanceTracer.end(perfTraceId)
         return true
     }
 
@@ -3357,7 +3383,7 @@ final class MobileAppState: ObservableObject {
         workspace: String,
         filter: AISessionListFilter
     ) -> String {
-        "\(project)::\(workspace)::\(filter.id)"
+        AISessionListSemantics.pageKey(project: project, workspace: workspace, filter: filter)
     }
 
     func updateSessionListPageState(

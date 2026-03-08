@@ -318,3 +318,86 @@ final class AISessionSemanticsTests: XCTestCase {
         XCTAssertNotEqual(fetched1?.sessionKey, fetched2?.sessionKey)
     }
 }
+
+// MARK: - AISessionListSemantics 共享语义层测试
+
+final class AISessionListSemanticsTests: XCTestCase {
+
+    // MARK: 当前选中判定
+
+    func testIsSessionSelected_matchesIdAndTool() {
+        let session = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "s1", title: "T", updatedAt: 0, origin: .user)
+        XCTAssertTrue(AISessionListSemantics.isSessionSelected(session: session, currentSessionId: "s1", currentTool: .codex))
+    }
+
+    func testIsSessionSelected_mismatchId() {
+        let session = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "s1", title: "T", updatedAt: 0, origin: .user)
+        XCTAssertFalse(AISessionListSemantics.isSessionSelected(session: session, currentSessionId: "s2", currentTool: .codex))
+    }
+
+    func testIsSessionSelected_mismatchTool() {
+        let session = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "s1", title: "T", updatedAt: 0, origin: .user)
+        XCTAssertFalse(AISessionListSemantics.isSessionSelected(session: session, currentSessionId: "s1", currentTool: .claude))
+    }
+
+    func testIsSessionSelected_nilSessionId() {
+        let session = AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "s1", title: "T", updatedAt: 0, origin: .user)
+        XCTAssertFalse(AISessionListSemantics.isSessionSelected(session: session, currentSessionId: nil, currentTool: .codex))
+    }
+
+    // MARK: 分页缓存键
+
+    func testPageKeyFormat() {
+        let key = AISessionListSemantics.pageKey(project: "proj", workspace: "ws", filter: .all)
+        XCTAssertEqual(key, "proj::ws::all")
+    }
+
+    func testPageKeyIsolatesAcrossWorkspaces() {
+        let key1 = AISessionListSemantics.pageKey(project: "p", workspace: "ws1", filter: .all)
+        let key2 = AISessionListSemantics.pageKey(project: "p", workspace: "ws2", filter: .all)
+        XCTAssertNotEqual(key1, key2, "不同工作区的分页键必须不同")
+    }
+
+    func testPageKeyIsolatesAcrossProjects() {
+        let key1 = AISessionListSemantics.pageKey(project: "p1", workspace: "ws", filter: .all)
+        let key2 = AISessionListSemantics.pageKey(project: "p2", workspace: "ws", filter: .all)
+        XCTAssertNotEqual(key1, key2, "不同项目的分页键必须不同")
+    }
+
+    func testPageKeyIsolatesAcrossFilters() {
+        let key1 = AISessionListSemantics.pageKey(project: "p", workspace: "ws", filter: .all)
+        let key2 = AISessionListSemantics.pageKey(project: "p", workspace: "ws", filter: .tool(.codex))
+        XCTAssertNotEqual(key1, key2, "不同筛选条件的分页键必须不同")
+    }
+
+    // MARK: 分页防重入
+
+    func testRequestAISessionList_preventsDoubleInitialLoad() {
+        let appState = AppState()
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        // 手动模拟已在加载
+        let pageKey = appState.sessionListPageKey(project: "proj", workspace: "ws", filter: .all)
+        appState.aiSessionListPageStates[pageKey] = AISessionListPageState(
+            sessions: [], hasMore: false, nextCursor: nil,
+            isLoadingInitial: true, isLoadingNextPage: false
+        )
+        // 再次请求应被拒绝
+        let result = appState.requestAISessionList(for: .all)
+        XCTAssertFalse(result, "已在初始加载时不应重复发起请求")
+    }
+
+    func testClearPageStates_resetsAllKeys() {
+        let appState = AppState()
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.updateSessionListPageState(
+            AISessionListPageState(sessions: [], hasMore: true, nextCursor: "c1",
+                                   isLoadingInitial: false, isLoadingNextPage: false),
+            project: "proj", workspace: "ws", filter: .all
+        )
+        XCTAssertFalse(appState.aiSessionListPageStates.isEmpty)
+        appState.clearAISessionListPageStates()
+        XCTAssertTrue(appState.aiSessionListPageStates.isEmpty, "清理后分页状态应为空")
+    }
+}

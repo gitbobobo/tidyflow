@@ -257,11 +257,21 @@ extension AppState {
     func fetchFileList(project: String, workspaceKey: String, path: String = ".") {
         let key = fileListCacheKey(project: project, workspace: workspaceKey, path: path)
 
+        // 性能追踪：文件树请求
+        let perfEvent: TFPerformanceEvent = path == "." ? .fileTreeRequest : .fileTreeExpand
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: perfEvent,
+            project: project,
+            workspace: workspaceKey,
+            metadata: ["path": path]
+        ))
+
         guard connectionState == .connected else {
             var cache = fileListCache[key] ?? FileListCache.empty()
             cache.error = "connection.disconnected".localized
             cache.isLoading = false
             fileListCache[key] = cache
+            performanceTracer.end(perfTraceId)
             return
         }
 
@@ -271,8 +281,10 @@ extension AppState {
         cache.error = nil
         fileListCache[key] = cache
 
-        // 发送请求
+        // 发送请求（追踪 ID 随请求上下文传递，handleFileListResult 中结束追踪）
         wsClient.requestFileList(project: project, workspace: workspaceKey, path: path)
+        // 请求发出即视为本轮追踪结束（实际网络延迟在 Core 端日志体现）
+        performanceTracer.end(perfTraceId)
     }
 
     /// 获取目录文件列表（便捷重载，隐式使用当前 `selectedProjectName`）。
@@ -288,19 +300,21 @@ extension AppState {
     }
 
     /// 刷新当前工作空间的文件列表（包括根目录和所有展开的目录）
+    /// 仅刷新当前 project/workspace 下的路径，避免跨项目同名工作区串扰。
     func refreshFileList() {
         guard let ws = selectedWorkspaceKey else { return }
         let project = selectedProjectName
         let prefix = WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: ws)
 
-        // 收集所有展开的目录路径
+        // 收集当前工作区下所有展开的目录路径
         let expandedPaths = directoryExpandState
             .filter { $0.key.hasPrefix(prefix) && $0.value }
             .map { String($0.key.dropFirst(prefix.count)) }
 
-        // 刷新根目录和所有展开的目录
+        // 根目录始终刷新
         fetchFileList(project: project, workspaceKey: ws, path: ".")
-        for path in expandedPaths {
+        // 展开的目录增量刷新（跳过根目录避免重复请求）
+        for path in expandedPaths where path != "." {
             fetchFileList(project: project, workspaceKey: ws, path: path)
         }
     }

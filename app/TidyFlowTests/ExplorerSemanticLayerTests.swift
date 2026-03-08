@@ -244,4 +244,51 @@ final class ExplorerSemanticLayerTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - 多项目工作区隔离
+
+    func testMultiProjectWorkspaceCacheKeyIsolation() {
+        // 不同项目下同名工作区的文件缓存键必须不同
+        let key1 = WorkspaceKeySemantics.fileCacheKey(project: "projectA", workspace: "default", path: "src")
+        let key2 = WorkspaceKeySemantics.fileCacheKey(project: "projectB", workspace: "default", path: "src")
+        XCTAssertNotEqual(key1, key2, "不同项目同名工作区的文件缓存键必须不同")
+    }
+
+    func testSameProjectSamePathCacheKeyConsistency() {
+        let key1 = WorkspaceKeySemantics.fileCacheKey(project: "proj", workspace: "ws", path: "src/main.swift")
+        let key2 = WorkspaceKeySemantics.fileCacheKey(project: "proj", workspace: "ws", path: "src/main.swift")
+        XCTAssertEqual(key1, key2, "同一项目同一路径的缓存键必须一致")
+    }
+
+    func testFileCachePrefixMatchesKeys() {
+        let prefix = WorkspaceKeySemantics.fileCachePrefix(project: "proj", workspace: "ws")
+        let key = WorkspaceKeySemantics.fileCacheKey(project: "proj", workspace: "ws", path: "src")
+        XCTAssertTrue(key.hasPrefix(prefix), "文件缓存键必须以工作区前缀开头")
+    }
+
+    func testFileCachePrefixDoesNotMatchOtherProject() {
+        let prefix = WorkspaceKeySemantics.fileCachePrefix(project: "projectA", workspace: "default")
+        let key = WorkspaceKeySemantics.fileCacheKey(project: "projectB", workspace: "default", path: "src")
+        XCTAssertFalse(key.hasPrefix(prefix), "不同项目的文件缓存键不应匹配对方前缀")
+    }
+
+    // MARK: - 目录展开与文件树展示规则
+
+    func testDirectoryExpandStateUsesFullCacheKey() {
+        // 展开状态键包含 project:workspace:path 三级
+        let key = WorkspaceKeySemantics.fileCacheKey(project: "proj", workspace: "ws", path: "src/models")
+        XCTAssertTrue(key.contains("proj"), "展开状态键应包含项目名")
+        XCTAssertTrue(key.contains("ws"), "展开状态键应包含工作区名")
+        XCTAssertTrue(key.contains("src/models"), "展开状态键应包含路径")
+    }
+
+    func testWorkspaceKeyNormalizationForDefault() {
+        let normalized = WorkspaceKeySemantics.normalizeWorkspaceName("(default)")
+        XCTAssertEqual(normalized, "default", "(default) 应归一化为 default")
+    }
+
+    func testWorkspaceKeyNormalizationPreservesCustomName() {
+        let normalized = WorkspaceKeySemantics.normalizeWorkspaceName("feature-branch")
+        XCTAssertEqual(normalized, "feature-branch", "自定义工作区名不应被归一化")
+    }
 }

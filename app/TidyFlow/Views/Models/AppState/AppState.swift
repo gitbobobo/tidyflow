@@ -336,6 +336,9 @@ class AppState: ObservableObject {
 
     // 后台任务管理器
     let taskManager = BackgroundTaskManager()
+
+    /// 共享性能追踪器，macOS/iOS 双端通过此对象暴露统一的性能观测结果。
+    let performanceTracer = TFPerformanceTracer()
     private var coreProcessManagerCancellable: AnyCancellable?
     private var evolutionReplayStoreCancellable: AnyCancellable?
     private var subAgentViewerStoreCancellable: AnyCancellable?
@@ -427,6 +430,16 @@ class AppState: ObservableObject {
               connectionState == .connected else {
             return false
         }
+
+        // 性能追踪：AI 会话列表请求
+        let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: perfEvent,
+            project: selectedProjectName,
+            workspace: workspace,
+            metadata: ["filter": filter.id, "append": String(append)]
+        ))
+
         let pageKey = sessionListPageKey(
             project: selectedProjectName,
             workspace: workspace,
@@ -434,10 +447,16 @@ class AppState: ObservableObject {
         )
         var pageState = aiSessionListPageStates[pageKey] ?? .empty()
         if append {
-            guard !pageState.isLoadingNextPage else { return false }
+            guard !pageState.isLoadingNextPage else {
+                performanceTracer.end(perfTraceId)
+                return false
+            }
             pageState.isLoadingNextPage = true
         } else {
-            guard !pageState.isLoadingInitial else { return false }
+            guard !pageState.isLoadingInitial else {
+                performanceTracer.end(perfTraceId)
+                return false
+            }
             if cursor == nil {
                 pageState = .empty()
             }
@@ -452,6 +471,7 @@ class AppState: ObservableObject {
             cursor: cursor,
             limit: limit
         )
+        performanceTracer.end(perfTraceId)
         return true
     }
 
@@ -822,7 +842,7 @@ class AppState: ObservableObject {
         workspace: String,
         filter: AISessionListFilter
     ) -> String {
-        "\(project)::\(workspace)::\(filter.id)"
+        AISessionListSemantics.pageKey(project: project, workspace: workspace, filter: filter)
     }
 
     func updateSessionListPageState(

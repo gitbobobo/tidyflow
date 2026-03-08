@@ -315,3 +315,27 @@ enum AISessionSemantics {
            .filter { $0.isLetter || $0.isNumber }
     }
 }
+
+// MARK: - AI 会话列表共享语义层
+//
+// 会话列表项的可见性过滤、当前选中判定、分页防重入等规则
+// 下沉到此枚举，macOS 与 iOS 视图层直接调用，不再各自推导。
+
+enum AISessionListSemantics {
+
+    /// 判断某会话是否为当前选中会话。
+    /// 双端统一规则：session.id 与 currentSessionId 匹配，且 aiTool 与 currentTool 匹配。
+    static func isSessionSelected(
+        session: AISessionInfo,
+        currentSessionId: String?,
+        currentTool: AIChatTool
+    ) -> Bool {
+        session.id == currentSessionId && session.aiTool == currentTool
+    }
+
+    /// 生成会话列表分页缓存键，格式 "project::workspace::filterId"。
+    /// macOS/iOS 共用同一键格式，确保跨端语义一致。
+    static func pageKey(project: String, workspace: String, filter: AISessionListFilter) -> String {
+        "\(project)::\(workspace)::\(filter.id)"
+    }
+}

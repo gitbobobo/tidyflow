@@ -99,8 +99,11 @@ struct SessionsPanelView: View {
                     ForEach(sessions) { session in
                         SessionRow(
                             session: session,
-                            isSelected: session.id == appState.aiStore(for: session.aiTool).currentSessionId
-                                && session.aiTool == appState.aiChatTool,
+                            isSelected: AISessionListSemantics.isSessionSelected(
+                                session: session,
+                                currentSessionId: appState.aiStore(for: session.aiTool).currentSessionId,
+                                currentTool: appState.aiChatTool
+                            ),
                             status: appState.aiSessionStatus(for: session)
                         )
                         .contentShape(Rectangle())
