@@ -381,6 +381,46 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertEqual(store.messages.last?.messageId, "m-existing")
     }
 
+    func testRecentHistoryLoadingClearsAfterReplacingMessages() {
+        let store = AIChatStore()
+        store.setRecentHistoryLoading(true)
+
+        store.replaceMessagesFromSessionCache(
+            [
+                AIProtocolMessageInfo(
+                    id: "m1",
+                    role: "assistant",
+                    createdAt: nil,
+                    agent: nil,
+                    modelProviderID: nil,
+                    modelID: nil,
+                    parts: [makeTextPart(id: "p1", text: "hello")]
+                ),
+            ],
+            isStreaming: false
+        )
+
+        XCTAssertFalse(store.recentHistoryIsLoading)
+    }
+
+    func testRecentHistoryLoadingClearsAfterPaginationUpdate() {
+        let store = AIChatStore()
+        store.setRecentHistoryLoading(true)
+
+        store.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
+
+        XCTAssertFalse(store.recentHistoryIsLoading)
+    }
+
+    func testRecentHistoryLoadingClearsAfterChatDone() {
+        let store = AIChatStore()
+        store.setRecentHistoryLoading(true)
+
+        store.handleChatDone(sessionId: "s1")
+
+        XCTAssertFalse(store.recentHistoryIsLoading)
+    }
+
     private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

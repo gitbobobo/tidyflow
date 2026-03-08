@@ -197,7 +197,9 @@ struct MobileAIChatView: View {
     }
 
     private var isLoadingMessages: Bool {
-        appState.aiCurrentSessionId != nil && aiChatStore.messages.isEmpty
+        appState.aiCurrentSessionId != nil &&
+            aiChatStore.messages.isEmpty &&
+            aiChatStore.recentHistoryIsLoading
     }
 
     private var messageArea: some View {

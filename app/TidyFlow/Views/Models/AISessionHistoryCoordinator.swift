@@ -33,6 +33,7 @@ struct AISessionHistoryCoordinator {
         pageSize: Int = AISessionSemantics.defaultMessagesPageSize
     ) {
         store.addSubscription(context.sessionId)
+        store.setRecentHistoryLoading(true)
         wsClient.requestAISessionSubscribe(
             project: context.project,
             workspace: context.workspace,

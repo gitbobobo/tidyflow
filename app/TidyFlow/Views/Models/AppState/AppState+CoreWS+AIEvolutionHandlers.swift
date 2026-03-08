@@ -1128,6 +1128,7 @@ extension AppState {
         // 历史分页请求失败时，避免“加载更早消息”按钮长期停留在 loading。
         for tool in AIChatTool.allCases {
             aiStore(for: tool).setHistoryLoading(false)
+            aiStore(for: tool).setRecentHistoryLoading(false)
         }
     }
 }

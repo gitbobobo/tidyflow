@@ -347,7 +347,9 @@ struct AITabView: View {
     }
 
     private var isLoadingMessages: Bool {
-        aiChatStore.currentSessionId != nil && aiChatStore.messages.isEmpty
+        aiChatStore.currentSessionId != nil &&
+            aiChatStore.messages.isEmpty &&
+            aiChatStore.recentHistoryIsLoading
     }
 
     private var messageArea: some View {
@@ -695,12 +697,15 @@ struct AITabView: View {
         TFLog.app.info(
             "AI loadSession: set current session and cleared messages, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
         )
-
-        // 保存订阅上下文，ack 后拉消息并 unsubscribe 旧会话
-        appState.pendingSubscribeContextByTool[session.aiTool] = AIPendingSubscribeContext(
-            session: session,
-            oldSessionId: (oldSessionId != session.id) ? oldSessionId : nil
-        )
+        if let oldSessionId, !oldSessionId.isEmpty, oldSessionId != session.id {
+            appState.wsClient.requestAISessionUnsubscribe(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                aiTool: session.aiTool.rawValue,
+                sessionId: oldSessionId
+            )
+            targetStore.removeSubscription(oldSessionId)
+        }
 
         if session.aiTool != appState.aiChatTool {
             // 先请求目标会话详情，再切换工具；避免首击空白。
@@ -723,15 +728,20 @@ struct AITabView: View {
                 aiTool: session.aiTool,
                 sessionId: session.id
             )
-            appState.wsClient.requestAISessionSubscribe(
-                project: session.projectName,
-                workspace: session.workspaceName,
-                aiTool: session.aiTool.rawValue,
-                sessionId: session.id
+            AISessionHistoryCoordinator.subscribeAndLoadRecent(
+                context: .init(
+                    project: session.projectName,
+                    workspace: session.workspaceName,
+                    aiTool: session.aiTool,
+                    sessionId: session.id
+                ),
+                wsClient: appState.wsClient,
+                store: targetStore,
+                pageSize: aiSessionMessagesPageSize
             )
             skipNextAutoReload = (session.aiTool, session.id)
             TFLog.app.info(
-                "AI loadSession: subscribed before switching tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+                "AI loadSession: subscribed and requested history before switching tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
             )
             appState.aiChatTool = session.aiTool
             return
@@ -756,14 +766,19 @@ struct AITabView: View {
             aiTool: session.aiTool,
             sessionId: session.id
         )
-        appState.wsClient.requestAISessionSubscribe(
-            project: session.projectName,
-            workspace: session.workspaceName,
-            aiTool: session.aiTool.rawValue,
-            sessionId: session.id
+        AISessionHistoryCoordinator.subscribeAndLoadRecent(
+            context: .init(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                aiTool: session.aiTool,
+                sessionId: session.id
+            ),
+            wsClient: appState.wsClient,
+            store: targetStore,
+            pageSize: aiSessionMessagesPageSize
         )
         TFLog.app.info(
-            "AI loadSession: subscribed, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+            "AI loadSession: subscribed and requested history, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
         )
     }
 
@@ -901,18 +916,16 @@ struct AITabView: View {
         let targetTool = tool ?? appState.aiChatTool
         guard let sessionId = appState.aiStore(for: targetTool).currentSessionId,
               let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
-        appState.wsClient.requestAISessionSubscribe(
-            project: appState.selectedProjectName,
-            workspace: ws,
-            aiTool: targetTool.rawValue,
-            sessionId: sessionId
-        )
-        appState.wsClient.requestAISessionMessages(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
-            aiTool: targetTool,
-            sessionId: sessionId,
-            limit: aiSessionMessagesPageSize
+        AISessionHistoryCoordinator.subscribeAndLoadRecent(
+            context: .init(
+                project: appState.selectedProjectName,
+                workspace: ws,
+                aiTool: targetTool,
+                sessionId: sessionId
+            ),
+            wsClient: appState.wsClient,
+            store: appState.aiStore(for: targetTool),
+            pageSize: aiSessionMessagesPageSize
         )
         appState.wsClient.requestAISessionConfigOptions(
             projectName: appState.selectedProjectName,

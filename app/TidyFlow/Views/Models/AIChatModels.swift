@@ -743,6 +743,8 @@ final class AIChatStore: ObservableObject {
     @Published var messages: [AIChatMessage] = []
     @Published var historyHasMore: Bool = false
     @Published var historyNextBeforeMessageId: String?
+    /// 首屏最近页历史消息加载态；仅用于详情页首次打开/重载时的空白页加载反馈。
+    @Published var recentHistoryIsLoading: Bool = false
     @Published var historyIsLoading: Bool = false
     @Published var isStreaming: Bool = false
     @Published var abortPendingSessionId: String?
@@ -800,6 +802,7 @@ final class AIChatStore: ObservableObject {
         messages = snapshot.messages
         historyHasMore = snapshot.historyHasMore
         historyNextBeforeMessageId = snapshot.historyNextBeforeMessageId
+        recentHistoryIsLoading = false
         historyIsLoading = false
         // 切换工作空间后不恢复流式态，后续由服务端事件重新驱动。
         abortPendingSessionId = nil
@@ -844,6 +847,7 @@ final class AIChatStore: ObservableObject {
         messages = []
         historyHasMore = false
         historyNextBeforeMessageId = nil
+        recentHistoryIsLoading = false
         historyIsLoading = false
         abortPendingSessionId = nil
         awaitingUserEcho = false
@@ -869,6 +873,7 @@ final class AIChatStore: ObservableObject {
         messages = []
         historyHasMore = false
         historyNextBeforeMessageId = nil
+        recentHistoryIsLoading = false
         historyIsLoading = false
         awaitingUserEcho = false
         hasPendingFirstContent = false
@@ -892,6 +897,7 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         messages = newMessages
         abortPendingSessionId = nil
+        recentHistoryIsLoading = false
         historyIsLoading = false
         awaitingUserEcho = false
         hasPendingFirstContent = false
@@ -959,9 +965,14 @@ final class AIChatStore: ObservableObject {
         historyIsLoading = isLoading
     }
 
+    func setRecentHistoryLoading(_ isLoading: Bool) {
+        recentHistoryIsLoading = isLoading
+    }
+
     func updateHistoryPagination(hasMore: Bool, nextBeforeMessageId: String?) {
         historyHasMore = hasMore
         historyNextBeforeMessageId = nextBeforeMessageId
+        recentHistoryIsLoading = false
         historyIsLoading = false
     }
 
@@ -1072,12 +1083,13 @@ final class AIChatStore: ObservableObject {
             if !isFirstSendSessionBinding {
                 awaitingUserEcho = false
                 lastUserEchoMessageId = nil
-                pendingUserEchoAssistantMessageId = nil
-                awaitingUserEchoBaselineIndex = nil
-                userPlaceholderMessageIdsPendingServerPart = []
+            pendingUserEchoAssistantMessageId = nil
+            awaitingUserEchoBaselineIndex = nil
+            userPlaceholderMessageIdsPendingServerPart = []
             }
             historyHasMore = false
             historyNextBeforeMessageId = nil
+            recentHistoryIsLoading = false
             historyIsLoading = false
         }
         if let old = currentSessionId, old != sessionId {
@@ -1435,6 +1447,7 @@ final class AIChatStore: ObservableObject {
             lastUserEchoMessageId = "done-\(sessionId)-\(UUID().uuidString)"
         }
         hasPendingFirstContent = false
+        recentHistoryIsLoading = false
         userPlaceholderMessageIdsPendingServerPart = []
         isStreaming = false
         pendingToolQuestions = [:]
@@ -1456,6 +1469,7 @@ final class AIChatStore: ObservableObject {
         hasPendingFirstContent = false
         awaitingUserEchoBaselineIndex = nil
         pendingUserEchoAssistantMessageId = nil
+        recentHistoryIsLoading = false
         userPlaceholderMessageIdsPendingServerPart = []
         isStreaming = false
         pendingToolQuestions = [:]
