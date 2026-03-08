@@ -55,6 +55,10 @@ async fn send_unhandled_message(socket: &mut WebSocket) -> Result<(), String> {
         &ServerMessage::Error {
             code: "unhandled_message".to_string(),
             message: "Message type not recognized".to_string(),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
     )
     .await

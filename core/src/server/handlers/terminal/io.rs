@@ -37,6 +37,10 @@ pub async fn handle_io_message(
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
                         message: format!("Terminal '{}' not found", term_id.as_ref().unwrap()),
+                        project: None,
+                        workspace: None,
+                        session_id: None,
+                        cycle_id: None,
                     },
                 )
                 .await?;

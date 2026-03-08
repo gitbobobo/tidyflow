@@ -71,6 +71,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git stage task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -139,6 +143,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git unstage task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -214,6 +222,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git discard task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;

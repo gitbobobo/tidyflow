@@ -20,6 +20,10 @@ pub async fn handle_lifecycle_message(
                     &ServerMessage::Error {
                         code: "invalid_path".to_string(),
                         message: format!("Path '{}' does not exist", cwd),
+                        project: None,
+                        workspace: None,
+                        session_id: None,
+                        cycle_id: None,
                     },
                 )
                 .await?;
@@ -212,6 +216,10 @@ pub async fn handle_lifecycle_message(
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
                         message: format!("Terminal '{}' not found", term_id),
+                        project: None,
+                        workspace: None,
+                        session_id: None,
+                        cycle_id: None,
                     },
                 )
                 .await?;
@@ -271,6 +279,10 @@ pub async fn handle_lifecycle_message(
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
                         message: format!("Terminal '{}' not found (may have exited)", term_id),
+                        project: None,
+                        workspace: None,
+                        session_id: None,
+                        cycle_id: None,
                     },
                 )
                 .await?;

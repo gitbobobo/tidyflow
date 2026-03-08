@@ -24,6 +24,18 @@ struct LogRecord {
     msg: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+    /// 结构化错误码（与 Apple 端共享）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    /// 错误归属上下文（多工作区场景）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cycle_id: Option<String>,
 }
 
 /// 内部状态，由 Mutex 保护
@@ -75,11 +87,17 @@ impl FileLogger {
             category: None,
             msg: message.to_string(),
             detail: None,
+            error_code: None,
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         };
         self.write_record(&record);
     }
 
-    /// 写入来自客户端（Web/Swift）的日志
+    /// 写入来自客户端（Web/Swift）的日志（含结构化错误码与上下文）
+    #[allow(clippy::too_many_arguments)]
     pub fn write_client_log(
         &self,
         level: &str,
@@ -87,6 +105,11 @@ impl FileLogger {
         category: Option<&str>,
         msg: &str,
         detail: Option<&str>,
+        error_code: Option<&str>,
+        project: Option<&str>,
+        workspace: Option<&str>,
+        session_id: Option<&str>,
+        cycle_id: Option<&str>,
     ) {
         let record = LogRecord {
             ts: Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
@@ -96,6 +119,11 @@ impl FileLogger {
             category: category.map(|s| s.to_string()),
             msg: msg.to_string(),
             detail: detail.map(|s| s.to_string()),
+            error_code: error_code.map(|s| s.to_string()),
+            project: project.map(|s| s.to_string()),
+            workspace: workspace.map(|s| s.to_string()),
+            session_id: session_id.map(|s| s.to_string()),
+            cycle_id: cycle_id.map(|s| s.to_string()),
         };
         self.write_record(&record);
     }

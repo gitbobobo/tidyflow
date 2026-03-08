@@ -115,6 +115,10 @@ pub async fn run_project_command(
                                     "Command '{}' not found or workspace '{}' not found",
                                     command_id, workspace
                                 ),
+                                project: None,
+                                workspace: None,
+                                session_id: None,
+                                cycle_id: None,
                             },
                             broadcast: None,
                         };
@@ -126,6 +130,10 @@ pub async fn run_project_command(
                     response: ServerMessage::Error {
                         code: "project_not_found".to_string(),
                         message: format!("Project '{}' not found", project),
+                        project: None,
+                        workspace: None,
+                        session_id: None,
+                        cycle_id: None,
                     },
                     broadcast: None,
                 };
@@ -442,6 +450,10 @@ pub async fn cancel_project_command(
             response: ServerMessage::Error {
                 code: "command_not_running".to_string(),
                 message: "No matching running command".to_string(),
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
             },
             broadcast: None,
         };
@@ -461,6 +473,10 @@ pub async fn cancel_project_command(
             response: ServerMessage::Error {
                 code: "cancel_failed".to_string(),
                 message: format!("Failed to cancel running command: {}", e),
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
             },
             broadcast: None,
         };

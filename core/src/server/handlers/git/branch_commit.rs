@@ -57,6 +57,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "git_error".to_string(),
                             message: format!("Git branches failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -67,6 +71,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git branches task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -132,6 +140,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git switch branch task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -197,6 +209,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git create branch task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -257,6 +273,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git commit task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;

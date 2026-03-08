@@ -33,6 +33,10 @@ pub async fn select_workspace_and_spawn_terminal(
         .map_err(|e| ServerMessage::Error {
             code: "spawn_error".to_string(),
             message: format!("Spawn error: {}", e),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         })?
     };
 

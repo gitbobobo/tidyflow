@@ -27,6 +27,10 @@ pub(in crate::server::ws) async fn handle_binary_client_message(
             &ServerMessage::Error {
                 code: "message_error".to_string(),
                 message: e,
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
             },
             &format!(
                 "Failed to send error message: conn_id={}, message_type={}",

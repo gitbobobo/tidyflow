@@ -34,7 +34,7 @@ pub async fn import_project_message(
                 }
                 _ => ("import_error".to_string(), e.to_string()),
             };
-            ServerMessage::Error { code, message }
+            ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
         }
     }
 }
@@ -104,7 +104,7 @@ pub async fn create_workspace_message(
                 }
                 _ => ("workspace_error".to_string(), e.to_string()),
             };
-            ServerMessage::Error { code, message }
+            ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
         }
     }
 }
@@ -439,6 +439,10 @@ pub async fn export_template_message(
         ServerMessage::Error {
             code: "template_not_found".to_string(),
             message: format!("模板 '{}' 不存在", template_id),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         }
     }
 }

@@ -12,6 +12,11 @@ pub fn handle_log_message(client_msg: &ClientMessage) -> Result<bool, String> {
             category,
             msg,
             detail,
+            error_code,
+            project,
+            workspace,
+            session_id,
+            cycle_id,
         } => {
             FileLogger::global().write_client_log(
                 level,
@@ -19,6 +24,11 @@ pub fn handle_log_message(client_msg: &ClientMessage) -> Result<bool, String> {
                 category.as_deref(),
                 msg,
                 detail.as_deref(),
+                error_code.as_deref(),
+                project.as_deref(),
+                workspace.as_deref(),
+                session_id.as_deref(),
+                cycle_id.as_deref(),
             );
             Ok(true)
         }

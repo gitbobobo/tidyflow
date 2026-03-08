@@ -59,6 +59,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "git_error".to_string(),
                             message: format!("Git log failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -69,6 +73,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git log task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -130,6 +138,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "git_error".to_string(),
                             message: format!("Git show failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -140,6 +152,10 @@ pub async fn handle_message(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Git show task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;

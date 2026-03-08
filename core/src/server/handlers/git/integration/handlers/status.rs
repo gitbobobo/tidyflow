@@ -43,6 +43,10 @@ pub(crate) async fn handle_git_op_status(
                 &ServerMessage::Error {
                     code: "git_error".to_string(),
                     message: format!("Git op status failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -53,6 +57,10 @@ pub(crate) async fn handle_git_op_status(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Git op status task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -104,6 +112,10 @@ pub(crate) async fn handle_git_integration_status(
                 &ServerMessage::Error {
                     code: "git_error".to_string(),
                     message: format!("Integration status failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -114,6 +126,10 @@ pub(crate) async fn handle_git_integration_status(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Integration status task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -212,6 +228,10 @@ pub(crate) async fn handle_git_check_branch_up_to_date(
                         &ServerMessage::Error {
                             code: "git_error".to_string(),
                             message: format!("Integration status failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -222,6 +242,10 @@ pub(crate) async fn handle_git_check_branch_up_to_date(
                         &ServerMessage::Error {
                             code: "internal_error".to_string(),
                             message: format!("Integration status task failed: {}", e),
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
@@ -234,6 +258,10 @@ pub(crate) async fn handle_git_check_branch_up_to_date(
                 &ServerMessage::Error {
                     code: "git_error".to_string(),
                     message: format!("Check branch divergence failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -244,6 +272,10 @@ pub(crate) async fn handle_git_check_branch_up_to_date(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Check branch divergence task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;

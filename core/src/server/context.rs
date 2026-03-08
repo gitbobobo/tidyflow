@@ -237,6 +237,14 @@ pub enum AppError {
 
     #[error("{0}")]
     Custom(String),
+
+    /// AI 会话操作失败
+    #[error("AI session error: {0}")]
+    AISession(String),
+
+    /// Evolution 阶段执行失败
+    #[error("Evolution error: {0}")]
+    Evolution(String),
 }
 
 impl AppError {
@@ -249,14 +257,38 @@ impl AppError {
             AppError::File(_) => "file_error",
             AppError::Internal(_) => "internal_error",
             AppError::Custom(_) => "error",
+            AppError::AISession(_) => "ai_session_error",
+            AppError::Evolution(_) => "evolution_error",
         }
     }
 
-    /// 转换为 ServerMessage::Error
+    /// 转换为 ServerMessage::Error（无上下文，向后兼容）
     pub fn to_server_error(&self) -> ServerMessage {
         ServerMessage::Error {
             code: self.code().to_string(),
             message: self.to_string(),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
+        }
+    }
+
+    /// 转换为 ServerMessage::Error（带多工作区定位上下文）
+    pub fn to_server_error_with_context(
+        &self,
+        project: Option<String>,
+        workspace: Option<String>,
+        session_id: Option<String>,
+        cycle_id: Option<String>,
+    ) -> ServerMessage {
+        ServerMessage::Error {
+            code: self.code().to_string(),
+            message: self.to_string(),
+            project,
+            workspace,
+            session_id,
+            cycle_id,
         }
     }
 }

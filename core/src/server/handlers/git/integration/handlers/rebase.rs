@@ -59,6 +59,10 @@ pub(crate) async fn handle_git_rebase(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Git rebase task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -117,6 +121,10 @@ pub(crate) async fn handle_git_rebase_continue(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Git rebase continue task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -175,6 +183,10 @@ pub(crate) async fn handle_git_rebase_abort(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Git rebase abort task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -263,6 +275,10 @@ pub(crate) async fn handle_git_rebase_onto_default(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Rebase onto default task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -323,6 +339,10 @@ pub(crate) async fn handle_git_rebase_onto_default_continue(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Rebase continue task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -383,6 +403,10 @@ pub(crate) async fn handle_git_rebase_onto_default_abort(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Rebase abort task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;

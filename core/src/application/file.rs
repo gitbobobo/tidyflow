@@ -77,7 +77,7 @@ pub fn file_error_to_response(e: &FileApiError) -> (String, String) {
 
 fn file_error_message(e: &FileApiError) -> ServerMessage {
     let (code, message) = file_error_to_response(e);
-    ServerMessage::Error { code, message }
+    ServerMessage::Error { code, message, project: None, workspace: None, session_id: None, cycle_id: None }
 }
 
 pub fn file_list_message(root: &Path, project: &str, workspace: &str, path: &str) -> ServerMessage {
@@ -161,6 +161,10 @@ pub fn file_write_message(
         Err(_) => ServerMessage::Error {
             code: "invalid_utf8".to_string(),
             message: "Content is not valid UTF-8".to_string(),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
     }
 }
@@ -232,10 +236,18 @@ pub async fn file_index_message(
         Ok(Err(e)) => ServerMessage::Error {
             code: "io_error".to_string(),
             message: format!("Failed to index files: {}", e),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
         Err(e) => ServerMessage::Error {
             code: "internal_error".to_string(),
             message: format!("Index task failed: {}", e),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
     }
 }

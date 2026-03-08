@@ -435,7 +435,7 @@ pub enum ClientMessage {
         template: TemplateInfo,
     },
 
-    // v1.30: 客户端日志上报
+    // v1.30: 客户端日志上报（v1.30.1: 添加结构化错误码与上下文）
     LogEntry {
         level: String,
         source: String,
@@ -444,6 +444,18 @@ pub enum ClientMessage {
         msg: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// 结构化错误码（仅错误级别日志携带，Apple 端与 Core 端共享）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_code: Option<String>,
+        /// 错误上下文：用于多项目/多工作区场景下关联错误归属
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cycle_id: Option<String>,
     },
 
     // v1.37: 取消 AI 任务
@@ -1078,6 +1090,15 @@ pub enum ServerMessage {
     Error {
         code: String,
         message: String,
+        /// 可选错误上下文：多项目/多工作区环境下标识错误归属
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cycle_id: Option<String>,
     },
 
     // v1.16: Project/Workspace import results
@@ -2156,6 +2177,43 @@ pub fn v1_capabilities() -> Vec<String> {
         "evidence".to_string(),
         "evolution".to_string(),
     ]
+}
+
+// ============================================================================
+// ServerMessage 辅助构造方法
+// ============================================================================
+
+impl ServerMessage {
+    /// 创建不带上下文的错误消息（向后兼容的快捷方式）
+    pub fn make_error(code: impl Into<String>, message: impl Into<String>) -> Self {
+        ServerMessage::Error {
+            code: code.into(),
+            message: message.into(),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
+        }
+    }
+
+    /// 创建带项目/工作区上下文的错误消息（多工作区场景使用）
+    pub fn make_error_with_context(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        project: Option<String>,
+        workspace: Option<String>,
+        session_id: Option<String>,
+        cycle_id: Option<String>,
+    ) -> Self {
+        ServerMessage::Error {
+            code: code.into(),
+            message: message.into(),
+            project,
+            workspace,
+            session_id,
+            cycle_id,
+        }
+    }
 }
 
 #[cfg(test)]

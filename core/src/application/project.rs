@@ -49,6 +49,10 @@ pub async fn list_workspaces_message(
             return Err(ServerMessage::Error {
                 code: "project_not_found".to_string(),
                 message: format!("Project '{}' not found", project),
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
             });
         };
 

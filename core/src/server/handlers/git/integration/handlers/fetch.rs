@@ -57,6 +57,10 @@ pub(crate) async fn handle_git_fetch(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Git fetch task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;

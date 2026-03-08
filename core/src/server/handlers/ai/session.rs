@@ -273,6 +273,10 @@ pub(super) async fn handle_ai_read_via_http_required(
                 "{} must be fetched via HTTP API (/api/v1/projects/:project/workspaces/:workspace/ai/...)",
                 action
             ),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
     )
     .await?;

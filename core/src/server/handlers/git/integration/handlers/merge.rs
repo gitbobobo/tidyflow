@@ -62,6 +62,10 @@ pub(crate) async fn handle_git_ensure_integration_worktree(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Ensure integration worktree task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -151,6 +155,10 @@ pub(crate) async fn handle_git_merge_to_default(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Merge to default task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -210,6 +218,10 @@ pub(crate) async fn handle_git_merge_continue(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Merge continue task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -269,6 +281,10 @@ pub(crate) async fn handle_git_merge_abort(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Merge abort task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;
@@ -327,6 +343,10 @@ pub(crate) async fn handle_git_reset_integration_worktree(
                 &ServerMessage::Error {
                     code: "internal_error".to_string(),
                     message: format!("Reset integration worktree task failed: {}", e),
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
                 },
             )
             .await?;

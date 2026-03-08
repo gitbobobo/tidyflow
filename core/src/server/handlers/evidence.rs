@@ -83,6 +83,10 @@ async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Re
                 "{} must be fetched via HTTP API (/api/v1/evidence/...)",
                 action
             ),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
         },
     )
     .await

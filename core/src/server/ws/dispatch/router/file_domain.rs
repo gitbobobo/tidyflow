@@ -57,6 +57,10 @@ async fn handle_watch_subscribe(
                         &ServerMessage::Error {
                             code: "watch_subscribe_failed".to_string(),
                             message: e,
+                            project: None,
+                            workspace: None,
+                            session_id: None,
+                            cycle_id: None,
                         },
                     )
                     .await?;
