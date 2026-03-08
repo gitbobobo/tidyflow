@@ -1821,16 +1821,6 @@ struct EvolutionTabView: View {
         primaryControlShowsStop ? .red : .green
     }
 
-    private let evolutionStageOrder: [String] = [
-        "direction",
-        "plan",
-        "implement_general",
-        "implement_visual",
-        "implement_advanced",
-        "verify",
-        "auto_commit",
-    ]
-
     var body: some View {
         ZStack(alignment: .trailing) {
             VStack(spacing: 0) {
@@ -2389,12 +2379,13 @@ struct EvolutionTabView: View {
         let runtimeAgents = currentItem?.agents ?? []
         var runtimeByStage: [String: EvolutionAgentInfoV2] = [:]
         for runtime in runtimeAgents {
-            let key = normalizedStageKey(runtime.stage)
+            let key = runtime.stage.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else { continue }
             if runtimeByStage[key] == nil {
                 runtimeByStage[key] = runtime
             }
         }
+        let runtimeProfileKeys = Set(runtimeAgents.map { profileStageKey(for: $0.stage) })
 
         let configuredProfiles: [EvolutionStageProfileInfoV2] = {
             if let workspace, !workspace.isEmpty {
@@ -2422,36 +2413,24 @@ struct EvolutionTabView: View {
         for profile in configuredProfiles {
             let key = normalizedStageKey(profile.stage)
             guard !key.isEmpty else { continue }
+            guard !runtimeProfileKeys.contains(key) else { continue }
             guard seenStages.insert(key).inserted else { continue }
-
-            if let runtime = runtimeByStage[key] {
-                items.append(
-                    EvolutionAgentDisplayItem(
-                        id: key,
-                        stage: runtime.stage,
-                        agent: runtime.agent,
-                        status: runtime.status,
-                        toolCallCount: runtime.toolCallCount
-                    )
+            let mode = (profile.mode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let agentName = mode.isEmpty ? profile.aiTool.displayName : mode
+            items.append(
+                EvolutionAgentDisplayItem(
+                    id: key,
+                    stage: profile.stage,
+                    agent: agentName,
+                    status: "not_started",
+                    toolCallCount: 0
                 )
-            } else {
-                let mode = (profile.mode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let agentName = mode.isEmpty ? profile.aiTool.displayName : mode
-                items.append(
-                    EvolutionAgentDisplayItem(
-                        id: key,
-                        stage: profile.stage,
-                        agent: agentName,
-                        status: "not_started",
-                        toolCallCount: 0
-                    )
-                )
-            }
+            )
         }
 
         // 兼容运行时存在但配置中缺失的阶段，避免状态被吞掉。
         for runtime in runtimeAgents {
-            let key = normalizedStageKey(runtime.stage)
+            let key = runtime.stage.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else { continue }
             guard seenStages.insert(key).inserted else { continue }
             items.append(
@@ -2466,8 +2445,8 @@ struct EvolutionTabView: View {
         }
 
         return items.sorted { a, b in
-            let leftOrder = stageOrder(for: a.stage)
-            let rightOrder = stageOrder(for: b.stage)
+            let leftOrder = stageSortOrder(a.stage)
+            let rightOrder = stageSortOrder(b.stage)
             if leftOrder != rightOrder {
                 return leftOrder < rightOrder
             }
@@ -2566,10 +2545,21 @@ struct EvolutionTabView: View {
 
     private func normalizedStageKey(_ stage: String) -> String {
         let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == "implement" {
+        if normalized.hasPrefix("implement.general.") { return "implement_general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return index <= 2 ? "implement_general" : "implement_advanced"
+            }
             return "implement_general"
         }
+        if normalized == "implement" { return "implement_general" }
         return normalized
+    }
+
+    private func profileStageKey(for stage: String) -> String {
+        normalizedStageKey(stage)
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {
@@ -2619,18 +2609,54 @@ struct EvolutionTabView: View {
         status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private func stageOrder(for stage: String) -> Int {
-        let normalized = normalizedStageKey(stage)
-        if let index = evolutionStageOrder.firstIndex(of: normalized) {
-            return index
+    private func stageSortOrder(_ stage: String) -> (Int, Int, Int, String) {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "direction" { return (0, 0, 0, "") }
+        if normalized == "plan" { return (1, 0, 0, "") }
+        if normalized == "verify" { return (4, 0, 0, "") }
+        if normalized == "auto_commit" { return (5, 0, 0, "") }
+        if normalized.hasPrefix("implement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 3, let index = Int(parts[2]) {
+                let kindRank = parts[1] == "general" ? 0 : 1
+                return (2, index, kindRank, "")
+            }
         }
-        return evolutionStageOrder.count
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return (3, index, 0, "")
+            }
+        }
+        switch normalized {
+        case "implement_general", "implement":
+            return (2, 1, 0, "")
+        case "implement_visual":
+            return (2, 1, 1, "")
+        case "implement_advanced":
+            return (3, 1, 0, "")
+        default:
+            return (6, 0, 0, normalized)
+        }
     }
 
     private func stageDisplayName(_ stage: String) -> String {
         let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
-        switch trimmed.lowercased() {
+        let normalized = trimmed.lowercased()
+        if normalized.hasPrefix("implement.general.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement General #\(index)"
+        }
+        if normalized.hasPrefix("implement.visual.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement Visual #\(index)"
+        }
+        if normalized.hasPrefix("reimplement.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Reimplement #\(index)"
+        }
+        switch normalized {
         case "direction":
             return "evolution.stage.direction".localized
         case "plan":
@@ -2713,7 +2739,11 @@ struct EvolutionTabView: View {
     }
 
     private func stageIconName(_ stage: String) -> String {
-        switch stage.lowercased() {
+        let normalized = stage.lowercased()
+        if normalized.hasPrefix("implement.general.") { return "hammer" }
+        if normalized.hasPrefix("implement.visual.") { return "paintbrush" }
+        if normalized.hasPrefix("reimplement.") { return "wrench.and.screwdriver" }
+        switch normalized {
         case "direction":
             return "arrow.triangle.branch"
         case "plan":

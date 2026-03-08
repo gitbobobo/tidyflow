@@ -86,32 +86,28 @@ struct EvolutionPipelineView: View {
         return actionHelpText("evolution.page.action.startManual".localized, reason: controlCapability.startReason)
     }
 
-    private let evolutionStageOrder: [String] = [
-        "direction", "plan",
-        "implement_general", "implement_visual", "implement_advanced",
-        "verify", "auto_commit",
-    ]
-
-    /// 可循环的代理阶段
-    private let loopableStages: Set<String> = [
-        "implement_general", "implement_visual", "implement_advanced",
-        "verify",
-    ]
-
     private let loopRoundOptions = [1, 2, 3, 5, 10, 16, 20]
 
     // MARK: - 代理颜色映射
 
     private func stageColor(_ stage: String) -> Color {
         switch normalizedStageKey(stage) {
-        case "direction": return .cyan
-        case "plan": return .blue
-        case "implement_general": return .orange
-        case "implement_visual": return .pink
-        case "implement_advanced": return .purple
-        case "verify": return .green
-        case "auto_commit": return .gray
-        default: return .secondary
+        case "direction":
+            return .cyan
+        case "plan":
+            return .blue
+        case "implement.general":
+            return .orange
+        case "implement.visual":
+            return .pink
+        case "reimplement":
+            return .purple
+        case "verify":
+            return .green
+        case "auto_commit":
+            return .gray
+        default:
+            return .secondary
         }
     }
 
@@ -1590,15 +1586,16 @@ struct EvolutionPipelineView: View {
     }
 
     private func findProfile(for stageKey: String) -> EvolutionStageProfileInfoV2? {
+        let normalizedProfileStage = profileStageKey(for: stageKey)
         if let workspace, !workspace.isEmpty {
             let profiles = appState.evolutionProfiles(project: project, workspace: workspace)
-            if let match = profiles.first(where: { normalizedStageKey($0.stage) == stageKey }) {
+            if let match = profiles.first(where: { normalizedStageKey($0.stage) == normalizedProfileStage }) {
                 return match
             }
             // workspace 无对应阶段配置时，回退到全局默认配置
         }
         let defaults = appState.evolutionDefaultProfiles
-        if let match = defaults.first(where: { normalizedStageKey($0.stage) == stageKey }) {
+        if let match = defaults.first(where: { normalizedStageKey($0.stage) == normalizedProfileStage }) {
             let model: EvolutionModelSelectionV2? = {
                 guard !match.providerID.isEmpty, !match.modelID.isEmpty else { return nil }
                 return EvolutionModelSelectionV2(providerID: match.providerID, modelID: match.modelID)
@@ -1740,34 +1737,27 @@ struct EvolutionPipelineView: View {
     // MARK: - 数据逻辑
 
     private func computeStandbyAgents() -> [PipelineStandbyAgent] {
-        let runningStages = Set((currentItem?.agents ?? [])
-            .filter { normalizedStageStatus($0.status) == "running" }
-            .map { normalizedStageKey($0.stage) })
+        let agents = currentItem?.agents ?? []
+        let runningStages = Set(
+            agents
+                .filter { normalizedStageStatus($0.status) == "running" }
+                .map(\.stage)
+        )
+        let completedStages = Set(
+            agents
+                .filter { isCompletedStatus(normalizedStageStatus($0.status)) }
+                .map(\.stage)
+        )
+        let candidateStages = Array(Set(agents.map(\.stage))).sorted { lhs, rhs in
+            stageSortOrder(lhs) < stageSortOrder(rhs)
+        }
 
-        let completedStages = Set((currentItem?.agents ?? [])
-            .filter { isCompletedStatus(normalizedStageStatus($0.status)) }
-            .map { normalizedStageKey($0.stage) })
-
-        var standby: [PipelineStandbyAgent] = []
-
-        for stage in evolutionStageOrder {
+        return candidateStages.compactMap { stage in
             let isRunning = runningStages.contains(stage)
             let isCompleted = completedStages.contains(stage)
-
-            if !isRunning && !isCompleted {
-                standby.append(PipelineStandbyAgent(
-                    stage: stage,
-                    isLoopable: loopableStages.contains(stage)
-                ))
-            } else if isCompleted && loopableStages.contains(stage) {
-                // 可循环代理完成后回到待命区
-                standby.append(PipelineStandbyAgent(
-                    stage: stage,
-                    isLoopable: true
-                ))
-            }
+            guard !isRunning && !isCompleted else { return nil }
+            return PipelineStandbyAgent(stage: stage, isLoopable: isRepeatableStage(stage))
         }
-        return standby
     }
 
     private func updateTimeline() {
@@ -2216,8 +2206,66 @@ struct EvolutionPipelineView: View {
 
     private func normalizedStageKey(_ stage: String) -> String {
         let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == "implement" { return "implement_general" }
+        if normalized.hasPrefix("implement.general.") { return "implement.general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement.visual" }
+        if normalized.hasPrefix("reimplement.") { return "reimplement" }
+        if normalized == "implement_general" || normalized == "implement" { return "implement.general" }
+        if normalized == "implement_visual" { return "implement.visual" }
+        if normalized == "implement_advanced" { return "reimplement" }
         return normalized
+    }
+
+    private func stageSortOrder(_ stage: String) -> (Int, Int, Int, String) {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "direction" { return (0, 0, 0, "") }
+        if normalized == "plan" { return (1, 0, 0, "") }
+        if normalized == "verify" { return (4, 0, 0, "") }
+        if normalized == "auto_commit" { return (5, 0, 0, "") }
+        if normalized.hasPrefix("implement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 3, let index = Int(parts[2]) {
+                let kindRank = parts[1] == "general" ? 0 : 1
+                return (2, index, kindRank, "")
+            }
+        }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return (3, index, 0, "")
+            }
+        }
+        switch normalized {
+        case "implement_general", "implement":
+            return (2, 1, 0, "")
+        case "implement_visual":
+            return (2, 1, 1, "")
+        case "implement_advanced":
+            return (3, 1, 0, "")
+        default:
+            return (6, 0, 0, normalized)
+        }
+    }
+
+    private func profileStageKey(for stage: String) -> String {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.hasPrefix("implement.general.") { return "implement_general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return index <= 2 ? "implement_general" : "implement_advanced"
+            }
+            return "implement_general"
+        }
+        if normalized == "implement.general" { return "implement_general" }
+        if normalized == "implement.visual" { return "implement_visual" }
+        if normalized == "reimplement" { return "implement_general" }
+        return normalized
+    }
+
+    private func isRepeatableStage(_ stage: String) -> Bool {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "verify" || normalized.hasPrefix("reimplement.")
     }
 
     private func normalizedStageStatus(_ status: String) -> String {
@@ -2312,13 +2360,25 @@ struct EvolutionPipelineView: View {
     private func stageDisplayName(_ stage: String) -> String {
         let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
-        switch trimmed.lowercased() {
+        let normalized = trimmed.lowercased()
+        if normalized.hasPrefix("implement.general.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement General #\(index)"
+        }
+        if normalized.hasPrefix("implement.visual.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Implement Visual #\(index)"
+        }
+        if normalized.hasPrefix("reimplement.") {
+            let index = normalized.split(separator: ".").last.flatMap { Int($0) } ?? 0
+            return "Reimplement #\(index)"
+        }
+        switch normalized {
         case "direction": return "evolution.stage.direction".localized
         case "plan": return "evolution.stage.plan".localized
-        case "implement_general": return "evolution.stage.implementGeneral".localized
+        case "implement_general", "implement": return "evolution.stage.implementGeneral".localized
         case "implement_visual": return "evolution.stage.implementVisual".localized
         case "implement_advanced": return "evolution.stage.implementAdvanced".localized
-        case "implement": return "evolution.stage.implementGeneral".localized
         case "verify": return "evolution.stage.verify".localized
         case "auto_commit": return "evolution.stage.autoCommit".localized
         default: return trimmed
@@ -2326,7 +2386,11 @@ struct EvolutionPipelineView: View {
     }
 
     private func stageIconName(_ stage: String) -> String {
-        switch stage.lowercased() {
+        let normalized = stage.lowercased()
+        if normalized.hasPrefix("implement.general.") { return "hammer" }
+        if normalized.hasPrefix("implement.visual.") { return "paintbrush" }
+        if normalized.hasPrefix("reimplement.") { return "wrench.and.screwdriver" }
+        switch normalized {
         case "direction": return "arrow.triangle.branch"
         case "plan": return "map"
         case "implement_general", "implement": return "hammer"
