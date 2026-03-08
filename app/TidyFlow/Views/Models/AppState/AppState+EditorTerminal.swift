@@ -407,6 +407,7 @@ extension AppState {
         if let tabId = terminalTabIdBySessionId.removeValue(forKey: termId) {
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
+            clearPendingTerminalOutput(termId: termId)
             // 通过共享终端存储清理所有与该 termId 相关的追踪状态
             terminalSessionStore.handleTermClosed(termId: termId)
             for (globalKey, var tabs) in workspaceTabs {
@@ -430,6 +431,7 @@ extension AppState {
                 terminalSessionByTabId.removeValue(forKey: tabId)
                 staleTerminalTabs.remove(tabId)
                 terminalTabIdBySessionId.removeValue(forKey: termId)
+                clearPendingTerminalOutput(termId: termId)
                 // 通过共享终端存储清理所有与该 termId 相关的追踪状态
                 terminalSessionStore.handleTermClosed(termId: termId)
                 tabs[index].terminalSessionId = nil
@@ -532,12 +534,13 @@ extension AppState {
             // 通过共享终端存储记录 detach 请求时间
             terminalSessionStore.recordDetachRequest(termId: previousTermId)
             wsClient.requestTermDetach(termId: previousTermId)
+            clearPendingTerminalOutput(termId: previousTermId)
         }
 
         terminalSink = sink
         terminalSinkTabId = tabId
         sink.resetTerminal()
-        flushPendingTerminalOutput()
+        schedulePendingTerminalOutputFlush(forceImmediate: true)
         let switchCostMs = Int(Date().timeIntervalSince(switchStartedAt) * 1000)
         TFLog.app.info("perf.terminal.switch_ms=\(switchCostMs, privacy: .public)")
     }
@@ -553,10 +556,12 @@ extension AppState {
                 // 通过共享终端存储记录 detach 请求时间
                 terminalSessionStore.recordDetachRequest(termId: termId)
                 wsClient.requestTermDetach(termId: termId)
+                clearPendingTerminalOutput(termId: termId)
             }
             terminalSink = nil
             terminalSinkTabId = nil
-            pendingTerminalOutput.removeAll()
+            terminalOutputFlushWorkItem?.cancel()
+            terminalOutputFlushWorkItem = nil
         }
     }
     #endif
@@ -609,14 +614,13 @@ extension AppState {
         guard let tabId = findTabIdByTermId(termId) else { return }
 
         if terminalSinkTabId == tabId {
-            if let sink = terminalSink {
-                sink.writeOutput(bytes)
-            } else {
-                pendingTerminalOutput.append(bytes)
-                if pendingTerminalOutput.count > pendingOutputChunkLimit {
-                    pendingTerminalOutput.removeFirst(pendingTerminalOutput.count - pendingOutputChunkLimit)
-                }
+            pendingTerminalOutputByTermId[termId, default: []].append(bytes)
+            if pendingTerminalOutputByTermId[termId]?.count ?? 0 > pendingOutputChunkLimit {
+                pendingTerminalOutputByTermId[termId]?.removeFirst(
+                    (pendingTerminalOutputByTermId[termId]?.count ?? 0) - pendingOutputChunkLimit
+                )
             }
+            schedulePendingTerminalOutputFlush()
         }
 
         // 通过共享终端存储追踪 ACK 计数
@@ -628,13 +632,69 @@ extension AppState {
         }
     }
 
-    private func flushPendingTerminalOutput() {
-        guard let sink = terminalSink else { return }
-        guard !pendingTerminalOutput.isEmpty else { return }
-        for chunk in pendingTerminalOutput {
-            sink.writeOutput(chunk)
+    private func schedulePendingTerminalOutputFlush(forceImmediate: Bool = false) {
+        terminalOutputFlushWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.flushPendingTerminalOutput()
         }
-        pendingTerminalOutput.removeAll()
+        terminalOutputFlushWorkItem = workItem
+        let delay = forceImmediate ? 0 : terminalOutputFlushInterval
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func flushPendingTerminalOutput() {
+        terminalOutputFlushWorkItem = nil
+        guard let sink = terminalSink else { return }
+        guard let tabId = terminalSinkTabId,
+              let termId = terminalSessionByTabId[tabId],
+              var pendingChunks = pendingTerminalOutputByTermId[termId],
+              !pendingChunks.isEmpty else { return }
+
+        let startedAt = Date()
+        var bytesToWrite: [UInt8] = []
+        bytesToWrite.reserveCapacity(min(terminalOutputMaxBytesPerFlush, pendingChunks.reduce(0) { $0 + $1.count }))
+
+        while let first = pendingChunks.first {
+            let nextSize = bytesToWrite.count + first.count
+            if !bytesToWrite.isEmpty && nextSize > terminalOutputMaxBytesPerFlush {
+                break
+            }
+            bytesToWrite.append(contentsOf: first)
+            pendingChunks.removeFirst()
+            if bytesToWrite.count >= terminalOutputMaxBytesPerFlush {
+                break
+            }
+        }
+
+        if bytesToWrite.isEmpty, let first = pendingChunks.first {
+            bytesToWrite = first
+            pendingChunks.removeFirst()
+        }
+
+        guard !bytesToWrite.isEmpty else { return }
+        sink.writeOutput(bytesToWrite)
+
+        if pendingChunks.isEmpty {
+            pendingTerminalOutputByTermId.removeValue(forKey: termId)
+        } else {
+            pendingTerminalOutputByTermId[termId] = pendingChunks
+            schedulePendingTerminalOutputFlush()
+        }
+
+        let costMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        TFLog.perf.debug(
+            "terminal_output_flush_ms=\(costMs, privacy: .public) bytes=\(bytesToWrite.count, privacy: .public) pending_chunks=\(pendingChunks.count, privacy: .public)"
+        )
+    }
+
+    private func clearPendingTerminalOutput(termId: String?) {
+        guard let termId, !termId.isEmpty else { return }
+        pendingTerminalOutputByTermId.removeValue(forKey: termId)
+    }
+
+    private func clearPendingTerminalOutput(for tabId: UUID) {
+        guard let termId = terminalSessionByTabId[tabId] else { return }
+        clearPendingTerminalOutput(termId: termId)
     }
 
     private func tryRunPendingCommandIfNeeded(tabId: UUID, termId: String) {

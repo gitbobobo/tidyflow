@@ -726,8 +726,11 @@ class AppState: ObservableObject {
     weak var terminalSink: MacTerminalOutputSink?
     var terminalSinkTabId: UUID?
     #endif
-    var pendingTerminalOutput: [[UInt8]] = []
+    var pendingTerminalOutputByTermId: [String: [[UInt8]]] = [:]
     let pendingOutputChunkLimit = 128
+    let terminalOutputFlushInterval: TimeInterval = 0.016
+    let terminalOutputMaxBytesPerFlush = 32 * 1024
+    var terminalOutputFlushWorkItem: DispatchWorkItem?
     var termOutputUnackedBytesByTermId: [String: Int] = [:]
     let termOutputAckThreshold = 50 * 1024
     var terminalAttachRequestedAtByTermId: [String: Date] = [:]
