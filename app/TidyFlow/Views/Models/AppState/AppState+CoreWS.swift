@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Darwin
+import TidyFlowShared
 
 private struct PairStartHTTPResponse: Decodable {
     let pairCode: String

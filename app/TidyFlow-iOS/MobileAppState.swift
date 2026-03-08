@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import TidyFlowShared
 
 private struct PairExchangeHTTPBody: Encodable {
     let pairCode: String

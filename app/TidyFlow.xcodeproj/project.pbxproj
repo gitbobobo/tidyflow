@@ -7,6 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		SHR02001 /* CoreErrorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01001 /* CoreErrorModels.swift */; };
+		SHR02002 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01002 /* ProjectProtocolModels.swift */; };
+		SHR02003 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01003 /* GitProtocolModels.swift */; };
+		SHR02004 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01004 /* FileProtocolModels.swift */; };
+		SHR02005 /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01005 /* AIChatProtocolModels.swift */; };
+		SHR02006 /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01006 /* TerminalProtocolModels.swift */; };
+		SHR02007 /* MessageHandlerProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01007 /* MessageHandlerProtocols.swift */; };
+		SHR02008 /* CoreTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01008 /* CoreTransport.swift */; };
+		SHR02009 /* CoreWSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01009 /* CoreWSClient.swift */; };
+		SHR03001 /* TidyFlowShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; };
+		SHR03002 /* SharedProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100A /* SharedProtocolModelsTests.swift */; };
+		SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100B /* SharedNetworkAbstractionTests.swift */; };
+		SHR05002 /* TidyFlowShared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+
 		28C59DA5E6FE98CF4D53E0B4 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
 		29487A27F065FE0B9D8A8266 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */; };
@@ -228,9 +242,33 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 			name = "Copy Core Binary";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		SHR05001 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				SHR05002 /* TidyFlowShared.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		SHR00005 /* TidyFlowShared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TidyFlowShared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		SHR01001 /* CoreErrorModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreErrorModels.swift; sourceTree = "<group>"; };
+		SHR01002 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01003 /* GitProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01004 /* FileProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01005 /* AIChatProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01006 /* TerminalProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01007 /* MessageHandlerProtocols.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerProtocols.swift; sourceTree = "<group>"; };
+		SHR01008 /* CoreTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreTransport.swift; sourceTree = "<group>"; };
+		SHR01009 /* CoreWSClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSClient.swift; sourceTree = "<group>"; };
+		SHR0100A /* SharedProtocolModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedProtocolModelsTests.swift; sourceTree = "<group>"; };
+		SHR0100B /* SharedNetworkAbstractionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedNetworkAbstractionTests.swift; sourceTree = "<group>"; };
+
 		0C7853A8D54BE247818D1333 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalProtocolModels.swift; sourceTree = "<group>"; };
 		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
@@ -426,6 +464,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				SHR03001 /* TidyFlowShared.framework in Frameworks */,
 				MSGPK001 /* MessagePacker in Frameworks */,
 				SWTERM01 /* SwiftTerm in Frameworks */,
 				TXTL001 /* Textual in Frameworks */,
@@ -439,9 +478,49 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		SHR00007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		SHR00008 /* TidyFlowShared */ = {
+			isa = PBXGroup;
+			children = (
+				SHR00009 /* Protocol */,
+				SHR0000A /* Networking */,
+			);
+			path = TidyFlowShared;
+			sourceTree = "<group>";
+		};
+		SHR00009 /* Protocol */ = {
+			isa = PBXGroup;
+			children = (
+				SHR01001 /* CoreErrorModels.swift */,
+				SHR01002 /* ProjectProtocolModels.swift */,
+				SHR01003 /* GitProtocolModels.swift */,
+				SHR01004 /* FileProtocolModels.swift */,
+				SHR01005 /* AIChatProtocolModels.swift */,
+				SHR01006 /* TerminalProtocolModels.swift */,
+				SHR01007 /* MessageHandlerProtocols.swift */,
+			);
+			path = Protocol;
+			sourceTree = "<group>";
+		};
+		SHR0000A /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				SHR01008 /* CoreTransport.swift */,
+				SHR01009 /* CoreWSClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+
 		2AEE0BAE2F2F0BAA009B67A9 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -559,6 +638,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		A1000007 = {
 			isa = PBXGroup;
 			children = (
+				SHR00008 /* TidyFlowShared */,
 				A1000020 /* TidyFlow */,
 				A100000F /* Products */,
 				3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */,
@@ -571,6 +651,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		A100000F /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				SHR00005 /* TidyFlowShared.framework */,
 				A1000010 /* TidyFlow-Debug.app */,
 				TST10020 /* TidyFlowTests.xctest */,
 				E2E10120 /* TidyFlowE2ETests.xctest */,
@@ -624,6 +705,8 @@ TSST013 /* TerminalSessionStoreTests.swift */,
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
+				SHR0100A /* SharedProtocolModelsTests.swift */,
+				SHR0100B /* SharedNetworkAbstractionTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -768,10 +851,12 @@ TSST011 /* TerminalSessionStore.swift */,
 				A100000D /* Frameworks */,
 				A100000E /* Resources */,
 				D3900031 /* Copy Core Binary */,
+				SHR05001 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				SHR04001 /* PBXTargetDependency */,
 			);
 			name = TidyFlow;
 			packageProductDependencies = (
@@ -816,6 +901,22 @@ TSST011 /* TerminalSessionStore.swift */,
 			productReference = E2E10120 /* TidyFlowE2ETests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		SHR00001 /* TidyFlowShared */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = SHR00002 /* Build configuration list for PBXNativeTarget "TidyFlowShared" */;
+			buildPhases = (
+				SHR00006 /* Sources */,
+				SHR00007 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TidyFlowShared;
+			productName = TidyFlowShared;
+			productReference = SHR00005 /* TidyFlowShared.framework */;
+			productType = "com.apple.product-type.framework";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -826,6 +927,9 @@ TSST011 /* TerminalSessionStore.swift */,
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
+					SHR00001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
 					A100000A = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -858,6 +962,7 @@ TSST011 /* TerminalSessionStore.swift */,
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				SHR00001 /* TidyFlowShared */,
 				A100000A /* TidyFlow */,
 				TST100A0 /* TidyFlowTests */,
 				E2E102A0 /* TidyFlowE2ETests */,
@@ -1090,6 +1195,8 @@ TSST003 /* TerminalSessionStoreTests.swift in Sources */,
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
+				SHR03002 /* SharedProtocolModelsTests.swift in Sources */,
+				SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1099,6 +1206,22 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			files = (
 				E2E10001 /* EvidenceRecorder.swift in Sources */,
 				E2E10002 /* TidyFlowE2ETests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		SHR00006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				SHR02001 /* CoreErrorModels.swift in Sources */,
+				SHR02002 /* ProjectProtocolModels.swift in Sources */,
+				SHR02003 /* GitProtocolModels.swift in Sources */,
+				SHR02004 /* FileProtocolModels.swift in Sources */,
+				SHR02005 /* AIChatProtocolModels.swift in Sources */,
+				SHR02006 /* TerminalProtocolModels.swift in Sources */,
+				SHR02007 /* MessageHandlerProtocols.swift in Sources */,
+				SHR02008 /* CoreTransport.swift in Sources */,
+				SHR02009 /* CoreWSClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1119,6 +1242,13 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			remoteGlobalIDString = A100000A;
 			remoteInfo = TidyFlow;
 		};
+		SHR04002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000008 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = SHR00001;
+			remoteInfo = TidyFlowShared;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
@@ -1131,6 +1261,11 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			isa = PBXTargetDependency;
 			target = A100000A /* TidyFlow */;
 			targetProxy = E2E102E0 /* PBXContainerItemProxy */;
+		};
+		SHR04001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = SHR00001 /* TidyFlowShared */;
+			targetProxy = SHR04002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1604,6 +1739,48 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			};
 			name = Release;
 		};
+		SHR00003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.tidyflow.shared";
+				PRODUCT_NAME = TidyFlowShared;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		SHR00004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.tidyflow.shared";
+				PRODUCT_NAME = TidyFlowShared;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1639,6 +1816,15 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			buildConfigurations = (
 				E2E102C1 /* Debug */,
 				E2E102C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		SHR00002 /* Build configuration list for PBXNativeTarget "TidyFlowShared" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				SHR00003 /* Debug */,
+				SHR00004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

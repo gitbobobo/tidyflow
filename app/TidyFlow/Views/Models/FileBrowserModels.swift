@@ -112,53 +112,8 @@ struct GitStatusIndex {
 }
 
 // MARK: - 文件浏览器模型
+// FileEntry と FileListResult は TidyFlowShared/Protocol/FileProtocolModels.swift へ移行
 
-/// 文件条目信息（对应 Core 的 FileEntryInfo）
-struct FileEntry: Identifiable, Equatable {
-    var id: String { path }
-    let name: String
-    let path: String      // 相对路径
-    let isDir: Bool
-    let size: UInt64
-    let isIgnored: Bool   // 是否被 .gitignore 忽略
-    let isSymlink: Bool   // 是否为符号链接
-
-    /// 从 JSON 解析
-    static func from(json: [String: Any], parentPath: String) -> FileEntry? {
-        guard let name = json["name"] as? String,
-              let isDir = json["is_dir"] as? Bool else {
-            return nil
-        }
-        let size = json["size"] as? UInt64 ?? 0
-        let isIgnored = json["is_ignored"] as? Bool ?? false
-        let isSymlink = json["is_symlink"] as? Bool ?? false
-        let path = parentPath.isEmpty ? name : "\(parentPath)/\(name)"
-        return FileEntry(name: name, path: path, isDir: isDir, size: size, isIgnored: isIgnored, isSymlink: isSymlink)
-    }
-}
-
-/// 文件列表请求结果
-struct FileListResult {
-    let project: String
-    let workspace: String
-    let path: String
-    let items: [FileEntry]
-    
-    static func from(json: [String: Any]) -> FileListResult? {
-        guard let project = json["project"] as? String,
-              let workspace = json["workspace"] as? String,
-              let path = json["path"] as? String,
-              let itemsJson = json["items"] as? [[String: Any]] else {
-            return nil
-        }
-        
-        let parentPath = path == "." ? "" : path
-        let items = itemsJson.compactMap { FileEntry.from(json: $0, parentPath: parentPath) }
-        return FileListResult(project: project, workspace: workspace, path: path, items: items)
-    }
-}
-
-/// 目录节点模型（用于展开/折叠状态管理）
 class DirectoryNode: Identifiable, ObservableObject {
     let id: String
     let name: String

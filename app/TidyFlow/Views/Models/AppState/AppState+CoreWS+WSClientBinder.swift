@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 extension AppState {
     // MARK: - WebSocket Setup

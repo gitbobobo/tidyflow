@@ -6,15 +6,6 @@ import os
 // - WSClient+Send.swift     所有 send/request 方法
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
-struct ServerEnvelopeMeta {
-    let seq: UInt64
-    let domain: String
-    let action: String
-    let kind: String
-    let requestID: String?
-    let serverTS: UInt64?
-}
-
 /// Minimal WebSocket client for Core communication
 /// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v7，包络结构沿用 v6）
 class WSClient: NSObject, ObservableObject {
