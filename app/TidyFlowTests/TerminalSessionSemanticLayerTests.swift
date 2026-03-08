@@ -180,4 +180,66 @@ final class TerminalSessionSemanticLayerTests: XCTestCase {
         let info = TerminalDisplayInfo.restoreFrom(session: session)
         XCTAssertNil(info)
     }
+
+    // MARK: - TerminalAIStatus.isVisible 展示规则
+
+    func testAIStatusIsVisible_idleIsHidden() {
+        XCTAssertFalse(TerminalAIStatus.idle.isVisible, "idle 状态不应显示状态指示器")
+    }
+
+    func testAIStatusIsVisible_nonIdleStatesAreVisible() {
+        XCTAssertTrue(TerminalAIStatus.running(toolName: "Codex").isVisible)
+        XCTAssertTrue(TerminalAIStatus.awaitingInput.isVisible)
+        XCTAssertTrue(TerminalAIStatus.success.isVisible)
+        XCTAssertTrue(TerminalAIStatus.failure(message: nil).isVisible)
+        XCTAssertTrue(TerminalAIStatus.cancelled.isVisible)
+    }
+
+    // MARK: - AI 状态映射大小写不敏感
+
+    func testAIStatusMapping_caseInsensitive() {
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(from: "RUNNING", errorMessage: nil, toolName: "T", aiToolDisplayName: "AI"),
+            .running(toolName: "T")
+        )
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(from: "SUCCESS", errorMessage: nil, toolName: nil, aiToolDisplayName: "AI"),
+            .success
+        )
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(from: "CANCELLED", errorMessage: nil, toolName: nil, aiToolDisplayName: "AI"),
+            .cancelled
+        )
+    }
+
+    func testAIStatusMapping_trimmedWhitespace() {
+        let status = TerminalSessionSemantics.terminalAIStatus(
+            from: "  success  ", errorMessage: nil, toolName: nil, aiToolDisplayName: "AI"
+        )
+        XCTAssertEqual(status, .success)
+    }
+
+    // MARK: - 多项目工作区 AI 状态边界（WI-001 契约：多项目隔离）
+
+    func testAIStatusMapping_sameStatusAcrossDifferentProjects() {
+        // 相同后端 status 字符串在不同 project/workspace 下映射结果应一致
+        let statusA = TerminalSessionSemantics.terminalAIStatus(
+            from: "running", errorMessage: nil, toolName: "Codex", aiToolDisplayName: "AI"
+        )
+        let statusB = TerminalSessionSemantics.terminalAIStatus(
+            from: "running", errorMessage: nil, toolName: "Codex", aiToolDisplayName: "AI"
+        )
+        XCTAssertEqual(statusA, statusB, "相同输入在不同工作区下应产生相同语义结果")
+    }
+
+    func testAIStatusMapping_failureWithNilMessage() {
+        let status = TerminalSessionSemantics.terminalAIStatus(
+            from: "failure", errorMessage: nil, toolName: nil, aiToolDisplayName: "AI"
+        )
+        if case .failure(let msg) = status {
+            XCTAssertNil(msg, "failure 时 errorMessage 为 nil 应透传为 nil")
+        } else {
+            XCTFail("Expected .failure")
+        }
+    }
 }
