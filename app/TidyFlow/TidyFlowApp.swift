@@ -256,6 +256,7 @@ struct TidyFlowApp: App {
             StartupLoadingView()
         case .ready:
             ContentView()
+                .accessibilityIdentifier("tf.mac.app.ready")
         case .failed(let message):
             StartupFailedView(message: message) {
                 appState.retryStartup()

@@ -86,6 +86,7 @@ struct MobileAIChatView: View {
                 }) {
                     Image(systemName: "clock.arrow.circlepath")
                 }
+                .accessibilityIdentifier("tf.ios.ai.session-list-button")
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
@@ -93,6 +94,7 @@ struct MobileAIChatView: View {
                 }) {
                     Image(systemName: "square.and.pencil")
                 }
+                .accessibilityIdentifier("tf.ios.ai.new-session")
             }
             #else
             ToolbarItem(placement: .automatic) {
@@ -194,6 +196,7 @@ struct MobileAIChatView: View {
             sawCodexPlanProposalInCurrentTurn = false
             codexPlanProposalPartIDInCurrentTurn = nil
         }
+        .accessibilityIdentifier("tf.ios.ai.chat-area")
     }
 
     private var isLoadingMessages: Bool {

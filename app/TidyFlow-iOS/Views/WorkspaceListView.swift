@@ -53,11 +53,13 @@ struct WorkspaceListView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        .accessibilityIdentifier("tf.ios.workspace.item.\(workspace.name)")
                     }
                 }
             }
         }
         .navigationTitle(project)
+        .accessibilityIdentifier("tf.ios.workspace.list")
         .refreshable {
             appState.selectProject(project)
         }
@@ -87,6 +89,7 @@ struct WorkspaceListView: View {
                 .padding(.vertical, 2)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("tf.ios.workspace.new-terminal.\(workspace)")
         } else {
             Menu {
                 Button {

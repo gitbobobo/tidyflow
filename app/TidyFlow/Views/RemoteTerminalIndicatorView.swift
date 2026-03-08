@@ -30,6 +30,7 @@ struct RemoteTerminalIndicatorView: View {
             }
             .buttonStyle(.plain)
             .help("toolbar.remoteTerminals".localized)
+            .accessibilityIdentifier("tf.mac.toolbar.remoteTerminal")
             .popover(isPresented: $showPopover, arrowEdge: .bottom) {
                 remoteTermPopover
             }

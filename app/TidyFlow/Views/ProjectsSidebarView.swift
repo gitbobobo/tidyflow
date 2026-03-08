@@ -185,7 +185,6 @@ struct ProjectsSidebarView: View {
         return rows
     }
 
-    /// 使用 ScrollView + LazyVStack 实现无间距列表，与资源管理器面板保持一致
     private var projectListView: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -208,6 +207,7 @@ struct ProjectsSidebarView: View {
             .padding(.vertical, 4)
         }
         .padding(.horizontal, 4)
+        .accessibilityIdentifier("tf.mac.sidebar.workspace-list")
     }
 }
 
@@ -453,6 +453,7 @@ struct WorkspaceRowView: View {
             }
         }
         .tag(workspace.name)
+        .accessibilityIdentifier("tf.mac.sidebar.workspace.\(workspace.name)")
         // 工作空间右键菜单：删除中时不显示
         .contextMenu {
             if !isDeleting {

@@ -60,6 +60,7 @@ struct SessionsPanelView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("新建会话")
+                .accessibilityIdentifier("tf.mac.ai.new-session")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -144,6 +145,7 @@ struct SessionsPanelView: View {
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
             requestSessionList(for: appState.sessionPanelFilter)
         }
+        .accessibilityIdentifier("tf.mac.ai.sessions-panel")
     }
 
     /// 向服务端请求指定筛选条件的 AI 会话列表

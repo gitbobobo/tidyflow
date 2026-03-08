@@ -110,6 +110,7 @@ struct CenterContentView: View {
                 onConfirm: { appState.performSaveAs(newPath: $0) }
             )
         }
+        .accessibilityIdentifier("tf.mac.content.main")
     }
 
     // MARK: - 展开状态的 Tab 面板

@@ -131,6 +131,7 @@ struct MobileSessionListSheet: View {
                     }) {
                         Image(systemName: "plus")
                     }
+                    .accessibilityIdentifier("tf.ios.ai.new-session")
                 }
                 #else
                 ToolbarItem(placement: .cancellationAction) {
@@ -156,6 +157,7 @@ struct MobileSessionListSheet: View {
         .onChange(of: filter) { _, newFilter in
             requestSessionList(for: newFilter)
         }
+        .accessibilityIdentifier("tf.ios.ai.sessions-panel")
     }
 
     /// 向服务端请求指定筛选条件的 AI 会话列表

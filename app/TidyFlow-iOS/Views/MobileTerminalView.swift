@@ -55,5 +55,6 @@ struct MobileTerminalView: View {
         .onDisappear {
             appState.detachTerminal()
         }
+        .accessibilityIdentifier("tf.ios.terminal.container")
     }
 }

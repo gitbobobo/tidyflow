@@ -131,6 +131,7 @@ struct ChatInputView: View {
             return true
         }
         #endif
+        .accessibilityIdentifier("tf.ai.input.container")
     }
 
     #if os(iOS)
@@ -1271,6 +1272,7 @@ struct ChatInputView: View {
                 .buttonStyle(.plain)
                 .disabled(!canStopStreaming)
                 .help(canStopStreaming ? "停止生成" : "会话创建中，暂不可停止")
+                .accessibilityIdentifier("tf.ai.input.stop-button")
             } else {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")
@@ -1283,8 +1285,10 @@ struct ChatInputView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend)
                 .help("发送")
+                .accessibilityIdentifier("tf.ai.input.send-button")
             }
         }
+        .accessibilityIdentifier("tf.ai.input.action-button")
     }
 }
 

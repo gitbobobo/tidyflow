@@ -198,6 +198,7 @@ struct WorkspaceDetailView: View {
         }
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("tf.ios.workspace.detail.\(workspace)")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 evidenceButton

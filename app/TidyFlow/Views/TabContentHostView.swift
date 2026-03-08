@@ -117,6 +117,7 @@ struct TerminalContentView: View {
             guard let requestedTabId = note.object as? UUID, requestedTabId == tab.id else { return }
             searchState.show()
         }
+        .accessibilityIdentifier("tf.mac.terminal.container")
     }
 
     @ViewBuilder

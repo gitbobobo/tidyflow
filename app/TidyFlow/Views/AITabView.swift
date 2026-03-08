@@ -250,6 +250,7 @@ struct AITabView: View {
             chatContent
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("tf.mac.ai.chat-area")
     }
 
     private var chatContent: some View {
