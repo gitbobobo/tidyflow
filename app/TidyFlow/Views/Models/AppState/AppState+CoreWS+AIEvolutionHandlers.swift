@@ -392,6 +392,15 @@ extension AppState {
                 status: ev.status.status
             )
         }
+        // WI-002：result 事件同样需要落到终端标签状态，避免初始快照不触发 update 时标签长期空白
+        syncAIStatusToTerminalTabs(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            toolName: ev.status.toolName
+        )
     }
 
     func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
@@ -500,6 +509,15 @@ extension AppState {
                 status: fallbackStatus
             )
         }
+        // WI-002：done 兜底收敛同样要落到终端标签，不受当前选中工作区限制
+        syncAIStatusToTerminalTabs(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: fallbackStatus,
+            errorMessage: nil,
+            toolName: nil
+        )
 
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -554,6 +572,15 @@ extension AppState {
                 status: "failure"
             )
         }
+        // WI-002：error 兜底收敛同样要落到终端标签，不受当前选中工作区限制
+        syncAIStatusToTerminalTabs(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            status: "failure",
+            errorMessage: ev.error,
+            toolName: nil
+        )
 
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }

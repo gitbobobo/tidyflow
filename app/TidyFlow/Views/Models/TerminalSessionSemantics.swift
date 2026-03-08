@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - 终端会话共享语义层
 //
@@ -6,6 +7,31 @@ import Foundation
 // AI 会话状态到 TerminalAIStatus 的映射、终端展示信息恢复与同工作区排序规则。
 // macOS 与 iOS 通过此层共享规则，不再各自维护同义私有实现。
 // 所有键均显式带上 project/workspace/termId 边界，禁止将单项目假设编码进状态派生逻辑。
+
+// MARK: - 终端 AI 状态（六态枚举）
+
+/// 终端标签中 AI 代理的执行状态（六态）。
+/// macOS 与 iOS 共用此定义，跨端消费同一状态语义。
+enum TerminalAIStatus: Equatable {
+    /// 空闲：无 AI 任务运行，标签栏不展示状态指示器
+    case idle
+    /// 执行中：AI 正在运行，toolName 为 AI 工具显示名（如 "Codex"、"Opencode"）
+    case running(toolName: String?)
+    /// 等待输入：AI 需要用户确认或提供输入
+    case awaitingInput
+    /// 成功完成
+    case success
+    /// 失败，message 为可选错误摘要
+    case failure(message: String?)
+    /// 已取消
+    case cancelled
+
+    /// 是否需要在终端入口显示状态指示器（空闲时隐藏）
+    var isVisible: Bool {
+        if case .idle = self { return false }
+        return true
+    }
+}
 
 // MARK: - 终端运行状态归一化
 
@@ -95,8 +121,8 @@ enum TerminalSessionSemantics {
 
     // MARK: - AI 执行状态映射
 
-    #if os(macOS)
     /// 将 AI 会话状态字符串映射为 TerminalAIStatus（六态枚举）。
+    /// macOS 与 iOS 共享此映射，不再分平台维护独立实现。
     /// - Parameters:
     ///   - status: 后端 AI 会话状态字符串（如 "running"、"awaiting_input"、"success" 等）
     ///   - errorMessage: 可选错误摘要（failure 时使用）
@@ -124,7 +150,6 @@ enum TerminalSessionSemantics {
             return .idle
         }
     }
-    #endif
 
     // MARK: - 工作区终端排序
 
@@ -178,6 +203,51 @@ enum TerminalSessionSemantics {
             }
         }
         return result.filter { activeWorkspaceKeys.contains($0.key) }
+    }
+}
+
+// MARK: - TerminalAIStatus 视觉属性（跨端共享）
+
+extension TerminalAIStatus {
+    /// SF Symbol 图标名称（macOS 与 iOS 统一使用）
+    var iconName: String {
+        switch self {
+        case .idle: return "circle.fill"
+        case .running: return "bolt.circle.fill"
+        case .awaitingInput: return "questionmark.circle.fill"
+        case .success: return "checkmark.circle.fill"
+        case .failure: return "xmark.circle.fill"
+        case .cancelled: return "minus.circle.fill"
+        }
+    }
+
+    /// 状态颜色（使用 SwiftUI 跨端语义颜色）
+    var color: Color {
+        switch self {
+        case .idle: return .secondary.opacity(0.4)
+        case .running: return .blue
+        case .awaitingInput: return .orange
+        case .success: return .green
+        case .failure: return .red
+        case .cancelled: return .secondary
+        }
+    }
+
+    /// 悬浮提示与辅助标签文案（含 AI 工具名或错误摘要）
+    var hint: String {
+        switch self {
+        case .idle: return ""
+        case .running(let toolName):
+            return toolName.map { "AI 执行中 · \($0)" } ?? "AI 执行中"
+        case .awaitingInput:
+            return "等待用户输入"
+        case .success:
+            return "AI 已完成"
+        case .failure(let message):
+            return message.map { "AI 失败：\($0)" } ?? "AI 失败"
+        case .cancelled:
+            return "AI 已取消"
+        }
     }
 }
 

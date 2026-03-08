@@ -129,6 +129,8 @@ extension AppState {
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
+            // WI-002：终端关闭时同步清除 AI 状态，防止脏状态残留到下次打开同 tab UUID
+            terminalStore.clearTerminalAIStatus(for: tabId)
         }
 
         // 编辑器 Tab 关闭时通知 JS 层清理缓存

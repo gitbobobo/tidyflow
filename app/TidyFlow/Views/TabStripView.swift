@@ -1,50 +1,5 @@
 import SwiftUI
 
-// MARK: - TerminalAIStatus 显示属性
-
-extension TerminalAIStatus {
-    /// SF Symbol 图标名称
-    var iconName: String {
-        switch self {
-        case .idle: return "circle.fill"
-        case .running: return "bolt.circle.fill"
-        case .awaitingInput: return "questionmark.circle.fill"
-        case .success: return "checkmark.circle.fill"
-        case .failure: return "xmark.circle.fill"
-        case .cancelled: return "minus.circle.fill"
-        }
-    }
-
-    /// 状态颜色
-    var color: Color {
-        switch self {
-        case .idle: return .secondary.opacity(0.4)
-        case .running: return .blue
-        case .awaitingInput: return .orange
-        case .success: return .green
-        case .failure: return .red
-        case .cancelled: return .secondary
-        }
-    }
-
-    /// 悬浮提示文案（包含 AI 工具名或错误信息）
-    var hint: String {
-        switch self {
-        case .idle: return ""
-        case .running(let toolName):
-            return toolName.map { "AI 执行中 · \($0)" } ?? "AI 执行中"
-        case .awaitingInput:
-            return "等待用户输入"
-        case .success:
-            return "AI 已完成"
-        case .failure(let message):
-            return message.map { "AI 失败：\($0)" } ?? "AI 失败"
-        case .cancelled:
-            return "AI 已取消"
-        }
-    }
-}
-
 struct TabStripView: View {
     @EnvironmentObject var appState: AppState
 
@@ -196,16 +151,17 @@ struct TabStripView: View {
 
     @ViewBuilder
     private func aiStatusIndicator(globalKey _: String) -> some View {
-        if let indicator = aiStatus() {
-            Image(systemName: indicator.iconName)
+        if let status = aiStatus() {
+            Image(systemName: status.iconName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(indicator.color)
-                .help(indicator.hint)
+                .foregroundColor(status.color)
+                .help(status.hint)
                 .frame(width: 16, height: 16)
         }
     }
 
-    private func aiStatus() -> (iconName: String, color: Color, hint: String)? {
+    /// 从当前活跃 AI 会话推导工作区级状态令牌，空闲时返回 nil。
+    private func aiStatus() -> TerminalAIStatus? {
         guard let workspaceKey = appState.selectedWorkspaceKey,
               let sessionId = appState.aiStore(for: appState.aiChatTool).currentSessionId else { return nil }
         let session = AISessionInfo(
@@ -216,21 +172,14 @@ struct TabStripView: View {
             title: "",
             updatedAt: 0
         )
-        guard let status = appState.aiSessionStatus(for: session) else { return nil }
-        switch status.normalizedStatus {
-        case "running":
-            return ("bolt.circle.fill", .blue, "AI：运行中")
-        case "awaiting_input":
-            return ("hourglass.circle.fill", .yellow, "AI：等待输入")
-        case "success":
-            return ("checkmark.circle.fill", .green, "AI：已完成")
-        case "failure", "error":
-            return ("xmark.octagon.fill", .red, status.errorMessage ?? "AI：失败")
-        case "cancelled":
-            return ("minus.circle.fill", .secondary, "AI：已取消")
-        default:
-            return ("circle.fill", .secondary, "AI：空闲")
-        }
+        guard let snapshot = appState.aiSessionStatus(for: session) else { return nil }
+        let status = TerminalSessionSemantics.terminalAIStatus(
+            from: snapshot.normalizedStatus,
+            errorMessage: snapshot.errorMessage,
+            toolName: nil,
+            aiToolDisplayName: appState.aiChatTool.displayName
+        )
+        return status.isVisible ? status : nil
     }
 }
 
