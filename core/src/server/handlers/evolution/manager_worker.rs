@@ -773,6 +773,7 @@ mod tests {
         is_rate_limit_error_text, is_retryable_session_error_text, is_round_limit_exceeded,
         is_terminal_status, should_stop_worker_after_stage,
     };
+    use super::super::consts::MAX_STAGE_RUNTIME_SECS;
 
     #[test]
     fn terminal_status_should_include_failed_exhausted_and_failed_system() {
@@ -882,9 +883,12 @@ mod tests {
     #[test]
     fn stage_runtime_timeout_error_should_be_classified_correctly() {
         // evo_stage_timeout 是超时错误：非 rate_limit，非 retryable（不触发指数退避，由外层处理）
-        let timeout_err = "evo_stage_timeout: stage=direction exceeded MAX_STAGE_RUNTIME_SECS=3600";
-        assert!(!is_rate_limit_error_text(timeout_err));
-        assert!(!is_retryable_session_error_text(timeout_err));
+        let timeout_err = format!(
+            "evo_stage_timeout: stage=direction exceeded MAX_STAGE_RUNTIME_SECS={}",
+            MAX_STAGE_RUNTIME_SECS
+        );
+        assert!(!is_rate_limit_error_text(&timeout_err));
+        assert!(!is_retryable_session_error_text(&timeout_err));
         // evo_stage_timeout 应当被系统标记为 failed_system，而不是无限等待
         assert!(!is_terminal_status("running"));
         assert!(is_terminal_status("failed_system"));
@@ -893,9 +897,12 @@ mod tests {
     #[test]
     fn stage_runtime_timeout_should_not_retry_permanently() {
         // 超时不属于可重试的瞬态错误，确保不会绕过熔断进入无限重试
-        let timeout_err = "evo_stage_timeout: stage=plan exceeded MAX_STAGE_RUNTIME_SECS=3600";
-        assert!(!is_retryable_session_error_text(timeout_err));
-        assert!(!is_rate_limit_error_text(timeout_err));
+        let timeout_err = format!(
+            "evo_stage_timeout: stage=plan exceeded MAX_STAGE_RUNTIME_SECS={}",
+            MAX_STAGE_RUNTIME_SECS
+        );
+        assert!(!is_retryable_session_error_text(&timeout_err));
+        assert!(!is_rate_limit_error_text(&timeout_err));
     }
 
     // WI-002: 指数退避重试策略回归测试

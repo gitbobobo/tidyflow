@@ -51,7 +51,7 @@ pub(super) const IMPLEMENTATION_STAGE_KINDS: [ImplementationStageKind; 2] = [
     ImplementationStageKind::Visual,
 ];
 
-pub(super) const MAX_STAGE_RUNTIME_SECS: u64 = 3600;
+pub(super) const MAX_STAGE_RUNTIME_SECS: u64 = 10_800;
 pub(super) const DEFAULT_VERIFY_LIMIT: u32 = 5;
 pub(super) const DEFAULT_LOOP_ROUND_LIMIT: u32 = 1;
 pub(super) const DEFAULT_MAX_PARALLEL: u32 = 4;

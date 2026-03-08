@@ -303,7 +303,7 @@ impl CodexAppServerManager {
             .map_err(AppServerRequestError::Transport)?;
         // ACP session/prompt 是长生命周期请求，agent 在完成所有工具调用后才返回
         // response，中间进度通过 session/update notification 传递，不应设置超时。
-        // 上层 consume_stage_stream 已有 MAX_STAGE_RUNTIME_SECS (1h) 保护。
+        // 上层 consume_stage_stream 已有 MAX_STAGE_RUNTIME_SECS（3 小时）保护。
         let timeout_secs = if method == "session/prompt" {
             None
         } else {
