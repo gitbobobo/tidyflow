@@ -6,6 +6,8 @@ import TidyFlowShared
 struct GitWorkspaceProjection: Equatable {
     let workspaceKey: String?
     let workspaceReady: Bool
+    /// 是否已经拿到过一次 Git 状态结果；用于区分首次加载与后台刷新。
+    let hasResolvedStatus: Bool
     let snapshot: GitPanelSemanticSnapshot
     let currentBranchDisplay: String
     let branchDivergenceText: String
@@ -32,6 +34,7 @@ struct GitWorkspaceProjection: Equatable {
     static let empty = GitWorkspaceProjection(
         workspaceKey: nil,
         workspaceReady: false,
+        hasResolvedStatus: false,
         snapshot: .empty(),
         currentBranchDisplay: "未知分支",
         branchDivergenceText: GitPanelSemanticSnapshot.empty().branchDivergenceText,
@@ -62,6 +65,7 @@ enum GitWorkspaceProjectionSemantics {
         workspaceKey: String?,
         snapshot: GitPanelSemanticSnapshot,
         isStageAllInFlight: Bool,
+        hasResolvedStatus: Bool,
         unknownBranchDisplayName: String = "未知分支"
     ) -> GitWorkspaceProjection {
         let stagedItems = snapshot.stagedItems
@@ -75,6 +79,7 @@ enum GitWorkspaceProjectionSemantics {
         return GitWorkspaceProjection(
             workspaceKey: workspaceKey,
             workspaceReady: workspaceKey != nil,
+            hasResolvedStatus: hasResolvedStatus,
             snapshot: snapshot,
             currentBranchDisplay: normalizedBranchDisplay(
                 currentBranch: snapshot.currentBranch,
@@ -150,7 +155,8 @@ final class GitWorkspaceProjectionStore {
         let next = GitWorkspaceProjectionSemantics.make(
             workspaceKey: workspaceKey,
             snapshot: snapshot,
-            isStageAllInFlight: workspaceKey.map { gitCache.isGitOpInFlight(workspaceKey: $0, path: nil, op: "stage") } ?? false
+            isStageAllInFlight: workspaceKey.map { gitCache.isGitOpInFlight(workspaceKey: $0, path: nil, op: "stage") } ?? false,
+            hasResolvedStatus: workspaceKey.map { gitCache.hasResolvedGitStatus(workspaceKey: $0) } ?? false
         )
         _ = updateProjection(next)
     }
@@ -188,7 +194,8 @@ final class GitWorkspaceProjectionStore {
         let next = GitWorkspaceProjectionSemantics.make(
             workspaceKey: workspaceKey,
             snapshot: snapshot,
-            isStageAllInFlight: false
+            isStageAllInFlight: false,
+            hasResolvedStatus: true
         )
         _ = updateProjection(next)
     }

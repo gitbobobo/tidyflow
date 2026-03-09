@@ -103,7 +103,7 @@ struct GitChangesSection: View {
             if isExpanded {
                 ScrollView {
                     VStack(spacing: 0) {
-                        if projection.isLoading && projection.unstagedItems.isEmpty {
+                        if projection.isLoading && !projection.hasResolvedStatus && projection.unstagedItems.isEmpty {
                             LoadingRow()
                         } else if !projection.isGitRepo {
                             EmptyRow(text: "git.notGitRepo".localized)

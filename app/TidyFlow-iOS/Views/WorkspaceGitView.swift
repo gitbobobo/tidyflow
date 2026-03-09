@@ -30,7 +30,8 @@ struct WorkspaceGitView: View {
         return GitWorkspaceProjectionSemantics.make(
             workspaceKey: appState.globalWorkspaceKey(project: project, workspace: workspace),
             snapshot: snapshot,
-            isStageAllInFlight: false
+            isStageAllInFlight: false,
+            hasResolvedStatus: true
         )
     }
 

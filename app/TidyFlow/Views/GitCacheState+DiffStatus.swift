@@ -128,6 +128,13 @@ extension GitCacheState {
         return gitStatusCache[key]
     }
 
+    /// 是否已经拿到过一次该工作区的 Git 状态结果。
+    /// 用于区分首次加载中的空态与已知“工作区干净”的后台刷新。
+    func hasResolvedGitStatus(workspaceKey: String) -> Bool {
+        guard let cache = getGitStatusCache(workspaceKey: workspaceKey) else { return false }
+        return cache.updatedAt != .distantPast || cache.error != nil || !cache.isGitRepo
+    }
+
     func getGitStatusIndex(workspaceKey: String) -> GitStatusIndex {
         let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
         if let index = gitStatusIndexCache[key] {

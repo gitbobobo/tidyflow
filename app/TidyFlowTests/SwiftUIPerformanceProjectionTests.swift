@@ -280,7 +280,8 @@ final class GitWorkspaceProjectionStoreTests: XCTestCase {
         let projection = GitWorkspaceProjectionSemantics.make(
             workspaceKey: "proj:ws",
             snapshot: snapshot,
-            isStageAllInFlight: true
+            isStageAllInFlight: true,
+            hasResolvedStatus: true
         )
 
         XCTAssertEqual(projection.currentBranchDisplay, "feature/refactor")
@@ -296,12 +297,36 @@ final class GitWorkspaceProjectionStoreTests: XCTestCase {
         let sample = GitWorkspaceProjectionSemantics.make(
             workspaceKey: "proj:ws",
             snapshot: GitPanelSemanticSnapshot.empty(),
-            isStageAllInFlight: false
+            isStageAllInFlight: false,
+            hasResolvedStatus: false
         )
 
         XCTAssertTrue(store.updateProjection(sample))
         XCTAssertFalse(store.updateProjection(sample))
         XCTAssertEqual(store.projection.workspaceKey, "proj:ws")
+    }
+
+    func testGitWorkspaceProjectionMarksResolvedEmptyRefresh() {
+        let projection = GitWorkspaceProjectionSemantics.make(
+            workspaceKey: "proj:ws",
+            snapshot: GitPanelSemanticSnapshot(
+                stagedItems: [],
+                trackedUnstagedItems: [],
+                untrackedItems: [],
+                isGitRepo: true,
+                isLoading: true,
+                currentBranch: "main",
+                defaultBranch: "main",
+                aheadBy: 0,
+                behindBy: 0
+            ),
+            isStageAllInFlight: false,
+            hasResolvedStatus: true
+        )
+
+        XCTAssertTrue(projection.isLoading)
+        XCTAssertTrue(projection.isEmpty)
+        XCTAssertTrue(projection.hasResolvedStatus, "已解析过的干净工作区在刷新时不应再回退为首次 loading")
     }
 }
 
