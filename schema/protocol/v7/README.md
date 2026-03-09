@@ -25,6 +25,61 @@
 6. `app/TidyFlow/Networking/WSClient+Send.swift` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 7. `app/TidyFlow/Web/main/protocol-rules.js` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 
+## HTTP/WS 传输边界契约（v7）
+
+本节定义哪些能力必须通过 HTTP 读取、哪些通过 WebSocket 流式推送，以及消息必须携带的多工作区边界字段。
+所有实现（Core、macOS、iOS）**必须**遵循此契约；任何不在此声明的私有字段不得作为业务逻辑依据。
+
+### HTTP 只读端点（`read_via_http_required`）
+
+以下 domain 的读取能力**只能**通过 HTTP GET 端点获取，若通过 WS action 发起则 Core 返回：
+`Error { code: "read_via_http_required" }`
+
+| Domain     | 已移除的 WS 读取 action                                                                                              | HTTP 替代端点                                                                                     |
+|------------|---------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| ai         | `ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options` | `GET /api/v1/projects/:project/workspaces/:workspace/ai/...`                                     |
+| evolution  | `evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`                                                 | `GET /api/v1/evolution/...`                                                                      |
+| evidence   | `evidence_get_snapshot` `evidence_get_rebuild_prompt` `evidence_read_item`                                          | `GET /api/v1/evidence/projects/:project/workspaces/:workspace/...`                               |
+| system     | —（无 WS 读取）                                                                                                     | `GET /api/v1/system/snapshot`（免鉴权）                                                          |
+
+### WS 专用写入与流式事件
+
+以下能力**只能**通过 WS 完成（不提供 HTTP 等价入口）：
+
+| 能力               | WS action 前缀/名称                                              |
+|--------------------|------------------------------------------------------------------|
+| AI 订阅控制        | `ai_session_subscribe` `ai_session_unsubscribe`                  |
+| AI/Evo 流式推送    | `ai_session_messages_update` `ai_session_status_update` `ai_chat_done` `ai_chat_error` `evo_*` |
+| 终端 / 文件 / Git  | 全部写操作 action                                                |
+| 系统健康           | `health_report` `health_repair`（写入）/ `health_snapshot` `health_repair_result`（推送） |
+
+### 多工作区边界字段约束
+
+所有 HTTP 响应 **和** WS 事件必须携带以下字段（适用时），作为工作区隔离的权威标识：
+
+| 字段          | 含义                                       | 类型     | 是否必须  |
+|---------------|--------------------------------------------|----------|-----------|
+| `project`     | 所属项目名称                               | string   | 必须      |
+| `workspace`   | 所属工作区名称                             | string   | 必须      |
+| `session_id`  | AI 会话 ID（AI 相关消息）                  | string?  | 条件必须  |
+| `cycle_id`    | Evolution 循环 ID（Evolution 相关消息）    | string?  | 条件必须  |
+
+**约束规则：**
+1. 客户端**必须**通过 `(project, workspace)` 二元组路由消息到对应缓存桶，不允许仅凭 `workspace` 名称决定归属。
+2. 来自其他工作区的 HTTP/WS 数据**不允许**覆盖当前激活工作区的 UI 状态。
+3. 错误响应中的 `project`/`workspace` 决定哪个上下文的状态受影响，不允许通过 `message` 字符串匹配推断归属。
+4. `(project, workspace)` 的多工作区语义默认成立，不允许将 `default` 或当前选中工作区视为隐含单例。
+
+### Snapshot 回退语义
+
+- 客户端在 HTTP 读取失败时，**必须**以 `(project, workspace)` 为键决定是否对当前激活工作区发起回退，不影响其他工作区状态。
+- WS 流式增量事件与 HTTP snapshot 共用兼容的 `project/workspace/session_id/cycle_id` 元数据，不允许出现两套键规则。
+- 后台工作区的 snapshot fallback **不允许**覆盖当前激活工作区的流式状态。
+
+### 订阅确认语义（`ai_session_subscribe_ack`）
+
+WS 订阅确认必须携带 `project`/`workspace` 字段，客户端按 `(project, workspace, ai_tool, session_id)` 四元组路由到对应会话状态，不允许按 `session_id` 单键匹配。
+
 ## 项目/工作区协议语义约束
 
 ### default 虚拟工作区

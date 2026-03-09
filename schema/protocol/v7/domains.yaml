@@ -1,5 +1,17 @@
 protocol_version: 7
 
+# ============================================================================
+# HTTP/WS 传输边界约定（v7 权威声明）
+#
+# http_read_via_ws_removed: 以下 WS action 已移除读取能力，Core 返回 read_via_http_required。
+# http_read_endpoints:      HTTP 只读端点列表（供一致性校验脚本引用）。
+# ws_stream_actions:        WS 专用流式推送/写入 action 前缀，不提供 HTTP 等价入口。
+#
+# 多工作区边界字段：所有 HTTP 响应和 WS 事件必须携带 project / workspace 字段；
+# session_id 和 cycle_id 在 AI / Evolution 相关消息中为条件必须字段。
+# 不允许仅凭 workspace 名称路由，不允许把 default 工作区视为隐含单例。
+# ============================================================================
+
 # 协议域权威定义（用于 Core/App/文档一致性校验）
 domains:
   - id: system
@@ -28,10 +40,83 @@ domains:
   # selected_by 取值：explicit | task_type_policy | selection_hint | default
   - id: ai
     action_rule: prefix("ai_")
+    # HTTP 只读端点（已移除对应 WS 读取 action）
+    http_read_endpoints:
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/messages
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/status
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/providers
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/agents
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/slash-commands
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/session-config-options
+    ws_read_via_http_required:
+      - ai_session_list
+      - ai_session_messages
+      - ai_session_status
+      - ai_provider_list
+      - ai_agent_list
+      - ai_slash_commands
+      - ai_session_config_options
+    # WS 专用订阅控制（不提供 HTTP 等价入口）
+    ws_only_actions:
+      - ai_session_subscribe
+      - ai_session_unsubscribe
+    # WS 专用流式推送事件（写向客户端）
+    ws_stream_events:
+      - ai_session_messages_update
+      - ai_session_status_update
+      - ai_session_subscribe_ack
+      - ai_chat_done
+      - ai_chat_error
+      - ai_chat_pending
+      - ai_question_asked
+      - ai_question_cleared
+      - ai_session_started
+    # 必须携带的多工作区边界字段
+    required_boundary_fields:
+      - project
+      - workspace
+      - session_id  # AI 消息中条件必须
   - id: evidence
     action_rule: prefix("evidence_")
+    # HTTP 只读端点（已移除对应 WS 读取 action）
+    http_read_endpoints:
+      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot
+      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt
+      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk
+    ws_read_via_http_required:
+      - evidence_get_snapshot
+      - evidence_get_rebuild_prompt
+      - evidence_read_item
+    required_boundary_fields:
+      - project
+      - workspace
   - id: evolution
     action_rule: prefix("evo_")
+    # HTTP 只读端点（已移除对应 WS 读取 action）
+    http_read_endpoints:
+      - GET /api/v1/evolution/snapshot
+      - GET /api/v1/evolution/projects/:project/workspaces/:workspace/agent-profile
+      - GET /api/v1/evolution/projects/:project/workspaces/:workspace/cycle-history
+    ws_read_via_http_required:
+      - evo_get_snapshot
+      - evo_get_agent_profile
+      - evo_list_cycle_history
+    # WS 专用流式推送事件（写向客户端）
+    ws_stream_events:
+      - evo_cycle_updated
+      - evo_workspace_status
+      - evo_error
+      - evo_blocking_required
+      - evo_blockers_updated
+      - evo_auto_commit_result
+      - evo_pulse
+      - evo_cycle_history
+      - evo_agent_profile
+    required_boundary_fields:
+      - project
+      - workspace
+      - cycle_id  # Evolution 消息中条件必须
   # v1.41: 系统健康诊断与自修复域
   # health_report     - 客户端上报自身运行健康状态
   # health_snapshot   - Core 推送系统健康快照（incidents、摘要）
