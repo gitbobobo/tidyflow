@@ -508,53 +508,15 @@ struct ChatInputView: View {
 
     private var imagePreviewRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 ForEach(imageAttachments) { attachment in
-                    imagePreviewItem(attachment)
+                    ImageAttachmentChip(attachment: attachment) {
+                        imageAttachments.removeAll { $0.id == attachment.id }
+                    }
                 }
             }
-            .padding(.bottom, 6)
-        }
-    }
-
-    private func imagePreviewItem(_ attachment: ImageAttachment) -> some View {
-        ZStack(alignment: .topTrailing) {
-            #if os(macOS)
-            Image(nsImage: attachment.thumbnail)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 60, height: 60)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(.rect(cornerRadius: 8))
-            #else
-            if let image = UIImage(data: attachment.data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 60, height: 60)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(.rect(cornerRadius: 8))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(width: 60, height: 60)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .foregroundColor(.secondary)
-                    )
-            }
-            #endif
-
-            Button(action: {
-                imageAttachments.removeAll { $0.id == attachment.id }
-            }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white)
-                    .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 18, height: 18))
-            }
-            .buttonStyle(.plain)
-            .offset(x: 4, y: -4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 2)
         }
     }
 
@@ -1353,11 +1315,11 @@ struct ChatInputView: View {
     }
 
     private var editorHorizontalInset: CGFloat {
-        8
+        6
     }
 
     private var editorVerticalInset: CGFloat {
-        8
+        6
     }
 
     private var chipFontSize: CGFloat {
@@ -1394,17 +1356,17 @@ struct ChatInputView: View {
 
     private var actionButtonDiameter: CGFloat {
         #if os(iOS)
-        return 36
-        #else
         return 32
+        #else
+        return 28
         #endif
     }
 
     private var actionIconFontSize: CGFloat {
         #if os(iOS)
-        return 15
+        return 14
         #else
-        return 13
+        return 12
         #endif
     }
 
@@ -1460,6 +1422,129 @@ struct ChatInputView: View {
             }
         }
         .accessibilityIdentifier("tf.ai.input.action-button")
+    }
+}
+
+private struct ImageAttachmentChip: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let attachment: ImageAttachment
+    let onRemove: () -> Void
+
+    #if os(macOS)
+    @State private var isHovering = false
+    #endif
+
+    var body: some View {
+        HStack(spacing: 6) {
+            attachmentThumbnail
+
+            Text(attachment.filename)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: filenameMaxWidth, alignment: .leading)
+
+            if showsRemoveButton {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.82))
+                        .frame(width: 16, height: 16)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                #if os(macOS)
+                .help("移除附件")
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                #endif
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, showsRemoveButton ? 7 : 10)
+        .padding(.vertical, 3)
+        .background(chipBackgroundColor, in: .capsule)
+        .overlay {
+            Capsule()
+                .stroke(chipBorderColor, lineWidth: 0.8)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        #if os(macOS)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.16)) {
+                isHovering = hovering
+            }
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var attachmentThumbnail: some View {
+        #if os(macOS)
+        if attachment.thumbnail.size.width > 0, attachment.thumbnail.size.height > 0 {
+            Image(nsImage: attachment.thumbnail)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 24, height: 24)
+                .clipShape(Circle())
+        } else {
+            fallbackThumbnail
+        }
+        #else
+        if let image = UIImage(data: attachment.data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 24, height: 24)
+                .clipShape(Circle())
+        } else {
+            fallbackThumbnail
+        }
+        #endif
+    }
+
+    private var fallbackThumbnail: some View {
+        Circle()
+            .fill(Color.secondary.opacity(0.14))
+            .frame(width: 24, height: 24)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+    }
+
+    private var showsRemoveButton: Bool {
+        #if os(macOS)
+        isHovering
+        #else
+        true
+        #endif
+    }
+
+    private var chipBackgroundColor: Color {
+        #if os(iOS)
+        return colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035)
+        #else
+        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.86 : 0.9)
+        #endif
+    }
+
+    private var chipBorderColor: Color {
+        #if os(iOS)
+        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        #else
+        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.38 : 0.28)
+        #endif
+    }
+
+    private var filenameMaxWidth: CGFloat {
+        #if os(iOS)
+        return 92
+        #else
+        return 108
+        #endif
     }
 }
 
