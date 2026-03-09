@@ -9,51 +9,75 @@ struct AIChatEmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            if isLoading {
-                ProgressView()
-                    .scaleEffect(1.2)
-            } else {
-                Image(currentTool.iconAssetName)
-                    .resizable()
-                    .renderingMode(.original)
-                    .scaledToFit()
-                    .frame(width: 44, height: 44)
-                    .padding(10)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Image(currentTool.iconAssetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 44, height: 44)
+                .padding(10)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(.rect(cornerRadius: 12))
+                .overlay {
+                    if isLoading {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.ultraThinMaterial.opacity(0.92))
+                        ProgressView()
+                            .controlSize(.regular)
+                            .tint(.primary)
+                    }
+                }
 
-                Text("使用 \(currentTool.displayName) 开始构建")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-
-                toolGrid
-            }
+            titleView
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    private var toolGrid: some View {
-        HStack(spacing: 8) {
+    private var titleView: some View {
+        HStack(spacing: 0) {
+            Text("使用 ")
+                .foregroundStyle(.secondary)
+
+            toolMenu
+
+            Text(" 开始构建")
+                .foregroundStyle(.secondary)
+        }
+        .font(.title3)
+    }
+
+    private var toolMenu: some View {
+        Menu {
             ForEach(AIChatTool.allCases) { tool in
-                Button(action: {
+                Button {
                     selectedTool = tool
-                }) {
-                    Text(tool.displayName)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .foregroundColor(currentTool == tool ? .white : .primary)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(currentTool == tool ? Color.accentColor : Color.secondary.opacity(0.12))
-                        )
+                } label: {
+                    Label {
+                        Text(tool.displayName)
+                    } icon: {
+                        Image(tool.iconAssetName)
+                            .resizable()
+                            .renderingMode(.original)
+                            .scaledToFit()
+                            .frame(width: 14, height: 14)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSwitchTool)
-                .opacity(canSwitchTool ? 1.0 : 0.5)
             }
         }
+        label: {
+            HStack(spacing: 0) {
+                Text(currentTool.displayName)
+                    .foregroundStyle(.tint)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.secondary.opacity(0.12))
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(!canSwitchTool)
+        .opacity(canSwitchTool ? 1 : 0.5)
     }
 }
 

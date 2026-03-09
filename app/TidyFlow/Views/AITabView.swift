@@ -483,7 +483,7 @@ struct AITabView: View {
                 AIChatEmptyStateView(
                     currentTool: appState.aiChatTool,
                     selectedTool: $appState.aiChatTool,
-                    canSwitchTool: canSwitchAITool,
+                    canSwitchTool: canSwitchAITool && !isLoadingMessages,
                     isLoading: isLoadingMessages
                 )
             } else {

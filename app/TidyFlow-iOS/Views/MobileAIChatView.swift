@@ -211,7 +211,7 @@ struct MobileAIChatView: View {
                 AIChatEmptyStateView(
                     currentTool: appState.aiChatTool,
                     selectedTool: aiToolBinding,
-                    canSwitchTool: appState.canSwitchAIChatTool,
+                    canSwitchTool: appState.canSwitchAIChatTool && !isLoadingMessages,
                     isLoading: isLoadingMessages
                 )
             } else {
