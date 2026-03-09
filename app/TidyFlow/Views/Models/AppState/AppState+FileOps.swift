@@ -294,9 +294,14 @@ extension AppState {
     }
 
     /// 获取缓存的文件列表
-    func getFileListCache(workspaceKey: String, path: String) -> FileListCache? {
-        let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
+    func getFileListCache(project: String, workspaceKey: String, path: String) -> FileListCache? {
+        let key = fileListCacheKey(project: project, workspace: workspaceKey, path: path)
         return fileListCache[key]
+    }
+
+    /// 获取缓存的文件列表
+    func getFileListCache(workspaceKey: String, path: String) -> FileListCache? {
+        getFileListCache(project: selectedProjectName, workspaceKey: workspaceKey, path: path)
     }
 
     /// 刷新当前工作空间的文件列表（包括根目录和所有展开的目录）
@@ -320,8 +325,8 @@ extension AppState {
     }
 
     /// 切换目录展开状态
-    func toggleDirectoryExpanded(workspaceKey: String, path: String) {
-        let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
+    func toggleDirectoryExpanded(project: String, workspaceKey: String, path: String) {
+        let key = fileListCacheKey(project: project, workspace: workspaceKey, path: path)
         let currentState = directoryExpandState[key] ?? false
         directoryExpandState[key] = !currentState
 
@@ -329,9 +334,14 @@ extension AppState {
         if !currentState {
             let cache = fileListCache[key]
             if cache == nil || cache!.isExpired {
-                fetchFileList(workspaceKey: workspaceKey, path: path)
+                fetchFileList(project: project, workspaceKey: workspaceKey, path: path)
             }
         }
+    }
+
+    /// 切换目录展开状态
+    func toggleDirectoryExpanded(workspaceKey: String, path: String) {
+        toggleDirectoryExpanded(project: selectedProjectName, workspaceKey: workspaceKey, path: path)
     }
 
     /// 检查目录是否展开

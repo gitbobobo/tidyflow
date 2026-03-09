@@ -8,9 +8,9 @@ struct ExplorerView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            if let workspaceKey = appState.selectedWorkspaceKey {
+            if let workspace = appState.selectedWorkspaceIdentity {
                 // 工作空间已选择，显示文件树
-                FileTreeView(workspaceKey: workspaceKey)
+                FileTreeView(workspace: workspace)
                     .environmentObject(appState)
             } else {
                 // 未选择工作空间
@@ -45,7 +45,7 @@ struct RightPanelNoWorkspaceView: View {
 /// 文件树视图
 struct FileTreeView: View {
     @EnvironmentObject var appState: AppState
-    let workspaceKey: String
+    let workspace: WorkspaceIdentity
 
     // 新建文件状态
     @State private var showNewFileDialog = false
@@ -63,7 +63,7 @@ struct FileTreeView: View {
             // 文件列表
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    FileListContent(workspaceKey: workspaceKey, path: ".", depth: 0)
+                    FileListContent(workspace: workspace, path: ".", depth: 0)
                         .environmentObject(appState)
                 }
                 .padding(4)
@@ -84,7 +84,7 @@ struct FileTreeView: View {
                 // 粘贴到根目录
                 if appState.clipboardHasFiles {
                     Button {
-                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
+                        appState.pasteFiles(workspaceKey: workspace.workspaceName, destDir: ".")
                     } label: {
                         Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
@@ -117,7 +117,11 @@ struct FileTreeView: View {
                     fileName: $newFileName,
                     onConfirm: {
                         if !newFileName.isEmpty {
-                            appState.createNewFile(workspaceKey: workspaceKey, parentDir: ".", fileName: newFileName)
+                            appState.createNewFile(
+                                workspaceKey: workspace.workspaceName,
+                                parentDir: ".",
+                                fileName: newFileName
+                            )
                         }
                         showNewFileDialog = false
                     },
@@ -137,7 +141,7 @@ struct FileTreeView: View {
                             guard !parentDir.isEmpty && parentDir != "." else { return }
                             DispatchQueue.main.async {
                                 appState.moveFile(
-                                    workspaceKey: workspaceKey,
+                                    workspaceKey: workspace.workspaceName,
                                     oldPath: draggedPath,
                                     newDir: "."
                                 )
@@ -150,8 +154,16 @@ struct FileTreeView: View {
         }
         .onAppear {
             // 首次加载时请求根目录文件列表
-            if appState.getFileListCache(workspaceKey: workspaceKey, path: ".") == nil {
-                appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
+            if appState.getFileListCache(
+                project: workspace.projectName,
+                workspaceKey: workspace.workspaceName,
+                path: "."
+            ) == nil {
+                appState.fetchFileList(
+                    project: workspace.projectName,
+                    workspaceKey: workspace.workspaceName,
+                    path: "."
+                )
             }
             // 检查剪贴板状态以驱动粘贴菜单
             appState.checkClipboardForFiles()
@@ -168,12 +180,12 @@ struct FileTreeView: View {
 struct FileListContent: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var fileCache: FileCacheState
-    let workspaceKey: String
+    let workspace: WorkspaceIdentity
     let path: String
     let depth: Int
 
     private var cache: FileListCache? {
-        appState.getFileListCache(workspaceKey: workspaceKey, path: path)
+        fileCache.fileListCache[workspace.fileCacheKey(path: path)]
     }
 
     var body: some View {
@@ -191,7 +203,7 @@ struct FileListContent: View {
             } else {
                 ForEach(cache.items) { item in
                     FileRowView(
-                        workspaceKey: workspaceKey,
+                        workspace: workspace,
                         item: item,
                         depth: depth
                     )
@@ -207,8 +219,9 @@ struct FileListContent: View {
 /// 单个文件/目录行（使用共用 TreeRowView）
 struct FileRowView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var fileCache: FileCacheState
     @EnvironmentObject var gitCache: GitCacheState
-    let workspaceKey: String
+    let workspace: WorkspaceIdentity
     let item: FileEntry
     let depth: Int
 
@@ -222,20 +235,24 @@ struct FileRowView: View {
     // v1.25: 拖拽放置目标高亮
     @State private var isDropTarget = false
 
+    private var expandStateKey: String {
+        workspace.fileCacheKey(path: item.path)
+    }
+
     private var isExpanded: Bool {
-        appState.isDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
+        fileCache.directoryExpandState[expandStateKey] ?? false
     }
 
     /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
     private var isSelected: Bool {
         !item.isDir
-            && appState.selectedWorkspaceKey == workspaceKey
+            && appState.currentGlobalWorkspaceKey == workspace.globalKey
             && appState.activeEditorPath == item.path
     }
 
     /// 通过共享语义解析器推导条目展示语义，消除本地重复图标/颜色规则
     private var presentation: ExplorerItemPresentation {
-        let gitIndex = gitCache.getGitStatusIndex(workspaceKey: workspaceKey)
+        let gitIndex = gitCache.getGitStatusIndex(workspaceKey: workspace.workspaceName)
         return ExplorerSemanticResolver.resolve(
             entry: item,
             gitIndex: gitIndex,
@@ -314,7 +331,7 @@ struct FileRowView: View {
 
                 Button {
                     appState.copyFileToClipboard(
-                        workspaceKey: workspaceKey,
+                        workspaceKey: workspace.workspaceName,
                         path: item.path,
                         isDir: item.isDir,
                         name: item.name
@@ -328,7 +345,7 @@ struct FileRowView: View {
                     Button {
                         let destDir = item.isDir ? item.path : (item.path as NSString).deletingLastPathComponent
                         let dest = destDir.isEmpty ? "." : destDir
-                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: dest)
+                        appState.pasteFiles(workspaceKey: workspace.workspaceName, destDir: dest)
                     } label: {
                         Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
@@ -375,7 +392,7 @@ struct FileRowView: View {
 
             if item.isDir && isExpanded {
                 FileListContent(
-                    workspaceKey: workspaceKey,
+                    workspace: workspace,
                     path: item.path,
                     depth: depth + 1
                 )
@@ -389,7 +406,11 @@ struct FileRowView: View {
                 isDir: item.isDir,
                 onConfirm: {
                     if !newName.isEmpty && newName != item.name {
-                        appState.renameFile(workspaceKey: workspaceKey, path: item.path, newName: newName)
+                        appState.renameFile(
+                            workspaceKey: workspace.workspaceName,
+                            path: item.path,
+                            newName: newName
+                        )
                     }
                     showRenameDialog = false
                 },
@@ -405,7 +426,11 @@ struct FileRowView: View {
                     if !newFileName.isEmpty {
                         let parentDir = item.isDir ? item.path : (item.path as NSString).deletingLastPathComponent
                         let dir = parentDir.isEmpty ? "." : parentDir
-                        appState.createNewFile(workspaceKey: workspaceKey, parentDir: dir, fileName: newFileName)
+                        appState.createNewFile(
+                            workspaceKey: workspace.workspaceName,
+                            parentDir: dir,
+                            fileName: newFileName
+                        )
                     }
                     showNewFileDialog = false
                 },
@@ -417,7 +442,7 @@ struct FileRowView: View {
         .alert("rightPanel.confirmDelete".localized, isPresented: $showDeleteConfirm) {
             Button("common.cancel".localized, role: .cancel) { }
             Button("common.delete".localized, role: .destructive) {
-                appState.deleteFile(workspaceKey: workspaceKey, path: item.path)
+                appState.deleteFile(workspaceKey: workspace.workspaceName, path: item.path)
             }
         } message: {
             Text(String(format: "rightPanel.confirmDelete.message".localized, item.name))
@@ -461,15 +486,17 @@ struct FileRowView: View {
     private func handleTap() {
         if item.isDir {
             // 目录：切换展开状态
-            appState.toggleDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
+            appState.toggleDirectoryExpanded(
+                project: workspace.projectName,
+                workspaceKey: workspace.workspaceName,
+                path: item.path
+            )
         } else {
             // 不支持的文件类型不打开 tab
             let ext = (item.name as NSString).pathExtension.lowercased()
             guard !Self.unsupportedExtensions.contains(ext) else { return }
-            // 文件：打开编辑器（使用全局工作空间键）
-            if let globalKey = appState.currentGlobalWorkspaceKey {
-                appState.addEditorTab(workspaceKey: globalKey, path: item.path)
-            }
+            // 文件：打开编辑器（使用资源树所属工作区的全局键）
+            appState.addEditorTab(workspaceKey: workspace.globalKey, path: item.path)
         }
     }
 
@@ -490,7 +517,7 @@ struct FileRowView: View {
                     guard parentDir != targetDir else { return }
                     DispatchQueue.main.async {
                         appState.moveFile(
-                            workspaceKey: workspaceKey,
+                            workspaceKey: workspace.workspaceName,
                             oldPath: draggedPath,
                             newDir: item.path
                         )
