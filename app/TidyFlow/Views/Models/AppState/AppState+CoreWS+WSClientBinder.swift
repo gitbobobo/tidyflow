@@ -15,6 +15,11 @@ extension AppState {
             self?.wsLastEnvelopeSeq = meta.seq
             self?.wsLastEnvelopeSummary = "\(meta.domain)/\(meta.action) [\(meta.kind)]"
         }
+        wsClient.onHTTPReadFailure = { [weak self] failure in
+            Task { @MainActor [weak self] in
+                self?.handleHTTPReadFailure(failure)
+            }
+        }
 
         wsClient.onConnectionStateChanged = { [weak self] connected in
             guard let self else { return }

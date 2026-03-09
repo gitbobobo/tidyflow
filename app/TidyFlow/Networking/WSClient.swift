@@ -10,6 +10,16 @@ import TidyFlowShared
 /// Minimal WebSocket client for Core communication
 /// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v7，包络结构沿用 v6）
 class WSClient: NSObject, ObservableObject {
+    enum HTTPReadRequestContext: Equatable {
+        case aiProviderList(project: String, workspace: String, aiTool: AIChatTool)
+        case aiAgentList(project: String, workspace: String, aiTool: AIChatTool)
+    }
+
+    struct HTTPReadFailure: Equatable {
+        let context: HTTPReadRequestContext?
+        let message: String
+    }
+
     struct CoalescedEnvelope {
         let domain: String
         let action: String
@@ -208,6 +218,8 @@ class WSClient: NSObject, ObservableObject {
     private var coalesceTimer: DispatchWorkItem?
     /// HTTP 读请求观测钩子（测试与性能排查使用，不参与业务逻辑）
     var onHTTPRequestScheduled: ((_ domain: String, _ path: String, _ queryItems: [URLQueryItem]) -> Void)?
+    /// HTTP 读请求失败钩子（用于上层清理 loading / pending 状态）
+    var onHTTPReadFailure: ((HTTPReadFailure) -> Void)?
     /// AI 最近页消息请求防重（仅 before=nil 场景）
     var aiRecentSessionMessagesInFlightAt: [String: Date] = [:]
     var aiRecentSessionMessagesLastSuccessAt: [String: Date] = [:]

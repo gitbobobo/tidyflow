@@ -25,6 +25,8 @@ private enum CoreHTTPClientError: LocalizedError {
 }
 
 private struct CoreHTTPClient {
+    private static let requestTimeout: TimeInterval = 15
+
     static func baseURL(from wsURL: URL?) -> URL? {
         guard let wsURL,
               var components = URLComponents(url: wsURL, resolvingAgainstBaseURL: false) else {
@@ -58,6 +60,7 @@ private struct CoreHTTPClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        request.timeoutInterval = requestTimeout
         if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -915,7 +918,8 @@ extension WSClient {
     private func handleHTTPReadResult(
         domain: String,
         fallbackAction: String,
-        json: [String: Any]
+        json: [String: Any],
+        context: HTTPReadRequestContext?
     ) {
         let action = (json["type"] as? String) ?? fallbackAction
         let handled: Bool
@@ -930,23 +934,30 @@ extension WSClient {
             handled = false
         }
         if !handled {
-            emitClientError("Unexpected HTTP response action: \(action)")
+            let message = "Unexpected HTTP response action: \(action)"
+            onHTTPReadFailure?(HTTPReadFailure(context: context, message: message))
+            emitClientError(message)
         }
     }
 
     @MainActor
-    private func handleHTTPReadError(_ error: Error) {
-        emitClientError(error.localizedDescription)
+    private func handleHTTPReadError(_ error: Error, context: HTTPReadRequestContext?) {
+        let message = error.localizedDescription
+        onHTTPReadFailure?(HTTPReadFailure(context: context, message: message))
+        emitClientError(message)
     }
 
     private func requestReadViaHTTP(
         domain: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        fallbackAction: String
+        fallbackAction: String,
+        context: HTTPReadRequestContext? = nil
     ) {
         guard let baseURL = CoreHTTPClient.baseURL(from: currentURL) else {
-            emitClientError(CoreHTTPClientError.invalidBaseURL.localizedDescription)
+            let message = CoreHTTPClientError.invalidBaseURL.localizedDescription
+            onHTTPReadFailure?(HTTPReadFailure(context: context, message: message))
+            emitClientError(message)
             return
         }
         let token = wsAuthToken
@@ -963,10 +974,11 @@ extension WSClient {
                 await self?.handleHTTPReadResult(
                     domain: domain,
                     fallbackAction: fallbackAction,
-                    json: json
+                    json: json,
+                    context: context
                 )
             } catch {
-                await self?.handleHTTPReadError(error)
+                await self?.handleHTTPReadError(error, context: context)
             }
         }
     }
@@ -1833,7 +1845,8 @@ extension WSClient {
         requestReadViaHTTP(
             domain: "ai",
             path: path,
-            fallbackAction: "ai_provider_list"
+            fallbackAction: "ai_provider_list",
+            context: .aiProviderList(project: projectName, workspace: workspaceName, aiTool: aiTool)
         )
     }
 
@@ -1843,7 +1856,8 @@ extension WSClient {
         requestReadViaHTTP(
             domain: "ai",
             path: path,
-            fallbackAction: "ai_agent_list"
+            fallbackAction: "ai_agent_list",
+            context: .aiAgentList(project: projectName, workspace: workspaceName, aiTool: aiTool)
         )
     }
 

@@ -1201,6 +1201,52 @@ extension AppState {
         }
     }
 
+    @MainActor
+    func handleHTTPReadFailure(_ failure: WSClient.HTTPReadFailure) {
+        guard let context = failure.context else { return }
+
+        switch context {
+        case let .aiProviderList(project, workspace, aiTool):
+            guard shouldAcceptAISelectorEvent(
+                projectName: project,
+                workspaceName: workspace,
+                aiTool: aiTool,
+                kind: .providerList
+            ) else { return }
+            if aiChatTool == aiTool,
+               selectedProjectName == project,
+               selectedWorkspaceKey == workspace,
+               isAILoadingModels {
+                isAILoadingModels = false
+            }
+            consumeAISelectorBootstrapContextIfNeeded(
+                projectName: project,
+                workspaceName: workspace,
+                aiTool: aiTool,
+                kind: .providerList
+            )
+        case let .aiAgentList(project, workspace, aiTool):
+            guard shouldAcceptAISelectorEvent(
+                projectName: project,
+                workspaceName: workspace,
+                aiTool: aiTool,
+                kind: .agentList
+            ) else { return }
+            if aiChatTool == aiTool,
+               selectedProjectName == project,
+               selectedWorkspaceKey == workspace,
+               isAILoadingAgents {
+                isAILoadingAgents = false
+            }
+            consumeAISelectorBootstrapContextIfNeeded(
+                projectName: project,
+                workspaceName: workspace,
+                aiTool: aiTool,
+                kind: .agentList
+            )
+        }
+    }
+
     /// 处理来自 Core 的结构化错误（通过 errorCode 决定状态迁移，避免字符串匹配漂移）
     ///
     /// 多工作区安全：错误仅影响归属的 project/workspace，不污染当前上下文。
