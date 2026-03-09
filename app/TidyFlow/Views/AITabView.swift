@@ -29,6 +29,8 @@ struct AITabView: View {
     @State private var presentedSubAgentSession: SubAgentSessionRoute?
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
+    /// 仅用于驱动输入区 selector 刷新，避免把整个 AITabView 重新挂回 AppState 观察链。
+    @State private var inputSelectorRefreshTick: UInt = 0
     @State private var sessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     @StateObject private var sidebarState = AIChatSidebarState()
     @State private var isCompactSidebarDrawerPresented = false
@@ -187,6 +189,30 @@ struct AITabView: View {
         .onChange(of: appState.aiSessionStatusesByTool) { _, _ in
             refreshShellProjection()
         }
+        .onReceive(appState.$aiProviders) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$aiAgents) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$aiSelectedModel) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$aiSelectedAgent) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$aiSessionConfigOptions) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$aiSelectedThoughtLevel) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$isAILoadingModels) { _ in
+            invalidateInputSelectorView()
+        }
+        .onReceive(appState.$isAILoadingAgents) { _ in
+            invalidateInputSelectorView()
+        }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
         }) { _ in
@@ -263,6 +289,10 @@ struct AITabView: View {
 
     private var canSwitchAITool: Bool {
         pendingSendRequest == nil
+    }
+
+    private func invalidateInputSelectorView() {
+        inputSelectorRefreshTick &+= 1
     }
 
     private var mainPane: some View {
