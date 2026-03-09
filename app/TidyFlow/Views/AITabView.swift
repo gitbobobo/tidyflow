@@ -102,12 +102,6 @@ struct AITabView: View {
                     return
                 }
                 pendingSendRequest = nil
-                appState.wsClient.requestAISessionSubscribe(
-                    project: appState.selectedProjectName,
-                    workspace: ws,
-                    aiTool: pending.aiTool.rawValue,
-                    sessionId: newSessionId
-                )
                 applyPendingSelectionHintIfNeeded(
                     pending.kind,
                     sessionId: newSessionId,
@@ -1035,6 +1029,16 @@ struct AITabView: View {
         workspaceName: String,
         aiTool: AIChatTool
     ) {
+        AISessionHistoryCoordinator.ensureSubscribed(
+            context: .init(
+                project: projectName,
+                workspace: workspaceName,
+                aiTool: aiTool,
+                sessionId: sessionId
+            ),
+            wsClient: appState.wsClient,
+            store: appState.aiStore(for: aiTool)
+        )
         switch kind {
         case let .message(text, imageParts, model, agent, fileRefs):
             let configOverrides = appState.aiConfigOverrides(for: aiTool)
@@ -1193,6 +1197,16 @@ struct AITabView: View {
         aiChatStore.isStreaming = true
 
         if let sessionId = aiChatStore.currentSessionId {
+            AISessionHistoryCoordinator.ensureSubscribed(
+                context: .init(
+                    project: appState.selectedProjectName,
+                    workspace: ws,
+                    aiTool: aiTool,
+                    sessionId: sessionId
+                ),
+                wsClient: appState.wsClient,
+                store: aiChatStore
+            )
             appState.wsClient.requestAIChatSend(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,
@@ -1327,12 +1341,23 @@ struct AITabView: View {
         } else {
             aiChatStore.beginAwaitingAssistantOnly()
         }
+        aiChatStore.isStreaming = true
 
         // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
         inputText = ""
         imageAttachments = []
 
         if let sessionId = aiChatStore.currentSessionId {
+            AISessionHistoryCoordinator.ensureSubscribed(
+                context: .init(
+                    project: appState.selectedProjectName,
+                    workspace: ws,
+                    aiTool: aiTool,
+                    sessionId: sessionId
+                ),
+                wsClient: appState.wsClient,
+                store: aiChatStore
+            )
             // 已有会话，直接发送
             if let slash = slashCommand {
                 appState.wsClient.requestAIChatCommand(
@@ -1503,6 +1528,7 @@ struct AITabView: View {
 
         autocomplete.reset()
         aiChatStore.beginAwaitingUserEcho()
+        aiChatStore.isStreaming = true
 
         inputText = ""
         imageAttachments = []
@@ -1510,6 +1536,16 @@ struct AITabView: View {
         codexPlanProposalPartIDInCurrentTurn = nil
 
         if let sessionId = aiChatStore.currentSessionId {
+            AISessionHistoryCoordinator.ensureSubscribed(
+                context: .init(
+                    project: appState.selectedProjectName,
+                    workspace: ws,
+                    aiTool: aiTool,
+                    sessionId: sessionId
+                ),
+                wsClient: appState.wsClient,
+                store: aiChatStore
+            )
             appState.wsClient.requestAIChatSend(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,

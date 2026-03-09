@@ -23,6 +23,22 @@ struct AISessionHistoryCoordinator {
 
     // MARK: - 订阅优先 + 首屏加载
 
+    /// 确保客户端本地过滤集合与 Core 侧 session 订阅同时就位。
+    /// 用于已有会话继续发送消息前补订阅，避免连接恢复后只剩本地缓存状态。
+    static func ensureSubscribed(
+        context: Context,
+        wsClient: WSClient,
+        store: AIChatStore
+    ) {
+        store.addSubscription(context.sessionId)
+        wsClient.requestAISessionSubscribe(
+            project: context.project,
+            workspace: context.workspace,
+            aiTool: context.aiTool.rawValue,
+            sessionId: context.sessionId
+        )
+    }
+
     /// Subscription-first 模式：先注册订阅，再请求最近 N 条历史消息。
     /// 适用于主聊天首次绑定、evolution replay 载入、sub-agent viewer 打开
     /// 以及重连后补拉等所有需要"重新建立会话订阅"的场景。
@@ -32,14 +48,8 @@ struct AISessionHistoryCoordinator {
         store: AIChatStore,
         pageSize: Int = AISessionSemantics.defaultMessagesPageSize
     ) {
-        store.addSubscription(context.sessionId)
         store.setRecentHistoryLoading(true)
-        wsClient.requestAISessionSubscribe(
-            project: context.project,
-            workspace: context.workspace,
-            aiTool: context.aiTool.rawValue,
-            sessionId: context.sessionId
-        )
+        ensureSubscribed(context: context, wsClient: wsClient, store: store)
         wsClient.requestAISessionMessages(
             projectName: context.project,
             workspaceName: context.workspace,

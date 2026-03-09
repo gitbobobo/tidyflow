@@ -2456,6 +2456,16 @@ final class MobileAppState: ObservableObject {
         aiChatStore.isStreaming = true
 
         if let sessionId = aiCurrentSessionId {
+            AISessionHistoryCoordinator.ensureSubscribed(
+                context: .init(
+                    project: aiActiveProject,
+                    workspace: aiActiveWorkspace,
+                    aiTool: aiTool,
+                    sessionId: sessionId
+                ),
+                wsClient: wsClient,
+                store: aiChatStore
+            )
             if let slash = slashCommand {
                 wsClient.requestAIChatCommand(
                     projectName: aiActiveProject,
@@ -2892,6 +2902,16 @@ final class MobileAppState: ObservableObject {
         workspaceName: String,
         aiTool: AIChatTool
     ) {
+        AISessionHistoryCoordinator.ensureSubscribed(
+            context: .init(
+                project: projectName,
+                workspace: workspaceName,
+                aiTool: aiTool,
+                sessionId: sessionId
+            ),
+            wsClient: wsClient,
+            store: aiChatStore
+        )
         switch kind {
         case let .message(text, imageParts, model, agent, fileRefs):
             let configOverrides = aiConfigOverrides(for: aiTool)
