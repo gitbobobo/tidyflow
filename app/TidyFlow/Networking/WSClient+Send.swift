@@ -102,6 +102,7 @@ private struct SaveClientSettingsRequest: Encodable {
     let mergeAIAgent: String?
     let fixedPort: Int
     let remoteAccessEnabled: Bool
+    let evolutionDefaultProfiles: [EvolutionStageProfilePayload]
     let workspaceTodos: [String: [WorkspaceTodoPayload]]
     let keybindings: [KeybindingPayload]
 
@@ -132,6 +133,32 @@ private struct SaveClientSettingsRequest: Encodable {
         }
     }
 
+    struct EvolutionModelSelectionPayload: Encodable {
+        let providerID: String
+        let modelID: String
+
+        enum CodingKeys: String, CodingKey {
+            case providerID = "provider_id"
+            case modelID = "model_id"
+        }
+    }
+
+    struct EvolutionStageProfilePayload: Encodable {
+        let stage: String
+        let aiTool: String
+        let mode: String?
+        let model: EvolutionModelSelectionPayload?
+        let configOptions: [String: AnyCodable]
+
+        enum CodingKeys: String, CodingKey {
+            case stage
+            case aiTool = "ai_tool"
+            case mode
+            case model
+            case configOptions = "config_options"
+        }
+    }
+
     struct KeybindingPayload: Encodable {
         let commandId: String
         let keyCombination: String
@@ -149,6 +176,7 @@ private struct SaveClientSettingsRequest: Encodable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
+        case evolutionDefaultProfiles = "evolution_default_profiles"
         case workspaceTodos = "workspace_todos"
         case keybindings
     }
@@ -888,48 +916,55 @@ extension WSClient {
 
     /// 保存客户端设置
     func requestSaveClientSettings(settings: ClientSettings) {
-        var payload: [String: Any] = [
-            "type": "save_client_settings",
-            "custom_commands": settings.customCommands.map { cmd in
-                [
-                    "id": cmd.id,
-                    "name": cmd.name,
-                    "icon": cmd.icon,
-                    "command": cmd.command
-                ]
+        let payload = SaveClientSettingsRequest(
+            customCommands: settings.customCommands.map { cmd in
+                SaveClientSettingsRequest.CustomCommandPayload(
+                    id: cmd.id,
+                    name: cmd.name,
+                    icon: cmd.icon,
+                    command: cmd.command
+                )
             },
-            "workspace_shortcuts": settings.workspaceShortcuts,
-            "fixed_port": settings.fixedPort,
-            "remote_access_enabled": settings.remoteAccessEnabled,
-            "evolution_default_profiles": settings.evolutionDefaultProfiles.map { $0.toJSON() },
-            "workspace_todos": settings.workspaceTodos.mapValues { items in
+            workspaceShortcuts: settings.workspaceShortcuts,
+            mergeAIAgent: settings.mergeAIAgent,
+            fixedPort: settings.fixedPort,
+            remoteAccessEnabled: settings.remoteAccessEnabled,
+            evolutionDefaultProfiles: settings.evolutionDefaultProfiles.map { profile in
+                SaveClientSettingsRequest.EvolutionStageProfilePayload(
+                    stage: profile.stage,
+                    aiTool: profile.aiTool.rawValue,
+                    mode: profile.mode,
+                    model: profile.model.map { model in
+                        SaveClientSettingsRequest.EvolutionModelSelectionPayload(
+                            providerID: model.providerID,
+                            modelID: model.modelID
+                        )
+                    },
+                    configOptions: profile.configOptions.mapValues { AnyCodable.from($0) }
+                )
+            },
+            workspaceTodos: settings.workspaceTodos.mapValues { items in
                 items.map { item in
-                    var todo: [String: Any] = [
-                        "id": item.id,
-                        "title": item.title,
-                        "status": item.status.rawValue,
-                        "order": item.order,
-                        "created_at_ms": item.createdAtMs,
-                        "updated_at_ms": item.updatedAtMs
-                    ]
-                    if let note = item.note {
-                        todo["note"] = note
-                    }
-                    return todo
+                    SaveClientSettingsRequest.WorkspaceTodoPayload(
+                        id: item.id,
+                        title: item.title,
+                        note: item.note,
+                        status: item.status.rawValue,
+                        order: item.order,
+                        createdAtMs: item.createdAtMs,
+                        updatedAtMs: item.updatedAtMs
+                    )
                 }
             },
-            "keybindings": settings.keybindings.map { kb in
-                [
-                    "commandId": kb.commandId,
-                    "keyCombination": kb.keyCombination,
-                    "context": kb.context
-                ]
+            keybindings: settings.keybindings.map { kb in
+                SaveClientSettingsRequest.KeybindingPayload(
+                    commandId: kb.commandId,
+                    keyCombination: kb.keyCombination,
+                    context: kb.context
+                )
             }
-        ]
-        if let mergeAIAgent = settings.mergeAIAgent {
-            payload["merge_ai_agent"] = mergeAIAgent
-        }
-        send(payload)
+        )
+        sendTyped(payload)
     }
 
     // MARK: - v1.22: 文件监控
