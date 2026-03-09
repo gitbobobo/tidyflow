@@ -26,9 +26,7 @@ struct ProjectsSidebarView: View {
             if projectionStore.projects.isEmpty && appState.projects.isEmpty {
                 emptyStateView
             } else {
-                TreeRowActivityPhaseProvider {
-                    projectListView
-                }
+                projectListView
             }
         }
         .frame(minWidth: 200)

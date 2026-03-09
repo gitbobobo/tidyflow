@@ -172,41 +172,19 @@ struct TreeRowActivityIndicator: Identifiable {
     let iconName: String
 }
 
-private struct TreeRowActivityPhaseKey: EnvironmentKey {
-    static let defaultValue: Double? = nil
-}
-
-extension EnvironmentValues {
-    var treeRowActivityPhase: Double? {
-        get { self[TreeRowActivityPhaseKey.self] }
-        set { self[TreeRowActivityPhaseKey.self] = newValue }
-    }
-}
-
-struct TreeRowActivityPhaseProvider<Content: View>: View {
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { timeline in
-            let cycle = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 1.8) / 1.8
-            content()
-                .environment(\.treeRowActivityPhase, cycle)
-        }
-    }
-}
-
 private struct TreeRowActivityIndicatorsView: View {
     let indicators: [TreeRowActivityIndicator]
-    @Environment(\.treeRowActivityPhase) private var sharedPhase
+    @State private var shimmerPhase: CGFloat = -0.3
+
+    private let cycleDuration: TimeInterval = 1.8
 
     var body: some View {
         indicatorIcons(maskStyle: false)
             .overlay {
-                if let sharedPhase, !indicators.isEmpty {
+                if !indicators.isEmpty {
                     GeometryReader { proxy in
                         let width = max(8, proxy.size.width * 0.45)
-                        let offset = (sharedPhase * 1.6 - 0.3) * proxy.size.width
+                        let offset = shimmerPhase * proxy.size.width
                         LinearGradient(
                             colors: [
                                 .clear,
@@ -224,6 +202,13 @@ private struct TreeRowActivityIndicatorsView: View {
                     .allowsHitTesting(false)
                 }
             }
+            .onAppear(perform: startShimmer)
+            .onChange(of: indicators.map(\.id).joined(separator: "|")) { _, _ in
+                startShimmer()
+            }
+            .onDisappear {
+                shimmerPhase = -0.3
+            }
     }
 
     @ViewBuilder
@@ -233,7 +218,14 @@ private struct TreeRowActivityIndicatorsView: View {
                 CommandIconView(iconName: indicator.iconName, size: 11)
                     .foregroundColor(maskStyle ? .white : .secondary)
                     .frame(width: 12, height: 12)
-            }
+                }
+        }
+    }
+
+    private func startShimmer() {
+        shimmerPhase = -0.3
+        withAnimation(.linear(duration: cycleDuration).repeatForever(autoreverses: false)) {
+            shimmerPhase = 1.3
         }
     }
 }
