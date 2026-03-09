@@ -454,15 +454,15 @@ final class BottomPanelLayoutSemanticsTests: XCTestCase {
 
 final class BottomPanelCategorySemanticsTests: XCTestCase {
 
-    func testBottomPanelCategoryOrder_placesSettingsFirst() {
+    func testBottomPanelCategoryOrder_placesProjectConfigFirst() {
         XCTAssertEqual(
             BottomPanelCategory.allCases,
-            [.settings, .terminal, .edit, .diff],
-            "底部面板分类顺序应为设置、终端、编辑、差异"
+            [.projectConfig, .terminal, .edit, .diff],
+            "底部面板分类顺序应为项目配置、终端、编辑、差异"
         )
     }
 
-    func testNewWorkspaceDefaultsToSettingsCategory() {
+    func testNewWorkspaceDefaultsToProjectConfigCategory() {
         let appState = AppState()
         let workspaceKey = "proj::ws"
 
@@ -470,8 +470,8 @@ final class BottomPanelCategorySemanticsTests: XCTestCase {
 
         XCTAssertEqual(
             appState.activeBottomPanelCategory(workspaceKey: workspaceKey),
-            .settings,
-            "新工作区底部面板默认应选中设置分类"
+            .projectConfig,
+            "新工作区底部面板默认应选中项目配置分类"
         )
     }
 
