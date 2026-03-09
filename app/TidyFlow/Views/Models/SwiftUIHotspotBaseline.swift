@@ -1,6 +1,12 @@
 import SwiftUI
 import Foundation
 
+#if DEBUG
+private let swiftUIHotspotBaselineEnabled = SwiftUIPerformanceDebug.hotspotBaselineEnabled
+#else
+private let swiftUIHotspotBaselineEnabled = false
+#endif
+
 enum SwiftUIHotspot: String {
     case macSidebar = "mac_sidebar"
     case macAIChat = "mac_ai_chat"
@@ -122,6 +128,7 @@ private struct SwiftUIHotspotBaselineModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onAppear {
+                guard swiftUIHotspotBaselineEnabled else { return }
                 guard session == nil else {
                     session?.markFirstPaintIfNeeded()
                     return
@@ -139,6 +146,7 @@ private struct SwiftUIHotspotBaselineModifier: ViewModifier {
                 }
             }
             .onDisappear {
+                guard swiftUIHotspotBaselineEnabled else { return }
                 guard let session else { return }
                 let renderCount = SwiftUIRenderDiagnostics.renderCount(name: renderProbeName, metadata: metadata)
                 session.finish(renderCountAtEnd: renderCount)
