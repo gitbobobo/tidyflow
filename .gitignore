@@ -138,13 +138,6 @@ scripts/upgrade.sh
 .tidyflow/
 
 docs/product-requirements.md
-# Legacy editor vendor files (removed in native refactor)
-app/TidyFlow/Web/vendor/codemirror.bundle.js
-app/TidyFlow/Web/vendor/codemirror.css
-app/TidyFlow/Web/vendor/highlight-dark.css
-app/TidyFlow/Web/vendor/highlight.min.js
-app/TidyFlow/Web/vendor/marked.min.js
-app/TidyFlow/Web/vendor/mermaid.min.js
 # Commit result output (temporary)
 commit_result.json
 # Temporary workspace files
