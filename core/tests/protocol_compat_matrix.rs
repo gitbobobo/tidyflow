@@ -11,12 +11,27 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// 动态端口分配起始端口
 static NEXT_PORT: AtomicU16 = AtomicU16::new(49100);
+
+/// 全局测试串行化互斥锁：确保同一时刻只有一个测试服务器在运行。
+/// 使用 std::sync::Mutex 而非 tokio::sync::Semaphore，因为测试跨多个独立的
+/// tokio runtime（每个 #[tokio::test] 有独立 runtime），tokio 同步原语不能
+/// 跨 runtime 可靠传递唤醒信号。std::sync::Mutex 在 OS 线程层面阻塞，
+/// 对 current_thread runtime 的 block_on 安全有效。
+static TEST_LOCK: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
+
+fn acquire_test_lock() -> MutexGuard<'static, ()> {
+    match TEST_LOCK.get_or_init(|| Arc::new(Mutex::new(()))).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(), // 前序测试 panic 导致 mutex 中毒时，继续使用
+    }
+}
 
 fn next_test_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::SeqCst)
@@ -52,30 +67,49 @@ impl ServerGuard {
             .env("TIDYFLOW_DEV", "1")
             .env_remove("TIDYFLOW_WS_TOKEN")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null()) // stderr 不消费会导致管道缓冲区满，阻塞服务器进程
             .spawn()
             .map_err(|e| format!("启动服务器失败: {}", e))?;
 
         let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let start = std::time::Instant::now();
 
-        loop {
-            if start.elapsed() > Duration::from_secs(10) {
-                let _ = child.kill();
-                return Err("服务器启动超时".into());
-            }
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    std::thread::sleep(Duration::from_millis(50));
+        // 在后台线程读取 stdout，通过 channel 传递启动信号，确保超时机制有效。
+        // read_line 是阻塞调用，直接在主线程轮询会导致超时检查无法在阻塞期间触发。
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Ok(_) if line.contains("TIDYFLOW_BOOTSTRAP") => {
+                        let _ = tx.send(Ok(()));
+                        return;
+                    }
+                    Ok(_) => line.clear(),
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("读取 stdout 失败: {}", e)));
+                        return;
+                    }
                 }
-                Ok(_) if line.contains("TIDYFLOW_BOOTSTRAP") => break,
-                Ok(_) => line.clear(),
-                Err(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        });
+
+        // 等待服务器启动，超时 60 秒（AI 服务初始化约 5-8 秒，并发测试场景下需要更充裕的时间）
+        match rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = child.kill();
+                return Err(format!("服务器启动失败: {}", e));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return Err("服务器启动超时（60s）".into());
             }
         }
-        child.stdout = Some(reader.into_inner());
+
         Ok(Self {
             child: Some(child),
             port,
@@ -198,6 +232,28 @@ async fn wait_for_action(
     None
 }
 
+/// 等待 action="error" 且 payload.code == expected_code 的信封。
+/// 用于验证 read_via_http_required 门禁响应（服务端通过 ServerMessage::Error 返回）。
+async fn wait_for_error_with_code(
+    ws: &mut futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+    expected_code: &str,
+) -> Option<ServerEnvelope> {
+    for _ in 0..30 {
+        if let Some(env) = recv_envelope(ws).await {
+            if env.action == "error"
+                && env.payload.get("code").and_then(|v| v.as_str()) == Some(expected_code)
+            {
+                return Some(env);
+            }
+        }
+    }
+    None
+}
+
 // ============================================================================
 // Domain/Action 兼容性矩阵测试
 // ============================================================================
@@ -205,6 +261,7 @@ async fn wait_for_action(
 /// 测试 system 域的消息路由
 #[tokio::test]
 async fn test_system_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -231,6 +288,7 @@ async fn test_system_domain_matrix() {
 /// 测试 terminal 域的消息路由
 #[tokio::test]
 async fn test_terminal_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -270,6 +328,7 @@ async fn test_terminal_domain_matrix() {
 /// 测试 project 域的消息路由
 #[tokio::test]
 async fn test_project_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -306,6 +365,7 @@ async fn test_project_domain_matrix() {
 /// 测试 file 域的消息路由
 #[tokio::test]
 async fn test_file_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -328,6 +388,7 @@ async fn test_file_domain_matrix() {
 /// 测试 git 域的消息路由
 #[tokio::test]
 async fn test_git_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -350,6 +411,7 @@ async fn test_git_domain_matrix() {
 /// 测试 settings 域的消息路由
 #[tokio::test]
 async fn test_settings_domain_matrix() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -373,6 +435,7 @@ async fn test_settings_domain_matrix() {
 /// 测试未知 domain 路由到 misc
 #[tokio::test]
 async fn test_misc_domain_fallback() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -398,6 +461,7 @@ async fn test_misc_domain_fallback() {
 /// 测试协议版本一致性
 #[tokio::test]
 async fn test_protocol_version_consistency() {
+    let _lock = acquire_test_lock();
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (_, mut read) = connect(port).await.expect("连接失败");
@@ -434,5 +498,117 @@ async fn test_protocol_version_consistency() {
     assert!(
         cap_names.iter().any(|c| *c == "git_tools"),
         "缺少 git_tools 能力"
+    );
+}
+
+/// 测试 AI domain 的 WS 读取入口返回 read_via_http_required
+///
+/// 验证 ai_session_list 等读取 action 在 WS 上返回正确的门禁响应，
+/// 且响应携带 project/workspace 字段（多工作区边界约束）。
+#[tokio::test]
+async fn test_ai_ws_read_via_http_required() {
+    let _lock = acquire_test_lock();
+    let server = ServerGuard::start().expect("启动服务器失败");
+    let port = server.port();
+    let (mut write, mut read) = connect(port).await.expect("连接失败");
+    let _ = wait_for_action(&mut read, "hello").await;
+
+    // ai_session_list 是 HTTP 读取入口，WS 上应返回 read_via_http_required（通过 error envelope 携带）
+    write
+        .send(Message::Binary(encode_client_message(
+            "ai",
+            "ai_session_list",
+            json!({ "project_name": "testproject", "workspace_name": "default", "ai_tool": "codex" }),
+        )))
+        .await
+        .unwrap();
+    // 服务端通过 ServerMessage::Error { code: "read_via_http_required", project, workspace } 返回门禁响应，
+    // 对应 envelope: action="error", payload.code="read_via_http_required"
+    // 注：error 消息的 domain 统一映射为 "misc"（服务端 domain_from_action("error") 行为）
+    let resp = wait_for_error_with_code(&mut read, "read_via_http_required")
+        .await
+        .expect("ai_session_list 应返回携带 read_via_http_required 代码的 error");
+    // 验证 project/workspace 字段存在（多工作区边界约束）
+    assert_eq!(
+        resp.payload["project"].as_str().unwrap_or(""),
+        "testproject",
+        "error payload 应携带 project 字段"
+    );
+    assert_eq!(
+        resp.payload["workspace"].as_str().unwrap_or(""),
+        "default",
+        "error payload 应携带 workspace 字段"
+    );
+}
+
+/// 测试 evolution domain 的 WS 读取入口返回 read_via_http_required
+///
+/// 验证 evo_get_snapshot action 在 WS 上返回门禁响应，
+/// 且响应携带 project/workspace 字段。
+#[tokio::test]
+async fn test_evolution_ws_read_via_http_required() {
+    let _lock = acquire_test_lock();
+    let server = ServerGuard::start().expect("启动服务器失败");
+    let port = server.port();
+    let (mut write, mut read) = connect(port).await.expect("连接失败");
+    let _ = wait_for_action(&mut read, "hello").await;
+
+    write
+        .send(Message::Binary(encode_client_message(
+            "evolution",
+            "evo_get_snapshot",
+            json!({ "project": "testproject", "workspace": "default" }),
+        )))
+        .await
+        .unwrap();
+    let resp = wait_for_error_with_code(&mut read, "read_via_http_required")
+        .await
+        .expect("evo_get_snapshot 应返回携带 read_via_http_required 代码的 error");
+    // 注：error 消息的 domain 统一映射为 "misc"
+    assert_eq!(
+        resp.payload["project"].as_str().unwrap_or(""),
+        "testproject",
+        "error payload 应携带 project 字段"
+    );
+    assert_eq!(
+        resp.payload["workspace"].as_str().unwrap_or(""),
+        "default",
+        "error payload 应携带 workspace 字段"
+    );
+}
+
+/// 测试 evidence domain 的 WS 读取入口返回 read_via_http_required
+///
+/// 验证 evidence_get_snapshot action 在 WS 上返回门禁响应，
+/// 且响应携带 project/workspace 字段。
+#[tokio::test]
+async fn test_evidence_ws_read_via_http_required() {
+    let _lock = acquire_test_lock();
+    let server = ServerGuard::start().expect("启动服务器失败");
+    let port = server.port();
+    let (mut write, mut read) = connect(port).await.expect("连接失败");
+    let _ = wait_for_action(&mut read, "hello").await;
+
+    write
+        .send(Message::Binary(encode_client_message(
+            "evidence",
+            "evidence_get_snapshot",
+            json!({ "project": "testproject", "workspace": "default" }),
+        )))
+        .await
+        .unwrap();
+    let resp = wait_for_error_with_code(&mut read, "read_via_http_required")
+        .await
+        .expect("evidence_get_snapshot 应返回携带 read_via_http_required 代码的 error");
+    // 注：error 消息的 domain 统一映射为 "misc"
+    assert_eq!(
+        resp.payload["project"].as_str().unwrap_or(""),
+        "testproject",
+        "error payload 应携带 project 字段"
+    );
+    assert_eq!(
+        resp.payload["workspace"].as_str().unwrap_or(""),
+        "default",
+        "error payload 应携带 workspace 字段"
     );
 }
