@@ -91,12 +91,535 @@ private func encodePathComponent(_ raw: String) -> String {
     return raw.addingPercentEncoding(withAllowedCharacters: allowed) ?? raw
 }
 
-private struct GetClientSettingsRequest: Encodable {
-    let type: String = "get_client_settings"
+protocol TypedWSRequest: Encodable {
+    var action: String { get }
+    var project: String? { get }
+    var workspace: String? { get }
 }
 
-private struct SaveClientSettingsRequest: Encodable {
-    let type: String = "save_client_settings"
+extension TypedWSRequest {
+    var project: String? { nil }
+    var workspace: String? { nil }
+}
+
+private struct ClientEnvelopeV6<Payload: Encodable>: Encodable {
+    let requestID: String
+    let domain: String
+    let action: String
+    let payload: Payload
+    let clientTs: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case domain
+        case action
+        case payload
+        case clientTs = "client_ts"
+    }
+}
+
+private struct EmptyTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+
+    var action: String { requestAction }
+
+    init(action: String) {
+        self.requestAction = action
+    }
+
+    private enum CodingKeys: CodingKey {}
+}
+
+private struct ProjectTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String) {
+        self.requestAction = action
+        self.project = project
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+    }
+}
+
+private struct ProjectWorkspaceTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+    }
+}
+
+private struct ProjectWorkspacePathTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+    let path: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String, path: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case path
+    }
+}
+
+private struct ProjectWorkspacePathContextTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+    let path: String
+    let context: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String, path: String, context: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.context = context
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case path
+        case context
+    }
+}
+
+private struct TermIDTypedWSRequest: TypedWSRequest {
+    private let requestAction: String
+    let termID: String
+
+    var action: String { requestAction }
+
+    init(action: String, termID: String) {
+        self.requestAction = action
+        self.termID = termID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case termID = "term_id"
+    }
+}
+
+private struct FileIndexRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let query: String?
+
+    var action: String { "file_index" }
+}
+
+private struct FileListRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String
+
+    var action: String { "file_list" }
+}
+
+private struct GitDiffRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String
+    let mode: String
+
+    var action: String { "git_diff" }
+}
+
+private struct GitLogRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let limit: Int
+
+    var action: String { "git_log" }
+}
+
+private struct GitShowRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let sha: String
+
+    var action: String { "git_show" }
+}
+
+private struct GitStageRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String?
+    let scope: String
+
+    var action: String { "git_stage" }
+}
+
+private struct GitUnstageRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String?
+    let scope: String
+
+    var action: String { "git_unstage" }
+}
+
+private struct GitDiscardRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String?
+    let scope: String
+    let includeUntracked: Bool?
+
+    var action: String { "git_discard" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case path
+        case scope
+        case includeUntracked = "include_untracked"
+    }
+}
+
+private struct GitBranchRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+    let branch: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String, branch: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.branch = branch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case branch
+    }
+}
+
+private struct GitCommitRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let message: String
+
+    var action: String { "git_commit" }
+}
+
+private struct GitAIMergeRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let aiAgent: String?
+    let defaultBranch: String?
+
+    var action: String { "git_ai_merge" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case aiAgent = "ai_agent"
+        case defaultBranch = "default_branch"
+    }
+}
+
+private struct GitOntoBranchRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+    let ontoBranch: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String, ontoBranch: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.ontoBranch = ontoBranch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case ontoBranch = "onto_branch"
+    }
+}
+
+private struct GitDefaultBranchRequest: TypedWSRequest {
+    private let requestAction: String
+    let project: String
+    let workspace: String
+    let defaultBranch: String
+
+    var action: String { requestAction }
+
+    init(action: String, project: String, workspace: String, defaultBranch: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.defaultBranch = defaultBranch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case defaultBranch = "default_branch"
+    }
+}
+
+private struct ImportProjectRequest: TypedWSRequest {
+    let name: String
+    let path: String
+
+    var action: String { "import_project" }
+}
+
+private struct ListWorkspacesRequest: TypedWSRequest {
+    let project: String
+
+    var action: String { "list_workspaces" }
+}
+
+private struct TermCreateRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let cols: Int?
+    let rows: Int?
+    let name: String?
+    let icon: String?
+
+    var action: String { "term_create" }
+}
+
+private struct TermOutputAckRequest: TypedWSRequest {
+    let termID: String
+    let bytes: Int
+
+    var action: String { "term_output_ack" }
+
+    private enum CodingKeys: String, CodingKey {
+        case termID = "term_id"
+        case bytes
+    }
+}
+
+private struct TerminalInputRequest: TypedWSRequest {
+    let termID: String
+    let data: [UInt8]
+
+    var action: String { "input" }
+
+    private enum CodingKeys: String, CodingKey {
+        case termID = "term_id"
+        case data
+    }
+}
+
+private struct TerminalResizeRequest: TypedWSRequest {
+    let termID: String
+    let cols: Int
+    let rows: Int
+
+    var action: String { "resize" }
+
+    private enum CodingKeys: String, CodingKey {
+        case termID = "term_id"
+        case cols
+        case rows
+    }
+}
+
+private struct CreateWorkspaceRequest: TypedWSRequest {
+    let project: String
+    let fromBranch: String?
+    let templateID: String?
+
+    var action: String { "create_workspace" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case fromBranch = "from_branch"
+        case templateID = "template_id"
+    }
+}
+
+private struct NameRequest: TypedWSRequest {
+    private let requestAction: String
+    let name: String
+
+    var action: String { requestAction }
+
+    init(action: String, name: String) {
+        self.requestAction = action
+        self.name = name
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+    }
+}
+
+private struct FileRenameRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let oldPath: String
+    let newName: String
+
+    var action: String { "file_rename" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case oldPath = "old_path"
+        case newName = "new_name"
+    }
+}
+
+private struct FileCopyRequest: TypedWSRequest {
+    let destProject: String
+    let destWorkspace: String
+    let sourceAbsolutePath: String
+    let destDir: String
+
+    var action: String { "file_copy" }
+
+    private enum CodingKeys: String, CodingKey {
+        case destProject = "dest_project"
+        case destWorkspace = "dest_workspace"
+        case sourceAbsolutePath = "source_absolute_path"
+        case destDir = "dest_dir"
+    }
+}
+
+private struct FileMoveRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let oldPath: String
+    let newDir: String
+
+    var action: String { "file_move" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case oldPath = "old_path"
+        case newDir = "new_dir"
+    }
+}
+
+private struct FileWriteRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let path: String
+    let content: [UInt8]
+
+    var action: String { "file_write" }
+}
+
+private struct RunProjectCommandRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let commandID: String
+
+    var action: String { "run_project_command" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case commandID = "command_id"
+    }
+}
+
+private struct CancelProjectCommandRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let commandID: String
+    let taskID: String?
+
+    var action: String { "cancel_project_command" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case commandID = "command_id"
+        case taskID = "task_id"
+    }
+}
+
+private struct TemplateIDRequest: TypedWSRequest {
+    private let requestAction: String
+    let templateID: String
+
+    var action: String { requestAction }
+
+    init(action: String, templateID: String) {
+        self.requestAction = action
+        self.templateID = templateID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case templateID = "template_id"
+    }
+}
+
+private struct CancelAITaskRequest: TypedWSRequest {
+    let project: String
+    let workspace: String
+    let operationType: String
+
+    var action: String { "cancel_ai_task" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case operationType = "operation_type"
+    }
+}
+
+private struct ClipboardImageUploadRequest: TypedWSRequest {
+    let imageData: Data
+
+    var action: String { "clipboard_image_upload" }
+
+    private enum CodingKeys: String, CodingKey {
+        case imageData = "image_data"
+    }
+}
+
+private struct GetClientSettingsRequest: TypedWSRequest {
+    var action: String { "get_client_settings" }
+}
+
+private struct SaveClientSettingsRequest: TypedWSRequest {
+    var action: String { "save_client_settings" }
     let customCommands: [CustomCommandPayload]
     let workspaceShortcuts: [String: String]
     let mergeAIAgent: String?
@@ -170,7 +693,6 @@ private struct SaveClientSettingsRequest: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type
         case customCommands = "custom_commands"
         case workspaceShortcuts = "workspace_shortcuts"
         case mergeAIAgent = "merge_ai_agent"
@@ -284,6 +806,29 @@ extension WSClient {
         return nil
     }
 
+    private func validateOutgoingMessage(
+        action: String,
+        project: String? = nil,
+        workspace: String? = nil
+    ) -> String? {
+        let trimmedAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAction.isEmpty else {
+            return "消息缺少 type"
+        }
+        guard evolutionActionsRequireProjectWorkspace.contains(trimmedAction) else {
+            return nil
+        }
+        let trimmedProject = project?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedProject.isEmpty {
+            return "消息 \(trimmedAction) 缺少 project"
+        }
+        let trimmedWorkspace = workspace?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedWorkspace.isEmpty {
+            return "消息 \(trimmedAction) 缺少 workspace"
+        }
+        return nil
+    }
+
     private func encodeEnvelope(dict: [String: Any], requestId: String?) throws -> Data {
         guard let action = dict["type"] as? String, !action.isEmpty else {
             throw NSError(domain: "WSClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Message missing type"])
@@ -299,6 +844,17 @@ extension WSClient {
         ]
         let codable = AnyCodable.from(envelope)
         return try msgpackEncoder.encode(codable)
+    }
+
+    func encodeTypedEnvelope<Body: TypedWSRequest>(_ body: Body, requestId: String?) throws -> Data {
+        let envelope = ClientEnvelopeV6(
+            requestID: requestId ?? UUID().uuidString,
+            domain: domainForAction(body.action),
+            action: body.action,
+            payload: body,
+            clientTs: UInt64(Date().timeIntervalSince1970 * 1000)
+        )
+        return try msgpackEncoder.encode(envelope)
     }
 
     // MARK: - Send Messages
@@ -336,14 +892,19 @@ extension WSClient {
     }
 
     /// 使用类型化请求体发送消息（包含统一请求包络）。
-    func sendTyped<Body: Encodable>(_ body: Body, requestId: String? = nil) {
+    func sendTyped<Body: TypedWSRequest>(_ body: Body, requestId: String? = nil) {
+        if let validationError = validateOutgoingMessage(
+            action: body.action,
+            project: body.project,
+            workspace: body.workspace
+        ) {
+            TFLog.ws.error("Drop outbound typed message: \(validationError, privacy: .public)")
+            emitClientError(validationError)
+            return
+        }
         do {
-            let jsonData = try JSONEncoder().encode(body)
-            let jsonObject = try JSONSerialization.jsonObject(with: jsonData)
-            guard let dict = jsonObject as? [String: Any] else {
-                throw NSError(domain: "WSClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Typed body is not object"])
-            }
-            send(dict, requestId: requestId)
+            let data = try encodeTypedEnvelope(body, requestId: requestId)
+            sendBinary(data)
         } catch {
             TFLog.ws.error("MessagePack typed encode failed: \(error.localizedDescription, privacy: .public)")
             emitClientError("Failed to encode typed message: \(error.localizedDescription)")
@@ -411,453 +972,248 @@ extension WSClient {
     }
 
     func requestFileIndex(project: String, workspace: String, query: String? = nil) {
-        var msg: [String: Any] = [
-            "type": "file_index",
-            "project": project,
-            "workspace": workspace
-        ]
-        if let query {
-            msg["query"] = query
-        }
-        send(msg)
+        sendTyped(FileIndexRequest(project: project, workspace: workspace, query: query))
     }
 
     /// 请求文件列表（目录浏览）
     func requestFileList(project: String, workspace: String, path: String = ".") {
-        send([
-            "type": "file_list",
-            "project": project,
-            "workspace": workspace,
-            "path": path
-        ])
+        sendTyped(FileListRequest(project: project, workspace: workspace, path: path))
     }
 
     /// 请求读取文件内容（文本/二进制）
     func requestFileRead(project: String, workspace: String, path: String) {
-        send([
-            "type": "file_read",
-            "project": project,
-            "workspace": workspace,
-            "path": path
-        ])
+        sendTyped(ProjectWorkspacePathTypedWSRequest(action: "file_read", project: project, workspace: workspace, path: path))
     }
 
     // Phase C2-2a: Request git diff
     func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
-        send([
-            "type": "git_diff",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "mode": mode
-        ])
+        sendTyped(GitDiffRequest(project: project, workspace: workspace, path: path, mode: mode))
     }
 
     // Phase C3-1: Request git status
     func requestGitStatus(project: String, workspace: String) {
-        send([
-            "type": "git_status",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_status", project: project, workspace: workspace))
     }
 
     // Git Log: Request commit history
     func requestGitLog(project: String, workspace: String, limit: Int = 50) {
-        send([
-            "type": "git_log",
-            "project": project,
-            "workspace": workspace,
-            "limit": limit
-        ])
+        sendTyped(GitLogRequest(project: project, workspace: workspace, limit: limit))
     }
 
     // Git Show: Request single commit details
     func requestGitShow(project: String, workspace: String, sha: String) {
-        send([
-            "type": "git_show",
-            "project": project,
-            "workspace": workspace,
-            "sha": sha
-        ])
+        sendTyped(GitShowRequest(project: project, workspace: workspace, sha: sha))
     }
 
     // Phase C3-2a: Request git stage
     func requestGitStage(project: String, workspace: String, path: String?, scope: String) {
-        var msg: [String: Any] = [
-            "type": "git_stage",
-            "project": project,
-            "workspace": workspace,
-            "scope": scope
-        ]
-        if let path = path {
-            msg["path"] = path
-        }
-        send(msg)
+        sendTyped(GitStageRequest(project: project, workspace: workspace, path: path, scope: scope))
     }
 
     // Phase C3-2a: Request git unstage
     func requestGitUnstage(project: String, workspace: String, path: String?, scope: String) {
-        var msg: [String: Any] = [
-            "type": "git_unstage",
-            "project": project,
-            "workspace": workspace,
-            "scope": scope
-        ]
-        if let path = path {
-            msg["path"] = path
-        }
-        send(msg)
+        sendTyped(GitUnstageRequest(project: project, workspace: workspace, path: path, scope: scope))
     }
 
     // Phase C3-2b: Request git discard
     func requestGitDiscard(project: String, workspace: String, path: String?, scope: String, includeUntracked: Bool = false) {
-        var msg: [String: Any] = [
-            "type": "git_discard",
-            "project": project,
-            "workspace": workspace,
-            "scope": scope
-        ]
-        if let path = path {
-            msg["path"] = path
-        }
-        if includeUntracked {
-            msg["include_untracked"] = true
-        }
-        send(msg)
+        sendTyped(
+            GitDiscardRequest(
+                project: project,
+                workspace: workspace,
+                path: path,
+                scope: scope,
+                includeUntracked: includeUntracked ? true : nil
+            )
+        )
     }
 
     // Phase C3-3a: Request git branches
     func requestGitBranches(project: String, workspace: String) {
-        send([
-            "type": "git_branches",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_branches", project: project, workspace: workspace))
     }
 
     // Phase C3-3a: Request git switch branch
     func requestGitSwitchBranch(project: String, workspace: String, branch: String) {
-        send([
-            "type": "git_switch_branch",
-            "project": project,
-            "workspace": workspace,
-            "branch": branch
-        ])
+        sendTyped(GitBranchRequest(action: "git_switch_branch", project: project, workspace: workspace, branch: branch))
     }
 
     // Phase C3-3b: Request git create branch
     func requestGitCreateBranch(project: String, workspace: String, branch: String) {
-        send([
-            "type": "git_create_branch",
-            "project": project,
-            "workspace": workspace,
-            "branch": branch
-        ])
+        sendTyped(GitBranchRequest(action: "git_create_branch", project: project, workspace: workspace, branch: branch))
     }
 
     // Phase C3-4a: Request git commit
     func requestGitCommit(project: String, workspace: String, message: String) {
-        send([
-            "type": "git_commit",
-            "project": project,
-            "workspace": workspace,
-            "message": message
-        ])
+        sendTyped(GitCommitRequest(project: project, workspace: workspace, message: message))
     }
 
     /// Evolution AutoCommit 独立执行
     func requestEvoAutoCommit(project: String, workspace: String) {
-        send([
-            "type": "evo_auto_commit",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "evo_auto_commit", project: project, workspace: workspace))
     }
 
     /// AI 智能合并到默认分支（v1.33）
     func requestGitAIMerge(project: String, workspace: String, aiAgent: String? = nil, defaultBranch: String? = nil) {
-        var dict: [String: Any] = [
-            "type": "git_ai_merge",
-            "project": project,
-            "workspace": workspace
-        ]
-        if let agent = aiAgent {
-            dict["ai_agent"] = agent
-        }
-        if let branch = defaultBranch {
-            dict["default_branch"] = branch
-        }
-        send(dict)
+        sendTyped(GitAIMergeRequest(project: project, workspace: workspace, aiAgent: aiAgent, defaultBranch: defaultBranch))
     }
 
     // Phase UX-3a: Request git fetch
     func requestGitFetch(project: String, workspace: String) {
-        send([
-            "type": "git_fetch",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_fetch", project: project, workspace: workspace))
     }
 
     // Phase UX-3a: Request git rebase
     func requestGitRebase(project: String, workspace: String, ontoBranch: String) {
-        send([
-            "type": "git_rebase",
-            "project": project,
-            "workspace": workspace,
-            "onto_branch": ontoBranch
-        ])
+        sendTyped(GitOntoBranchRequest(action: "git_rebase", project: project, workspace: workspace, ontoBranch: ontoBranch))
     }
 
     // Phase UX-3a: Request git rebase continue
     func requestGitRebaseContinue(project: String, workspace: String) {
-        send([
-            "type": "git_rebase_continue",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_rebase_continue", project: project, workspace: workspace))
     }
 
     // Phase UX-3a: Request git rebase abort
     func requestGitRebaseAbort(project: String, workspace: String) {
-        send([
-            "type": "git_rebase_abort",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_rebase_abort", project: project, workspace: workspace))
     }
 
     // Phase UX-3a: Request git operation status
     func requestGitOpStatus(project: String, workspace: String) {
-        send([
-            "type": "git_op_status",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_op_status", project: project, workspace: workspace))
     }
 
     // Phase UX-3b: Request git merge to default
     func requestGitMergeToDefault(project: String, workspace: String, defaultBranch: String) {
-        send([
-            "type": "git_merge_to_default",
-            "project": project,
-            "workspace": workspace,
-            "default_branch": defaultBranch
-        ])
+        sendTyped(GitDefaultBranchRequest(action: "git_merge_to_default", project: project, workspace: workspace, defaultBranch: defaultBranch))
     }
 
     // Phase UX-3b: Request git merge continue
     func requestGitMergeContinue(project: String) {
-        send([
-            "type": "git_merge_continue",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_merge_continue", project: project))
     }
 
     // Phase UX-3b: Request git merge abort
     func requestGitMergeAbort(project: String) {
-        send([
-            "type": "git_merge_abort",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_merge_abort", project: project))
     }
 
     // Phase UX-3b: Request git integration status
     func requestGitIntegrationStatus(project: String) {
-        send([
-            "type": "git_integration_status",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_integration_status", project: project))
     }
 
     // Phase UX-4: Request git rebase onto default
     func requestGitRebaseOntoDefault(project: String, workspace: String, defaultBranch: String) {
-        send([
-            "type": "git_rebase_onto_default",
-            "project": project,
-            "workspace": workspace,
-            "default_branch": defaultBranch
-        ])
+        sendTyped(GitDefaultBranchRequest(action: "git_rebase_onto_default", project: project, workspace: workspace, defaultBranch: defaultBranch))
     }
 
     // Phase UX-4: Request git rebase onto default continue
     func requestGitRebaseOntoDefaultContinue(project: String) {
-        send([
-            "type": "git_rebase_onto_default_continue",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_rebase_onto_default_continue", project: project))
     }
 
     // Phase UX-4: Request git rebase onto default abort
     func requestGitRebaseOntoDefaultAbort(project: String) {
-        send([
-            "type": "git_rebase_onto_default_abort",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_rebase_onto_default_abort", project: project))
     }
 
     // Phase UX-5: Request git reset integration worktree
     func requestGitResetIntegrationWorktree(project: String) {
-        send([
-            "type": "git_reset_integration_worktree",
-            "project": project
-        ])
+        sendTyped(ProjectTypedWSRequest(action: "git_reset_integration_worktree", project: project))
     }
 
     // Phase UX-6: Request git check branch up to date
     func requestGitCheckBranchUpToDate(project: String, workspace: String) {
-        send([
-            "type": "git_check_branch_up_to_date",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_check_branch_up_to_date", project: project, workspace: workspace))
     }
 
     // v1.40: 冲突向导请求方法
 
     /// 读取单文件四路对比内容
     func requestGitConflictDetail(project: String, workspace: String, path: String, context: String) {
-        send([
-            "type": "git_conflict_detail",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "context": context
-        ])
+        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_detail", project: project, workspace: workspace, path: path, context: context))
     }
 
     /// 接受我方版本（ours）解决冲突
     func requestGitConflictAcceptOurs(project: String, workspace: String, path: String, context: String) {
-        send([
-            "type": "git_conflict_accept_ours",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "context": context
-        ])
+        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_accept_ours", project: project, workspace: workspace, path: path, context: context))
     }
 
     /// 接受对方版本（theirs）解决冲突
     func requestGitConflictAcceptTheirs(project: String, workspace: String, path: String, context: String) {
-        send([
-            "type": "git_conflict_accept_theirs",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "context": context
-        ])
+        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_accept_theirs", project: project, workspace: workspace, path: path, context: context))
     }
 
     /// 保留双方内容（both）解决冲突
     func requestGitConflictAcceptBoth(project: String, workspace: String, path: String, context: String) {
-        send([
-            "type": "git_conflict_accept_both",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "context": context
-        ])
+        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_accept_both", project: project, workspace: workspace, path: path, context: context))
     }
 
     /// 手动标记文件已解决
     func requestGitConflictMarkResolved(project: String, workspace: String, path: String, context: String) {
-        send([
-            "type": "git_conflict_mark_resolved",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "context": context
-        ])
+        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_mark_resolved", project: project, workspace: workspace, path: path, context: context))
     }
 
     // UX-2: Request import project
     func requestImportProject(name: String, path: String) {
-        send([
-            "type": "import_project",
-            "name": name,
-            "path": path
-        ])
+        sendTyped(ImportProjectRequest(name: name, path: path))
     }
 
     // UX-2: Request list projects
     func requestListProjects() {
-        send([
-            "type": "list_projects"
-        ])
+        sendTyped(EmptyTypedWSRequest(action: "list_projects"))
     }
 
     // Request list workspaces
     func requestListWorkspaces(project: String) {
-        send([
-            "type": "list_workspaces",
-            "project": project
-        ])
+        sendTyped(ListWorkspacesRequest(project: project))
     }
 
     // MARK: - 终端会话（供 iOS / 远程客户端复用）
 
     /// 创建终端（基于项目与工作空间），可附带初始尺寸和展示信息
     func requestTermCreate(project: String, workspace: String, cols: Int? = nil, rows: Int? = nil, name: String? = nil, icon: String? = nil) {
-        var msg: [String: Any] = [
-            "type": "term_create",
-            "project": project,
-            "workspace": workspace
-        ]
-        if let cols { msg["cols"] = cols }
-        if let rows { msg["rows"] = rows }
-        if let name { msg["name"] = name }
-        if let icon { msg["icon"] = icon }
-        send(msg)
+        sendTyped(
+            TermCreateRequest(
+                project: project,
+                workspace: workspace,
+                cols: cols,
+                rows: rows,
+                name: name,
+                icon: icon
+            )
+        )
     }
 
     /// 获取终端会话列表
     func requestTermList() {
-        send([
-            "type": "term_list"
-        ])
+        sendTyped(EmptyTypedWSRequest(action: "term_list"))
     }
 
     /// 关闭终端
     func requestTermClose(termId: String) {
-        send([
-            "type": "term_close",
-            "term_id": termId
-        ])
+        sendTyped(TermIDTypedWSRequest(action: "term_close", termID: termId))
     }
 
     /// 附着已存在终端（重连场景）
     func requestTermAttach(termId: String) {
-        send([
-            "type": "term_attach",
-            "term_id": termId
-        ])
+        sendTyped(TermIDTypedWSRequest(action: "term_attach", termID: termId))
     }
 
     /// 取消当前 WS 连接对该终端的输出订阅（不关闭 PTY）
     func requestTermDetach(termId: String) {
-        send([
-            "type": "term_detach",
-            "term_id": termId
-        ])
+        sendTyped(TermIDTypedWSRequest(action: "term_detach", termID: termId))
     }
 
     /// 终端输出流控 ACK：通知 Core 已消费指定字节数，释放背压
     func sendTermOutputAck(termId: String, bytes: Int) {
-        send([
-            "type": "term_output_ack",
-            "term_id": termId,
-            "bytes": bytes
-        ])
+        sendTyped(TermOutputAckRequest(termID: termId, bytes: bytes))
     }
 
     /// 发送终端输入（二进制字节）
     func sendTerminalInput(_ bytes: [UInt8], termId: String) {
-        send([
-            "type": "input",
-            "term_id": termId,
-            "data": bytes
-        ])
+        sendTyped(TerminalInputRequest(termID: termId, data: bytes))
     }
 
     /// 发送终端输入（UTF-8 文本）
@@ -867,44 +1223,22 @@ extension WSClient {
 
     /// 发送终端 resize
     func requestTermResize(termId: String, cols: Int, rows: Int) {
-        send([
-            "type": "resize",
-            "term_id": termId,
-            "cols": cols,
-            "rows": rows
-        ])
+        sendTyped(TerminalResizeRequest(termID: termId, cols: cols, rows: rows))
     }
 
     // UX-2: Request create workspace（名称由 Core 用 petname 生成）
     func requestCreateWorkspace(project: String, fromBranch: String? = nil, templateId: String? = nil) {
-        var msg: [String: Any] = [
-            "type": "create_workspace",
-            "project": project
-        ]
-        if let branch = fromBranch {
-            msg["from_branch"] = branch
-        }
-        if let tid = templateId {
-            msg["template_id"] = tid
-        }
-        send(msg)
+        sendTyped(CreateWorkspaceRequest(project: project, fromBranch: fromBranch, templateID: templateId))
     }
 
     // Remove project
     func requestRemoveProject(name: String) {
-        send([
-            "type": "remove_project",
-            "name": name
-        ])
+        sendTyped(NameRequest(action: "remove_project", name: name))
     }
 
     // Remove workspace
     func requestRemoveWorkspace(project: String, workspace: String) {
-        send([
-            "type": "remove_workspace",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "remove_workspace", project: project, workspace: workspace))
     }
 
     // MARK: - 客户端设置
@@ -971,18 +1305,12 @@ extension WSClient {
 
     /// 订阅工作空间文件监控
     func requestWatchSubscribe(project: String, workspace: String) {
-        send([
-            "type": "watch_subscribe",
-            "project": project,
-            "workspace": workspace
-        ])
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "watch_subscribe", project: project, workspace: workspace))
     }
 
     /// 取消文件监控订阅
     func requestWatchUnsubscribe() {
-        send([
-            "type": "watch_unsubscribe"
-        ])
+        sendTyped(EmptyTypedWSRequest(action: "watch_unsubscribe"))
     }
 
     // MARK: - v1.xx: AI 会话订阅
@@ -1013,62 +1341,40 @@ extension WSClient {
 
     /// 请求重命名文件或目录
     func requestFileRename(project: String, workspace: String, oldPath: String, newName: String) {
-        send([
-            "type": "file_rename",
-            "project": project,
-            "workspace": workspace,
-            "old_path": oldPath,
-            "new_name": newName
-        ])
+        sendTyped(FileRenameRequest(project: project, workspace: workspace, oldPath: oldPath, newName: newName))
     }
 
     /// 请求删除文件或目录（移到回收站）
     func requestFileDelete(project: String, workspace: String, path: String) {
-        send([
-            "type": "file_delete",
-            "project": project,
-            "workspace": workspace,
-            "path": path
-        ])
+        sendTyped(ProjectWorkspacePathTypedWSRequest(action: "file_delete", project: project, workspace: workspace, path: path))
     }
 
     // MARK: - v1.24: 文件复制
 
     /// 请求复制文件或目录（使用绝对路径）
     func requestFileCopy(destProject: String, destWorkspace: String, sourceAbsolutePath: String, destDir: String) {
-        send([
-            "type": "file_copy",
-            "dest_project": destProject,
-            "dest_workspace": destWorkspace,
-            "source_absolute_path": sourceAbsolutePath,
-            "dest_dir": destDir
-        ])
+        sendTyped(
+            FileCopyRequest(
+                destProject: destProject,
+                destWorkspace: destWorkspace,
+                sourceAbsolutePath: sourceAbsolutePath,
+                destDir: destDir
+            )
+        )
     }
 
     // MARK: - v1.25: 文件移动
 
     /// 请求移动文件或目录到新目录
     func requestFileMove(project: String, workspace: String, oldPath: String, newDir: String) {
-        send([
-            "type": "file_move",
-            "project": project,
-            "workspace": workspace,
-            "old_path": oldPath,
-            "new_dir": newDir
-        ])
+        sendTyped(FileMoveRequest(project: project, workspace: workspace, oldPath: oldPath, newDir: newDir))
     }
 
     // MARK: - 文件写入（新建文件）
 
     /// 请求写入文件（用于新建空文件）
     func requestFileWrite(project: String, workspace: String, path: String, content: Data) {
-        send([
-            "type": "file_write",
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "content": [UInt8](content)
-        ])
+        sendTyped(FileWriteRequest(project: project, workspace: workspace, path: path, content: [UInt8](content)))
     }
 
     // MARK: - v1.29: 项目命令
@@ -1094,12 +1400,7 @@ extension WSClient {
 
     /// 执行项目命令
     func requestRunProjectCommand(project: String, workspace: String, commandId: String) {
-        send([
-            "type": "run_project_command",
-            "project": project,
-            "workspace": workspace,
-            "command_id": commandId
-        ])
+        sendTyped(RunProjectCommandRequest(project: project, workspace: workspace, commandID: commandId))
     }
 
     /// 取消正在运行的项目命令
@@ -1109,23 +1410,21 @@ extension WSClient {
         commandId: String,
         taskId: String? = nil
     ) {
-        var payload: [String: Any] = [
-            "type": "cancel_project_command",
-            "project": project,
-            "workspace": workspace,
-            "command_id": commandId
-        ]
-        if let taskId, !taskId.isEmpty {
-            payload["task_id"] = taskId
-        }
-        send(payload)
+        sendTyped(
+            CancelProjectCommandRequest(
+                project: project,
+                workspace: workspace,
+                commandID: commandId,
+                taskID: taskId?.isEmpty == false ? taskId : nil
+            )
+        )
     }
 
     // MARK: - v1.40: 工作流模板管理
 
     /// 获取所有工作流模板列表
     func requestListTemplates() {
-        send(["type": "list_templates"])
+        sendTyped(EmptyTypedWSRequest(action: "list_templates"))
     }
 
     /// 保存（新增或更新）工作流模板
@@ -1138,18 +1437,12 @@ extension WSClient {
 
     /// 删除工作流模板
     func requestDeleteTemplate(templateId: String) {
-        send([
-            "type": "delete_template",
-            "template_id": templateId
-        ])
+        sendTyped(TemplateIDRequest(action: "delete_template", templateID: templateId))
     }
 
     /// 导出工作流模板（服务端返回完整模板数据）
     func requestExportTemplate(templateId: String) {
-        send([
-            "type": "export_template",
-            "template_id": templateId
-        ])
+        sendTyped(TemplateIDRequest(action: "export_template", templateID: templateId))
     }
 
     /// 导入工作流模板
@@ -1164,22 +1457,14 @@ extension WSClient {
 
     /// 取消正在运行的 AI 任务
     func requestCancelAITask(project: String, workspace: String, operationType: String) {
-        send([
-            "type": "cancel_ai_task",
-            "project": project,
-            "workspace": workspace,
-            "operation_type": operationType
-        ])
+        sendTyped(CancelAITaskRequest(project: project, workspace: workspace, operationType: operationType))
     }
 
     // MARK: - v1.39: 剪贴板图片上传
 
     /// 上传剪贴板图片到服务端（转 JPG 写入 macOS 系统剪贴板）
     func sendClipboardImageUpload(imageData: [UInt8]) {
-        send([
-            "type": "clipboard_image_upload",
-            "image_data": Data(imageData)
-        ])
+        sendTyped(ClipboardImageUploadRequest(imageData: Data(imageData)))
     }
 
     // MARK: - 日志上报
@@ -1216,9 +1501,7 @@ extension WSClient {
 
     /// 请求任务快照（用于移动端重连后恢复后台任务状态）
     func requestListTasks() {
-        send([
-            "type": "list_tasks"
-        ])
+        sendTyped(EmptyTypedWSRequest(action: "list_tasks"))
     }
 
     // MARK: - AI Chat（结构化 message/part 流）

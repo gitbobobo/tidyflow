@@ -69,6 +69,30 @@ enum AnyCodable: Codable {
         switch value {
         case is NSNull:
             return .null
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .bool(number.boolValue)
+            }
+            if CFNumberIsFloatType(number) {
+                return .double(number.doubleValue)
+            }
+            if number.int64Value > Int64(Int.max) || number.int64Value < Int64(Int.min) {
+                return .string(number.stringValue)
+            }
+            return .int(Int(number.int64Value))
+        case let string as NSString:
+            return .string(string as String)
+        case let data as NSData:
+            return .data(data as Data)
+        case let array as NSArray:
+            return .array(array.map { from($0) })
+        case let dict as NSDictionary:
+            var result: [String: AnyCodable] = [:]
+            for (key, nestedValue) in dict {
+                guard let stringKey = key as? String else { continue }
+                result[stringKey] = from(nestedValue)
+            }
+            return .dictionary(result)
         case let bool as Bool:
             return .bool(bool)
         // 优先识别 [UInt8]，按 MessagePack bin 编码，避免被当作字符串数组

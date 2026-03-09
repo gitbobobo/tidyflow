@@ -238,6 +238,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST10036 /* GitPanelSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002E /* GitPanelSemanticLayerTests.swift */; };
 		TST10037 /* GitConflictWizardSemanticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002F /* GitConflictWizardSemanticTests.swift */; };
 		TST10038 /* MainThreadReliefRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003A /* MainThreadReliefRegressionTests.swift */; };
+		TST10039 /* AnyCodableFoundationBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003B /* AnyCodableFoundationBridgeTests.swift */; };
+		TST1003D /* TypedMessagePackEnvelopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003C /* TypedMessagePackEnvelopeTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -332,6 +334,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST1002F /* GitConflictWizardSemanticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSemanticTests.swift; sourceTree = "<group>"; };
 		TST1003A /* MainThreadReliefRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainThreadReliefRegressionTests.swift; sourceTree = "<group>"; };
+		TST1003B /* AnyCodableFoundationBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodableFoundationBridgeTests.swift; sourceTree = "<group>"; };
+		TST1003C /* TypedMessagePackEnvelopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedMessagePackEnvelopeTests.swift; sourceTree = "<group>"; };
 		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
 		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -719,6 +723,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
 					TST1002F /* GitConflictWizardSemanticTests.swift */,
 					TST1003A /* MainThreadReliefRegressionTests.swift */,
+					TST1003B /* AnyCodableFoundationBridgeTests.swift */,
+					TST1003C /* TypedMessagePackEnvelopeTests.swift */,
 					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
@@ -1216,6 +1222,8 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
 				TST10037 /* GitConflictWizardSemanticTests.swift in Sources */,
 				TST10038 /* MainThreadReliefRegressionTests.swift in Sources */,
+				TST10039 /* AnyCodableFoundationBridgeTests.swift in Sources */,
+				TST1003D /* TypedMessagePackEnvelopeTests.swift in Sources */,
 				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
