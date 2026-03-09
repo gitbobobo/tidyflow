@@ -584,6 +584,9 @@ private struct MessageBubble: View, Equatable {
     @State private var fullscreenImageData: Data?
 
     private var isUser: Bool { message.role == .user }
+    private var bubbleCornerRadius: CGFloat { 12 }
+    private var primaryTextColor: Color { .primary }
+    private var secondaryTextColor: Color { .secondary }
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message.id == rhs.message.id &&
@@ -665,10 +668,10 @@ private struct MessageBubble: View, Equatable {
             .padding(.vertical, 10)
             .background(bubbleBackgroundColor)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: bubbleCornerRadius)
                     .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
             )
-            .cornerRadius(12)
+            .clipShape(.rect(cornerRadius: bubbleCornerRadius))
         }
     }
 
@@ -682,14 +685,14 @@ private struct MessageBubble: View, Equatable {
                     Text(verbatim: normalizedText)
                         .textSelection(.enabled)
                         .font(.system(size: 13))
-                        .foregroundColor(isUser ? .white : .primary)
+                        .foregroundStyle(primaryTextColor)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if isUser,
                           let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
                         text: markdownText,
                         baseFontSize: 13,
-                        textColor: .white
+                        textColor: primaryTextColor
                     )
                 } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
@@ -790,12 +793,12 @@ private struct MessageBubble: View, Equatable {
             if summary.isEmpty {
                 Text("...")
                     .font(.system(size: 12))
-                    .foregroundColor(isUser ? .white.opacity(0.9) : .secondary)
+                    .foregroundStyle(isUser ? primaryTextColor.opacity(0.85) : .secondary)
             } else {
                 Text(summary)
                     .textSelection(.enabled)
                     .font(.system(size: 13))
-                    .foregroundColor(isUser ? .white : .primary)
+                    .foregroundStyle(primaryTextColor)
                     .lineLimit(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -804,10 +807,10 @@ private struct MessageBubble: View, Equatable {
         .padding(.vertical, 10)
         .background(bubbleBackgroundColor)
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: bubbleCornerRadius)
                 .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
         )
-        .cornerRadius(12)
+        .clipShape(.rect(cornerRadius: bubbleCornerRadius))
     }
 
     private func compactSummaryText() -> String {
@@ -842,7 +845,7 @@ private struct MessageBubble: View, Equatable {
 
     private var bubbleBackgroundColor: Color {
         if isUser {
-            return Color.blue
+            return Color.primary.opacity(0.08)
         } else {
             return .clear
         }
@@ -900,15 +903,15 @@ private struct MessageBubble: View, Equatable {
 
     @ViewBuilder
     private func filePartView(_ part: AIChatPart) -> some View {
-        let primaryTextColor: Color = isUser ? .white : .primary
-        let secondaryTextColor: Color = isUser ? .white.opacity(0.85) : .secondary
         let fileName = part.filename ?? "attachment"
         let mime = part.mime ?? "application/octet-stream"
+        let isImageAttachment = mime.lowercased().hasPrefix("image/")
+        let hidesMetadata = isUser && isImageAttachment
 
         VStack(alignment: .leading, spacing: 8) {
             if let cacheKey = imageCacheKey(for: part),
                let imageURL = part.url,
-               mime.lowercased().hasPrefix("image/") {
+               isImageAttachment {
                 AsyncChatAttachmentImageView(
                     cacheKey: cacheKey,
                     urlString: imageURL,
@@ -917,23 +920,25 @@ private struct MessageBubble: View, Equatable {
                     }
                 )
                 .frame(maxWidth: 320, maxHeight: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(.rect(cornerRadius: 8))
                 .help("点击查看大图")
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 12))
-                    .foregroundColor(secondaryTextColor)
-                Text(fileName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(primaryTextColor)
-                    .lineLimit(1)
-            }
+            if !hidesMetadata {
+                HStack(spacing: 6) {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 12))
+                        .foregroundStyle(secondaryTextColor)
+                    Text(fileName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(primaryTextColor)
+                        .lineLimit(1)
+                }
 
-            Text(mime)
-                .font(.system(size: 11))
-                .foregroundColor(secondaryTextColor)
+                Text(mime)
+                    .font(.system(size: 11))
+                    .foregroundStyle(secondaryTextColor)
+            }
         }
         .frame(maxWidth: 360, alignment: .leading)
     }
