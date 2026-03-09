@@ -589,13 +589,6 @@ struct AITabView: View {
             },
             cursorRectInInput: $cursorRectInInput
         )
-        .background(controlBackgroundColor)
-        .overlay(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundColor(separatorColor),
-            alignment: .top
-        )
         .onChange(of: inputText) { _, newText in
             if !inputIsComposing {
                 refreshAutocomplete(text: newText)

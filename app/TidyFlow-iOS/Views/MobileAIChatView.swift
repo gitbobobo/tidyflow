@@ -274,42 +274,38 @@ struct MobileAIChatView: View {
             return appState.aiSessionStatus(for: session)?.contextRemainingPercent
         }()
 
-        return VStack(spacing: 0) {
-            Divider()
-            ChatInputView(
-                text: $inputText,
-                imageAttachments: $imageAttachments,
-                isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
-                autoFocusOnAppear: true,
-                canStopStreaming: appState.aiCurrentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
-                isSendingPending: aiChatStore.hasPendingFirstContent,
-                onSend: { sendMessage() },
-                onStop: { stopStreaming() },
-                providers: appState.aiProviders,
-                selectedModel: $appState.aiSelectedModel,
-                contextRemainingPercent: contextRemainingPercent,
-                agents: appState.aiAgents,
-                selectedAgent: $appState.aiSelectedAgent,
-                thoughtLevelOptions: appState.thoughtLevelOptions(),
-                selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
-                isLoadingModels: appState.isAILoadingModels,
-                isLoadingAgents: appState.isAILoadingAgents,
-                autocomplete: nil,
-                onSelectAutocomplete: nil,
-                slashCommands: appState.aiSlashCommands,
-                fileReferenceItems: appState.aiCurrentFileItems(),
-                onRequestFileReferences: {
-                    appState.fetchAIFileIndexIfNeeded()
-                },
-                onSearchFileReferences: { query in
-                    scheduleReferenceSearch(query: query)
-                },
-                projectNames: appState.allProjectNames,
-                onInputContextChange: nil,
-                cursorRectInInput: .constant(.zero)
-            )
-        }
-        .background(systemBackgroundColor)
+        return ChatInputView(
+            text: $inputText,
+            imageAttachments: $imageAttachments,
+            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
+            autoFocusOnAppear: true,
+            canStopStreaming: appState.aiCurrentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
+            isSendingPending: aiChatStore.hasPendingFirstContent,
+            onSend: { sendMessage() },
+            onStop: { stopStreaming() },
+            providers: appState.aiProviders,
+            selectedModel: $appState.aiSelectedModel,
+            contextRemainingPercent: contextRemainingPercent,
+            agents: appState.aiAgents,
+            selectedAgent: $appState.aiSelectedAgent,
+            thoughtLevelOptions: appState.thoughtLevelOptions(),
+            selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
+            isLoadingModels: appState.isAILoadingModels,
+            isLoadingAgents: appState.isAILoadingAgents,
+            autocomplete: nil,
+            onSelectAutocomplete: nil,
+            slashCommands: appState.aiSlashCommands,
+            fileReferenceItems: appState.aiCurrentFileItems(),
+            onRequestFileReferences: {
+                appState.fetchAIFileIndexIfNeeded()
+            },
+            onSearchFileReferences: { query in
+                scheduleReferenceSearch(query: query)
+            },
+            projectNames: appState.allProjectNames,
+            onInputContextChange: nil,
+            cursorRectInInput: .constant(.zero)
+        )
     }
 
     private func loadSession(_ session: AISessionInfo) {

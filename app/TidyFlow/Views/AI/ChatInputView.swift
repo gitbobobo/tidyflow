@@ -9,6 +9,7 @@ import PhotosUI
 import AppKit
 #endif
 struct ChatInputView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     @Binding var imageAttachments: [ImageAttachment]
     var isStreaming: Bool
@@ -82,46 +83,11 @@ struct ChatInputView: View {
     private let maxImageAttachmentCount = 9
     #endif
 
-    private var inputEditorBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.secondarySystemBackground)
-        #else
-        return Color.secondary.opacity(0.08)
-        #endif
-    }
-
-    private var inputEditorBorderColor: Color {
-        #if os(iOS)
-        return Color.white.opacity(0.15)
-        #else
-        return Color.secondary.opacity(0.2)
-        #endif
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            // 图片缩略图预览行
-            if !imageAttachments.isEmpty {
-                imagePreviewRow
-            }
-
-            #if os(iOS)
-            iOSInputSection
-            #else
-            // 输入区域
-            inputEditor
-
-            // 工具栏
-            toolbar
-            #endif
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        #if os(iOS)
-        .padding(.bottom, 0)
-        #else
-        .padding(.bottom, 12)
-        #endif
+        composerCard
+            .padding(.horizontal, outerHorizontalPadding)
+            .padding(.top, outerTopPadding)
+            .padding(.bottom, outerBottomPadding)
         .onChange(of: cursorRect) { _, newRect in
             cursorRectInInput = newRect
         }
@@ -134,36 +100,47 @@ struct ChatInputView: View {
         .accessibilityIdentifier("tf.ai.input.container")
     }
 
+    private var composerCard: some View {
+        VStack(alignment: .leading, spacing: cardContentSpacing) {
+            if !imageAttachments.isEmpty {
+                imagePreviewRow
+            }
+
+            #if os(iOS)
+            iOSInputSection
+            #else
+            inputEditor
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: editorMinHeight, alignment: .topLeading)
+
+            toolbar
+            #endif
+        }
+        .padding(.horizontal, cardHorizontalPadding)
+        .padding(.top, cardTopPadding)
+        .padding(.bottom, cardBottomPadding)
+        .background(floatingCardBackgroundColor, in: .rect(cornerRadius: floatingCardCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: floatingCardCornerRadius, style: .continuous)
+                .stroke(floatingCardBorderColor, lineWidth: 0.8)
+        }
+        .shadow(color: floatingCardPrimaryShadowColor, radius: 20, x: 0, y: 8)
+        .shadow(color: floatingCardSecondaryShadowColor, radius: 3, x: 0, y: 1)
+    }
+
     #if os(iOS)
     private var iOSInputSection: some View {
-        VStack(spacing: 8) {
-            iOSSelectorRow
+        VStack(alignment: .leading, spacing: 12) {
+            inputEditor
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: editorMinHeight, alignment: .topLeading)
 
-            HStack(alignment: .center, spacing: 10) {
-                iOSInputModeToggleButton
-
-                inputEditor
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 36)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(inputEditorBackgroundColor)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(inputEditorBorderColor, lineWidth: 0.5)
-                    )
-
-                sendOrStopButton
-            }
+            iOSFloatingToolbar
 
             if showIOSInputPanel {
                 iOSInputPanelGrid
             }
         }
-        .padding(.bottom, 8)
         .onAppear {
             guard autoFocusOnAppear else { return }
             requestIOSInputFocus()
@@ -195,27 +172,36 @@ struct ChatInputView: View {
         }
     }
 
-    @ViewBuilder
-    private var iOSSelectorRow: some View {
-        if isLoadingAgents || isLoadingModels || !agents.isEmpty || !providers.isEmpty || !normalizedThoughtLevelOptions.isEmpty {
-            HStack(spacing: 8) {
-                agentButton
-                modelButton
-                thoughtLevelButton
-                contextRemainingRing
-                Spacer(minLength: 0)
+    private var iOSFloatingToolbar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    iOSInputModeToggleButton
+                    agentButton
+                    modelButton
+                    thoughtLevelButton
+                    contextRemainingRing
+                }
+                .padding(.vertical, 2)
             }
+            .scrollIndicators(.hidden)
+
+            sendOrStopButton
         }
     }
 
     private var iOSInputModeToggleButton: some View {
         Button(action: toggleIOSInputPanel) {
             Image(systemName: "plus")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: 36, height: 36)
-                .background(showIOSInputPanel ? Color.accentColor : Color.white.opacity(0.18))
+                .font(.system(size: accessoryIconFontSize, weight: .semibold))
+                .foregroundStyle(showIOSInputPanel ? .white : .secondary)
+                .frame(width: accessoryButtonDiameter, height: accessoryButtonDiameter)
+                .background(showIOSInputPanel ? Color.accentColor : toolbarChipBackgroundColor)
                 .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(showIOSInputPanel ? Color.clear : toolbarChipBorderColor, lineWidth: 0.6)
+                }
         }
         .buttonStyle(.plain)
     }
@@ -585,9 +571,9 @@ struct ChatInputView: View {
                     #endif
                 }
                     .foregroundColor(.secondary.opacity(0.6))
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 8)
+                    .font(.system(size: editorFontSize))
+                    .padding(.horizontal, editorHorizontalInset)
+                    .padding(.vertical, editorVerticalInset)
                     .allowsHitTesting(false)
             }
 
@@ -596,7 +582,7 @@ struct ChatInputView: View {
                 text: $text,
                 contentHeight: $textContentHeight,
                 cursorRect: $cursorRect,
-                font: .systemFont(ofSize: 13),
+                font: .systemFont(ofSize: editorFontSize),
                 onEnter: {
                     imeDebugLog("ChatInputView.onEnter start text=\(text.debugDescription) canSend=\(canSend) isStreaming=\(isStreaming) autocompleteVisible=\(autocomplete?.isVisible == true)")
                     // 弹出层可见时，Enter 选择当前项
@@ -640,14 +626,14 @@ struct ChatInputView: View {
                 },
                 onInputContextChange: onInputContextChange
             )
-            .frame(height: min(max(textContentHeight, 28), 80))
+            .frame(height: min(max(textContentHeight, editorCollapsedMinHeight), editorExpandedMaxHeight))
             #else
             TextField("", text: $text, axis: .vertical)
-                .font(.system(size: 13))
+                .font(.system(size: editorFontSize))
                 .lineLimit(1...6)
                 .focused($isIOSInputFocused)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 8)
+                .padding(.horizontal, editorHorizontalInset - 5)
+                .padding(.vertical, editorVerticalInset)
                 .onTapGesture {
                     if !isIOSInputFocused {
                         isIOSInputFocused = true
@@ -660,8 +646,8 @@ struct ChatInputView: View {
     // MARK: - 工具栏
 
     private var toolbar: some View {
-        HStack(spacing: 8) {
-            // 左侧：Agent 切换 + 模型选择
+        HStack(spacing: 10) {
+            imageUploadButton
             agentButton
             modelButton
             thoughtLevelButton
@@ -669,11 +655,8 @@ struct ChatInputView: View {
 
             Spacer()
 
-            // 右侧：图片上传 + 发送/停止
-            imageUploadButton
             sendOrStopButton
         }
-        .padding(.top, 8)
     }
 
     // MARK: - Agent 切换按钮
@@ -703,20 +686,11 @@ struct ChatInputView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "cpu")
-                            .font(.system(size: 11))
-                        Text(selectedAgent ?? agents.first?.name ?? "Agent")
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(6)
-                    .foregroundStyle(dropdownPrimaryTextColor)
+                    toolbarMenuLabel(
+                        systemImage: "cpu",
+                        title: selectedAgent ?? agents.first?.name ?? "Agent",
+                        showsChevron: false
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -758,22 +732,10 @@ struct ChatInputView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 11))
-                        Text(selectedModelDisplayName)
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
-                    }
-                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(6)
-                    .foregroundStyle(dropdownPrimaryTextColor)
+                    toolbarMenuLabel(
+                        systemImage: "sparkle",
+                        title: selectedModelDisplayName
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -794,22 +756,10 @@ struct ChatInputView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "brain")
-                            .font(.system(size: 11))
-                        Text(selectedThoughtLevelDisplayName)
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
-                    }
-                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(6)
-                    .foregroundStyle(dropdownPrimaryTextColor)
+                    toolbarMenuLabel(
+                        systemImage: "brain",
+                        title: selectedThoughtLevelDisplayName
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -858,14 +808,17 @@ struct ChatInputView: View {
                 .scaleEffect(0.6)
                 .frame(width: 12, height: 12)
             Text("加载中...")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(.system(size: chipFontSize))
+                .foregroundStyle(dropdownSecondaryTextColor)
         }
         .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.1))
-        .cornerRadius(6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(toolbarChipBackgroundColor, in: .capsule)
+        .overlay {
+            Capsule()
+                .stroke(toolbarChipBorderColor, lineWidth: 0.6)
+        }
     }
 
     @ViewBuilder
@@ -903,27 +856,17 @@ struct ChatInputView: View {
             maxSelectionCount: 6,
             matching: .images
         ) {
-            Image(systemName: "photo")
-                .font(.system(size: actionIconFontSize, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: actionButtonDiameter, height: actionButtonDiameter)
-                .background(Color.white.opacity(0.18))
-                .clipShape(Circle())
+            toolbarAccessoryIcon(systemName: "plus")
         }
         .onChange(of: selectedPhotoItems) { _, items in
             handleSelectedPhotoItems(items)
         }
         #else
         Button(action: pickImage) {
-            Image(systemName: "photo")
-                .font(.system(size: actionIconFontSize, weight: .semibold))
-                .foregroundColor(.secondary)
-                .frame(width: actionButtonDiameter, height: actionButtonDiameter)
-                .background(Color.secondary.opacity(0.12))
-                .clipShape(Circle())
+            toolbarAccessoryIcon(systemName: "plus")
         }
         .buttonStyle(.plain)
-        .help("上传图片")
+        .help("添加附件")
         #endif
     }
 
@@ -1215,12 +1158,50 @@ struct ChatInputView: View {
     }
     #endif
 
+    private func toolbarMenuLabel(
+        systemImage: String,
+        title: String,
+        showsChevron: Bool = true
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: chipFontSize, weight: .semibold))
+            Text(title)
+                .font(.system(size: chipFontSize, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(dropdownSecondaryTextColor)
+            }
+        }
+        .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(toolbarChipBackgroundColor, in: .capsule)
+        .overlay {
+            Capsule()
+                .stroke(toolbarChipBorderColor, lineWidth: 0.6)
+        }
+        .foregroundStyle(dropdownPrimaryTextColor)
+    }
+
+    private func toolbarAccessoryIcon(systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: accessoryIconFontSize, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: accessoryButtonDiameter, height: accessoryButtonDiameter)
+            .background(toolbarChipBackgroundColor)
+            .clipShape(Circle())
+            .overlay {
+                Circle()
+                    .stroke(toolbarChipBorderColor, lineWidth: 0.6)
+            }
+    }
+
     private var dropdownPrimaryTextColor: Color {
-        #if os(iOS)
-        return .white
-        #else
-        return .primary
-        #endif
+        .primary
     }
 
     private var normalizedContextRemainingPercent: Double? {
@@ -1241,10 +1222,166 @@ struct ChatInputView: View {
     }
 
     private var dropdownSecondaryTextColor: Color {
+        .secondary
+    }
+
+    private var outerHorizontalPadding: CGFloat {
         #if os(iOS)
-        return .white.opacity(0.72)
+        return 14
         #else
-        return .secondary
+        return 16
+        #endif
+    }
+
+    private var outerTopPadding: CGFloat {
+        #if os(iOS)
+        return 10
+        #else
+        return 12
+        #endif
+    }
+
+    private var outerBottomPadding: CGFloat {
+        #if os(iOS)
+        return 12
+        #else
+        return 14
+        #endif
+    }
+
+    private var cardHorizontalPadding: CGFloat {
+        #if os(iOS)
+        return 16
+        #else
+        return 18
+        #endif
+    }
+
+    private var cardTopPadding: CGFloat {
+        #if os(iOS)
+        return 16
+        #else
+        return 18
+        #endif
+    }
+
+    private var cardBottomPadding: CGFloat {
+        #if os(iOS)
+        return 14
+        #else
+        return 16
+        #endif
+    }
+
+    private var cardContentSpacing: CGFloat {
+        14
+    }
+
+    private var floatingCardCornerRadius: CGFloat {
+        #if os(iOS)
+        return 24
+        #else
+        return 22
+        #endif
+    }
+
+    private var floatingCardBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.systemBackground)
+        #else
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
+
+    private var floatingCardBorderColor: Color {
+        #if os(iOS)
+        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        #else
+        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.5 : 0.35)
+        #endif
+    }
+
+    private var floatingCardPrimaryShadowColor: Color {
+        colorScheme == .dark ? Color.black.opacity(0.24) : Color.black.opacity(0.1)
+    }
+
+    private var floatingCardSecondaryShadowColor: Color {
+        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.04)
+    }
+
+    private var toolbarChipBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.secondarySystemBackground)
+        #else
+        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.9 : 0.92)
+        #endif
+    }
+
+    private var toolbarChipBorderColor: Color {
+        #if os(iOS)
+        return colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.07)
+        #else
+        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.45 : 0.28)
+        #endif
+    }
+
+    private var editorMinHeight: CGFloat {
+        #if os(iOS)
+        return 84
+        #else
+        return 72
+        #endif
+    }
+
+    private var editorCollapsedMinHeight: CGFloat {
+        #if os(iOS)
+        return 36
+        #else
+        return 34
+        #endif
+    }
+
+    private var editorExpandedMaxHeight: CGFloat {
+        #if os(iOS)
+        return 124
+        #else
+        return 112
+        #endif
+    }
+
+    private var editorFontSize: CGFloat {
+        14
+    }
+
+    private var editorHorizontalInset: CGFloat {
+        10
+    }
+
+    private var editorVerticalInset: CGFloat {
+        10
+    }
+
+    private var chipFontSize: CGFloat {
+        #if os(iOS)
+        return 13
+        #else
+        return 12
+        #endif
+    }
+
+    private var accessoryButtonDiameter: CGFloat {
+        #if os(iOS)
+        return 34
+        #else
+        return 32
+        #endif
+    }
+
+    private var accessoryIconFontSize: CGFloat {
+        #if os(iOS)
+        return 15
+        #else
+        return 14
         #endif
     }
 
@@ -1258,9 +1395,9 @@ struct ChatInputView: View {
 
     private var actionButtonDiameter: CGFloat {
         #if os(iOS)
-        return 36
+        return 40
         #else
-        return 28
+        return 36
         #endif
     }
 
@@ -1268,7 +1405,7 @@ struct ChatInputView: View {
         #if os(iOS)
         return 16
         #else
-        return 13
+        return 14
         #endif
     }
 
