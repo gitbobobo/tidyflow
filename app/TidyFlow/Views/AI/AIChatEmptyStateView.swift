@@ -54,11 +54,7 @@ struct AIChatEmptyStateView: View {
                     Label {
                         Text(tool.displayName)
                     } icon: {
-                        Image(tool.iconAssetName)
-                            .resizable()
-                            .renderingMode(.original)
-                            .scaledToFit()
-                            .frame(width: 14, height: 14)
+                        AIToolMenuIcon(assetName: tool.iconAssetName)
                     }
                 }
             }
@@ -78,6 +74,23 @@ struct AIChatEmptyStateView: View {
         .menuStyle(.borderlessButton)
         .disabled(!canSwitchTool)
         .opacity(canSwitchTool ? 1 : 0.5)
+    }
+}
+
+private struct AIToolMenuIcon: View {
+    let assetName: String
+    private let iconSize: CGFloat = 14
+
+    var body: some View {
+        #if os(macOS)
+            FixedSizeAssetImage(name: assetName, targetSize: iconSize)
+        #else
+            Image(assetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+        #endif
     }
 }
 
