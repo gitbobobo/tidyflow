@@ -96,13 +96,13 @@ private func encodePathComponent(_ raw: String) -> String {
 
 protocol TypedWSRequest: Encodable {
     var action: String { get }
-    var project: String? { get }
-    var workspace: String? { get }
+    var validationProject: String? { get }
+    var validationWorkspace: String? { get }
 }
 
 extension TypedWSRequest {
-    var project: String? { nil }
-    var workspace: String? { nil }
+    var validationProject: String? { nil }
+    var validationWorkspace: String? { nil }
 }
 
 private struct ClientEnvelopeV6<Payload: Encodable>: Encodable {
@@ -138,6 +138,7 @@ private struct ProjectTypedWSRequest: TypedWSRequest {
     let project: String
 
     var action: String { requestAction }
+    var validationProject: String? { project }
 
     init(action: String, project: String) {
         self.requestAction = action
@@ -155,6 +156,8 @@ private struct ProjectWorkspaceTypedWSRequest: TypedWSRequest {
     let workspace: String
 
     var action: String { requestAction }
+    var validationProject: String? { project }
+    var validationWorkspace: String? { workspace }
 
     init(action: String, project: String, workspace: String) {
         self.requestAction = action
@@ -175,6 +178,8 @@ private struct ProjectWorkspacePathTypedWSRequest: TypedWSRequest {
     let path: String
 
     var action: String { requestAction }
+    var validationProject: String? { project }
+    var validationWorkspace: String? { workspace }
 
     init(action: String, project: String, workspace: String, path: String) {
         self.requestAction = action
@@ -198,6 +203,8 @@ private struct ProjectWorkspacePathContextTypedWSRequest: TypedWSRequest {
     let context: String
 
     var action: String { requestAction }
+    var validationProject: String? { project }
+    var validationWorkspace: String? { workspace }
 
     init(action: String, project: String, workspace: String, path: String, context: String) {
         self.requestAction = action
@@ -898,8 +905,8 @@ extension WSClient {
     func sendTyped<Body: TypedWSRequest>(_ body: Body, requestId: String? = nil) {
         if let validationError = validateOutgoingMessage(
             action: body.action,
-            project: body.project,
-            workspace: body.workspace
+            project: body.validationProject,
+            workspace: body.validationWorkspace
         ) {
             TFLog.ws.error("Drop outbound typed message: \(validationError, privacy: .public)")
             emitClientError(validationError)
