@@ -4049,6 +4049,13 @@ final class MobileAppState: ObservableObject {
             self?.workspaceCacheMetrics = metrics
         }
 
+        // HTTP 读取失败回调：多工作区安全，与 macOS 语义对齐
+        wsClient.onHTTPReadFailure = { [weak self] failure in
+            DispatchQueue.main.async { [weak self] in
+                self?.handleHTTPReadFailure(failure)
+            }
+        }
+
         // v1.41: 系统健康快照 - 与 macOS 使用同一套共享健康模型（语义对齐）
         wsClient.onHealthSnapshot = { [weak self] snapshot in
             DispatchQueue.main.async {
@@ -5083,6 +5090,34 @@ extension MobileAppState {
         }
         aiSessionIndexByKey[updated.sessionKey] = updated
         aiSessionListStore.renameSession(updated, newTitle: updated.title)
+    }
+
+    /// 处理 HTTP 读取失败（多工作区安全版本）。
+    ///
+    /// 与 macOS `handleHTTPReadFailure` 语义对齐：
+    /// - 仅当失败归属当前激活的 (project, workspace, aiTool) 时才更新 UI 状态。
+    /// - 跨工作区的 HTTP 失败不影响当前激活工作区。
+    @MainActor
+    func handleHTTPReadFailure(_ failure: WSClient.HTTPReadFailure) {
+        guard let context = failure.context else { return }
+
+        switch context {
+        case let .aiProviderList(project, workspace, aiTool):
+            guard aiChatTool == aiTool,
+                  aiActiveProject == project,
+                  aiActiveWorkspace == workspace else { return }
+            if isAILoadingModels {
+                isAILoadingModels = false
+            }
+
+        case let .aiAgentList(project, workspace, aiTool):
+            guard aiChatTool == aiTool,
+                  aiActiveProject == project,
+                  aiActiveWorkspace == workspace else { return }
+            if isAILoadingAgents {
+                isAILoadingAgents = false
+            }
+        }
     }
 }
 

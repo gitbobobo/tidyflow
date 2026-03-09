@@ -1147,6 +1147,16 @@ extension AppState {
         for tool in AIChatTool.allCases {
             guard let ctx = pendingSubscribeContextByTool[tool] else { continue }
             guard ctx.session.id == ev.sessionId else { continue }
+            // 多工作区边界防护：ack 中的工作区字段非空时，必须与待确认上下文一致。
+            if !ev.projectName.isEmpty, !ev.workspaceName.isEmpty {
+                guard ev.projectName == ctx.session.projectName,
+                      ev.workspaceName == ctx.session.workspaceName else {
+                    TFLog.app.warning(
+                        "AI subscribe ack workspace mismatch: ack=(\(ev.projectName, privacy: .public)/\(ev.workspaceName, privacy: .public)) ctx=(\(ctx.session.projectName, privacy: .public)/\(ctx.session.workspaceName, privacy: .public)) session_id=\(ev.sessionId, privacy: .public)"
+                    )
+                    continue
+                }
+            }
             pendingSubscribeContextByTool[tool] = nil
 
             let session = ctx.session

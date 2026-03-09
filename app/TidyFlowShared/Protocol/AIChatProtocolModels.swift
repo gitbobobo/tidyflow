@@ -184,17 +184,34 @@ public struct AISessionMessagesV2 {
     }
 }
 
+/// AI 会话订阅确认（`ai_session_subscribe_ack`）
+///
+/// v7 新增 `projectName`/`workspaceName` 字段，客户端**必须**按
+/// `{project}::{workspace}::{ai_tool}::{session_id}` 四元组路由到对应会话状态，
+/// 不允许按 `sessionId` 单键或 `sessionKey` 字符串拼接作为唯一归属依据。
 public struct AISessionSubscribeAck {
+    public let projectName: String
+    public let workspaceName: String
     public let sessionId: String
     public let sessionKey: String
 
     public static func from(json: [String: Any]) -> AISessionSubscribeAck? {
         guard let sessionId = json["session_id"] as? String,
               let sessionKey = json["session_key"] as? String else { return nil }
-        return AISessionSubscribeAck(sessionId: sessionId, sessionKey: sessionKey)
+        // project_name / workspace_name 为 v7 新增字段，兼容旧 Core 时降级为空字符串
+        let projectName = (json["project_name"] as? String) ?? ""
+        let workspaceName = (json["workspace_name"] as? String) ?? ""
+        return AISessionSubscribeAck(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            sessionId: sessionId,
+            sessionKey: sessionKey
+        )
     }
 
-    public init(sessionId: String, sessionKey: String) {
+    public init(projectName: String, workspaceName: String, sessionId: String, sessionKey: String) {
+        self.projectName = projectName
+        self.workspaceName = workspaceName
         self.sessionId = sessionId
         self.sessionKey = sessionKey
     }
