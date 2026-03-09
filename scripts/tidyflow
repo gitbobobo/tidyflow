@@ -87,9 +87,10 @@ case "$cmd" in
             cargo bench --manifest-path core/Cargo.toml "$@"
         ;;
     test)
+        ncpu="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
         run_core_cargo \
             test \
-            cargo test --manifest-path core/Cargo.toml "$@"
+            cargo test --manifest-path core/Cargo.toml --jobs "$ncpu" "$@"
         ;;
     coverage)
         exec ./scripts/tools/coverage.sh "$@"
