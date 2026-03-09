@@ -556,12 +556,7 @@ extension AppState {
         guard let tabId = findTabIdByTermId(termId) else { return }
 
         if terminalSinkTabId == tabId {
-            pendingTerminalOutputByTermId[termId, default: []].append(bytes)
-            if pendingTerminalOutputByTermId[termId]?.count ?? 0 > pendingOutputChunkLimit {
-                pendingTerminalOutputByTermId[termId]?.removeFirst(
-                    (pendingTerminalOutputByTermId[termId]?.count ?? 0) - pendingOutputChunkLimit
-                )
-            }
+            enqueuePendingTerminalOutput(bytes, for: termId)
             schedulePendingTerminalOutputFlush()
         }
 
@@ -588,9 +583,9 @@ extension AppState {
         terminalOutputFlushWorkItem = nil
         guard let sink = terminalSink else { return }
         guard let tabId = terminalSinkTabId,
-              let termId = terminalSessionByTabId[tabId],
-              var pendingChunks = pendingTerminalOutputByTermId[termId],
-              !pendingChunks.isEmpty else { return }
+              let termId = terminalSessionByTabId[tabId] else { return }
+        var pendingChunks = pendingTerminalOutputByTermId.removeValue(forKey: termId) ?? []
+        guard !pendingChunks.isEmpty else { return }
 
         let startedAt = Date()
         var bytesToWrite: [UInt8] = []
@@ -614,12 +609,13 @@ extension AppState {
         }
 
         guard !bytesToWrite.isEmpty else { return }
+
+        if !pendingChunks.isEmpty {
+            pendingTerminalOutputByTermId[termId] = pendingChunks
+        }
         sink.writeOutput(bytesToWrite)
 
-        if pendingChunks.isEmpty {
-            pendingTerminalOutputByTermId.removeValue(forKey: termId)
-        } else {
-            pendingTerminalOutputByTermId[termId] = pendingChunks
+        if pendingTerminalOutputByTermId[termId]?.isEmpty == false {
             schedulePendingTerminalOutputFlush()
         }
 
@@ -627,6 +623,15 @@ extension AppState {
         TFLog.perf.debug(
             "terminal_output_flush_ms=\(costMs, privacy: .public) bytes=\(bytesToWrite.count, privacy: .public) pending_chunks=\(pendingChunks.count, privacy: .public)"
         )
+    }
+
+    private func enqueuePendingTerminalOutput(_ bytes: [UInt8], for termId: String) {
+        var pendingChunks = pendingTerminalOutputByTermId.removeValue(forKey: termId) ?? []
+        pendingChunks.append(bytes)
+        if pendingChunks.count > pendingOutputChunkLimit {
+            pendingChunks.removeFirst(pendingChunks.count - pendingOutputChunkLimit)
+        }
+        pendingTerminalOutputByTermId[termId] = pendingChunks
     }
 
     private func clearPendingTerminalOutput(termId: String?) {
