@@ -1866,7 +1866,7 @@ struct EvolutionTabView: View {
             refreshData()
         }
 
-        .onReceive(appState.$evolutionWorkspaceItems) { _ in
+        .onChange(of: currentItem?.statusStageRoundSignature) { _, _ in
             syncStartOptionsFromCurrentItem()
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in

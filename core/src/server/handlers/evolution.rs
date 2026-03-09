@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use axum::extract::ws::WebSocket;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
+use tokio::time::Duration;
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -40,14 +41,24 @@ pub async fn handle_evolution_message(
 }
 
 pub(crate) async fn query_evolution_snapshot(
-    _project: Option<&str>,
-    _workspace: Option<&str>,
+    project: Option<&str>,
+    workspace: Option<&str>,
     ctx: &HandlerContext,
 ) -> Result<ServerMessage, String> {
     let Some(manager) = maybe_manager() else {
         return Err("evolution manager init failed".to_string());
     };
-    let snapshot = manager.build_snapshot(ctx).await;
+    let mut snapshot = manager.build_snapshot(ctx).await;
+    if project.is_some() || workspace.is_some() {
+        crate::server::perf::record_evolution_snapshot_fallback();
+        snapshot.workspace_items.retain(|item| {
+            let project_match = project.map(|value| item.project == value).unwrap_or(true);
+            let workspace_match = workspace
+                .map(|value| item.workspace == value)
+                .unwrap_or(true);
+            project_match && workspace_match
+        });
+    }
     Ok(ServerMessage::EvoSnapshot {
         scheduler: snapshot.scheduler,
         workspace_items: snapshot.workspace_items,
@@ -96,6 +107,7 @@ struct EvolutionManager {
     state: Arc<Mutex<EvolutionState>>,
     workers: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     semaphore: Arc<Semaphore>,
+    debounced_cycle_update_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
 }
 
 impl EvolutionManager {
@@ -109,7 +121,19 @@ impl EvolutionManager {
             })),
             workers: Arc::new(Mutex::new(HashMap::new())),
             semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_PARALLEL as usize)),
+            debounced_cycle_update_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    async fn cancel_debounced_cycle_update(&self, key: &str) {
+        let mut tasks = self.debounced_cycle_update_tasks.lock().await;
+        if let Some(handle) = tasks.remove(key) {
+            handle.abort();
+        }
+    }
+
+    fn cycle_update_debounce_window() -> Duration {
+        Duration::from_millis(250)
     }
 }
 

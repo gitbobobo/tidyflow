@@ -186,6 +186,7 @@ public extension AIMessageHandler {
 
 public protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionPulse()
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2)
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2)
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2)
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
@@ -198,6 +199,7 @@ public protocol EvolutionMessageHandler: AnyObject {
 
 public extension EvolutionMessageHandler {
     func handleEvolutionPulse() {}
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) {}
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {}
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) {}
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}

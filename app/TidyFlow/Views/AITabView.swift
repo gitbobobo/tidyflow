@@ -754,7 +754,9 @@ struct AITabView: View {
 
         let sessionListLimit = aiSessionListLimit
         deferredSessionListLoadWorkItem?.cancel()
-        _ = appState.requestAISessionList(for: appState.sessionPanelFilter, limit: sessionListLimit)
+        if !appState.bootstrapAISessionListIfNeeded(limit: sessionListLimit) {
+            _ = appState.requestAISessionList(for: appState.sessionPanelFilter, limit: sessionListLimit)
+        }
 
         appState.isAILoadingModels = true
         appState.isAILoadingAgents = true

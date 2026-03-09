@@ -7,6 +7,85 @@ extension AppState {
         wsClient.requestEvoSnapshot(project: project, workspace: workspace)
     }
 
+    func scheduleEvolutionSnapshotFallback(
+        project: String,
+        workspace: String,
+        reason: String
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionSnapshotFallbackWorkItems[key]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.evolutionSnapshotFallbackWorkItems[key] = nil
+            self.evolutionTargetedSnapshotMergeKeys.insert(key)
+            self.evolutionSnapshotFallbackTotal += 1
+            TFLog.perf.info(
+                "perf evolution_snapshot_fallback_total=\(self.evolutionSnapshotFallbackTotal, privacy: .public) key=\(key, privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            self.requestEvolutionSnapshot(project: project, workspace: normalizedWorkspace)
+        }
+        evolutionSnapshotFallbackWorkItems[key] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    func cancelEvolutionSnapshotFallback(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        if let work = evolutionSnapshotFallbackWorkItems[key] {
+            work.cancel()
+            evolutionSnapshotFallbackWorkItems[key] = nil
+        }
+    }
+
+    func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        return evolutionWorkspaceItemIndexByKey[key]
+    }
+
+    func replaceEvolutionWorkspaceItems(_ items: [EvolutionWorkspaceItemV2]) {
+        evolutionWorkspaceItemIndexByKey = Dictionary(
+            uniqueKeysWithValues: items.map { ($0.workspaceKey, $0) }
+        )
+        publishEvolutionWorkspaceProjection(keys: items.map(\.workspaceKey))
+    }
+
+    func mergeEvolutionWorkspaceItems(_ items: [EvolutionWorkspaceItemV2]) {
+        for item in items {
+            evolutionWorkspaceItemIndexByKey[item.workspaceKey] = item
+        }
+        let orderedKeys = evolutionWorkspaceItemIndexByKey.values
+            .sorted { ($0.project, $0.workspace) < ($1.project, $1.workspace) }
+            .map(\.workspaceKey)
+        publishEvolutionWorkspaceProjection(keys: orderedKeys)
+    }
+
+    func upsertEvolutionWorkspaceItem(_ item: EvolutionWorkspaceItemV2) -> Bool {
+        let existing = evolutionWorkspaceItemIndexByKey[item.workspaceKey]
+        guard existing?.projectionSignature != item.projectionSignature else {
+            return false
+        }
+        evolutionWorkspaceItemIndexByKey[item.workspaceKey] = item
+        let orderedKeys = evolutionWorkspaceItemIndexByKey.values
+            .sorted { ($0.project, $0.workspace) < ($1.project, $1.workspace) }
+            .map(\.workspaceKey)
+        publishEvolutionWorkspaceProjection(keys: orderedKeys)
+        return true
+    }
+
+    private func publishEvolutionWorkspaceProjection(keys: [String]) {
+        let projectedItems = keys.compactMap { evolutionWorkspaceItemIndexByKey[$0] }
+        let currentKeys = evolutionWorkspaceItems.map(\.workspaceKey)
+        let currentSignatures = evolutionWorkspaceItems.map(\.projectionSignature)
+        let nextKeys = projectedItems.map(\.workspaceKey)
+        let nextSignatures = projectedItems.map(\.projectionSignature)
+        guard currentKeys != nextKeys || currentSignatures != nextSignatures else {
+            return
+        }
+        evolutionWorkspaceItems = projectedItems
+    }
+
     func requestEvolutionAgentProfile(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         finishEvolutionProfileReloadTracking(project: project, workspace: normalizedWorkspace)
@@ -321,14 +400,6 @@ extension AppState {
         subAgentViewerError = nil
         subAgentViewerTitle = ""
         subAgentViewerStore.clearAll()
-    }
-
-    func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        return evolutionWorkspaceItems.first {
-            $0.project == project &&
-                normalizeEvolutionWorkspaceName($0.workspace) == normalizedWorkspace
-        }
     }
 
     func evolutionControlCapability(project: String, workspace: String?) -> EvolutionControlCapability {

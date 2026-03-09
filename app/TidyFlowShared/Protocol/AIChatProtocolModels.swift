@@ -2039,6 +2039,61 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             .map(\.agent)
     }
 
+    public var statusStageRoundSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(project)
+        hasher.combine(workspace)
+        hasher.combine(cycleID)
+        hasher.combine(status)
+        hasher.combine(currentStage)
+        hasher.combine(globalLoopRound)
+        hasher.combine(loopRoundLimit)
+        hasher.combine(verifyIteration)
+        hasher.combine(verifyIterationLimit)
+        hasher.combine(terminalReasonCode ?? "")
+        hasher.combine(terminalErrorMessage ?? "")
+        hasher.combine(rateLimitErrorMessage ?? "")
+        return hasher.finalize()
+    }
+
+    public var timelineSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(project)
+        hasher.combine(workspace)
+        hasher.combine(cycleID)
+        hasher.combine(globalLoopRound)
+        hasher.combine(executions.count)
+        for execution in executions {
+            hasher.combine(execution.stage)
+            hasher.combine(execution.sessionID)
+            hasher.combine(execution.status)
+            hasher.combine(execution.startedAt)
+            hasher.combine(execution.completedAt ?? "")
+            hasher.combine(execution.durationMs ?? 0)
+            hasher.combine(execution.toolCallCount)
+        }
+        if executions.isEmpty {
+            for agent in agents {
+                hasher.combine(agent.stage)
+                hasher.combine(agent.agent)
+                hasher.combine(agent.status)
+                hasher.combine(agent.startedAt ?? "")
+                hasher.combine(agent.durationMs ?? 0)
+                hasher.combine(agent.toolCallCount)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    public var projectionSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(statusStageRoundSignature)
+        hasher.combine(timelineSignature)
+        hasher.combine(agents.count)
+        hasher.combine(executions.count)
+        return hasher.finalize()
+    }
+
     public func latestResolvedExecution(forExactStage stage: String) -> EvolutionSessionExecutionEntryV2? {
         let targetStageKey = EvolutionExecutionLookupSemantics.exactStageKey(for: stage)
         return executions.reversed().first { execution in
@@ -2183,6 +2238,88 @@ public struct EvoCycleUpdatedV2 {
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
         self.rateLimitErrorMessage = rateLimitErrorMessage
+    }
+}
+
+public enum EvolutionWorkspaceStatusEventKindV2: String {
+    case started = "started"
+    case stopped = "stopped"
+    case resumed = "resumed"
+    case stageChanged = "stage_changed"
+}
+
+public struct EvolutionWorkspaceStatusEventV2 {
+    public let kind: EvolutionWorkspaceStatusEventKindV2
+    public let project: String
+    public let workspace: String
+    public let cycleID: String
+    public let status: String?
+    public let currentStage: String?
+    public let verifyIteration: Int?
+    public let reason: String?
+    public let source: String?
+
+    public static func from(action: String, json: [String: Any]) -> EvolutionWorkspaceStatusEventV2? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleID = json["cycle_id"] as? String else {
+            return nil
+        }
+
+        let kind: EvolutionWorkspaceStatusEventKindV2
+        switch action {
+        case "evo_workspace_started":
+            kind = .started
+        case "evo_workspace_stopped":
+            kind = .stopped
+        case "evo_workspace_resumed":
+            kind = .resumed
+        case "evo_stage_changed":
+            kind = .stageChanged
+        default:
+            return nil
+        }
+
+        let currentStage: String? = {
+            if kind == .stageChanged {
+                return parseOptionalString(json["to_stage"])
+            }
+            return parseOptionalString(json["current_stage"])
+        }()
+
+        return EvolutionWorkspaceStatusEventV2(
+            kind: kind,
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            status: parseOptionalString(json["status"]),
+            currentStage: currentStage,
+            verifyIteration: json["verify_iteration"].map { Int(parseInt64($0)) },
+            reason: parseOptionalString(json["reason"]),
+            source: parseOptionalString(json["source"])
+        )
+    }
+
+    public init(
+        kind: EvolutionWorkspaceStatusEventKindV2,
+        project: String,
+        workspace: String,
+        cycleID: String,
+        status: String?,
+        currentStage: String?,
+        verifyIteration: Int?,
+        reason: String?,
+        source: String?
+    ) {
+        self.kind = kind
+        self.project = project
+        self.workspace = workspace
+        self.cycleID = cycleID
+        self.status = status
+        self.currentStage = currentStage
+        self.verifyIteration = verifyIteration
+        self.reason = reason
+        self.source = source
     }
 }
 

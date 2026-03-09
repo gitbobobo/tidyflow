@@ -361,6 +361,7 @@ extension WSClient {
             return
         }
         let token = wsAuthToken
+        onHTTPRequestScheduled?(domain, path, queryItems)
 
         Task { [weak self] in
             do {
@@ -1387,14 +1388,38 @@ extension WSClient {
         limit: Int? = nil,
         beforeMessageId: String? = nil
     ) {
+        let normalizedBefore = beforeMessageId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedBefore == nil || normalizedBefore?.isEmpty == true {
+            let dedupKey = aiRecentSessionMessagesKey(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                aiTool: aiTool,
+                sessionId: sessionId
+            )
+            let now = Date()
+            if let startedAt = aiRecentSessionMessagesInFlightAt[dedupKey],
+               now.timeIntervalSince(startedAt) < 5 {
+                aiRecentSessionMessagesDedupDropTotal += 1
+                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiRecentSessionMessagesDedupDropTotal, privacy: .public) scope=messages")
+                return
+            }
+            if let lastSuccessAt = aiRecentSessionMessagesLastSuccessAt[dedupKey],
+               now.timeIntervalSince(lastSuccessAt) < 1 {
+                aiRecentSessionMessagesDedupDropTotal += 1
+                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiRecentSessionMessagesDedupDropTotal, privacy: .public) scope=messages")
+                return
+            }
+            aiRecentSessionMessagesInFlightAt[dedupKey] = now
+        }
+
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions/\(encodePathComponent(sessionId))/messages"
         var queryItems: [URLQueryItem] = []
         if let limit {
             queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
         }
-        if let beforeMessageId,
-           !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            queryItems.append(URLQueryItem(name: "before_message_id", value: beforeMessageId))
+        if let normalizedBefore,
+           !normalizedBefore.isEmpty {
+            queryItems.append(URLQueryItem(name: "before_message_id", value: normalizedBefore))
         }
         requestReadViaHTTP(
             domain: "ai",
@@ -1402,6 +1427,15 @@ extension WSClient {
             queryItems: queryItems,
             fallbackAction: "ai_session_messages"
         )
+    }
+
+    func aiRecentSessionMessagesKey(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> String {
+        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
     }
 
     /// 查询 AI 会话状态（idle/busy/error）

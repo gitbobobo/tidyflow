@@ -388,6 +388,11 @@ class AppState: ObservableObject {
     @Published var sessionPanelFilter: AISessionListFilter = .all
     /// 当前工作区会话列表分页状态（按筛选维度分桶）。
     @Published var aiSessionListPageStates: [String: AISessionListPageState] = [:]
+    /// AI 会话列表请求防重入与短期缓存（key: project::workspace::filter::cursor）。
+    var aiSessionListRequestInFlightAt: [String: Date] = [:]
+    var aiSessionListRequestLastSuccessAt: [String: Date] = [:]
+    var aiSessionListBootstrapWorkspaceKey: String?
+    var aiSessionListDedupDropTotal: Int = 0
 
     /// 右侧面板会话操作（由 SessionsPanelView 发起，AITabView 响应）
     enum SessionPanelAction: Equatable {
@@ -428,7 +433,8 @@ class AppState: ObservableObject {
         for filter: AISessionListFilter,
         limit: Int = 50,
         cursor: String? = nil,
-        append: Bool = false
+        append: Bool = false,
+        force: Bool = false
     ) -> Bool {
         guard let workspace = selectedWorkspaceKey,
               !workspace.isEmpty,
@@ -450,6 +456,30 @@ class AppState: ObservableObject {
             workspace: workspace,
             filter: filter
         )
+        let requestKey = sessionListRequestDedupKey(
+            project: selectedProjectName,
+            workspace: workspace,
+            filter: filter,
+            cursor: cursor
+        )
+        let now = Date()
+        if let startedAt = aiSessionListRequestInFlightAt[requestKey] {
+            if now.timeIntervalSince(startedAt) < 5 {
+                aiSessionListDedupDropTotal += 1
+                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiSessionListDedupDropTotal, privacy: .public)")
+                performanceTracer.end(perfTraceId)
+                return false
+            }
+            aiSessionListRequestInFlightAt.removeValue(forKey: requestKey)
+        }
+        if !force,
+           let lastSuccessAt = aiSessionListRequestLastSuccessAt[requestKey],
+           now.timeIntervalSince(lastSuccessAt) < 1 {
+            aiSessionListDedupDropTotal += 1
+            TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiSessionListDedupDropTotal, privacy: .public)")
+            performanceTracer.end(perfTraceId)
+            return false
+        }
         var pageState = aiSessionListPageStates[pageKey] ?? .empty()
         if append {
             guard !pageState.isLoadingNextPage else {
@@ -469,6 +499,7 @@ class AppState: ObservableObject {
             pageState.isLoadingNextPage = false
         }
         aiSessionListPageStates[pageKey] = pageState
+        aiSessionListRequestInFlightAt[requestKey] = now
         wsClient.requestAISessionList(
             projectName: selectedProjectName,
             workspaceName: workspace,
@@ -492,6 +523,43 @@ class AppState: ObservableObject {
             cursor: nextCursor,
             append: true
         )
+    }
+
+    func sessionListRequestDedupKey(
+        project: String,
+        workspace: String,
+        filter: AISessionListFilter,
+        cursor: String?
+    ) -> String {
+        let normalizedCursor = cursor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return "\(project)::\(workspace)::\(filter.id)::\(normalizedCursor)"
+    }
+
+    func markAISessionListRequestCompleted(
+        project: String,
+        workspace: String,
+        filter: AISessionListFilter
+    ) {
+        let prefix = "\(project)::\(workspace)::\(filter.id)::"
+        let now = Date()
+        for key in aiSessionListRequestInFlightAt.keys.filter({ $0.hasPrefix(prefix) }) {
+            aiSessionListRequestInFlightAt.removeValue(forKey: key)
+            aiSessionListRequestLastSuccessAt[key] = now
+        }
+    }
+
+    @discardableResult
+    func bootstrapAISessionListIfNeeded(limit: Int = 50) -> Bool {
+        guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else { return false }
+        let globalKey = globalWorkspaceKey(projectName: selectedProjectName, workspaceName: workspace)
+        if aiSessionListBootstrapWorkspaceKey != globalKey {
+            aiSessionListBootstrapWorkspaceKey = globalKey
+            if sessionPanelFilter != .all {
+                sessionPanelFilter = .all
+            }
+            return requestAISessionList(for: .all, limit: limit, force: true)
+        }
+        return false
     }
 
     // AI Provider / Model / Agent 状态（当前工具上下文）
@@ -620,6 +688,11 @@ class AppState: ObservableObject {
     var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
     /// Evolution：记录某工作空间等待重试/等待确认的动作。
     @Published var evolutionPendingActionByWorkspace: [String: EvolutionPendingActionState] = [:]
+    /// Evolution：工作区运行态权威索引，避免每次事件都重建整数组。
+    var evolutionWorkspaceItemIndexByKey: [String: EvolutionWorkspaceItemV2] = [:]
+    var evolutionSnapshotFallbackWorkItems: [String: DispatchWorkItem] = [:]
+    var evolutionTargetedSnapshotMergeKeys: Set<String> = []
+    var evolutionSnapshotFallbackTotal: Int = 0
     /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
@@ -863,6 +936,7 @@ class AppState: ObservableObject {
 
     func clearAISessionListPageStates() {
         aiSessionListPageStates = [:]
+        aiSessionListRequestInFlightAt.removeAll()
     }
 
     func replaceToolSessionIndex(_ sessions: [AISessionInfo], for tool: AIChatTool) {

@@ -31,6 +31,12 @@ static WS_OUTBOUND_SELECT_WAIT_MAX_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_COUNT: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `evolution_cycle_update_emitted_total`
+static EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `evolution_cycle_update_debounced_total`
+static EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `evolution_snapshot_fallback_total`
+static EVOLUTION_SNAPSHOT_FALLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 const PERF_LOG_INTERVAL: u64 = 200;
 
@@ -173,5 +179,26 @@ pub fn record_ws_outbound_loop_tick(ms: u64) {
             handle_max_ms,
             handle_count
         );
+    }
+}
+
+pub fn record_evolution_cycle_update_emitted() {
+    let total = EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
+        info!("perf evolution_cycle_update_emitted_total={}", total);
+    }
+}
+
+pub fn record_evolution_cycle_update_debounced() {
+    let total = EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
+        info!("perf evolution_cycle_update_debounced_total={}", total);
+    }
+}
+
+pub fn record_evolution_snapshot_fallback() {
+    let total = EVOLUTION_SNAPSHOT_FALLBACK_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
+        info!("perf evolution_snapshot_fallback_total={}", total);
     }
 }

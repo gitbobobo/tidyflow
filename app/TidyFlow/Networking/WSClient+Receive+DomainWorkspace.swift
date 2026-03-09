@@ -242,7 +242,15 @@ extension WSClient {
         case "evo_scheduler_updated", "evo_scheduler_status",
              "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
             "evo_stage_changed":
-            if let handler = evolutionMessageHandler {
+            if let event = EvolutionWorkspaceStatusEventV2.from(action: action, json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionWorkspaceStatusEvent(event)
+                } else if let onEvoWorkspaceStatusEvent {
+                    onEvoWorkspaceStatusEvent(event)
+                } else {
+                    onEvoPulse?()
+                }
+            } else if let handler = evolutionMessageHandler {
                 handler.handleEvolutionPulse()
             } else {
                 onEvoPulse?()

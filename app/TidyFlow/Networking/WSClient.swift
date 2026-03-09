@@ -156,6 +156,7 @@ class WSClient: NSObject, ObservableObject {
     var onAICodeCompletionDone: ((AICodeCompletionDone) -> Void)?
     // Evolution
     var onEvoPulse: (() -> Void)?
+    var onEvoWorkspaceStatusEvent: ((EvolutionWorkspaceStatusEventV2) -> Void)?
     var onEvoSnapshot: ((EvolutionSnapshotV2) -> Void)?
     var onEvoCycleUpdated: ((EvoCycleUpdatedV2) -> Void)?
     var onEvoAgentProfile: ((EvolutionAgentProfileV2) -> Void)?
@@ -205,6 +206,12 @@ class WSClient: NSObject, ObservableObject {
     private var coalesceQueue: [String: CoalescedEnvelope] = [:]
     /// 合并窗口定时器
     private var coalesceTimer: DispatchWorkItem?
+    /// HTTP 读请求观测钩子（测试与性能排查使用，不参与业务逻辑）
+    var onHTTPRequestScheduled: ((_ domain: String, _ path: String, _ queryItems: [URLQueryItem]) -> Void)?
+    /// AI 最近页消息请求防重（仅 before=nil 场景）
+    var aiRecentSessionMessagesInFlightAt: [String: Date] = [:]
+    var aiRecentSessionMessagesLastSuccessAt: [String: Date] = [:]
+    var aiRecentSessionMessagesDedupDropTotal: Int = 0
 
     /// 后台串行队列，用于 MessagePack 解码（避免阻塞主线程）
     private let decodeQueue: OperationQueue = {

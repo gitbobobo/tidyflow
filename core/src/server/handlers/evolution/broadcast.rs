@@ -14,6 +14,35 @@ impl EvolutionManager {
         ctx: &HandlerContext,
         source: &str,
     ) {
+        if source == "agent" {
+            crate::server::perf::record_evolution_cycle_update_debounced();
+            self.cancel_debounced_cycle_update(key).await;
+            let key_owned = key.to_string();
+            let ctx_cloned = ctx.clone();
+            let manager = self.clone();
+            let handle = tokio::spawn(async move {
+                tokio::time::sleep(Self::cycle_update_debounce_window()).await;
+                manager
+                    .emit_cycle_update_now(&key_owned, &ctx_cloned, "agent")
+                    .await;
+                let mut tasks = manager.debounced_cycle_update_tasks.lock().await;
+                tasks.remove(&key_owned);
+            });
+            let mut tasks = self.debounced_cycle_update_tasks.lock().await;
+            tasks.insert(key.to_string(), handle);
+            return;
+        }
+
+        self.cancel_debounced_cycle_update(key).await;
+        self.emit_cycle_update_now(key, ctx, source).await;
+    }
+
+    pub(super) async fn emit_cycle_update_now(
+        &self,
+        key: &str,
+        ctx: &HandlerContext,
+        source: &str,
+    ) {
         let (
             project,
             workspace,
@@ -67,6 +96,7 @@ impl EvolutionManager {
             &stage_duration_ms,
         );
 
+        crate::server::perf::record_evolution_cycle_update_emitted();
         self.broadcast(
             ctx,
             ServerMessage::EvoCycleUpdated {
@@ -164,6 +194,7 @@ mod tests {
     use std::sync::Arc;
 
     use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+    use tokio::time::{sleep, Duration};
 
     use super::super::types::WorkspaceRunState;
     use super::super::EvolutionManager;
@@ -260,6 +291,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(8);
         let ctx = make_handler_context(tx);
         manager.broadcast_cycle_update(&key, &ctx, "agent").await;
+        sleep(Duration::from_millis(280)).await;
 
         let event = rx.recv().await.expect("应收到 evo_cycle_updated 广播");
         match event.message {
@@ -272,5 +304,72 @@ mod tests {
             }
             other => panic!("unexpected message: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn broadcast_cycle_update_should_debounce_agent_updates() {
+        let manager = EvolutionManager::new();
+        let key = "demo::default".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            let mut workspace = make_workspace_run_state();
+            workspace
+                .stage_tool_call_counts
+                .insert("plan".to_string(), 1);
+            state.workspaces.insert(key.clone(), workspace);
+        }
+
+        let (tx, mut rx) = broadcast::channel(8);
+        let ctx = make_handler_context(tx);
+        manager.broadcast_cycle_update(&key, &ctx, "agent").await;
+        {
+            let mut state = manager.state.lock().await;
+            state
+                .workspaces
+                .get_mut(&key)
+                .expect("workspace")
+                .stage_tool_call_counts
+                .insert("plan".to_string(), 2);
+        }
+        sleep(Duration::from_millis(40)).await;
+        manager.broadcast_cycle_update(&key, &ctx, "agent").await;
+
+        sleep(Duration::from_millis(280)).await;
+
+        let event = rx.recv().await.expect("应收到合并后的 evo_cycle_updated 广播");
+        match event.message {
+            ServerMessage::EvoCycleUpdated { agents, .. } => {
+                let plan_agent = agents.iter().find(|agent| agent.stage == "plan").expect("plan agent");
+                assert_eq!(plan_agent.tool_call_count, 2);
+            }
+            other => panic!("unexpected message: {:?}", other),
+        }
+        assert!(rx.try_recv().is_err(), "防抖窗口内不应产生第二条广播");
+    }
+
+    #[tokio::test]
+    async fn broadcast_cycle_update_should_flush_immediately_for_non_agent_source() {
+        let manager = EvolutionManager::new();
+        let key = "demo::default".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            state.workspaces.insert(key.clone(), make_workspace_run_state());
+        }
+
+        let (tx, mut rx) = broadcast::channel(8);
+        let ctx = make_handler_context(tx);
+        manager.broadcast_cycle_update(&key, &ctx, "agent").await;
+        manager.broadcast_cycle_update(&key, &ctx, "system").await;
+
+        let event = rx.recv().await.expect("非 agent 广播应立即送达");
+        match event.message {
+            ServerMessage::EvoCycleUpdated { source, .. } => {
+                assert_eq!(source, "system");
+            }
+            other => panic!("unexpected message: {:?}", other),
+        }
+
+        sleep(Duration::from_millis(280)).await;
+        assert!(rx.try_recv().is_err(), "立即广播后不应残留延迟 agent 广播");
     }
 }

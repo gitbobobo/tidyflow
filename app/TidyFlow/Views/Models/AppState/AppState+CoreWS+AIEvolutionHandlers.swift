@@ -142,6 +142,11 @@ extension AppState {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
+                self.markAISessionListRequestCompleted(
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    filter: filter
+                )
                 var pageState = self.sessionListPageState(for: filter)
                 let mergedSessions = pageState.isLoadingNextPage
                     ? (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
@@ -748,22 +753,91 @@ extension AppState {
     }
 
     func handleEvolutionPulse() {
-        wsClient.requestEvoSnapshot()
+        if let workspace = selectedWorkspaceKey, !workspace.isEmpty {
+            requestEvolutionSnapshot(project: selectedProjectName, workspace: workspace)
+        } else {
+            requestEvolutionSnapshot()
+        }
+    }
+
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
+            guard let existing = self.evolutionWorkspaceItemIndexByKey[key] else {
+                self.scheduleEvolutionSnapshotFallback(
+                    project: ev.project,
+                    workspace: workspace,
+                    reason: "missing_workspace_status_event"
+                )
+                return
+            }
+
+            let shouldFallback: Bool
+            switch ev.kind {
+            case .started:
+                shouldFallback = existing.cycleID != ev.cycleID
+            case .resumed:
+                shouldFallback = existing.cycleID != ev.cycleID
+            case .stageChanged:
+                shouldFallback = existing.cycleID != ev.cycleID || (ev.currentStage?.isEmpty ?? true)
+            case .stopped:
+                shouldFallback = false
+            }
+            if shouldFallback {
+                self.scheduleEvolutionSnapshotFallback(
+                    project: ev.project,
+                    workspace: workspace,
+                    reason: "workspace_status_event_requires_snapshot"
+                )
+                return
+            }
+
+            let updated = EvolutionWorkspaceItemV2(
+                project: existing.project,
+                workspace: existing.workspace,
+                cycleID: ev.cycleID,
+                title: existing.title,
+                status: ev.status ?? existing.status,
+                currentStage: ev.currentStage ?? existing.currentStage,
+                globalLoopRound: existing.globalLoopRound,
+                loopRoundLimit: existing.loopRoundLimit,
+                verifyIteration: ev.verifyIteration ?? existing.verifyIteration,
+                verifyIterationLimit: existing.verifyIterationLimit,
+                agents: existing.agents,
+                executions: existing.executions,
+                terminalReasonCode: existing.terminalReasonCode,
+                terminalErrorMessage: existing.terminalErrorMessage,
+                rateLimitErrorMessage: existing.rateLimitErrorMessage
+            )
+            if self.upsertEvolutionWorkspaceItem(updated) {
+                self.scheduleWorkspaceSidebarStatusRefresh(
+                    projectNames: [ev.project],
+                    debounce: 0.2
+                )
+            }
+        }
     }
 
     /// 直接处理 evo_cycle_updated 事件，在不触发全量快照刷新的情况下更新单个工作空间状态。
     /// 若对应工作空间尚不存在则回退到 pulse（触发全量刷新）。
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) {
-        DispatchQueue.main.async { [weak self] in
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
             let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
-            guard let existingIndex = self.evolutionWorkspaceItems.firstIndex(where: { $0.workspaceKey == key }) else {
-                // 找不到已有条目时触发全量刷新（首次连接或重连场景）
-                self.wsClient.requestEvoSnapshot()
+            guard let existing = self.evolutionWorkspaceItemIndexByKey[key] else {
+                DispatchQueue.main.async {
+                    self.scheduleEvolutionSnapshotFallback(
+                        project: ev.project,
+                        workspace: workspace,
+                        reason: "missing_cycle_update_item"
+                    )
+                }
                 return
             }
-            let existing = self.evolutionWorkspaceItems[existingIndex]
             let updated = EvolutionWorkspaceItemV2(
                 project: ev.project,
                 workspace: workspace,
@@ -781,25 +855,33 @@ extension AppState {
                 terminalErrorMessage: ev.terminalErrorMessage,
                 rateLimitErrorMessage: ev.rateLimitErrorMessage
             )
-            if self.evolutionWorkspaceItems[existingIndex] != updated {
-                self.evolutionWorkspaceItems[existingIndex] = updated
-                self.scheduleWorkspaceSidebarStatusRefresh(
-                    projectNames: [ev.project],
-                    debounce: 0.2
-                )
-            }
-            if let pendingAction = self.evolutionPendingActionByWorkspace[key],
-               EvolutionControlCapability.shouldClearPendingAction(
-                pendingAction,
-                currentStatus: ev.status
-            ) {
-                self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            guard existing.projectionSignature != updated.projectionSignature else { return }
+            DispatchQueue.main.async {
+                let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                TFLog.perf.info("perf evolution_item_apply_ms=\(itemApplyMs, privacy: .public) key=\(key, privacy: .public)")
+                let didUpdate = self.upsertEvolutionWorkspaceItem(updated)
+                if didUpdate {
+                    self.cancelEvolutionSnapshotFallback(project: ev.project, workspace: workspace)
+                    self.evolutionTargetedSnapshotMergeKeys.remove(key)
+                    self.scheduleWorkspaceSidebarStatusRefresh(
+                        projectNames: [ev.project],
+                        debounce: 0.2
+                    )
+                }
+                if let pendingAction = self.evolutionPendingActionByWorkspace[key],
+                   EvolutionControlCapability.shouldClearPendingAction(
+                    pendingAction,
+                    currentStatus: ev.status
+                ) {
+                    self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
+                }
             }
         }
     }
 
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
         // 排序和字典构建移至后台线程
+        let startedAt = CFAbsoluteTimeGetCurrent()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let items = snapshot.workspaceItems.sorted {
@@ -818,8 +900,24 @@ extension AppState {
                 if self.evolutionScheduler != snapshot.scheduler {
                     self.evolutionScheduler = snapshot.scheduler
                 }
-                if self.evolutionWorkspaceItems != items {
-                    self.evolutionWorkspaceItems = items
+                if items.isEmpty && !self.evolutionTargetedSnapshotMergeKeys.isEmpty {
+                    return
+                }
+                let mergeKeys = items.map(\.workspaceKey)
+                let shouldMerge = !mergeKeys.isEmpty &&
+                    mergeKeys.allSatisfy { self.evolutionTargetedSnapshotMergeKeys.contains($0) }
+                if shouldMerge {
+                    self.mergeEvolutionWorkspaceItems(items)
+                    for key in mergeKeys {
+                        self.evolutionTargetedSnapshotMergeKeys.remove(key)
+                    }
+                } else {
+                    self.replaceEvolutionWorkspaceItems(items)
+                    self.evolutionTargetedSnapshotMergeKeys.subtract(mergeKeys)
+                }
+                let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                TFLog.perf.info("perf evolution_item_apply_ms=\(itemApplyMs, privacy: .public) count=\(items.count, privacy: .public)")
+                if !items.isEmpty {
                     self.scheduleWorkspaceSidebarStatusRefresh(
                         projectNames: items.map(\.project),
                         debounce: 0.2

@@ -160,8 +160,10 @@ struct EvolutionPipelineView: View {
             guard state == .connected else { return }
             refreshData()
         }
-        .onReceive(appState.$evolutionWorkspaceItems) { _ in
+        .onChange(of: currentItem?.statusStageRoundSignature) { _, _ in
             syncStartOptions()
+        }
+        .onChange(of: currentItem?.timelineSignature) { _, _ in
             updateTimeline()
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in
@@ -1783,6 +1785,7 @@ struct EvolutionPipelineView: View {
     }
 
     private func updateTimeline() {
+        let startedAt = CFAbsoluteTimeGetCurrent()
         guard let item = currentItem else {
             timelineSnapshotSignature = 0
             if !completedTimeline.isEmpty {
@@ -1839,6 +1842,8 @@ struct EvolutionPipelineView: View {
         if completedTimeline != newTimeline {
             completedTimeline = newTimeline
         }
+        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        TFLog.perf.info("perf evolution_timeline_recompute_ms=\(durationMs, privacy: .public) key=\(workspaceContextKey, privacy: .public)")
     }
 
     private func resetCurrentCycleTimeline() {

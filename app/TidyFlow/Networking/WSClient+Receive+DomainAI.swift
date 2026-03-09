@@ -34,6 +34,16 @@ extension WSClient {
             return true
         case "ai_session_messages":
             if let ev = AISessionMessagesV2.from(json: json) {
+                if ev.beforeMessageId == nil {
+                    let key = aiRecentSessionMessagesKey(
+                        projectName: ev.projectName,
+                        workspaceName: ev.workspaceName,
+                        aiTool: ev.aiTool,
+                        sessionId: ev.sessionId
+                    )
+                    aiRecentSessionMessagesInFlightAt.removeValue(forKey: key)
+                    aiRecentSessionMessagesLastSuccessAt[key] = Date()
+                }
                 if let handler = aiMessageHandler {
                     handler.handleAISessionMessages(ev)
                 } else {

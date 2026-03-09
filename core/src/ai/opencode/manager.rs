@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -9,6 +10,7 @@ const HEALTH_CHECK_INTERVAL_MS: u64 = 100;
 const HEALTH_CHECK_TIMEOUT_MS: u64 = 3000;
 const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 30;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS: u64 = 5000;
+const HEALTH_CHECK_SUCCESS_CACHE_MS: u64 = 1000;
 
 #[derive(Debug)]
 pub struct OpenCodeManager {
@@ -16,6 +18,7 @@ pub struct OpenCodeManager {
     base_url: String,
     process: Arc<Mutex<Option<tokio::process::Child>>>,
     lifecycle: Arc<Mutex<()>>,
+    last_successful_health_check_at: Arc<Mutex<Option<Instant>>>,
     working_dir: PathBuf,
 }
 
@@ -28,6 +31,7 @@ impl OpenCodeManager {
             base_url,
             process: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
+            last_successful_health_check_at: Arc::new(Mutex::new(None)),
             working_dir,
         }
     }
@@ -146,6 +150,19 @@ impl OpenCodeManager {
     }
 
     pub async fn check_health(&self) -> Result<(), String> {
+        {
+            let last_success = self.last_successful_health_check_at.lock().await;
+            if let Some(last_success_at) = *last_success {
+                if last_success_at.elapsed() <= Duration::from_millis(HEALTH_CHECK_SUCCESS_CACHE_MS) {
+                    debug!(
+                        "Health check cache hit within {}ms",
+                        HEALTH_CHECK_SUCCESS_CACHE_MS
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         // OpenCode 新版建议使用 /global/health；老版本可能仍有 /health。
         let health_urls = [
             format!("{}/global/health", self.base_url),
@@ -176,6 +193,8 @@ impl OpenCodeManager {
                 }
             }
             if ok {
+                let mut last_success = self.last_successful_health_check_at.lock().await;
+                *last_success = Some(Instant::now());
                 info!("Health check passed on attempt {}", attempt);
                 return Ok(());
             }
@@ -224,6 +243,10 @@ impl OpenCodeManager {
 
     async fn stop_server_locked(&self) -> Result<(), String> {
         info!("Stopping OpenCode server on port {}", self.port);
+        {
+            let mut last_success = self.last_successful_health_check_at.lock().await;
+            *last_success = None;
+        }
 
         let mut process_lock = self.process.lock().await;
         if let Some(mut child) = process_lock.take() {

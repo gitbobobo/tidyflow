@@ -96,6 +96,18 @@ async fn test_health_check_fails_for_unavailable_server() {
 }
 
 #[tokio::test]
+async fn test_health_check_uses_recent_success_cache() {
+    let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
+    {
+        let mut last_success = manager.last_successful_health_check_at.lock().await;
+        *last_success = Some(std::time::Instant::now());
+    }
+
+    let result = manager.check_health().await;
+    assert!(result.is_ok(), "最近成功探活应命中缓存，不应重新访问服务");
+}
+
+#[tokio::test]
 async fn test_base_url_consistency() {
     let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
     let expected_url = format!("http://127.0.0.1:{}", manager.get_port());

@@ -142,8 +142,9 @@ struct SessionsPanelView: View {
             }
         }
         .onAppear {
-            appState.sessionPanelFilter = .all
-            requestSessionList(for: appState.sessionPanelFilter)
+            if !appState.bootstrapAISessionListIfNeeded(limit: 50) {
+                requestSessionList(for: appState.sessionPanelFilter)
+            }
         }
         .onChange(of: appState.sessionPanelFilter) { _, newFilter in
             requestSessionList(for: newFilter)

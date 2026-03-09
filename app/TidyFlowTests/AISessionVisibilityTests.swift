@@ -387,6 +387,36 @@ final class AISessionListSemanticsTests: XCTestCase {
         XCTAssertFalse(result, "已在初始加载时不应重复发起请求")
     }
 
+    func testRequestAISessionList_dedupsRecentSuccessButForceBypasses() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.connectionPhase = .connected
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+
+        var scheduledRequestCount = 0
+        appState.wsClient.onHTTPRequestScheduled = { _, _, _ in
+            scheduledRequestCount += 1
+        }
+
+        XCTAssertTrue(appState.requestAISessionList(for: .all))
+        appState.markAISessionListRequestCompleted(project: "proj", workspace: "ws", filter: .all)
+
+        XCTAssertFalse(
+            appState.requestAISessionList(for: .all),
+            "成功返回 1 秒内的相同列表请求应被去重"
+        )
+        XCTAssertTrue(
+            appState.requestAISessionList(for: .all, force: true),
+            "显式强制刷新应绕过去重保护"
+        )
+        XCTAssertEqual(scheduledRequestCount, 2)
+    }
+
     func testClearPageStates_resetsAllKeys() {
         let appState = AppState()
         appState.selectedProjectName = "proj"
