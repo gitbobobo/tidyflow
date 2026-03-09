@@ -131,7 +131,7 @@ struct AITabView: View {
             pendingSendRequest = nil
             aiChatStore.setAbortPendingSessionId(nil)
             previousSnapshotKey = currentSnapshotKey
-            loadSessions()
+            loadSessions(refreshSessionList: false)
             let currentSessionId = appState.aiStore(for: newTool).currentSessionId
             if let skip = skipNextAutoReload,
                skip.tool == newTool,
@@ -673,7 +673,7 @@ struct AITabView: View {
                 aiChatStore.applySnapshot(snapshot)
                 appState.aiSessions = snapshot.sessions
             }
-            loadSessions()
+            loadSessions(refreshSessionList: true)
             reloadCurrentSessionIfNeeded()
             return
         }
@@ -696,7 +696,7 @@ struct AITabView: View {
         appState.aiAgents = []
         appState.aiSelectedAgent = nil
         appState.aiSlashCommands = []
-        loadSessions()
+        loadSessions(refreshSessionList: true)
         reloadCurrentSessionIfNeeded()
     }
 
@@ -735,12 +735,12 @@ struct AITabView: View {
         appState.aiSelectedAgent = nil
         appState.aiSlashCommands = []
         // 始终刷新会话列表（保持与服务端同步）
-        loadSessions()
+        loadSessions(refreshSessionList: true)
         // 若有选中会话，重新加载消息以弥补切走期间丢失的增量
         reloadCurrentSessionIfNeeded()
     }
 
-    private func loadSessions() {
+    private func loadSessions(refreshSessionList: Bool) {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else {
             deferredSessionListLoadWorkItem?.cancel()
             deferredSessionListLoadWorkItem = nil
@@ -753,9 +753,11 @@ struct AITabView: View {
         }
 
         let sessionListLimit = aiSessionListLimit
-        deferredSessionListLoadWorkItem?.cancel()
-        if !appState.bootstrapAISessionListIfNeeded(limit: sessionListLimit) {
-            _ = appState.requestAISessionList(for: appState.sessionPanelFilter, limit: sessionListLimit)
+        if refreshSessionList {
+            deferredSessionListLoadWorkItem?.cancel()
+            if !appState.bootstrapAISessionListIfNeeded(limit: sessionListLimit) {
+                _ = appState.requestAISessionList(for: appState.sessionPanelFilter, limit: sessionListLimit)
+            }
         }
 
         appState.isAILoadingModels = true

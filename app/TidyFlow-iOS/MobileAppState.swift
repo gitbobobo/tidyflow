@@ -2082,7 +2082,7 @@ final class MobileAppState: ObservableObject {
         aiSessionConfigOptions = aiSessionConfigOptionsByTool[aiChatTool] ?? []
         aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[aiChatTool] ?? nil
         refreshCurrentAISlashCommands(for: aiChatTool)
-        requestAIContextResources()
+        requestAIContextResources(refreshSessionList: true)
         reloadCurrentAISessionIfNeeded()
     }
 
@@ -2128,15 +2128,17 @@ final class MobileAppState: ObservableObject {
             aiSessionConfigOptions = aiSessionConfigOptionsByTool[newTool] ?? []
             aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[newTool] ?? nil
             refreshCurrentAISlashCommands(for: newTool)
-            requestAIContextResources()
+            requestAIContextResources(refreshSessionList: false)
             reloadCurrentAISessionIfNeeded()
         }
     }
 
-    /// 拉取会话列表 + provider/agent/斜杠命令
-    func requestAIContextResources() {
+    /// 拉取当前工具的上下文资源；仅在进入聊天上下文时刷新会话列表。
+    func requestAIContextResources(refreshSessionList: Bool = true) {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
-        _ = requestAISessionList(for: sessionListFilter)
+        if refreshSessionList {
+            _ = requestAISessionList(for: sessionListFilter)
+        }
         isAILoadingModels = true
         isAILoadingAgents = true
         wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
