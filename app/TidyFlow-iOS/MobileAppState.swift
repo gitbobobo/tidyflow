@@ -1095,6 +1095,11 @@ final class MobileAppState: ObservableObject {
         return taskStore.activeTasks(for: key)
     }
 
+    func taskForWorkspace(project: String, workspace: String, taskID: String) -> WorkspaceTaskItem? {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return taskStore.allTasks(for: key).first { $0.id == taskID }
+    }
+
     func todosForWorkspace(project: String, workspace: String) -> [WorkspaceTodoItem] {
         let key = globalWorkspaceKey(project: project, workspace: workspace)
         return WorkspaceTodoStore.items(for: key, in: workspaceTodosByKey)
@@ -1254,6 +1259,13 @@ final class MobileAppState: ObservableObject {
         task.status.isActive
     }
 
+    func canCancelTask(project: String, workspace: String, taskID: String) -> Bool {
+        guard let task = taskForWorkspace(project: project, workspace: workspace, taskID: taskID) else {
+            return false
+        }
+        return canCancelTask(task)
+    }
+
     func cancelTask(_ task: WorkspaceTaskItem) {
         guard canCancelTask(task) else { return }
 
@@ -1286,6 +1298,13 @@ final class MobileAppState: ObservableObject {
             item.message = "已取消"
             item.completedAt = Date()
         }
+    }
+
+    func cancelTask(project: String, workspace: String, taskID: String) {
+        guard let task = taskForWorkspace(project: project, workspace: workspace, taskID: taskID) else {
+            return
+        }
+        cancelTask(task)
     }
 
     /// 清除指定工作空间的已完成任务

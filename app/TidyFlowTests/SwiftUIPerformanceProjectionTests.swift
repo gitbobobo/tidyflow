@@ -304,6 +304,138 @@ final class WorkspaceOverviewProjectionStoreTests: XCTestCase {
 }
 
 @MainActor
+final class WorkspaceTaskTodoProjectionStoreTests: XCTestCase {
+    func testWorkspaceTaskProjectionSemanticsKeepSectionOrder() {
+        let now = Date(timeIntervalSince1970: 1_730_000_000)
+        let tasks = [
+            makeTask(id: "running", status: .running, createdAt: now.addingTimeInterval(-30), message: "执行中"),
+            makeTask(id: "failed", status: .failed, createdAt: now.addingTimeInterval(-20), completedAt: now.addingTimeInterval(-5), message: "失败"),
+            makeTask(id: "completed", status: .completed, createdAt: now.addingTimeInterval(-10), completedAt: now, message: "完成"),
+            makeTask(id: "cancelled", status: .cancelled, createdAt: now.addingTimeInterval(-5), completedAt: now.addingTimeInterval(-1), message: "取消")
+        ]
+
+        let projection = WorkspaceTaskListProjectionSemantics.make(
+            workspaceKey: "proj:default",
+            tasks: tasks,
+            canCancel: { $0.id == "running" }
+        )
+
+        XCTAssertEqual(projection.sections.map(\.id), ["进行中", "失败", "已完成", "已取消"])
+        XCTAssertEqual(projection.sections.first?.items.first?.id, "running")
+        XCTAssertTrue(projection.sections.first?.items.first?.canCancel == true)
+        XCTAssertEqual(projection.terminalTaskCount, 3)
+    }
+
+    func testWorkspaceTodoProjectionSemanticsKeepStatusBuckets() {
+        let items = [
+            makeTodo(id: "pending-1", title: "待办 1", status: .pending, order: 0),
+            makeTodo(id: "progress-1", title: "进行中", status: .inProgress, order: 0),
+            makeTodo(id: "done-1", title: "已完成", status: .completed, order: 0)
+        ]
+
+        let projection = WorkspaceTodoProjectionSemantics.make(
+            workspaceKey: "proj:default",
+            items: items
+        )
+
+        XCTAssertEqual(projection.pendingCount, 2)
+        XCTAssertEqual(projection.sections.map(\.status), [.pending, .inProgress, .completed])
+        XCTAssertEqual(projection.sections.flatMap(\.items).map(\.id), ["pending-1", "progress-1", "done-1"])
+    }
+
+    func testWorkspaceTaskProjectionStoreSkipsDuplicatePublication() {
+        let store = WorkspaceTaskListProjectionStore()
+        let projection = WorkspaceTaskListProjection(
+            workspaceKey: "proj:default",
+            hasWorkspace: true,
+            terminalTaskCount: 1,
+            sections: [
+                WorkspaceTaskSectionProjection(
+                    id: "进行中",
+                    title: "进行中",
+                    items: [
+                        WorkspaceTaskRowProjection(
+                            makeTask(id: "running", status: .running, createdAt: Date(), message: "执行中"),
+                            canCancel: true
+                        )
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertTrue(store.updateProjection(projection))
+        XCTAssertFalse(store.updateProjection(projection))
+    }
+
+    func testWorkspaceTodoProjectionStoreSkipsDuplicatePublication() {
+        let store = WorkspaceTodoProjectionStore()
+        let projection = WorkspaceTodoProjection(
+            workspaceKey: "proj:default",
+            workspaceReady: true,
+            totalCount: 1,
+            pendingCount: 1,
+            sections: [
+                WorkspaceTodoSectionProjection(
+                    id: WorkspaceTodoStatus.pending.rawValue,
+                    title: WorkspaceTodoStatus.pending.localizedTitle,
+                    status: .pending,
+                    items: [
+                        WorkspaceTodoRowProjection(
+                            makeTodo(id: "todo-1", title: "待办", status: .pending, order: 0)
+                        )
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertTrue(store.updateProjection(projection))
+        XCTAssertFalse(store.updateProjection(projection))
+    }
+
+    private func makeTask(
+        id: String,
+        status: WorkspaceTaskStatus,
+        createdAt: Date,
+        completedAt: Date? = nil,
+        message: String
+    ) -> WorkspaceTaskItem {
+        WorkspaceTaskItem(
+            id: id,
+            project: "proj",
+            workspace: "default",
+            workspaceGlobalKey: "proj:default",
+            type: .projectCommand,
+            title: id,
+            iconName: "hammer",
+            status: status,
+            message: message,
+            createdAt: createdAt,
+            startedAt: createdAt,
+            completedAt: completedAt,
+            lastOutputLine: "line",
+            isCancellable: status.isActive
+        )
+    }
+
+    private func makeTodo(
+        id: String,
+        title: String,
+        status: WorkspaceTodoStatus,
+        order: Int64
+    ) -> WorkspaceTodoItem {
+        WorkspaceTodoItem(
+            id: id,
+            title: title,
+            note: "说明",
+            status: status,
+            order: order,
+            createdAtMs: 1,
+            updatedAtMs: 1
+        )
+    }
+}
+
+@MainActor
 final class EvidenceProjectionStoreTests: XCTestCase {
     func testEvidenceProjectionStoreSkipsDuplicatePublication() {
         let store = EvidenceProjectionStore()

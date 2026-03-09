@@ -186,6 +186,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		AICS0001 /* AIChatShellProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICS0011 /* AIChatShellProjectionStore.swift */; };
 		BTP0001 /* BottomPanelProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BTP0011 /* BottomPanelProjectionStore.swift */; };
 		WOP0001 /* WorkspaceOverviewProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WOP0011 /* WorkspaceOverviewProjectionStore.swift */; };
+		WTTP0001 /* WorkspaceTaskTodoProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTTP0011 /* WorkspaceTaskTodoProjectionStore.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		SPL00003 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
@@ -467,6 +468,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		AICS0011 /* AIChatShellProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatShellProjectionStore.swift; sourceTree = "<group>"; };
 		BTP0011 /* BottomPanelProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomPanelProjectionStore.swift; sourceTree = "<group>"; };
 		WOP0011 /* WorkspaceOverviewProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjectionStore.swift; sourceTree = "<group>"; };
+		WTTP0011 /* WorkspaceTaskTodoProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskTodoProjectionStore.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
@@ -877,6 +879,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				SRD0011 /* SwiftUIRenderDiagnostics.swift */,
 				HOTS0011 /* SwiftUIHotspotBaseline.swift */,
 				WOP0011 /* WorkspaceOverviewProjectionStore.swift */,
+				WTTP0011 /* WorkspaceTaskTodoProjectionStore.swift */,
 				TST00011 /* ToastManager.swift */,
 				MDL000103 /* TabModels.swift */,
 			);
@@ -1164,6 +1167,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				BTP0001 /* BottomPanelProjectionStore.swift in Sources */,
 				HOTS0001 /* SwiftUIHotspotBaseline.swift in Sources */,
 				WOP0001 /* WorkspaceOverviewProjectionStore.swift in Sources */,
+				WTTP0001 /* WorkspaceTaskTodoProjectionStore.swift in Sources */,
 				TST00001 /* ToastManager.swift in Sources */,
 				TST00002 /* ToastOverlayView.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,

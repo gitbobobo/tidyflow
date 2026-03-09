@@ -104,8 +104,7 @@ struct InspectorContentView: View {
                     NativeGitPanelView()
                         .environmentObject(appState)
                 case .todos:
-                    TodoInspectorView()
-                        .environmentObject(appState)
+                    TodoInspectorView(appState: appState)
                 case .sessions:
                     // 会话列表已移至聊天界面左侧侧边栏，右侧面板不再显示
                     EmptyView()
@@ -415,30 +414,19 @@ extension TreeRowView {
 // MARK: - 待办面板
 
 struct TodoInspectorView: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
     @State private var draftTitle: String = ""
     @State private var draftNote: String = ""
-    @State private var editingItem: WorkspaceTodoItem?
+    @State private var editingItem: WorkspaceTodoRowProjection?
+    @State private var projectionStore = WorkspaceTodoProjectionStore()
 
-    private var workspaceKey: String? {
-        appState.currentGlobalWorkspaceKey
-    }
-
-    private var pendingTodos: [WorkspaceTodoItem] {
-        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .pending }
-    }
-
-    private var inProgressTodos: [WorkspaceTodoItem] {
-        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .inProgress }
-    }
-
-    private var completedTodos: [WorkspaceTodoItem] {
-        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .completed }
+    private var projection: WorkspaceTodoProjection {
+        projectionStore.projection
     }
 
     var body: some View {
         Group {
-            if let workspaceKey {
+            if let workspaceKey = projection.workspaceKey {
                 VStack(spacing: 0) {
                     PanelHeaderView(title: "rightPanel.todos".localized)
                     composer(workspaceKey: workspaceKey)
@@ -458,6 +446,9 @@ struct TodoInspectorView: View {
             } else {
                 RightPanelNoWorkspaceView()
             }
+        }
+        .task(id: projection.workspaceKey ?? "no-workspace") {
+            projectionStore.bind(appState: appState)
         }
     }
 
@@ -491,8 +482,7 @@ struct TodoInspectorView: View {
 
     @ViewBuilder
     private func todoList(workspaceKey: String) -> some View {
-        let isEmpty = pendingTodos.isEmpty && inProgressTodos.isEmpty && completedTodos.isEmpty
-        if isEmpty {
+        if projection.totalCount == 0 {
             VStack(spacing: 10) {
                 Spacer()
                 Image(systemName: "checklist")
@@ -506,24 +496,9 @@ struct TodoInspectorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
-                todoSection(
-                    title: "todo.section.pending".localized,
-                    workspaceKey: workspaceKey,
-                    status: .pending,
-                    items: pendingTodos
-                )
-                todoSection(
-                    title: "todo.section.inProgress".localized,
-                    workspaceKey: workspaceKey,
-                    status: .inProgress,
-                    items: inProgressTodos
-                )
-                todoSection(
-                    title: "todo.section.completed".localized,
-                    workspaceKey: workspaceKey,
-                    status: .completed,
-                    items: completedTodos
-                )
+                ForEach(projection.sections) { section in
+                    todoSection(workspaceKey: workspaceKey, section: section)
+                }
             }
             .listStyle(.inset)
 #if os(iOS)
@@ -535,44 +510,40 @@ struct TodoInspectorView: View {
 
     @ViewBuilder
     private func todoSection(
-        title: String,
         workspaceKey: String,
-        status: WorkspaceTodoStatus,
-        items: [WorkspaceTodoItem]
+        section: WorkspaceTodoSectionProjection
     ) -> some View {
-        if !items.isEmpty {
-            Section(title) {
-                ForEach(items) { item in
-                    TodoRowView(
-                        item: item,
-                        onEdit: { editingItem = item },
-                        onDelete: {
-                            _ = appState.deleteWorkspaceTodo(workspaceKey: workspaceKey, todoID: item.id)
-                        },
-                        onChangeStatus: { next in
-                            _ = appState.setWorkspaceTodoStatus(
-                                workspaceKey: workspaceKey,
-                                todoID: item.id,
-                                status: next
-                            )
-                        }
-                    )
-                }
-                .onMove { from, to in
-                    appState.moveWorkspaceTodos(
-                        workspaceKey: workspaceKey,
-                        status: status,
-                        fromOffsets: from,
-                        toOffset: to
-                    )
-                }
+        Section(section.title) {
+            ForEach(section.items) { item in
+                TodoRowView(
+                    item: item,
+                    onEdit: { editingItem = item },
+                    onDelete: {
+                        _ = appState.deleteWorkspaceTodo(workspaceKey: workspaceKey, todoID: item.id)
+                    },
+                    onChangeStatus: { next in
+                        _ = appState.setWorkspaceTodoStatus(
+                            workspaceKey: workspaceKey,
+                            todoID: item.id,
+                            status: next
+                        )
+                    }
+                )
+            }
+            .onMove { from, to in
+                appState.moveWorkspaceTodos(
+                    workspaceKey: workspaceKey,
+                    status: section.status,
+                    fromOffsets: from,
+                    toOffset: to
+                )
             }
         }
     }
 }
 
 private struct TodoRowView: View {
-    let item: WorkspaceTodoItem
+    let item: WorkspaceTodoRowProjection
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onChangeStatus: (WorkspaceTodoStatus) -> Void
@@ -620,13 +591,13 @@ private struct TodoRowView: View {
 
 private struct TodoEditSheet: View {
     @Environment(\.dismiss) private var dismiss
-    let item: WorkspaceTodoItem
+    let item: WorkspaceTodoRowProjection
     let onSave: (String, String?) -> Void
 
     @State private var title: String
     @State private var note: String
 
-    init(item: WorkspaceTodoItem, onSave: @escaping (String, String?) -> Void) {
+    init(item: WorkspaceTodoRowProjection, onSave: @escaping (String, String?) -> Void) {
         self.item = item
         self.onSave = onSave
         _title = State(initialValue: item.title)

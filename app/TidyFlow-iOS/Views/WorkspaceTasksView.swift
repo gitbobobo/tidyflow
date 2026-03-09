@@ -2,66 +2,23 @@ import SwiftUI
 
 /// 工作空间后台任务列表页。消费 WorkspaceTaskSemantics / WorkspaceTaskStore 共享语义层。
 struct WorkspaceTasksView: View {
-    @EnvironmentObject var appState: MobileAppState
+    let appState: MobileAppState
     let project: String
     let workspace: String
+    @State private var projectionStore = WorkspaceTaskListProjectionStore()
 
-    private var workspaceKey: String {
-        appState.globalWorkspaceKey(project: project, workspace: workspace)
-    }
-
-    private var tasks: [WorkspaceTaskItem] {
-        appState.tasksForWorkspace(project: project, workspace: workspace)
-    }
-
-    private var activeTasks: [WorkspaceTaskItem] {
-        appState.taskStore.activeTasks(for: workspaceKey)
-    }
-
-    private var completedTasks: [WorkspaceTaskItem] {
-        tasks.filter { $0.status == .completed }
-    }
-
-    private var failedTasks: [WorkspaceTaskItem] {
-        tasks.filter { $0.status == .failed || $0.status == .unknown }
-    }
-
-    private var cancelledTasks: [WorkspaceTaskItem] {
-        tasks.filter { $0.status == .cancelled }
+    private var projection: WorkspaceTaskListProjection {
+        projectionStore.projection
     }
 
     var body: some View {
         List {
-            if tasks.isEmpty {
+            if projection.sections.isEmpty {
                 ContentUnavailableView("暂无后台任务", systemImage: "tray")
             } else {
-                if !activeTasks.isEmpty {
-                    Section(WorkspaceTaskStatus.running.sectionTitle) {
-                        ForEach(activeTasks) { task in
-                            taskRow(task)
-                        }
-                    }
-                }
-
-                if !failedTasks.isEmpty {
-                    Section(WorkspaceTaskStatus.failed.sectionTitle) {
-                        ForEach(failedTasks) { task in
-                            taskRow(task)
-                        }
-                    }
-                }
-
-                if !completedTasks.isEmpty {
-                    Section(WorkspaceTaskStatus.completed.sectionTitle) {
-                        ForEach(completedTasks) { task in
-                            taskRow(task)
-                        }
-                    }
-                }
-
-                if !cancelledTasks.isEmpty {
-                    Section(WorkspaceTaskStatus.cancelled.sectionTitle) {
-                        ForEach(cancelledTasks) { task in
+                ForEach(projection.sections) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { task in
                             taskRow(task)
                         }
                     }
@@ -71,7 +28,7 @@ struct WorkspaceTasksView: View {
         .navigationTitle("后台任务")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !completedTasks.isEmpty || !failedTasks.isEmpty || !cancelledTasks.isEmpty {
+            if projection.terminalTaskCount > 0 {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         appState.clearCompletedTasks(project: project, workspace: workspace)
@@ -84,16 +41,19 @@ struct WorkspaceTasksView: View {
         .refreshable {
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
         }
+        .task(id: "\(project):\(workspace)") {
+            projectionStore.bind(appState: appState, project: project, workspace: workspace)
+        }
     }
 
     @ViewBuilder
-    private func taskRow(_ task: WorkspaceTaskItem) -> some View {
+    private func taskRow(_ task: WorkspaceTaskRowProjection) -> some View {
         HStack(spacing: 10) {
             MobileCommandIconView(iconName: task.iconName, size: 16)
             VStack(alignment: .leading, spacing: 3) {
                 Text(task.title)
                     .font(.body)
-                Text(task.statusSummaryText())
+                Text(task.statusSummary)
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 if let line = task.lastOutputLine, !line.isEmpty {
@@ -105,9 +65,9 @@ struct WorkspaceTasksView: View {
             }
             Spacer()
             if task.status.isActive {
-                if appState.canCancelTask(task) {
+                if task.canCancel {
                     Button {
-                        appState.cancelTask(task)
+                        appState.cancelTask(project: project, workspace: workspace, taskID: task.id)
                     } label: {
                         Image(systemName: "stop.circle")
                             .foregroundColor(.red)
@@ -122,9 +82,9 @@ struct WorkspaceTasksView: View {
         }
         .padding(.vertical, 2)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if appState.canCancelTask(task) {
+            if task.canCancel {
                 Button(role: .destructive) {
-                    appState.cancelTask(task)
+                    appState.cancelTask(project: project, workspace: workspace, taskID: task.id)
                 } label: {
                     Label("取消", systemImage: "stop.circle")
                 }
@@ -133,7 +93,7 @@ struct WorkspaceTasksView: View {
     }
 
     @ViewBuilder
-    private func taskStatusIcon(_ task: WorkspaceTaskItem) -> some View {
+    private func taskStatusIcon(_ task: WorkspaceTaskRowProjection) -> some View {
         Image(systemName: task.status.completedIconName)
             .foregroundColor(task.status.completedIconColor)
     }
@@ -141,49 +101,26 @@ struct WorkspaceTasksView: View {
 
 /// 工作空间待办列表页。
 struct WorkspaceTodosView: View {
-    @EnvironmentObject var appState: MobileAppState
+    let appState: MobileAppState
     let project: String
     let workspace: String
 
     @State private var showAddSheet = false
-    @State private var editingItem: WorkspaceTodoItem?
+    @State private var editingItem: WorkspaceTodoRowProjection?
+    @State private var projectionStore = WorkspaceTodoProjectionStore()
 
-    private var todos: [WorkspaceTodoItem] {
-        appState.todosForWorkspace(project: project, workspace: workspace)
-    }
-
-    private var pendingTodos: [WorkspaceTodoItem] {
-        todos.filter { $0.status == .pending }
-    }
-
-    private var inProgressTodos: [WorkspaceTodoItem] {
-        todos.filter { $0.status == .inProgress }
-    }
-
-    private var completedTodos: [WorkspaceTodoItem] {
-        todos.filter { $0.status == .completed }
+    private var projection: WorkspaceTodoProjection {
+        projectionStore.projection
     }
 
     var body: some View {
         List {
-            if todos.isEmpty {
+            if projection.totalCount == 0 {
                 ContentUnavailableView("todo.empty".localized, systemImage: "checklist")
             } else {
-                todoSection(
-                    title: "todo.section.pending".localized,
-                    status: .pending,
-                    items: pendingTodos
-                )
-                todoSection(
-                    title: "todo.section.inProgress".localized,
-                    status: .inProgress,
-                    items: inProgressTodos
-                )
-                todoSection(
-                    title: "todo.section.completed".localized,
-                    status: .completed,
-                    items: completedTodos
-                )
+                ForEach(projection.sections) { section in
+                    todoSection(section: section)
+                }
             }
         }
         .environment(\.editMode, .constant(.active))
@@ -225,64 +162,61 @@ struct WorkspaceTodosView: View {
                 )
             }
         }
+        .task(id: "\(project):\(workspace)") {
+            projectionStore.bind(appState: appState, project: project, workspace: workspace)
+        }
     }
 
     @ViewBuilder
-    private func todoSection(
-        title: String,
-        status: WorkspaceTodoStatus,
-        items: [WorkspaceTodoItem]
-    ) -> some View {
-        if !items.isEmpty {
-            Section(title) {
-                ForEach(items) { item in
-                    TodoListRow(
-                        item: item,
-                        onEdit: { editingItem = item },
-                        onDelete: {
-                            _ = appState.deleteWorkspaceTodo(
-                                project: project,
-                                workspace: workspace,
-                                todoID: item.id
-                            )
-                        },
-                        onChangeStatus: { nextStatus in
-                            _ = appState.setWorkspaceTodoStatus(
-                                project: project,
-                                workspace: workspace,
-                                todoID: item.id,
-                                status: nextStatus
-                            )
-                        }
-                    )
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            _ = appState.deleteWorkspaceTodo(
-                                project: project,
-                                workspace: workspace,
-                                todoID: item.id
-                            )
-                        } label: {
-                            Label("todo.delete".localized, systemImage: "trash")
-                        }
+    private func todoSection(section: WorkspaceTodoSectionProjection) -> some View {
+        Section(section.title) {
+            ForEach(section.items) { item in
+                TodoListRow(
+                    item: item,
+                    onEdit: { editingItem = item },
+                    onDelete: {
+                        _ = appState.deleteWorkspaceTodo(
+                            project: project,
+                            workspace: workspace,
+                            todoID: item.id
+                        )
+                    },
+                    onChangeStatus: { nextStatus in
+                        _ = appState.setWorkspaceTodoStatus(
+                            project: project,
+                            workspace: workspace,
+                            todoID: item.id,
+                            status: nextStatus
+                        )
+                    }
+                )
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        _ = appState.deleteWorkspaceTodo(
+                            project: project,
+                            workspace: workspace,
+                            todoID: item.id
+                        )
+                    } label: {
+                        Label("todo.delete".localized, systemImage: "trash")
                     }
                 }
-                .onMove { from, to in
-                    appState.moveWorkspaceTodos(
-                        project: project,
-                        workspace: workspace,
-                        status: status,
-                        fromOffsets: from,
-                        toOffset: to
-                    )
-                }
+            }
+            .onMove { from, to in
+                appState.moveWorkspaceTodos(
+                    project: project,
+                    workspace: workspace,
+                    status: section.status,
+                    fromOffsets: from,
+                    toOffset: to
+                )
             }
         }
     }
 }
 
 private struct TodoListRow: View {
-    let item: WorkspaceTodoItem
+    let item: WorkspaceTodoRowProjection
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onChangeStatus: (WorkspaceTodoStatus) -> Void

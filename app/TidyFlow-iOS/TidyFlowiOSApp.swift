@@ -43,9 +43,9 @@ struct TidyFlowiOSApp: App {
                             case .workspaceExplorer(let project, let workspace):
                                 WorkspaceExplorerView(project: project, workspace: workspace)
                             case .workspaceTasks(let project, let workspace):
-                                WorkspaceTasksView(project: project, workspace: workspace)
+                                WorkspaceTasksView(appState: appState, project: project, workspace: workspace)
                             case .workspaceTodos(let project, let workspace):
-                                WorkspaceTodosView(project: project, workspace: workspace)
+                                WorkspaceTodosView(appState: appState, project: project, workspace: workspace)
                             case .workspaceGit(let project, let workspace):
                                 WorkspaceGitView(project: project, workspace: workspace)
                             case .terminal(let project, let workspace, let command, let commandIcon, let commandName):
