@@ -649,8 +649,7 @@ struct ChatInputView: View {
                     }
                 } label: {
                     toolbarMenuLabel(
-                        title: selectedAgent ?? agents.first?.name ?? "Agent",
-                        showsChevron: false
+                        title: selectedAgent ?? agents.first?.name ?? "Agent"
                     )
                 }
                 .menuStyle(.borderlessButton)
@@ -1119,8 +1118,7 @@ struct ChatInputView: View {
 
     private func toolbarMenuLabel(
         systemImage: String? = nil,
-        title: String,
-        showsChevron: Bool = true
+        title: String
     ) -> some View {
         HStack(spacing: 6) {
             if let systemImage {
@@ -1131,11 +1129,6 @@ struct ChatInputView: View {
                 .font(.system(size: chipFontSize, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if showsChevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(dropdownSecondaryTextColor)
-            }
         }
         .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
         .padding(.horizontal, 8)
