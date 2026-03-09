@@ -667,6 +667,76 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.activeAgents, ["ImplementGeneralAgent"])
     }
 
+    func testEvolutionWorkspaceProjectionSignatureTracksRunningAgentToolCallCountWithExecutions() {
+        let base = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-19",
+            title: "AI工作流智能化与系统稳定性提升",
+            status: "running",
+            currentStage: "reimplement.2",
+            globalLoopRound: 19,
+            loopRoundLimit: 30,
+            verifyIteration: 1,
+            verifyIterationLimit: 5,
+            agents: [
+                EvolutionAgentInfoV2(
+                    stage: "reimplement.2",
+                    agent: "ReimplementAgent",
+                    status: "running",
+                    toolCallCount: 0,
+                    startedAt: "2026-03-09T10:00:00Z",
+                    durationMs: nil
+                )
+            ],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "plan",
+                    agent: "PlanAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-plan",
+                    status: "done",
+                    startedAt: "2026-03-09T09:55:00Z",
+                    completedAt: "2026-03-09T09:58:00Z",
+                    durationMs: 180_000,
+                    toolCallCount: 2
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+        let updated = EvolutionWorkspaceItemV2(
+            project: base.project,
+            workspace: base.workspace,
+            cycleID: base.cycleID,
+            title: base.title,
+            status: base.status,
+            currentStage: base.currentStage,
+            globalLoopRound: base.globalLoopRound,
+            loopRoundLimit: base.loopRoundLimit,
+            verifyIteration: base.verifyIteration,
+            verifyIterationLimit: base.verifyIterationLimit,
+            agents: [
+                EvolutionAgentInfoV2(
+                    stage: "reimplement.2",
+                    agent: "ReimplementAgent",
+                    status: "running",
+                    toolCallCount: 3,
+                    startedAt: "2026-03-09T10:00:00Z",
+                    durationMs: nil
+                )
+            ],
+            executions: base.executions,
+            terminalReasonCode: base.terminalReasonCode,
+            terminalErrorMessage: base.terminalErrorMessage,
+            rateLimitErrorMessage: base.rateLimitErrorMessage
+        )
+
+        XCTAssertNotEqual(base.timelineSignature, updated.timelineSignature)
+        XCTAssertNotEqual(base.projectionSignature, updated.projectionSignature)
+    }
+
     func testEvoCycleUpdatedV2Parses() {
         let json: [String: Any] = [
             "project": "tidyflow",

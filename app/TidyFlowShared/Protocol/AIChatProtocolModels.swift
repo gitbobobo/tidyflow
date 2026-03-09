@@ -2072,15 +2072,13 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             hasher.combine(execution.durationMs ?? 0)
             hasher.combine(execution.toolCallCount)
         }
-        if executions.isEmpty {
-            for agent in agents {
-                hasher.combine(agent.stage)
-                hasher.combine(agent.agent)
-                hasher.combine(agent.status)
-                hasher.combine(agent.startedAt ?? "")
-                hasher.combine(agent.durationMs ?? 0)
-                hasher.combine(agent.toolCallCount)
-            }
+        for agent in agents {
+            hasher.combine(agent.stage)
+            hasher.combine(agent.agent)
+            hasher.combine(agent.status)
+            hasher.combine(agent.startedAt ?? "")
+            hasher.combine(agent.durationMs ?? 0)
+            hasher.combine(agent.toolCallCount)
         }
         return hasher.finalize()
     }
