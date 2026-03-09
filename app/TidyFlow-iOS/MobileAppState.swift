@@ -309,6 +309,11 @@ final class MobileAppState: ObservableObject {
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
 
+    // v1.41: 系统健康快照（Core 权威真源，与 macOS 使用同一套共享模型）
+    @Published var systemHealthSnapshot: SystemHealthSnapshot?
+    /// 按 incident key（"project:workspace:incidentId"）追踪修复状态
+    @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
+
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
 
@@ -3946,6 +3951,36 @@ final class MobileAppState: ObservableObject {
         // 工作区缓存可观测性快照：更新 Core 权威指标（语义与 macOS 对齐）
         wsClient.onSystemSnapshot = { [weak self] metrics in
             self?.workspaceCacheMetrics = metrics
+        }
+
+        // v1.41: 系统健康快照 - 与 macOS 使用同一套共享健康模型（语义对齐）
+        wsClient.onHealthSnapshot = { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.systemHealthSnapshot = snapshot
+            }
+        }
+
+        // v1.41: 修复执行结果 - 与 macOS 使用相同的状态迁移语义
+        wsClient.onHealthRepairResult = { [weak self] audit in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let incidentId = audit.incidentId {
+                    let project = audit.context.project
+                    let workspace = audit.context.workspace
+                    let key = "\(project ?? ""):\(workspace ?? ""):\(incidentId)"
+                    switch audit.outcome {
+                    case .success, .alreadyHealthy:
+                        self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
+                    case .failed:
+                        self.incidentRepairStates[key] = .repairFailed(
+                            requestId: audit.requestId,
+                            summary: audit.resultSummary
+                        )
+                    case .partialSuccess:
+                        self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
+                    }
+                }
+            }
         }
     }
 

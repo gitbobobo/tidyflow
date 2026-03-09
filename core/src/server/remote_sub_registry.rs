@@ -105,6 +105,11 @@ impl RemoteSubRegistry {
     pub fn subscribe_events(&self) -> broadcast::Receiver<RemoteTermEvent> {
         self.notify_tx.subscribe()
     }
+
+    /// 健康探针：返回当前订阅状态摘要（订阅者总数）
+    pub fn subscriber_count(&self) -> usize {
+        self.subscribers.values().map(|v| v.len()).sum()
+    }
 }
 
 /// 共享远程订阅注册表类型

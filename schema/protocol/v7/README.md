@@ -269,3 +269,16 @@ Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Co
 - `last_eviction_reason`：可能的值包括 `ttl_expired`（TTL 到期）、`invalidated`（主动失效），由 Core 写入。
 - 不允许客户端本地推导 `budget_exceeded` 或淘汰原因；如需更多上下文，以 `cache_metrics` 字段为准。
 - 多项目场景下，同名工作区在不同项目的 `cache_metrics` 条目相互独立，不会合并。
+
+## v1.41：健康诊断域（health）
+
+新增 `health` 域，使用 `health_` 前缀路由。核心 action：
+
+| action | 方向 | 说明 |
+|--------|------|------|
+| `health_report` | 客户端 → Core | 客户端上报自身运行健康状态与本地检测 incident |
+| `health_snapshot` | Core → 客户端 | Core 推送系统健康快照（incidents、摘要） |
+| `health_repair` | 客户端 → Core | 客户端请求执行修复动作 |
+| `health_repair_result` | Core → 客户端 | Core 推送修复执行结果与审计记录 |
+
+详见 `docs/PROTOCOL.md` 的"系统健康诊断与自修复域"章节。

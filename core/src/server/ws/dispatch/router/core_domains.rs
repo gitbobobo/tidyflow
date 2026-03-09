@@ -85,3 +85,11 @@ pub(super) async fn handle_evolution_domain(
 ) -> Result<bool, String> {
     crate::server::handlers::evolution::handle_evolution_message(client_msg, socket, ctx).await
 }
+
+pub(super) async fn handle_health_domain(
+    client_msg: &ClientMessage,
+    socket: &mut WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    crate::server::handlers::health::handle_health_message(client_msg, socket, ctx).await
+}

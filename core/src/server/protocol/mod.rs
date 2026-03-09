@@ -6,6 +6,7 @@ pub mod ai;
 pub mod domain_table;
 pub mod file;
 pub mod git;
+pub mod health;
 pub mod project;
 pub mod settings;
 pub mod terminal;
@@ -823,6 +824,28 @@ pub enum ClientMessage {
 
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
+
+    // v1.41: 系统健康上报（客户端 → Core）
+    #[serde(rename = "health_report")]
+    HealthReport {
+        /// 客户端会话标识（用于多端并行归属）
+        client_session_id: String,
+        /// 客户端连接质量（`good` | `degraded` | `lost`）
+        connectivity: String,
+        /// 客户端本地检测的 incident 列表
+        #[serde(default)]
+        incidents: Vec<health::HealthIncident>,
+        /// 上报上下文
+        context: health::HealthContext,
+        /// 上报时间（Unix ms）
+        reported_at: u64,
+    },
+
+    // v1.41: 客户端请求执行修复动作
+    #[serde(rename = "health_repair")]
+    HealthRepair {
+        request: health::RepairActionRequest,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -1829,6 +1852,18 @@ pub enum ServerMessage {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         context: Option<serde_json::Value>,
+    },
+
+    // v1.41: Core 推送系统健康快照
+    #[serde(rename = "health_snapshot")]
+    HealthSnapshot {
+        snapshot: health::SystemHealthSnapshot,
+    },
+
+    // v1.41: Core 推送修复执行结果
+    #[serde(rename = "health_repair_result")]
+    HealthRepairResult {
+        audit: health::RepairAuditEntry,
     },
 }
 

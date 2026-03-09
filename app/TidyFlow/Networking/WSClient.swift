@@ -1,6 +1,7 @@
 import Foundation
 import MessagePacker
 import os
+import TidyFlowShared
 
 // 已拆分：
 // - WSClient+Send.swift     所有 send/request 方法
@@ -170,6 +171,10 @@ class WSClient: NSObject, ObservableObject {
     var onConnectionStateChanged: ((Bool) -> Void)?
     /// v7 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
+    /// v1.41: Core 推送系统健康快照
+    var onHealthSnapshot: ((SystemHealthSnapshot) -> Void)?
+    /// v1.41: Core 推送修复执行结果
+    var onHealthRepairResult: ((RepairAuditEntry) -> Void)?
 
     func emitClientError(_ message: String) {
         if let handler = errorMessageHandler {

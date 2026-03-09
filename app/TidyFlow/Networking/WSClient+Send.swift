@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 private enum CoreHTTPClientError: LocalizedError {
     case invalidBaseURL
@@ -190,6 +191,7 @@ extension WSClient {
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ("git", "git_conflict_"),
+        ("health", "health_"),
         ]
     }
 
@@ -1794,5 +1796,61 @@ extension WSClient {
             path: "/api/v1/system/snapshot",
             fallbackAction: "system_snapshot"
         )
+    }
+
+    // MARK: - v1.41: 系统健康诊断与自修复
+
+    /// 上报客户端健康状态（含本地检测 incidents）
+    func reportHealthStatus(
+        clientSessionId: String,
+        connectivity: ClientConnectivity,
+        incidents: [HealthIncident] = [],
+        context: HealthContext = .system
+    ) {
+        let incidentsJson = incidents.compactMap { incident -> [String: Any]? in
+            guard let data = try? JSONEncoder().encode(incident),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return dict
+        }
+        send([
+            "type": "health_report",
+            "client_session_id": clientSessionId,
+            "connectivity": connectivity.rawValue,
+            "incidents": incidentsJson,
+            "context": [
+                "project": context.project as Any,
+                "workspace": context.workspace as Any,
+                "session_id": context.sessionId as Any,
+                "cycle_id": context.cycleId as Any
+            ],
+            "reported_at": UInt64(Date().timeIntervalSince1970 * 1000)
+        ])
+    }
+
+    /// 请求执行修复动作（含上下文，确保 project/workspace 边界）
+    func requestHealthRepair(
+        action: RepairActionKind,
+        context: HealthContext,
+        incidentId: String? = nil
+    ) {
+        let requestId = UUID().uuidString
+        var requestDict: [String: Any] = [
+            "request_id": requestId,
+            "action": action.rawValue,
+            "context": [
+                "project": context.project as Any,
+                "workspace": context.workspace as Any,
+                "session_id": context.sessionId as Any,
+                "cycle_id": context.cycleId as Any
+            ]
+        ]
+        if let incidentId {
+            requestDict["incident_id"] = incidentId
+        }
+        send([
+            "type": "health_repair",
+            "request": requestDict
+        ])
     }
 }

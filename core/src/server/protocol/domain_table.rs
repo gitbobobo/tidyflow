@@ -15,6 +15,7 @@ pub enum DomainRoute {
     Ai,
     Evidence,
     Evolution,
+    Health,
 }
 
 pub const DOMAIN_IDS: &[&str] = &[
@@ -28,6 +29,7 @@ pub const DOMAIN_IDS: &[&str] = &[
     "ai",
     "evidence",
     "evolution",
+    "health",
 ];
 
 pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
@@ -42,6 +44,7 @@ pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
         "ai" => Some(DomainRoute::Ai),
         "evidence" => Some(DomainRoute::Evidence),
         "evolution" => Some(DomainRoute::Evolution),
+        "health" => Some(DomainRoute::Health),
         _ => None,
     }
 }
@@ -58,5 +61,6 @@ pub fn domain_route_id(route: DomainRoute) -> &'static str {
         DomainRoute::Ai => "ai",
         DomainRoute::Evidence => "evidence",
         DomainRoute::Evolution => "evolution",
+        DomainRoute::Health => "health",
     }
 }

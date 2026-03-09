@@ -3,6 +3,7 @@ pub mod file_api;
 pub mod file_index;
 pub mod git;
 pub mod handlers;
+pub mod health;
 pub mod perf;
 pub mod protocol;
 pub mod remote_sub_registry;

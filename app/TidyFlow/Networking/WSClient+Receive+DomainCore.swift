@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 // MARK: - WSClient 领域处理（Core）
 
@@ -340,6 +341,27 @@ extension WSClient {
                 } else {
                     onFileListResult?(result)
                 }
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - 健康域处理（v1.41）
+
+    func handleHealthDomain(_ action: String, json: [String: Any]) -> Bool {
+        switch action {
+        case "health_snapshot":
+            if let snapshotJson = json["snapshot"] as? [String: Any],
+               let snapshot = SystemHealthSnapshot.from(json: snapshotJson) {
+                onHealthSnapshot?(snapshot)
+            }
+            return true
+        case "health_repair_result":
+            if let auditJson = json["audit"] as? [String: Any],
+               let audit = RepairAuditEntry.from(json: auditJson) {
+                onHealthRepairResult?(audit)
             }
             return true
         default:

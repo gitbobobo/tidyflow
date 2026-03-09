@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import TidyFlowShared
 
 // MARK: - v1.24: 剪贴板模型
 
@@ -355,6 +356,11 @@ class AppState: ObservableObject {
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
+
+    // v1.41: 系统健康快照（Core 权威真源）
+    @Published var systemHealthSnapshot: SystemHealthSnapshot?
+    /// 按 (project, workspace) 分桶的 incident 修复状态（key: "project:workspace:incidentId"）
+    @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
 
     // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
     var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]

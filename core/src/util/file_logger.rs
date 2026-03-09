@@ -94,6 +94,21 @@ impl FileLogger {
             cycle_id: None,
         };
         self.write_record(&record);
+
+        // error/critical 级别日志同步写入健康注册表，供 incident 聚合
+        if matches!(level, "error" | "critical") {
+            let registry = crate::server::health::global();
+            match registry.try_write() {
+                Ok(mut reg) => {
+                    reg.record_log_error(
+                        format!("core_log:{}", target),
+                        message.chars().take(120).collect::<String>(),
+                        crate::server::protocol::health::HealthContext::system(),
+                    );
+                }
+                Err(_) => {}
+            };
+        }
     }
 
     /// 写入来自客户端（Web/Swift）的日志（含结构化错误码与上下文）

@@ -25,6 +25,13 @@ domains:
     action_rule: prefix("evidence_")
   - id: evolution
     action_rule: prefix("evo_")
+  # v1.41: 系统健康诊断与自修复域
+  # health_report     - 客户端上报自身运行健康状态
+  # health_snapshot   - Core 推送系统健康快照（incidents、摘要）
+  # health_repair     - 客户端请求执行修复动作
+  # health_repair_result - Core 推送修复执行结果
+  - id: health
+    action_rule: prefix("health_")
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved

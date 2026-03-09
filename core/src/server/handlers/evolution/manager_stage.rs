@@ -5686,6 +5686,25 @@ impl EvolutionManager {
         if let Some((project, workspace, cycle_id)) = maybe {
             // WI-004: 结构化错误日志落盘，包含 cycle_id、error_code、message
             log_evolution_error(&cycle_id, "system", code, &normalized_err);
+            // WI-003: Evolution 系统故障写入健康注册表，供修复执行器消费
+            {
+                let registry = crate::server::health::global();
+                match registry.try_write() {
+                    Ok(mut reg) => {
+                        reg.record_log_error(
+                            format!("evo:{}", code),
+                            normalized_err.chars().take(120).collect::<String>(),
+                            crate::server::protocol::health::HealthContext {
+                                project: Some(project.clone()),
+                                workspace: Some(workspace.clone()),
+                                session_id: None,
+                                cycle_id: Some(cycle_id.clone()),
+                            },
+                        );
+                    }
+                    Err(_) => {}
+                };
+            }
             self.persist_cycle_file(key).await.ok();
             self.broadcast(
                 ctx,

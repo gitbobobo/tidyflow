@@ -83,5 +83,13 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/api/v1/system/snapshot",
             get(crate::server::ws::http_api::system_snapshot_handler),
         )
+        .route(
+            "/api/v1/system/health",
+            get(crate::server::ws::http_api::system_health_snapshot_handler),
+        )
+        .route(
+            "/api/v1/system/repair",
+            axum::routing::post(crate::server::ws::http_api::system_repair_handler),
+        )
         .with_state(ctx)
 }

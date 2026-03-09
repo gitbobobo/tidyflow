@@ -729,3 +729,126 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 1. `conflict_files` 是 `conflicts`（路径列表）的语义增强替代，客户端应优先使用 `conflict_files`。
 2. 冲突向导 UI 状态（当前选中文件、可用动作、continue/abort 可用条件）必须以 Core 下发的 snapshot 为权威，不得客户端自行推导。
 3. macOS 与 iOS 必须使用同一套共享冲突向导语义模型，禁止各自独立维护 conflicts 推导规则。
+
+## 系统健康诊断与自修复域（v1.41）
+
+### 概述
+
+`health` 域提供系统健康快照、客户端健康上报与关键故障修复动作的标准化协议契约。
+Core 是健康状态的权威真源，客户端消费快照，不在本地推导系统级故障状态。
+
+### 健康快照（Core → 客户端推送）
+
+**action**: `health_snapshot`
+
+```jsonc
+{
+  "snapshot": {
+    "snapshot_at": 1709900000000,          // Unix ms
+    "overall_status": "degraded",          // "healthy" | "degraded" | "unhealthy"
+    "incidents": [
+      {
+        "incident_id": "abc123",
+        "severity": "warning",             // "info" | "warning" | "critical"
+        "recoverability": "recoverable",   // "recoverable" | "manual" | "permanent"
+        "source": "core_workspace_cache",  // 见下方 source 枚举
+        "root_cause": "workspace_cache_stale",
+        "summary": "工作区缓存已失效，文件索引可能不完整",
+        "first_seen_at": 1709899000000,
+        "last_seen_at": 1709900000000,
+        "context": {
+          "project": "myproject",
+          "workspace": "feature/foo",
+          "session_id": null,
+          "cycle_id": null
+        }
+      }
+    ],
+    "recent_repairs": []   // 最近 20 条修复审计记录
+  }
+}
+```
+
+**source 枚举**：
+- `core_process`：Core 进程 / 连接层
+- `core_workspace_cache`：工作区缓存
+- `core_evolution`：Evolution 任务
+- `core_log`：Core 结构化日志（error/critical 级别）
+- `client_connectivity`：客户端连接状态
+- `client_state`：客户端运行时状态
+
+### 客户端健康上报（客户端 → Core）
+
+**action**: `health_report`
+
+```jsonc
+{
+  "client_session_id": "sess-abc",
+  "connectivity": "good",                  // "good" | "degraded" | "lost"
+  "incidents": [],                         // 客户端本地检测的 incident 列表（可为空）
+  "context": { "project": null, "workspace": null },
+  "reported_at": 1709900000000
+}
+```
+
+### 修复动作请求（客户端 → Core）
+
+**action**: `health_repair`
+
+```jsonc
+{
+  "request": {
+    "request_id": "req-uuid",
+    "action": "invalidate_workspace_cache", // 见下方 action 枚举
+    "context": {
+      "project": "myproject",
+      "workspace": "feature/foo"
+    },
+    "incident_id": "abc123"               // 可选，关联修复目标 incident
+  }
+}
+```
+
+**action 枚举**：
+- `refresh_health_snapshot`：刷新健康快照（无副作用）
+- `invalidate_workspace_cache`：失效指定工作区缓存
+- `rebuild_workspace_cache`：重建指定工作区缓存
+- `restore_subscriptions`：恢复运行时订阅
+
+### 修复执行结果（Core → 客户端推送）
+
+**action**: `health_repair_result`
+
+```jsonc
+{
+  "audit": {
+    "request_id": "req-uuid",
+    "action": "invalidate_workspace_cache",
+    "context": { "project": "myproject", "workspace": "feature/foo" },
+    "incident_id": "abc123",
+    "outcome": "success",                  // "success" | "already_healthy" | "failed" | "partial_success"
+    "trigger": "client_request",           // "client_request" | "auto_heal" | "system_init"
+    "started_at": 1709900000000,
+    "duration_ms": 12,
+    "result_summary": "缓存已失效，下次访问时自动重建",
+    "incident_resolved": true
+  }
+}
+```
+
+### 多项目隔离约束
+
+1. 每个 incident 的 `context` 字段必须填入正确的 project / workspace 归属，系统级事件可留空但不可省略字段。
+2. repair action 必须按 `context` 中声明的 project/workspace 边界执行，Core 不允许把一个工作区的修复动作误施加到另一个工作区。
+3. 客户端上报的 incident 必须携带上下文，禁止以系统级方式上报工作区级故障。
+4. 修复动作的 `project`/`workspace` 字段为必填项（`restore_subscriptions` 和 `refresh_health_snapshot` 除外）。
+
+### 读取 API 扩展
+
+健康快照也可通过 HTTP 读取（含 incidents 和 repair 审计）：
+
+```
+GET /api/v1/system/snapshot
+```
+
+响应新增字段 `health_incidents` 和 `recent_repairs`，兼容原有字段。

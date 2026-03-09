@@ -37,6 +37,7 @@ extension WSClient {
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ("git", "git_conflict_"),
+        ("health", "health_"),
         ]
     }
 
@@ -55,7 +56,9 @@ extension WSClient {
         "terminal:remote_term_changed",
         "project:projects",
         "project:workspaces",
-        "project:tasks_snapshot"
+        "project:tasks_snapshot",
+        "health:health_snapshot",
+        "health:health_repair_result",
     ]
 
     private static let fallbackActionCatalog: Set<String> = ["clipboard_image_set", "error"]
@@ -86,6 +89,8 @@ extension WSClient {
             return handleEvidenceDomain(action, json: json)
         case "evolution":
             return handleEvolutionDomain(action, json: json)
+        case "health":
+            return handleHealthDomain(action, json: json)
         default:
             return false
         }

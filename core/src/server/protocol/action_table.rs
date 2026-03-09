@@ -33,6 +33,7 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("evidence", "evidence_"),
     ("evolution", "evo_"),
     ("git", "git_conflict_"),
+    ("health", "health_"),
 ];
 
 pub const CONTAINS_RULES: &[(&str, &str)] = &[

@@ -28,3 +28,5 @@ prefix,evidence,evidence_
 prefix,evolution,evo_
 # v1.40: 冲突向导（已由 git 前缀规则覆盖，此处作文档显式说明）
 prefix,git,git_conflict_
+# v1.41: 系统健康诊断与自修复域
+prefix,health,health_

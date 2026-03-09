@@ -16,6 +16,7 @@
 		SHR02007 /* MessageHandlerProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01007 /* MessageHandlerProtocols.swift */; };
 		SHR02008 /* CoreTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01008 /* CoreTransport.swift */; };
 		SHR02009 /* CoreWSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01009 /* CoreWSClient.swift */; };
+		SHR0200A /* SystemHealthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100C /* SystemHealthModels.swift */; };
 		SHR03001 /* TidyFlowShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; };
 		SHR03002 /* SharedProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100A /* SharedProtocolModelsTests.swift */; };
 		SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100B /* SharedNetworkAbstractionTests.swift */; };
@@ -274,6 +275,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01009 /* CoreWSClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSClient.swift; sourceTree = "<group>"; };
 		SHR0100A /* SharedProtocolModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedProtocolModelsTests.swift; sourceTree = "<group>"; };
 		SHR0100B /* SharedNetworkAbstractionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedNetworkAbstractionTests.swift; sourceTree = "<group>"; };
+		SHR0100C /* SystemHealthModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemHealthModels.swift; sourceTree = "<group>"; };
 
 		0C7853A8D54BE247818D1333 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalProtocolModels.swift; sourceTree = "<group>"; };
@@ -519,6 +521,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01005 /* AIChatProtocolModels.swift */,
 				SHR01006 /* TerminalProtocolModels.swift */,
 				SHR01007 /* MessageHandlerProtocols.swift */,
+				SHR0100C /* SystemHealthModels.swift */,
 			);
 			path = Protocol;
 			sourceTree = "<group>";
@@ -1246,6 +1249,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02007 /* MessageHandlerProtocols.swift in Sources */,
 				SHR02008 /* CoreTransport.swift in Sources */,
 				SHR02009 /* CoreWSClient.swift in Sources */,
+				SHR0200A /* SystemHealthModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

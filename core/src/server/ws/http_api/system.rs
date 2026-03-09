@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
 use axum::{extract::State, Json};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{
     ServerMessage, WorkspaceCacheMetricsInfo, FileCacheMetricsInfo, GitCacheMetricsInfo,
     WorkspaceInfo, PROTOCOL_VERSION,
+};
+use crate::server::protocol::health::{
+    HealthIncident, RepairActionRequest, RepairAuditEntry, SystemHealthSnapshot,
 };
 use crate::workspace::cache_metrics::WorkspaceCacheSnapshot;
 use crate::workspace::state::DEFAULT_WORKSPACE_NAME;
@@ -21,6 +24,10 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     workspace_items: Vec<SystemSnapshotWorkspaceItem>,
     /// 每个工作区的缓存可观测性指标，由 Core 权威输出，按 `(project, workspace)` 隔离
     cache_metrics: Vec<WorkspaceCacheMetricsInfo>,
+    /// 系统健康 incidents（v1.41）
+    health_incidents: Vec<HealthIncident>,
+    /// 最近修复审计摘要（v1.41）
+    recent_repairs: Vec<RepairAuditEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,13 +66,58 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
     let (workspace_items, cache_metrics) =
         build_workspace_items_and_metrics(&ctx.app_state, &evo_index).await;
 
+    // 聚合健康快照
+    let health_snapshot = {
+        let registry = crate::server::health::global();
+        let mut reg = registry.write().await;
+        reg.snapshot()
+    };
+
     Ok(Json(SystemSnapshotResponse {
         msg_type: "system_snapshot",
         core_version: env!("CARGO_PKG_VERSION").to_string(),
         protocol_version: PROTOCOL_VERSION,
         workspace_items,
         cache_metrics,
+        health_incidents: health_snapshot.incidents,
+        recent_repairs: health_snapshot.recent_repairs,
     }))
+}
+
+/// 系统健康快照专用端点（返回完整 SystemHealthSnapshot，含 incidents 与修复审计）
+pub(in crate::server::ws) async fn system_health_snapshot_handler(
+    State(_ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+) -> Result<Json<SystemHealthSnapshot>, ApiError> {
+    let registry = crate::server::health::global();
+    let mut reg = registry.write().await;
+    let snapshot = reg.snapshot();
+    Ok(Json(snapshot))
+}
+
+/// 修复动作请求体
+#[derive(Debug, Deserialize)]
+pub(in crate::server::ws) struct RepairRequestBody {
+    pub request: RepairActionRequest,
+}
+
+/// 修复动作响应体
+#[derive(Debug, Serialize)]
+pub(in crate::server::ws) struct RepairResponseBody {
+    pub audit: RepairAuditEntry,
+}
+
+/// 执行系统修复动作（HTTP POST）
+pub(in crate::server::ws) async fn system_repair_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    Json(body): Json<RepairRequestBody>,
+) -> Result<Json<RepairResponseBody>, ApiError> {
+    let audit = crate::server::health::execute_repair(
+        body.request,
+        "client_request",
+        ctx.app_state.clone(),
+    )
+    .await;
+    Ok(Json(RepairResponseBody { audit }))
 }
 
 fn evolution_index_from_message(
