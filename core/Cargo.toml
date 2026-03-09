@@ -56,6 +56,20 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "workspace_cache_bench"
 harness = false
 
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.test]
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.bench]
+debug = 1
+split-debuginfo = "unpacked"
+
 [profile.release]
 opt-level = 3
 lto = true

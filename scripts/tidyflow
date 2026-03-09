@@ -23,6 +23,12 @@ print_usage() {
   test
       运行 Core 测试（cargo test --manifest-path core/Cargo.toml）
 
+  coverage [args...]
+      运行 Core 覆盖率采集（透传到 ./scripts/tools/coverage.sh）
+
+  target-stats [--check]
+      查看 Core target 目录占用与缓存回收状态
+
   check
       运行架构护栏检查：
       - 协议一致性检查
@@ -50,6 +56,19 @@ print_usage() {
 EOF
 }
 
+run_core_cargo() {
+    local action="$1"
+    shift || true
+
+    ./scripts/tools/core_target_guard.sh prepare "$action"
+    set +e
+    "$@"
+    local exit_code=$?
+    set -e
+    ./scripts/tools/core_target_guard.sh finalize "$action"
+    return "$exit_code"
+}
+
 cmd="${1:-}"
 if [ -z "$cmd" ]; then
     print_usage
@@ -62,10 +81,21 @@ case "$cmd" in
         exec ./scripts/run-app.sh "$@"
         ;;
     bench)
-        exec cargo bench --manifest-path core/Cargo.toml "$@"
+        run_core_cargo \
+            bench \
+            env CARGO_TARGET_DIR="$PROJECT_ROOT/core/target/bench-target" \
+            cargo bench --manifest-path core/Cargo.toml "$@"
         ;;
     test)
-        exec cargo test --manifest-path core/Cargo.toml "$@"
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml "$@"
+        ;;
+    coverage)
+        exec ./scripts/tools/coverage.sh "$@"
+        ;;
+    target-stats)
+        exec ./scripts/tools/core_target_guard.sh stats "$@"
         ;;
     check)
         ./scripts/tools/check_protocol_consistency.sh

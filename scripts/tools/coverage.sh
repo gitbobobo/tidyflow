@@ -19,6 +19,15 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+COVERAGE_TARGET_DIR="$PROJECT_ROOT/core/target/llvm-cov-target"
+COVERAGE_REPORT_DIR="$PROJECT_ROOT/core/target/llvm-cov-report"
+
+cleanup_guard() {
+    ./scripts/tools/core_target_guard.sh finalize coverage >/dev/null 2>&1 || true
+}
+
+trap cleanup_guard EXIT
+
 THRESHOLD="${COVERAGE_THRESHOLD:-70}"
 GENERATE_REPORT=false
 CI_MODE=false
@@ -52,8 +61,14 @@ done
 echo "[coverage] 阈值: ${THRESHOLD}%"
 echo "[coverage] 运行覆盖率测试..."
 
+./scripts/tools/core_target_guard.sh prepare coverage
+
 # 运行覆盖率测试（只运行单元测试，因为集成测试需要启动服务器）
-COVERAGE_OUTPUT=$(cargo llvm-cov --manifest-path core/Cargo.toml --lib -- --test-threads=4 2>&1 || true)
+COVERAGE_OUTPUT=$(
+    env \
+        CARGO_TARGET_DIR="$COVERAGE_TARGET_DIR" \
+        cargo llvm-cov --manifest-path core/Cargo.toml --lib -- --test-threads=4 2>&1 || true
+)
 
 # 提取总覆盖率
 TOTAL_LINE=$(echo "$COVERAGE_OUTPUT" | grep "^TOTAL" | tail -1)
@@ -106,8 +121,15 @@ fi
 # 生成 HTML 报告
 if [ "$GENERATE_REPORT" = true ]; then
     echo "[coverage] 生成 HTML 报告..."
-    cargo llvm-cov --manifest-path core/Cargo.toml --lib --html -- --test-threads=4 2>/dev/null || true
-    echo "[coverage] HTML 报告: core/target/llvm-cov/html/index.html"
+    env \
+        CARGO_TARGET_DIR="$COVERAGE_TARGET_DIR" \
+        cargo llvm-cov \
+        --manifest-path core/Cargo.toml \
+        --lib \
+        --html \
+        --output-dir "$COVERAGE_REPORT_DIR" \
+        -- --test-threads=4 2>/dev/null || true
+    echo "[coverage] HTML 报告: core/target/llvm-cov-report/index.html"
 fi
 
 # 检查阈值
