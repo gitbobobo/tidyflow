@@ -19,12 +19,16 @@ final class AISessionSubscribeAckDispatchTests: XCTestCase {
             "ai_session_subscribe_ack",
             json: [
                 "session_id": "ses_123",
-                "session_key": "codex::/tmp/demo::ses_123"
+                "session_key": "codex::/tmp/demo::ses_123",
+                "project_name": "myproject",
+                "workspace_name": "default"
             ]
         )
 
         XCTAssertTrue(handled)
         XCTAssertEqual(handler.receivedAck?.sessionId, "ses_123")
         XCTAssertEqual(handler.receivedAck?.sessionKey, "codex::/tmp/demo::ses_123")
+        XCTAssertEqual(handler.receivedAck?.projectName, "myproject")
+        XCTAssertEqual(handler.receivedAck?.workspaceName, "default")
     }
 }

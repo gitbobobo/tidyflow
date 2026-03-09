@@ -43,11 +43,11 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
             )
         )
 
-        let wait = expectation(description: "等待无回退请求")
+        let exp = expectation(description: "等待无回退请求")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            wait.fulfill()
+            exp.fulfill()
         }
-        wait(for: [wait], timeout: 1.0)
+        wait(for: [exp], timeout: 1.0)
 
         XCTAssertTrue(scheduledRequests.isEmpty, "已知工作区阶段切换不应回退到全量 snapshot")
         XCTAssertEqual(
@@ -86,11 +86,11 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
             )
         )
 
-        let wait = expectation(description: "等待 targeted snapshot fallback")
+        let exp = expectation(description: "等待 targeted snapshot fallback")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            wait.fulfill()
+            exp.fulfill()
         }
-        wait(for: [wait], timeout: 1.0)
+        wait(for: [exp], timeout: 1.0)
 
         XCTAssertEqual(scheduledRequests.count, 1)
         XCTAssertEqual(scheduledRequests[0].0, "evolution")
@@ -318,10 +318,10 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     }
 
     private func waitForEvolutionAsyncWork() {
-        let wait = expectation(description: "等待 Evolution 异步更新完成")
+        let exp = expectation(description: "等待 Evolution 异步更新完成")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            wait.fulfill()
+            exp.fulfill()
         }
-        wait(for: [wait], timeout: 1.0)
+        wait(for: [exp], timeout: 1.0)
     }
 }
