@@ -140,6 +140,46 @@
   - AI/Evolution 实时推送事件
   - 所有写操作 action
 
+## HTTP/WS 一致性边界与多工作区字段约束
+
+本节为 `schema/protocol/v7/` 的人类可读说明，**两者必须保持一致**。
+
+### 多工作区边界字段
+
+所有 HTTP 响应 **和** WS 事件在适用时**必须**携带以下字段作为工作区归属的权威标识：
+
+| 字段         | 适用范围                              | 是否必须  |
+|--------------|---------------------------------------|-----------|
+| `project`    | 全部 domain                           | 必须      |
+| `workspace`  | 全部 domain                           | 必须      |
+| `session_id` | AI 相关 action/event                  | 条件必须  |
+| `cycle_id`   | Evolution 相关 action/event           | 条件必须  |
+
+**消费规则（macOS / iOS 双端一致执行）**：
+
+1. 客户端**必须**通过 `(project, workspace)` 二元组作为缓存键路由消息，不允许仅凭 `workspace` 名称匹配。
+2. 来自其他工作区的 HTTP 快照和 WS 流式事件**不允许**覆盖当前激活工作区的 UI 状态；必须通过 `project`/`workspace` 字段过滤归属。
+3. 错误响应中的 `project`/`workspace` 字段是唯一的归属决策依据，不允许通过 `message` 字符串内容推断。
+4. `default` 工作区不得视为隐含单例；多项目并行时每个项目各有独立的 `default` 工作区上下文。
+
+### HTTP Snapshot 回退语义
+
+- HTTP 读取失败（网络错误、非 2xx 响应）时，客户端以 `(project, workspace)` 为键决定回退范围。
+- 仅当前激活工作区的失败触发 UI 状态清空/回退；后台工作区的失败不影响当前激活工作区的状态。
+- WS 流式增量与 HTTP snapshot 使用兼容的 `project/workspace/session_id/cycle_id` 元数据；不允许 HTTP 响应与 WS 事件使用不同的键语义。
+
+### AI 订阅确认（`ai_session_subscribe_ack`）
+
+`ai_session_subscribe_ack` 事件携带 `project`/`workspace`/`session_id` 字段；
+客户端**必须**按 `{project}::{workspace}::{ai_tool}::{session_id}` 四元组路由到对应会话状态，
+不允许按 `session_id` 单键或 `session_key` 字符串拼接作为唯一归属依据。
+
+### Evolution 定向 Snapshot 刷新
+
+收到 `evo_workspace_status` 事件时：
+- 若当前 `(project, workspace)` 已在本地状态中，直接按事件字段增量更新，不发起全量 HTTP snapshot 请求。
+- 若 `(project, workspace)` 不在本地状态中（首次收到），允许对该工作区发起定向 HTTP snapshot 请求；但此请求**不得**以全量 `GET /api/v1/evolution/snapshot`（无过滤参数）覆盖其他工作区的缓存。
+
 ## 客户端设置字段（v7）
 
 - `SaveClientSettings` 与 `ClientSettingsResult` 不再包含 `app_language`。
