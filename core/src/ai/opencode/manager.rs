@@ -153,7 +153,8 @@ impl OpenCodeManager {
         {
             let last_success = self.last_successful_health_check_at.lock().await;
             if let Some(last_success_at) = *last_success {
-                if last_success_at.elapsed() <= Duration::from_millis(HEALTH_CHECK_SUCCESS_CACHE_MS) {
+                if last_success_at.elapsed() <= Duration::from_millis(HEALTH_CHECK_SUCCESS_CACHE_MS)
+                {
                     debug!(
                         "Health check cache hit within {}ms",
                         HEALTH_CHECK_SUCCESS_CACHE_MS

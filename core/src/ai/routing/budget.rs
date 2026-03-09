@@ -120,7 +120,10 @@ impl BudgetEngine {
         if self.config.max_concurrent_requests_per_workspace == 0 {
             return true;
         }
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let state = states.entry(workspace_key.to_string()).or_default();
         if state.active_requests >= self.config.max_concurrent_requests_per_workspace {
             return false;
@@ -131,7 +134,10 @@ impl BudgetEngine {
 
     /// 释放请求槽（请求完成时调用，无论成功失败）
     pub fn release_request_slot(&self, workspace_key: &str) {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(state) = states.get_mut(workspace_key) {
             state.active_requests = state.active_requests.saturating_sub(1);
         }
@@ -146,7 +152,10 @@ impl BudgetEngine {
         completion_tokens: u64,
         cost_per_1k_tokens: f64,
     ) -> bool {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let state = states.entry(workspace_key.to_string()).or_default();
 
         let session = state.sessions.entry(session_id.to_string()).or_default();
@@ -184,7 +193,10 @@ impl BudgetEngine {
 
     /// 获取工作区预算状态快照
     pub fn snapshot(&self, workspace_key: &str) -> BudgetStatusSnapshot {
-        let states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(state) = states.get(workspace_key) {
             BudgetStatusSnapshot {
                 workspace_key: workspace_key.to_string(),
@@ -208,7 +220,10 @@ impl BudgetEngine {
 
     /// 重置工作区预算超阈值标志
     pub fn reset_budget_exceeded(&self, workspace_key: &str) {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(state) = states.get_mut(workspace_key) {
             state.budget_exceeded = false;
             state.last_exceeded_reason = None;
@@ -217,7 +232,10 @@ impl BudgetEngine {
 
     /// 清除工作区所有预算状态（会话清理时调用）
     pub fn clear_workspace(&self, workspace_key: &str) {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         states.remove(workspace_key);
     }
 }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::policy::{RouteCandidate, RouteDecision, RouteSelectedBy};
+use super::policy::RouteDecision;
 
 // ============================================================================
 // 降级原因枚举
@@ -188,7 +188,10 @@ impl FallbackEngine {
 
         // 检查重试次数限制
         let fallback_count = {
-            let states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+            let states = self
+                .workspace_states
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             states
                 .get(&current_decision.workspace_key)
                 .map(|s| s.fallback_count)
@@ -245,7 +248,10 @@ impl FallbackEngine {
 
     /// 获取工作区的当前降级次数（用于状态展示）
     pub fn fallback_count(&self, workspace_key: &str) -> u32 {
-        let states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         states
             .get(workspace_key)
             .map(|s| s.fallback_count)
@@ -254,13 +260,19 @@ impl FallbackEngine {
 
     /// 重置工作区降级状态（会话结束时调用）
     pub fn reset_workspace(&self, workspace_key: &str) {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         states.remove(workspace_key);
     }
 
     /// 清理所有降级状态（维护时调用）
     pub fn clear_all(&self) {
-        let mut states = self.workspace_states.lock().unwrap_or_else(|e| e.into_inner());
+        let mut states = self
+            .workspace_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         states.clear();
     }
 }
@@ -272,9 +284,7 @@ impl FallbackEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::routing::policy::{
-        DefaultRoutingPolicy, RoutingInput, RoutingPolicy, TaskType,
-    };
+    use crate::ai::routing::policy::{DefaultRoutingPolicy, RoutingInput, RoutingPolicy, TaskType};
 
     fn make_engine() -> FallbackEngine {
         FallbackEngine::new(FallbackConfig {
@@ -284,14 +294,17 @@ mod tests {
     }
 
     fn make_decision_with_candidates() -> RouteDecision {
-        let policy = DefaultRoutingPolicy::new("openai", "gpt-4o")
-            .with_task_type_mapping(TaskType::CodeGeneration, "anthropic", "claude-3-5-sonnet");
+        let policy = DefaultRoutingPolicy::new("openai", "gpt-4o").with_task_type_mapping(
+            TaskType::CodeGeneration,
+            "anthropic",
+            "claude-3-5-sonnet",
+        );
         let input = RoutingInput::new(TaskType::CodeGeneration, "proj-a", "ws-1");
         policy.decide(&input)
     }
 
     #[test]
-    fn fallback_switches_to_next_candidate() {
+    fn routing_fallback_switches_to_next_candidate() {
         let engine = make_engine();
         let decision = make_decision_with_candidates();
 
@@ -307,7 +320,10 @@ mod tests {
         );
 
         match result {
-            FallbackResult::Fallback { decision: new_decision, reason } => {
+            FallbackResult::Fallback {
+                decision: new_decision,
+                reason,
+            } => {
                 assert!(new_decision.is_fallback);
                 assert_eq!(new_decision.provider_id, "openai");
                 assert_eq!(new_decision.model_id, "gpt-4o");
@@ -318,15 +334,12 @@ mod tests {
     }
 
     #[test]
-    fn fallback_exhausted_when_no_more_candidates() {
+    fn routing_fallback_exhausted_when_no_more_candidates() {
         let engine = make_engine();
         let decision = make_decision_with_candidates();
 
         // 第一次降级
-        let result1 = engine.try_fallback(
-            &decision,
-            FallbackReason::Timeout { timeout_ms: 5000 },
-        );
+        let result1 = engine.try_fallback(&decision, FallbackReason::Timeout { timeout_ms: 5000 });
         let second_decision = match result1 {
             FallbackResult::Fallback { decision, .. } => decision,
             _ => panic!("Expected fallback"),
@@ -341,36 +354,62 @@ mod tests {
     }
 
     #[test]
-    fn fallback_respects_retry_limit() {
+    fn routing_fallback_respects_retry_limit() {
         let engine = make_engine(); // max_retries=2
         let decision = make_decision_with_candidates();
 
         // 前 2 次降级都成功
-        let _ = engine.try_fallback(&decision, FallbackReason::Other { message: "err1".into() });
-        let _ = engine.try_fallback(&decision, FallbackReason::Other { message: "err2".into() });
+        let _ = engine.try_fallback(
+            &decision,
+            FallbackReason::Other {
+                message: "err1".into(),
+            },
+        );
+        let _ = engine.try_fallback(
+            &decision,
+            FallbackReason::Other {
+                message: "err2".into(),
+            },
+        );
 
         // 第 3 次触发 retry limit
-        let result = engine.try_fallback(&decision, FallbackReason::Other { message: "err3".into() });
+        let result = engine.try_fallback(
+            &decision,
+            FallbackReason::Other {
+                message: "err3".into(),
+            },
+        );
         assert!(matches!(result, FallbackResult::Exhausted { .. }));
     }
 
     #[test]
-    fn fallback_workspace_isolation() {
+    fn routing_fallback_workspace_isolation() {
         let engine = make_engine();
 
         // ws-1 降级 1 次
         let decision_ws1 = {
-            let policy = DefaultRoutingPolicy::new("openai", "gpt-4o")
-                .with_task_type_mapping(TaskType::CodeGeneration, "anthropic", "claude");
+            let policy = DefaultRoutingPolicy::new("openai", "gpt-4o").with_task_type_mapping(
+                TaskType::CodeGeneration,
+                "anthropic",
+                "claude",
+            );
             let input = RoutingInput::new(TaskType::CodeGeneration, "proj-a", "ws-1");
             policy.decide(&input)
         };
-        let _ = engine.try_fallback(&decision_ws1, FallbackReason::Other { message: "err".into() });
+        let _ = engine.try_fallback(
+            &decision_ws1,
+            FallbackReason::Other {
+                message: "err".into(),
+            },
+        );
 
         // ws-2 未降级
-        let decision_ws2 = {
-            let policy = DefaultRoutingPolicy::new("openai", "gpt-4o")
-                .with_task_type_mapping(TaskType::CodeGeneration, "anthropic", "claude");
+        let _decision_ws2 = {
+            let policy = DefaultRoutingPolicy::new("openai", "gpt-4o").with_task_type_mapping(
+                TaskType::CodeGeneration,
+                "anthropic",
+                "claude",
+            );
             let input = RoutingInput::new(TaskType::CodeGeneration, "proj-a", "ws-2");
             policy.decide(&input)
         };
@@ -380,10 +419,15 @@ mod tests {
     }
 
     #[test]
-    fn fallback_reset_clears_state() {
+    fn routing_fallback_reset_clears_state() {
         let engine = make_engine();
         let decision = make_decision_with_candidates();
-        let _ = engine.try_fallback(&decision, FallbackReason::Other { message: "err".into() });
+        let _ = engine.try_fallback(
+            &decision,
+            FallbackReason::Other {
+                message: "err".into(),
+            },
+        );
         assert_eq!(engine.fallback_count("proj-a::ws-1"), 1);
 
         engine.reset_workspace("proj-a::ws-1");
@@ -391,8 +435,11 @@ mod tests {
     }
 
     #[test]
-    fn fallback_reason_budget_exceeded() {
-        let reason = FallbackReason::BudgetExceeded { threshold: 10.0, current: 15.5 };
+    fn routing_fallback_reason_budget_exceeded() {
+        let reason = FallbackReason::BudgetExceeded {
+            threshold: 10.0,
+            current: 15.5,
+        };
         let s = reason.as_str();
         assert!(s.contains("budget_exceeded"));
         assert!(s.contains("15.50") || s.contains("15.5"));

@@ -103,7 +103,10 @@ impl AiRouter {
                 current: budget_snapshot.total_estimated_cost,
             };
             match self.fallback_engine.try_fallback(&decision, reason) {
-                FallbackResult::Fallback { decision: fallback_decision, .. } => {
+                FallbackResult::Fallback {
+                    decision: fallback_decision,
+                    ..
+                } => {
                     let metadata = RouteMetadata::from_decision(&fallback_decision)
                         .with_budget_status(budget_snapshot);
                     return (fallback_decision, metadata);
@@ -147,7 +150,10 @@ pub fn build_default_router(
     default_provider_id: impl Into<String>,
     default_model_id: impl Into<String>,
 ) -> AiRouter {
-    let policy = Arc::new(DefaultRoutingPolicy::new(default_provider_id, default_model_id));
+    let policy = Arc::new(DefaultRoutingPolicy::new(
+        default_provider_id,
+        default_model_id,
+    ));
     let fallback_engine = Arc::new(FallbackEngine::new(FallbackConfig::default()));
     let budget_engine = Arc::new(BudgetEngine::new(BudgetConfig::default()));
     AiRouter::new(policy, fallback_engine, budget_engine)

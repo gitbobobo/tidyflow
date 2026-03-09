@@ -4,6 +4,7 @@
 //! 路由层在 agent/model 选择链路中插入，不破坏现有显式选择语义。
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 // ============================================================================
 // 任务类型
@@ -31,20 +32,6 @@ pub enum TaskType {
 }
 
 impl TaskType {
-    /// 从字符串解析任务类型
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "chat" => TaskType::Chat,
-            "code_generation" | "code_gen" => TaskType::CodeGeneration,
-            "code_review" => TaskType::CodeReview,
-            "code_completion" => TaskType::CodeCompletion,
-            "documentation" | "docs" => TaskType::Documentation,
-            "debugging" | "debug" => TaskType::Debugging,
-            "system" => TaskType::System,
-            _ => TaskType::Unknown,
-        }
-    }
-
     /// 转为字符串
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -71,6 +58,23 @@ impl TaskType {
             TaskType::System => 1.0,
             TaskType::Unknown => 0.5,
         }
+    }
+}
+
+impl FromStr for TaskType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "chat" => TaskType::Chat,
+            "code_generation" | "code_gen" => TaskType::CodeGeneration,
+            "code_review" => TaskType::CodeReview,
+            "code_completion" => TaskType::CodeCompletion,
+            "documentation" | "docs" => TaskType::Documentation,
+            "debugging" | "debug" => TaskType::Debugging,
+            "system" => TaskType::System,
+            _ => TaskType::Unknown,
+        })
     }
 }
 
@@ -270,7 +274,10 @@ pub struct DefaultRoutingPolicy {
 }
 
 impl DefaultRoutingPolicy {
-    pub fn new(default_provider_id: impl Into<String>, default_model_id: impl Into<String>) -> Self {
+    pub fn new(
+        default_provider_id: impl Into<String>,
+        default_model_id: impl Into<String>,
+    ) -> Self {
         Self {
             task_type_map: HashMap::new(),
             default_provider_id: default_provider_id.into(),
@@ -285,8 +292,10 @@ impl DefaultRoutingPolicy {
         provider_id: impl Into<String>,
         model_id: impl Into<String>,
     ) -> Self {
-        self.task_type_map
-            .insert(task_type.as_str().to_string(), (provider_id.into(), model_id.into()));
+        self.task_type_map.insert(
+            task_type.as_str().to_string(),
+            (provider_id.into(), model_id.into()),
+        );
         self
     }
 
@@ -298,9 +307,7 @@ impl DefaultRoutingPolicy {
             priority: 0,
         }];
         // 若首选不是 default，则添加 default 作为候选（用于降级）
-        if primary_provider != self.default_provider_id
-            || primary_model != self.default_model_id
-        {
+        if primary_provider != self.default_provider_id || primary_model != self.default_model_id {
             candidates.push(RouteCandidate {
                 provider_id: self.default_provider_id.clone(),
                 model_id: self.default_model_id.clone(),
@@ -437,8 +444,8 @@ mod tests {
             model_id: Some("gpt-4-turbo".to_string()),
             agent: None,
         };
-        let input = RoutingInput::new(TaskType::Unknown, "proj-b", "ws-2")
-            .with_selection_hint(hint);
+        let input =
+            RoutingInput::new(TaskType::Unknown, "proj-b", "ws-2").with_selection_hint(hint);
 
         let decision = policy.decide(&input);
         assert_eq!(decision.provider_id, "openai");
@@ -497,7 +504,10 @@ mod tests {
             None,
         );
         assert!(fallback.is_fallback);
-        assert_eq!(fallback.fallback_reason.as_deref(), Some("provider_error: 503"));
+        assert_eq!(
+            fallback.fallback_reason.as_deref(),
+            Some("provider_error: 503")
+        );
         assert_eq!(fallback.provider_id, "openai");
         assert_eq!(fallback.model_id, "gpt-4o");
     }
