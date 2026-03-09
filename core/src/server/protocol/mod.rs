@@ -2054,8 +2054,6 @@ pub struct ConflictSnapshotInfo {
     pub all_resolved: bool,
 }
 
-
-
 /// 自定义命令信息（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomCommandInfo {
@@ -2410,6 +2408,8 @@ impl ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::context::AppError;
+    use serde_json::json;
 
     #[test]
     fn test_parse_import_project() {
@@ -2628,6 +2628,208 @@ mod tests {
                 assert_eq!(next_cursor.as_deref(), Some("cursor_1"));
             }
             other => panic!("Unexpected message type: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn envelope_shapes_and_msgpack_roundtrip_are_stable() {
+        let client_envelope = json!({
+            "request_id": "test-123",
+            "domain": "system",
+            "action": "ping",
+            "payload": {},
+            "client_ts": 1234567890
+        });
+        assert_eq!(client_envelope["request_id"], "test-123");
+        assert_eq!(client_envelope["domain"], "system");
+        assert_eq!(client_envelope["action"], "ping");
+
+        let server_envelope = json!({
+            "seq": 2,
+            "domain": "terminal",
+            "action": "output",
+            "kind": "event",
+            "payload": {"data": "base64encoded"},
+            "server_ts": 1234567890
+        });
+        assert!(server_envelope.get("request_id").is_none());
+
+        let encoded = rmp_serde::to_vec_named(&client_envelope).expect("encode should succeed");
+        assert!(!encoded.is_empty());
+        assert!(encoded.len() < 80);
+
+        let decoded: serde_json::Value =
+            rmp_serde::from_slice(&encoded).expect("decode should succeed");
+        assert_eq!(decoded["request_id"], "test-123");
+        assert_eq!(decoded["domain"], "system");
+    }
+
+    #[test]
+    fn protocol_version_is_v7() {
+        assert_eq!(PROTOCOL_VERSION, 7);
+    }
+
+    #[test]
+    fn app_error_and_server_error_helpers_keep_context() {
+        assert_eq!(
+            AppError::ProjectNotFound("foo".into()).code(),
+            "project_not_found"
+        );
+        assert_eq!(
+            AppError::WorkspaceNotFound("bar".into()).code(),
+            "workspace_not_found"
+        );
+        assert_eq!(AppError::Git("err".into()).code(), "git_error");
+        assert_eq!(AppError::File("err".into()).code(), "file_error");
+        assert_eq!(AppError::Internal("err".into()).code(), "internal_error");
+        assert_eq!(AppError::Custom("err".into()).code(), "error");
+        assert_eq!(AppError::AISession("err".into()).code(), "ai_session_error");
+        assert_eq!(AppError::Evolution("err".into()).code(), "evolution_error");
+
+        let contextual = AppError::AISession("session failed".into()).to_server_error_with_context(
+            Some("myproject".to_string()),
+            Some("feature-x".to_string()),
+            Some("sess-123".to_string()),
+            None,
+        );
+        match contextual {
+            ServerMessage::Error {
+                code,
+                project,
+                workspace,
+                session_id,
+                ..
+            } => {
+                assert_eq!(code, "ai_session_error");
+                assert_eq!(project.as_deref(), Some("myproject"));
+                assert_eq!(workspace.as_deref(), Some("feature-x"));
+                assert_eq!(session_id.as_deref(), Some("sess-123"));
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+
+        let helper = ServerMessage::make_error_with_context(
+            "evolution_error",
+            "evo failed",
+            Some("proj".to_string()),
+            Some("ws".to_string()),
+            None,
+            Some("cycle-abc".to_string()),
+        );
+        match helper {
+            ServerMessage::Error {
+                code,
+                project,
+                workspace,
+                cycle_id,
+                ..
+            } => {
+                assert_eq!(code, "evolution_error");
+                assert_eq!(project.as_deref(), Some("proj"));
+                assert_eq!(workspace.as_deref(), Some("ws"));
+                assert_eq!(cycle_id.as_deref(), Some("cycle-abc"));
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn error_serialization_preserves_context_contract() {
+        let plain = ServerMessage::make_error("internal_error", "something went wrong");
+        let plain_json = serde_json::to_string(&plain).expect("serialize should succeed");
+        assert!(!plain_json.contains("\"project\""));
+        assert!(!plain_json.contains("\"workspace\""));
+        assert!(!plain_json.contains("\"session_id\""));
+        assert!(!plain_json.contains("\"cycle_id\""));
+        assert!(plain_json.contains("\"internal_error\""));
+
+        let contextual = ServerMessage::Error {
+            code: "workspace_not_found".to_string(),
+            message: "Workspace 'missing' not found in project 'demo'".to_string(),
+            project: Some("demo".to_string()),
+            workspace: Some("missing".to_string()),
+            session_id: None,
+            cycle_id: None,
+        };
+        let contextual_json = serde_json::to_string(&contextual).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&contextual_json).unwrap();
+
+        match parsed {
+            ServerMessage::Error {
+                code,
+                project,
+                workspace,
+                ..
+            } => {
+                assert_eq!(code, "workspace_not_found");
+                assert_eq!(project.as_deref(), Some("demo"));
+                assert_eq!(workspace.as_deref(), Some("missing"));
+            }
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn log_entry_new_fields_remain_backward_compatible() {
+        let json_with_error_code = serde_json::json!({
+            "type": "log_entry",
+            "level": "ERROR",
+            "source": "swift",
+            "category": "ws",
+            "msg": "WebSocket receive failed",
+            "detail": "timeout",
+            "error_code": "ws_receive_error",
+            "project": "myproject",
+            "workspace": "default",
+            "session_id": null,
+            "cycle_id": null
+        });
+
+        let msg: ClientMessage =
+            serde_json::from_value(json_with_error_code).expect("deserialize should succeed");
+        match msg {
+            ClientMessage::LogEntry {
+                level,
+                error_code,
+                project,
+                workspace,
+                ..
+            } => {
+                assert_eq!(level, "ERROR");
+                assert_eq!(error_code.as_deref(), Some("ws_receive_error"));
+                assert_eq!(project.as_deref(), Some("myproject"));
+                assert_eq!(workspace.as_deref(), Some("default"));
+            }
+            _ => panic!("Expected ClientMessage::LogEntry"),
+        }
+
+        let json_old_format = serde_json::json!({
+            "type": "log_entry",
+            "level": "INFO",
+            "source": "swift",
+            "msg": "App started"
+        });
+
+        let msg: ClientMessage =
+            serde_json::from_value(json_old_format).expect("old format deserialize should succeed");
+        match msg {
+            ClientMessage::LogEntry {
+                level,
+                error_code,
+                project,
+                workspace,
+                session_id,
+                cycle_id,
+                ..
+            } => {
+                assert_eq!(level, "INFO");
+                assert!(error_code.is_none());
+                assert!(project.is_none());
+                assert!(workspace.is_none());
+                assert!(session_id.is_none());
+                assert!(cycle_id.is_none());
+            }
+            _ => panic!("Expected ClientMessage::LogEntry"),
         }
     }
 }

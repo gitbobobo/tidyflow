@@ -170,6 +170,15 @@ pub fn check_condition(condition: &str, working_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn create_test_config(dir: &Path, content: &str) {
+        let config_path = dir.join(".tidyflow.toml");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+    }
 
     #[test]
     fn test_default_config() {
@@ -199,5 +208,103 @@ condition = "file_exists:package.json"
         assert_eq!(config.project.default_branch, "develop");
         assert_eq!(config.setup.steps.len(), 1);
         assert_eq!(config.setup.steps[0].name, "Install deps");
+    }
+
+    #[test]
+    fn test_load_missing_config_returns_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = ProjectConfig::load(temp_dir.path()).unwrap();
+
+        assert_eq!(config.project.default_branch, "main");
+        assert!(config.project.name.is_none());
+    }
+
+    #[test]
+    fn test_load_valid_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let toml_content = r#"
+[project]
+name = "my-project"
+description = "A test project"
+default_branch = "develop"
+
+[setup]
+timeout = 300
+shell = "/bin/bash"
+
+[[setup.steps]]
+name = "Install dependencies"
+run = "npm install"
+timeout = 120
+
+[[setup.steps]]
+name = "Build"
+run = "npm run build"
+continue_on_error = false
+
+[env]
+inherit = true
+[env.vars]
+NODE_ENV = "development"
+"#;
+        create_test_config(temp_dir.path(), toml_content);
+
+        let config = ProjectConfig::load(temp_dir.path()).unwrap();
+
+        assert_eq!(config.project.name, Some("my-project".to_string()));
+        assert_eq!(
+            config.project.description,
+            Some("A test project".to_string())
+        );
+        assert_eq!(config.project.default_branch, "develop");
+        assert_eq!(config.setup.timeout, 300);
+        assert_eq!(config.setup.shell, Some("/bin/bash".to_string()));
+        assert_eq!(config.setup.steps.len(), 2);
+        assert_eq!(config.setup.steps[0].name, "Install dependencies");
+        assert_eq!(config.setup.steps[0].run, "npm install");
+        assert_eq!(config.setup.steps[0].timeout, Some(120));
+        assert!(!config.setup.steps[0].continue_on_error);
+        assert!(config.env.inherit);
+        assert_eq!(
+            config.env.vars.get("NODE_ENV"),
+            Some(&"development".to_string())
+        );
+    }
+
+    #[test]
+    fn test_effective_name_prefers_custom_name() {
+        let mut config = ProjectConfig::default();
+        assert_eq!(config.effective_name("fallback"), "fallback");
+
+        config.project.name = Some("custom-name".to_string());
+        assert_eq!(config.effective_name("fallback"), "custom-name");
+    }
+
+    #[test]
+    fn test_check_condition_file_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "test").unwrap();
+
+        assert!(check_condition("file_exists:test.txt", temp_dir.path()));
+        assert!(!check_condition(
+            "file_exists:nonexistent.txt",
+            temp_dir.path()
+        ));
+    }
+
+    #[test]
+    fn test_check_condition_dir_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("subdir")).unwrap();
+
+        assert!(check_condition("dir_exists:subdir", temp_dir.path()));
+        assert!(!check_condition("dir_exists:nonexistent", temp_dir.path()));
+    }
+
+    #[test]
+    fn test_check_condition_invalid_format() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(!check_condition("invalidcondition", temp_dir.path()));
     }
 }

@@ -74,6 +74,34 @@ async fn test_is_running_returns_false_initially() {
     assert!(!manager.is_running().await);
 }
 
+#[tokio::test]
+async fn test_manager_creation() {
+    let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
+    assert!(manager.get_port() >= 49152);
+    assert!(manager.get_base_url().starts_with("http://127.0.0.1:"));
+}
+
+#[tokio::test]
+async fn test_stop_server_when_not_running() {
+    let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
+    let result = manager.stop_server().await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_health_check_fails_for_unavailable_server() {
+    let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
+    let result = manager.check_health().await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_base_url_consistency() {
+    let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
+    let expected_url = format!("http://127.0.0.1:{}", manager.get_port());
+    assert_eq!(manager.get_base_url(), expected_url);
+}
+
 #[test]
 fn test_allocate_ephemeral_port_releases_immediately() {
     // 连续分配两次应该成功，因为端口立即释放

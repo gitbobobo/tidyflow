@@ -204,31 +204,37 @@ impl WorkspaceCacheSnapshot {
         let file_sample = FILE_CACHE_METRICS
             .lock()
             .ok()
-            .and_then(|m| m.get(root_path).map(|c| FileCacheMetricsSample {
-                hit_count: c.hit,
-                miss_count: c.miss,
-                rebuild_count: c.rebuild,
-                incremental_update_count: c.incremental_update,
-                eviction_count: c.eviction,
-                item_count: c.item_count,
-                last_eviction_reason: c.last_eviction_reason.clone(),
-            }))
+            .and_then(|m| {
+                m.get(root_path).map(|c| FileCacheMetricsSample {
+                    hit_count: c.hit,
+                    miss_count: c.miss,
+                    rebuild_count: c.rebuild,
+                    incremental_update_count: c.incremental_update,
+                    eviction_count: c.eviction,
+                    item_count: c.item_count,
+                    last_eviction_reason: c.last_eviction_reason.clone(),
+                })
+            })
             .unwrap_or_default();
 
         let git_sample = GIT_CACHE_METRICS
             .lock()
             .ok()
-            .and_then(|m| m.get(root_path).map(|c| GitCacheMetricsSample {
-                hit_count: c.hit,
-                miss_count: c.miss,
-                rebuild_count: c.rebuild,
-                eviction_count: c.eviction,
-                item_count: c.item_count,
-                last_eviction_reason: c.last_eviction_reason.clone(),
-            }))
+            .and_then(|m| {
+                m.get(root_path).map(|c| GitCacheMetricsSample {
+                    hit_count: c.hit,
+                    miss_count: c.miss,
+                    rebuild_count: c.rebuild,
+                    eviction_count: c.eviction,
+                    item_count: c.item_count,
+                    last_eviction_reason: c.last_eviction_reason.clone(),
+                })
+            })
             .unwrap_or_default();
 
-        let total_rebuilds = file_sample.rebuild_count.saturating_add(git_sample.rebuild_count);
+        let total_rebuilds = file_sample
+            .rebuild_count
+            .saturating_add(git_sample.rebuild_count);
         let budget_exceeded = total_rebuilds >= REBUILD_BUDGET_THRESHOLD;
 
         // 从工作区级别共享淘汰原因中取最新值（由 file 或 git 任一淘汰事件覆盖更新）
@@ -266,6 +272,16 @@ pub fn clear_metrics_for_path(root_path: &str) {
 mod tests {
     use super::*;
 
+    fn root(id: &str) -> String {
+        format!("/tmp/unit_test_cache_metrics/{id}")
+    }
+
+    fn clean(id: &str) -> String {
+        let path = root(id);
+        clear_metrics_for_path(&path);
+        path
+    }
+
     #[test]
     fn file_cache_counters_increment_correctly() {
         let path = "/tmp/test_project_alpha";
@@ -301,7 +317,10 @@ mod tests {
         assert_eq!(snap.git_cache.miss_count, 1);
         assert_eq!(snap.git_cache.rebuild_count, 1);
         assert_eq!(snap.git_cache.eviction_count, 1);
-        assert_eq!(snap.git_cache.last_eviction_reason.as_deref(), Some("ttl_expired"));
+        assert_eq!(
+            snap.git_cache.last_eviction_reason.as_deref(),
+            Some("ttl_expired")
+        );
     }
 
     #[test]
@@ -314,7 +333,10 @@ mod tests {
         }
 
         let snap = WorkspaceCacheSnapshot::from_counters("p", "w", path);
-        assert!(snap.budget_exceeded, "should be budget_exceeded when rebuilds > threshold");
+        assert!(
+            snap.budget_exceeded,
+            "should be budget_exceeded when rebuilds > threshold"
+        );
     }
 
     #[test]
@@ -335,5 +357,232 @@ mod tests {
         assert_eq!(snap_a.file_cache.miss_count, 0);
         assert_eq!(snap_b.file_cache.hit_count, 0);
         assert_eq!(snap_b.file_cache.miss_count, 1);
+    }
+
+    #[test]
+    fn budget_not_exceeded_below_threshold() {
+        let path = clean("budget_below");
+        for _ in 0..(REBUILD_BUDGET_THRESHOLD - 1) {
+            record_file_cache_rebuild(&path, 50);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &path);
+        assert!(!snap.budget_exceeded);
+    }
+
+    #[test]
+    fn budget_exceeded_by_combined_file_and_git_rebuilds() {
+        let path = clean("budget_combined");
+        let half = REBUILD_BUDGET_THRESHOLD / 2;
+        for _ in 0..=half {
+            record_file_cache_rebuild(&path, 50);
+            record_git_cache_rebuild(&path, 20);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &path);
+        assert!(snap.budget_exceeded);
+    }
+
+    #[test]
+    fn eviction_reason_propagates_and_overwrites() {
+        let path = clean("evict_reason");
+        record_file_cache_eviction(&path, "memory_pressure");
+        record_git_cache_eviction(&path, "invalidated");
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &path);
+        assert_eq!(snap.last_eviction_reason.as_deref(), Some("invalidated"));
+    }
+
+    #[test]
+    fn clear_metrics_resets_all_counters() {
+        let path = clean("clear_test");
+        record_file_cache_hit(&path);
+        record_file_cache_rebuild(&path, 50);
+        record_git_cache_hit(&path);
+        clear_metrics_for_path(&path);
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &path);
+        assert_eq!(snap.file_cache.hit_count, 0);
+        assert_eq!(snap.file_cache.rebuild_count, 0);
+        assert_eq!(snap.git_cache.hit_count, 0);
+        assert!(!snap.budget_exceeded);
+    }
+
+    #[test]
+    fn file_cache_rebuild_hot_path_does_not_panic() {
+        let path = clean("rebuild_hot");
+        for i in 0..100 {
+            record_file_cache_rebuild(&path, i * 10 + 50);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "w", &path);
+        assert_eq!(snap.file_cache.rebuild_count, 100);
+        assert!(snap.budget_exceeded);
+    }
+
+    #[test]
+    fn file_cache_incremental_hot_path_does_not_panic() {
+        let path = clean("incremental_hot");
+        record_file_cache_rebuild(&path, 500);
+        for _ in 0..50 {
+            record_file_cache_incremental_update(&path, 501);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "ws_incr", &path);
+        assert_eq!(snap.file_cache.rebuild_count, 1);
+        assert_eq!(snap.file_cache.incremental_update_count, 50);
+    }
+
+    #[test]
+    fn git_cache_hit_miss_hot_path_does_not_panic() {
+        let path = clean("git_hit_miss");
+        for _ in 0..200 {
+            record_git_cache_hit(&path);
+        }
+        for _ in 0..10 {
+            record_git_cache_miss(&path);
+            record_git_cache_rebuild(&path, 15);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("p", "ws_git", &path);
+        assert_eq!(snap.git_cache.hit_count, 200);
+        assert_eq!(snap.git_cache.miss_count, 10);
+        assert_eq!(snap.git_cache.rebuild_count, 10);
+    }
+
+    #[test]
+    fn snapshot_multi_project_does_not_cross_pollute() {
+        let num_projects = 3;
+        let ws_per_project = 4;
+
+        let mut entries: Vec<(String, String, String)> = Vec::new();
+        for p in 0..num_projects {
+            let project = format!("smoke_mp_project_{p}");
+            entries.push((
+                project.clone(),
+                "default".to_string(),
+                clean(&format!("mp_{p}_default")),
+            ));
+            for w in 0..ws_per_project {
+                entries.push((
+                    project.clone(),
+                    format!("ws_{w}"),
+                    clean(&format!("mp_{p}_{w}")),
+                ));
+            }
+        }
+
+        for (_, _, root_path) in &entries {
+            record_file_cache_rebuild(root_path, 100);
+            record_git_cache_hit(root_path);
+        }
+
+        for (project, workspace, root_path) in &entries {
+            let snap = WorkspaceCacheSnapshot::from_counters(project, workspace, root_path);
+            assert_eq!(snap.project, *project);
+            assert_eq!(snap.workspace, *workspace);
+            assert_eq!(snap.file_cache.rebuild_count, 1);
+            assert_eq!(snap.git_cache.hit_count, 1);
+        }
+    }
+
+    #[test]
+    fn eviction_scan_does_not_panic() {
+        let entries: Vec<String> = (0..12)
+            .map(|i| clean(&format!("eviction_scan_{i}")))
+            .collect();
+
+        for path in &entries {
+            record_file_cache_eviction(path, "ttl_expired");
+            record_git_cache_eviction(path, "ttl_expired");
+        }
+
+        for (i, path) in entries.iter().enumerate() {
+            let snap = WorkspaceCacheSnapshot::from_counters("p", &format!("ws_{i}"), path);
+            assert_eq!(snap.file_cache.eviction_count, 1);
+            assert_eq!(snap.git_cache.eviction_count, 1);
+            assert_eq!(snap.last_eviction_reason.as_deref(), Some("ttl_expired"));
+        }
+    }
+
+    #[test]
+    fn same_workspace_name_different_projects_metrics_are_isolated() {
+        let root_a = clean("iso_project_a_ws1");
+        let root_b = clean("iso_project_b_ws1");
+
+        for _ in 0..100 {
+            record_file_cache_hit(&root_a);
+        }
+        for _ in 0..3 {
+            record_file_cache_rebuild(&root_a, 100);
+        }
+        for _ in 0..5 {
+            record_file_cache_hit(&root_b);
+        }
+
+        let snap_a = WorkspaceCacheSnapshot::from_counters("project_a", "ws1", &root_a);
+        let snap_b = WorkspaceCacheSnapshot::from_counters("project_b", "ws1", &root_b);
+
+        assert_eq!(snap_a.file_cache.hit_count, 100);
+        assert_eq!(snap_a.file_cache.rebuild_count, 3);
+        assert_eq!(snap_b.file_cache.hit_count, 5);
+        assert_eq!(snap_b.file_cache.rebuild_count, 0);
+        assert_ne!(snap_a.file_cache.hit_count, snap_b.file_cache.hit_count);
+    }
+
+    #[test]
+    fn resource_guard_detects_rebuild_storm_and_reset() {
+        let path = clean("guard_reset");
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            record_file_cache_rebuild(&path, 30);
+        }
+
+        let snap_before = WorkspaceCacheSnapshot::from_counters("proj", "ws", &path);
+        assert!(snap_before.budget_exceeded);
+
+        clear_metrics_for_path(&path);
+        let snap_after = WorkspaceCacheSnapshot::from_counters("proj", "ws", &path);
+        assert!(!snap_after.budget_exceeded);
+    }
+
+    #[test]
+    fn resource_guard_isolated_across_workspaces() {
+        let hot = clean("guard_hot");
+        let cold = clean("guard_cold");
+
+        for _ in 0..REBUILD_BUDGET_THRESHOLD {
+            record_file_cache_rebuild(&hot, 40);
+        }
+        record_file_cache_hit(&cold);
+
+        let snap_hot = WorkspaceCacheSnapshot::from_counters("proj", "hot_ws", &hot);
+        let snap_cold = WorkspaceCacheSnapshot::from_counters("proj", "cold_ws", &cold);
+
+        assert!(snap_hot.budget_exceeded);
+        assert!(!snap_cold.budget_exceeded);
+    }
+
+    #[test]
+    fn resource_guard_detects_eviction_events() {
+        let path = clean("guard_evict");
+        record_file_cache_eviction(&path, "memory_limit");
+        record_git_cache_eviction(&path, "ttl_expired");
+
+        let snap = WorkspaceCacheSnapshot::from_counters("proj", "ws", &path);
+        assert_eq!(snap.last_eviction_reason.as_deref(), Some("ttl_expired"));
+        assert_eq!(snap.file_cache.eviction_count, 1);
+        assert_eq!(snap.git_cache.eviction_count, 1);
+    }
+
+    #[test]
+    fn inactive_workspace_does_not_trigger_resource_guard() {
+        let path = clean("guard_inactive");
+        for _ in 0..100 {
+            record_file_cache_hit(&path);
+            record_git_cache_hit(&path);
+        }
+
+        let snap = WorkspaceCacheSnapshot::from_counters("proj", "ws", &path);
+        assert!(!snap.budget_exceeded);
     }
 }
