@@ -3441,6 +3441,7 @@ impl EvolutionManager {
             .await;
         self.record_session_execution_started(key, stage, &ai_tool, &session.id)
             .await;
+        self.broadcast_cycle_update(key, ctx, "agent").await;
         self.persist_chat_map(key).await.ok();
         self.persist_stage_file(key, stage, "running", None, None)
             .await

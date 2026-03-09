@@ -86,34 +86,6 @@ pub(crate) async fn query_evolution_cycle_history(
     })
 }
 
-pub(crate) async fn query_evolution_stage_chat(
-    project: &str,
-    workspace: &str,
-    cycle_id: &str,
-    stage: &str,
-) -> Result<ServerMessage, String> {
-    let Some(manager) = maybe_manager() else {
-        return Err("evolution manager init failed".to_string());
-    };
-    match manager
-        .open_stage_chat(project, workspace, cycle_id, stage)
-        .await
-    {
-        Some((ai_tool, session_id)) => Ok(ServerMessage::EvoStageChatOpened {
-            project: project.to_string(),
-            workspace: workspace.to_string(),
-            cycle_id: cycle_id.to_string(),
-            stage: stage.to_string(),
-            ai_tool,
-            session_id,
-        }),
-        None => Err(format!(
-            "evo_chat_session_not_found: project={}, workspace={}, cycle_id={}, stage={}",
-            project, workspace, cycle_id, stage
-        )),
-    }
-}
-
 fn maybe_manager() -> Option<Arc<EvolutionManager>> {
     let manager = EVOLUTION_MANAGER.get_or_init(|| Arc::new(EvolutionManager::new()));
     Some(manager.clone())

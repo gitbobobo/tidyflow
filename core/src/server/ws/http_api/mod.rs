@@ -15,7 +15,6 @@ pub(in crate::server::ws) use evidence::{
 };
 pub(in crate::server::ws) use evolution::{
     evolution_agent_profile_handler, evolution_cycle_history_handler, evolution_snapshot_handler,
-    evolution_stage_chat_handler,
 };
 pub(in crate::server::ws) use system::{
     system_health_snapshot_handler, system_repair_handler, system_snapshot_handler,

@@ -64,10 +64,6 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::http_api::evolution_cycle_history_handler),
         )
         .route(
-            "/api/v1/evolution/projects/:project/workspaces/:workspace/stage-chat",
-            get(crate::server::ws::http_api::evolution_stage_chat_handler),
-        )
-        .route(
             "/api/v1/evidence/projects/:project/workspaces/:workspace/snapshot",
             get(crate::server::ws::http_api::evidence_snapshot_handler),
         )

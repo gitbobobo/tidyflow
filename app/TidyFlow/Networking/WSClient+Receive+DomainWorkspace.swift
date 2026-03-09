@@ -274,15 +274,6 @@ extension WSClient {
                 }
             }
             return true
-        case "evo_stage_chat_opened":
-            if let ev = EvolutionStageChatOpenedV2.from(json: json) {
-                if let handler = evolutionMessageHandler {
-                    handler.handleEvolutionStageChatOpened(ev)
-                } else {
-                    onEvoStageChatOpened?(ev)
-                }
-            }
-            return true
         case "evo_agent_profile":
             if let ev = EvolutionAgentProfileV2.from(json: json) {
                 if let handler = evolutionMessageHandler {

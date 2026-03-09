@@ -438,65 +438,39 @@ extension MobileAppState {
     }
 
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) {
-        // iOS 端暂未使用，保留接口对齐
-    }
-
-    func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) {
-        guard let aiTool = ev.aiTool else {
-            evolutionReplayLoading = false
-            evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
+        let workspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        let key = globalWorkspaceKey(project: ev.project, workspace: workspace)
+        guard let existingIndex = evolutionWorkspaceItems.firstIndex(where: { item in
+            globalWorkspaceKey(project: item.project, workspace: normalizeEvolutionWorkspaceName(item.workspace)) == key
+        }) else {
+            wsClient.requestEvoSnapshot()
             return
         }
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
-        evolutionReplayRequest = (
+
+        let existing = evolutionWorkspaceItems[existingIndex]
+        let updated = EvolutionWorkspaceItemV2(
             project: ev.project,
-            workspace: normalizedWorkspace,
-            aiTool: aiTool,
-            sessionId: ev.sessionID,
-            cycleId: ev.cycleID,
-            stage: ev.stage
+            workspace: workspace,
+            cycleID: ev.cycleID,
+            title: ev.title ?? existing.title,
+            status: ev.status,
+            currentStage: ev.currentStage,
+            globalLoopRound: ev.globalLoopRound,
+            loopRoundLimit: ev.loopRoundLimit,
+            verifyIteration: ev.verifyIteration,
+            verifyIterationLimit: ev.verifyIterationLimit,
+            agents: ev.agents,
+            executions: ev.executions,
+            terminalReasonCode: ev.terminalReasonCode,
+            terminalErrorMessage: ev.terminalErrorMessage,
+            rateLimitErrorMessage: ev.rateLimitErrorMessage
         )
-        evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
-        evolutionReplayMessages = []
-        evolutionReplayError = nil
-        evolutionReplayLoading = false
-
-        openAIChat(project: ev.project, workspace: normalizedWorkspace)
-
-        let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
-        let session = AISessionInfo(
-            projectName: ev.project,
-            workspaceName: normalizedWorkspace,
-            aiTool: aiTool,
-            id: ev.sessionID,
-            title: "\(ev.stage) · \(ev.cycleID)",
-            updatedAt: updatedAt,
-            origin: .evolutionSystem
-        )
-
-        var sessions = aiSessionsByTool[aiTool] ?? []
-        sessions.removeAll { $0.id == session.id }
-        sessions.insert(session, at: 0)
-        setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
-
-        let evoContext = AISessionHistoryCoordinator.Context(
-            project: ev.project,
-            workspace: normalizedWorkspace,
-            aiTool: aiTool,
-            sessionId: ev.sessionID
-        )
-        AISessionHistoryCoordinator.subscribeAndLoadRecent(
-            context: evoContext,
-            wsClient: wsClient,
-            store: aiChatStore
-        )
-        requestAISessionStatus(
-            projectName: ev.project,
-            workspaceName: normalizedWorkspace,
-            aiTool: aiTool,
-            sessionId: ev.sessionID,
-            force: true
-        )
+        if evolutionWorkspaceItems[existingIndex] != updated {
+            evolutionWorkspaceItems[existingIndex] = updated
+        }
+        if ev.status != "interrupted" {
+            evolutionPendingActionByWorkspace.removeValue(forKey: key)
+        }
     }
 
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {

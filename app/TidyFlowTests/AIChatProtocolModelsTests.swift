@@ -471,6 +471,168 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.terminalErrorMessage, "verify.result.json 校验失败: 缺少 summary 字段")
     }
 
+    func testEvolutionWorkspaceItemLatestResolvedExecutionMatchesCurrentStageProfile() {
+        let item = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-1",
+            title: "当前循环",
+            status: "running",
+            currentStage: "verify.1",
+            globalLoopRound: 1,
+            loopRoundLimit: 3,
+            verifyIteration: 1,
+            verifyIterationLimit: 5,
+            agents: [],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "plan",
+                    agent: "PlanAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-plan",
+                    status: "done",
+                    startedAt: "2026-03-09T10:00:00Z",
+                    completedAt: "2026-03-09T10:01:00Z",
+                    durationMs: 60_000,
+                    toolCallCount: 2
+                ),
+                EvolutionSessionExecutionEntryV2(
+                    stage: "verify.1",
+                    agent: "VerifyAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-verify-1",
+                    status: "running",
+                    startedAt: "2026-03-09T10:02:00Z",
+                    completedAt: nil,
+                    durationMs: nil,
+                    toolCallCount: 0
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+
+        let execution = item.latestResolvedExecution(forStage: "verify")
+        XCTAssertEqual(execution?.sessionID, "sess-verify-1")
+        XCTAssertEqual(execution?.stage, "verify.1")
+    }
+
+    func testEvolutionWorkspaceItemLatestResolvedExecutionReturnsNilWhenStageHasNoSession() {
+        let item = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-2",
+            title: nil,
+            status: "running",
+            currentStage: "implement.general.1",
+            globalLoopRound: 1,
+            loopRoundLimit: 3,
+            verifyIteration: 0,
+            verifyIterationLimit: 5,
+            agents: [],
+            executions: [],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+
+        XCTAssertNil(item.latestResolvedExecution(forStage: "implement_general"))
+    }
+
+    func testEvolutionWorkspaceItemLatestResolvedExecutionKeepsNewestRetry() {
+        let item = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-3",
+            title: nil,
+            status: "running",
+            currentStage: "implement.general.2",
+            globalLoopRound: 1,
+            loopRoundLimit: 3,
+            verifyIteration: 0,
+            verifyIterationLimit: 5,
+            agents: [],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.1",
+                    agent: "ImplementGeneralAgent",
+                    aiTool: "copilot",
+                    sessionID: "sess-old",
+                    status: "failed",
+                    startedAt: "2026-03-09T09:00:00Z",
+                    completedAt: "2026-03-09T09:02:00Z",
+                    durationMs: 120_000,
+                    toolCallCount: 4
+                ),
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.2",
+                    agent: "ImplementGeneralAgent",
+                    aiTool: "copilot",
+                    sessionID: "sess-new",
+                    status: "running",
+                    startedAt: "2026-03-09T09:05:00Z",
+                    completedAt: nil,
+                    durationMs: nil,
+                    toolCallCount: 1
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+
+        let execution = item.latestResolvedExecution(forStage: "implement_general")
+        XCTAssertEqual(execution?.sessionID, "sess-new")
+        XCTAssertEqual(execution?.stage, "implement.general.2")
+    }
+
+    func testEvolutionWorkspaceItemLatestResolvedExecutionByExactStageDoesNotCrossStageInstance() {
+        let item = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-4",
+            title: nil,
+            status: "running",
+            currentStage: "implement.general.2",
+            globalLoopRound: 1,
+            loopRoundLimit: 3,
+            verifyIteration: 0,
+            verifyIterationLimit: 5,
+            agents: [],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.1",
+                    agent: "ImplementGeneralAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-general-1",
+                    status: "done",
+                    startedAt: "2026-03-09T09:00:00Z",
+                    completedAt: "2026-03-09T09:01:00Z",
+                    durationMs: 60_000,
+                    toolCallCount: 2
+                ),
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.2",
+                    agent: "ImplementGeneralAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-general-2",
+                    status: "running",
+                    startedAt: "2026-03-09T09:02:00Z",
+                    completedAt: nil,
+                    durationMs: nil,
+                    toolCallCount: 1
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+
+        let exact = item.latestResolvedExecution(forExactStage: "implement.general.1")
+        XCTAssertEqual(exact?.sessionID, "sess-general-1")
+    }
+
     func testEvolutionWorkspaceItemDerivesActiveAgentsFromAgentStatus() {
         let json: [String: Any] = [
             "project": "tidyflow",

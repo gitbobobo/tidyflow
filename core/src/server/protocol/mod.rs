@@ -760,13 +760,6 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         workspace: Option<String>,
     },
-    #[serde(rename = "evo_open_stage_chat")]
-    EvoOpenStageChat {
-        project: String,
-        workspace: String,
-        cycle_id: String,
-        stage: String,
-    },
     #[serde(rename = "evo_update_agent_profile")]
     EvoUpdateAgentProfile {
         project: String,
@@ -1748,15 +1741,6 @@ pub enum ServerMessage {
     EvoSnapshot {
         scheduler: EvolutionSchedulerInfo,
         workspace_items: Vec<EvolutionWorkspaceItem>,
-    },
-    #[serde(rename = "evo_stage_chat_opened")]
-    EvoStageChatOpened {
-        project: String,
-        workspace: String,
-        cycle_id: String,
-        stage: String,
-        ai_tool: String,
-        session_id: String,
     },
     #[serde(rename = "evo_agent_profile")]
     EvoAgentProfile {

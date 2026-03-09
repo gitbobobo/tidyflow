@@ -223,7 +223,6 @@ extension WSClient {
             "evo_start_workspace",
             "evo_stop_workspace",
             "evo_resume_workspace",
-            "evo_open_stage_chat",
             "evo_update_agent_profile",
             "evo_get_agent_profile",
             "evo_list_cycle_history",
@@ -1653,19 +1652,6 @@ extension WSClient {
             path: "/api/v1/evolution/snapshot",
             queryItems: queryItems,
             fallbackAction: "evo_snapshot"
-        )
-    }
-
-    func requestEvoOpenStageChat(project: String, workspace: String, cycleID: String, stage: String) {
-        let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/stage-chat"
-        requestReadViaHTTP(
-            domain: "evolution",
-            path: path,
-            queryItems: [
-                URLQueryItem(name: "cycle_id", value: cycleID),
-                URLQueryItem(name: "stage", value: stage)
-            ],
-            fallbackAction: "evo_stage_chat_opened"
         )
     }
 

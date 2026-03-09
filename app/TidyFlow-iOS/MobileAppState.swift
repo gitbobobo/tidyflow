@@ -1670,30 +1670,6 @@ final class MobileAppState: ObservableObject {
         return hint
     }
 
-    func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        // WI-002：在打开新回放前先取消旧回放会话的订阅，阻断旧会话内容回灌
-        if let request = evolutionReplayRequest {
-            wsClient.requestAISessionUnsubscribe(
-                project: request.project,
-                workspace: request.workspace,
-                aiTool: request.aiTool.rawValue,
-                sessionId: request.sessionId
-            )
-        }
-        evolutionReplayTitle = "\(normalizedWorkspace) · \(stage) · \(cycleId)"
-        evolutionReplayRequest = nil
-        evolutionReplayMessages = []
-        evolutionReplayError = nil
-        evolutionReplayLoading = true
-        wsClient.requestEvoOpenStageChat(
-            project: project,
-            workspace: normalizedWorkspace,
-            cycleID: cycleId,
-            stage: stage
-        )
-    }
-
     func clearEvolutionReplay() {
         // WI-002：取消订阅旧回放会话，防止旧事件残留
         if let request = evolutionReplayRequest {

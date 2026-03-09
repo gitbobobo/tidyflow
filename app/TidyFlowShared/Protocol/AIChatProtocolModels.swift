@@ -1942,6 +1942,45 @@ public struct EvolutionSessionExecutionEntryV2: Equatable {
     }
 }
 
+public extension EvolutionSessionExecutionEntryV2 {
+    var hasResolvedSessionReference: Bool {
+        !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !aiTool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private enum EvolutionExecutionLookupSemantics {
+    static func exactStageKey(for stage: String) -> String {
+        normalize(stage)
+    }
+
+    static func profileStageKey(for stage: String) -> String {
+        let normalized = normalize(stage)
+        if normalized.hasPrefix("implement.general.") { return "implement_general" }
+        if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
+        if normalized.hasPrefix("verify.") { return "verify" }
+        if normalized.hasPrefix("reimplement.") {
+            let parts = normalized.split(separator: ".")
+            if parts.count == 2, let index = Int(parts[1]) {
+                return index <= 2 ? "implement_general" : "implement_advanced"
+            }
+            return "implement_general"
+        }
+        if normalized == "implement.general" { return "implement_general" }
+        if normalized == "implement.visual" { return "implement_visual" }
+        if normalized == "implement" { return "implement_general" }
+        if normalized == "reimplement" { return "implement_general" }
+        return normalized
+    }
+
+    private static func normalize(_ stage: String) -> String {
+        stage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: ".")
+    }
+}
+
 public struct EvolutionSchedulerInfoV2: Equatable {
     public let activationState: String
     public let maxParallelWorkspaces: Int
@@ -1998,6 +2037,22 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         agents
             .filter { $0.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "running" }
             .map(\.agent)
+    }
+
+    public func latestResolvedExecution(forExactStage stage: String) -> EvolutionSessionExecutionEntryV2? {
+        let targetStageKey = EvolutionExecutionLookupSemantics.exactStageKey(for: stage)
+        return executions.reversed().first { execution in
+            execution.hasResolvedSessionReference &&
+                EvolutionExecutionLookupSemantics.exactStageKey(for: execution.stage) == targetStageKey
+        }
+    }
+
+    public func latestResolvedExecution(forStage stage: String) -> EvolutionSessionExecutionEntryV2? {
+        let targetStageKey = EvolutionExecutionLookupSemantics.profileStageKey(for: stage)
+        return executions.reversed().first { execution in
+            execution.hasResolvedSessionReference &&
+                EvolutionExecutionLookupSemantics.profileStageKey(for: execution.stage) == targetStageKey
+        }
     }
 
     public static func from(json: [String: Any]) -> EvolutionWorkspaceItemV2? {
@@ -2128,45 +2183,6 @@ public struct EvoCycleUpdatedV2 {
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
         self.rateLimitErrorMessage = rateLimitErrorMessage
-    }
-}
-
-public struct EvolutionStageChatOpenedV2 {
-    public let project: String
-    public let workspace: String
-    public let cycleID: String
-    public let stage: String
-    public let aiToolRaw: String
-    public let sessionID: String
-
-    public var aiTool: AIChatTool? {
-        parseAIChatTool(aiToolRaw)
-    }
-
-    public static func from(json: [String: Any]) -> EvolutionStageChatOpenedV2? {
-        guard let project = json["project"] as? String,
-              let workspace = json["workspace"] as? String,
-              let cycleID = json["cycle_id"] as? String,
-              let stage = json["stage"] as? String,
-              let aiToolRaw = json["ai_tool"] as? String,
-              let sessionID = json["session_id"] as? String else { return nil }
-        return EvolutionStageChatOpenedV2(
-            project: project,
-            workspace: workspace,
-            cycleID: cycleID,
-            stage: stage,
-            aiToolRaw: aiToolRaw,
-            sessionID: sessionID
-        )
-    }
-
-    public init(project: String, workspace: String, cycleID: String, stage: String, aiToolRaw: String, sessionID: String) {
-        self.project = project
-        self.workspace = workspace
-        self.cycleID = cycleID
-        self.stage = stage
-        self.aiToolRaw = aiToolRaw
-        self.sessionID = sessionID
     }
 }
 

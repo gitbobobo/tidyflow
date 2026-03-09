@@ -32,16 +32,6 @@ pub(in crate::server::ws) struct EvolutionTokenQuery {
     token: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub(in crate::server::ws) struct EvolutionStageChatQuery {
-    #[serde(default)]
-    cycle_id: Option<String>,
-    #[serde(default)]
-    stage: Option<String>,
-    #[serde(default)]
-    token: Option<String>,
-}
-
 pub(in crate::server::ws) async fn evolution_snapshot_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
     headers: HeaderMap,
@@ -92,38 +82,6 @@ pub(in crate::server::ws) async fn evolution_cycle_history_handler(
         &path.project,
         &path.workspace,
         &handler_ctx,
-    )
-    .await
-    .map_err(map_query_error)?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn evolution_stage_chat_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<EvolutionWorkspacePath>,
-    Query(query): Query<EvolutionStageChatQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-
-    let cycle_id = query
-        .cycle_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| ApiError::BadRequest("missing query parameter: cycle_id".to_string()))?;
-    let stage = query
-        .stage
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| ApiError::BadRequest("missing query parameter: stage".to_string()))?;
-
-    let response = crate::server::handlers::evolution::query_evolution_stage_chat(
-        &path.project,
-        &path.workspace,
-        cycle_id,
-        stage,
     )
     .await
     .map_err(map_query_error)?;

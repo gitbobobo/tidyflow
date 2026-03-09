@@ -2488,9 +2488,9 @@ struct EvolutionTabView: View {
 
 
 
-                if canOpenStageChat(stage: agent.stage, status: statusText) {
+                if canOpenStageSession(stage: agent.stage) {
                     Button {
-                        openStageChat(stage: agent.stage)
+                        openStageSession(stage: agent.stage)
                     } label: {
                         HStack(spacing: 4) {
                             Text(displayStatusText)
@@ -2584,15 +2584,8 @@ struct EvolutionTabView: View {
         }
     }
 
-    private func canOpenStageChat(stage: String, status: String) -> Bool {
-        let normalized = normalizedStageStatus(status)
-        return normalized == "running" ||
-            normalized == "done" ||
-            normalized == "completed" ||
-            normalized == "已完成" ||
-            normalized == "完成" ||
-            normalized == "success" ||
-            normalized == "succeeded"
+    private func canOpenStageSession(stage: String) -> Bool {
+        currentItem?.latestResolvedExecution(forExactStage: stage) != nil
     }
 
     private func normalizedStageStatus(_ status: String) -> String {
@@ -2671,18 +2664,31 @@ struct EvolutionTabView: View {
         EvolutionStageSemantics.iconName(for: stage)
     }
 
-    private func openStageChat(stage: String) {
-        guard let item = currentItem else { return }
-        appState.openEvolutionStageChat(
-            project: item.project,
-            workspace: item.workspace,
-            cycleId: item.cycleID,
-            stage: stage
+    private func openStageSession(stage: String) {
+        guard let item = currentItem,
+              let execution = item.latestResolvedExecution(forExactStage: stage),
+              let aiTool = AIChatTool(rawValue: execution.aiTool) else { return }
+        let workspace = item.workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workspace.isEmpty else { return }
+
+        let cached = appState.cachedAISession(
+            projectName: item.project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            sessionId: execution.sessionID
         )
+        let session = AISessionInfo(
+            projectName: item.project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            id: execution.sessionID,
+            title: cached?.title ?? "\(stageDisplayName(execution.stage)) · \(item.cycleID)",
+            updatedAt: cached?.updatedAt ?? 0,
+            origin: .evolutionSystem
+        )
+        appState.upsertAISession(session, for: aiTool)
+        appState.sessionPanelAction = .loadSession(session)
         viewerStage = stage
-        #if os(iOS)
-        isSessionViewerPresented = true
-        #endif
     }
 
     private func startCurrentWorkspace() {

@@ -1634,17 +1634,10 @@ struct MobileEvolutionView: View {
                         }
                     )
                     Section(sectionTitle(for: profile, runtime: runtime)) {
-                        if canOpenStageChat(stage: stage, status: statusText) {
+                        if canOpenStageSession(stage: stage) {
                             LabeledContent("evolution.page.agent.status".localized) {
                                 Button {
-                                    guard let currentItem = item else { return }
-                                    appState.openEvolutionStageChat(
-                                        project: project,
-                                        workspace: workspace,
-                                        cycleId: currentItem.cycleID,
-                                        stage: stage
-                                    )
-                                    appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
+                                    openCurrentStageSession(stage: stage)
                                 } label: {
                                     HStack(spacing: 4) {
                                         Text(localizedStageStatusDisplay(statusText))
@@ -1997,18 +1990,19 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private func canOpenStageChat(stage: String, status: String) -> Bool {
-        if normalizedStageKey(stage) == "auto_commit" {
-            return false
-        }
-        let normalized = normalizedStageStatus(status)
-        return normalized == "running" ||
-            normalized == "completed" ||
-            normalized == "done" ||
-            normalized == "success" ||
-            normalized == "succeeded" ||
-            normalized == "已完成" ||
-            normalized == "完成"
+    private func canOpenStageSession(stage: String) -> Bool {
+        item?.latestResolvedExecution(forStage: stage) != nil
+    }
+
+    private func openCurrentStageSession(stage: String) {
+        guard let currentItem = item,
+              let execution = currentItem.latestResolvedExecution(forStage: stage) else { return }
+        openExecutionSession(
+            sessionID: execution.sessionID,
+            aiToolRawValue: execution.aiTool,
+            stage: execution.stage,
+            cycleID: currentItem.cycleID
+        )
     }
 
     private func normalizedStageStatus(_ status: String) -> String {
@@ -2798,7 +2792,23 @@ struct MobileEvolutionView: View {
 
     private func openHistorySessionFromCycleDetail(entry: MobileCycleDetailTimelineEntry, cycleID: String) {
         guard let sessionID = trimmedNonEmptyText(entry.sessionID),
-              let aiTool = AIChatTool(rawValue: entry.aiTool) else { return }
+              let aiToolRawValue = trimmedNonEmptyText(entry.aiTool) else { return }
+
+        openExecutionSession(
+            sessionID: sessionID,
+            aiToolRawValue: aiToolRawValue,
+            stage: entry.stage,
+            cycleID: cycleID
+        )
+    }
+
+    private func openExecutionSession(
+        sessionID: String,
+        aiToolRawValue: String,
+        stage: String,
+        cycleID: String
+    ) {
+        guard let aiTool = AIChatTool(rawValue: aiToolRawValue) else { return }
 
         let cached = appState.cachedAISession(
             projectName: project,
@@ -2806,8 +2816,7 @@ struct MobileEvolutionView: View {
             aiTool: aiTool,
             sessionId: sessionID
         )
-        let fallbackTitle = trimmedNonEmptyText(entry.agent)
-            ?? trimmedNonEmptyText(entry.stage)
+        let fallbackTitle = trimmedNonEmptyText(stage)
             ?? cycleID
         let session = AISessionInfo(
             projectName: project,

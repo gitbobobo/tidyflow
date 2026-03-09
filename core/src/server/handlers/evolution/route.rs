@@ -81,10 +81,6 @@ pub(super) async fn handle_message(
             send_read_via_http_required(socket, "evo_get_snapshot").await?;
             Ok(true)
         }
-        ClientMessage::EvoOpenStageChat { .. } => {
-            send_read_via_http_required(socket, "evo_open_stage_chat").await?;
-            Ok(true)
-        }
         ClientMessage::EvoUpdateAgentProfile {
             project,
             workspace,

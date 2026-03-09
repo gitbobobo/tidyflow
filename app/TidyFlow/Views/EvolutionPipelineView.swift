@@ -421,9 +421,9 @@ struct EvolutionPipelineView: View {
                 Spacer()
 
                 // 查看聊天
-                if canOpenStageChat(stage: agent.stage, status: agent.status) {
+                if canOpenStageSession(stage: agent.stage) {
                     Button {
-                        openStageChat(stage: agent.stage)
+                        openStageSession(stage: agent.stage)
                     } label: {
                         Image(systemName: "bubble.left.and.text.bubble.right")
                             .font(.system(size: 10))
@@ -953,8 +953,7 @@ struct EvolutionPipelineView: View {
             totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
             terminalReasonCode: item.terminalReasonCode,
             terminalErrorMessage: item.terminalErrorMessage,
-            timelineEntries: entries,
-            allowsChatNavigation: false
+            timelineEntries: entries
         )
     }
 
@@ -971,8 +970,7 @@ struct EvolutionPipelineView: View {
             totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
             terminalReasonCode: cycle.terminalReasonCode,
             terminalErrorMessage: cycle.terminalErrorMessage,
-            timelineEntries: entries,
-            allowsChatNavigation: true
+            timelineEntries: entries
         )
     }
 
@@ -1142,9 +1140,7 @@ struct EvolutionPipelineView: View {
     }
 
     private func cycleTimelineRow(_ entry: PipelineCycleTimelineEntry, payload: PipelineCycleDetailPayload) -> some View {
-        let canOpenChat = payload.allowsChatNavigation &&
-            trimmedNonEmptyText(entry.sessionID) != nil &&
-            entry.aiToolRawValue.flatMap(AIChatTool.init(rawValue:)) != nil
+        let canOpenChat = hasResolvedTimelineSession(entry)
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: stageIconName(entry.stage))
                 .font(.system(size: 11, weight: .semibold))
@@ -1193,6 +1189,11 @@ struct EvolutionPipelineView: View {
             guard canOpenChat else { return }
             openHistorySessionFromDetail(entry: entry, cycleID: payload.cycleID)
         }
+    }
+
+    private func hasResolvedTimelineSession(_ entry: PipelineCycleTimelineEntry) -> Bool {
+        trimmedNonEmptyText(entry.sessionID) != nil &&
+            entry.aiToolRawValue.flatMap(AIChatTool.init(rawValue:)) != nil
     }
 
     private func detailMetaBadge(icon: String, label: String, value: String) -> some View {
@@ -1318,7 +1319,7 @@ struct EvolutionPipelineView: View {
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
                         .onTapGesture {
-                            openStageChat(stage: entry.stage)
+                            openStageSession(stage: entry.stage)
                         }
                 }
             }
@@ -1450,7 +1451,7 @@ struct EvolutionPipelineView: View {
                         .foregroundColor(.secondary.opacity(0.7))
 
                     Button {
-                        openStageChat(stage: entry.stage)
+                        openStageSession(stage: entry.stage)
                     } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8))
@@ -1927,24 +1928,37 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    // MARK: - Stage Chat
+    // MARK: - Stage Session
 
-    private func openStageChat(stage: String) {
-        guard let item = currentItem else { return }
-        appState.openEvolutionStageChat(
-            project: item.project,
-            workspace: item.workspace,
-            cycleId: item.cycleID,
-            stage: stage
+    private func openStageSession(stage: String) {
+        guard let item = currentItem,
+              let execution = item.latestResolvedExecution(forExactStage: stage) else { return }
+        openExecutionSession(
+            sessionID: execution.sessionID,
+            aiToolRawValue: execution.aiTool,
+            stage: execution.stage,
+            cycleID: item.cycleID
         )
-        // macOS 端不再弹出 sheet，handleEvolutionStageChatOpened 会直接
-        // 将会话加载到主聊天区，由左侧侧边栏高亮显示
     }
 
     private func openHistorySessionFromDetail(entry: PipelineCycleTimelineEntry, cycleID: String) {
+        guard let sessionID = trimmedNonEmptyText(entry.sessionID),
+              let aiToolRawValue = entry.aiToolRawValue else { return }
+        openExecutionSession(
+            sessionID: sessionID,
+            aiToolRawValue: aiToolRawValue,
+            stage: entry.stage,
+            cycleID: cycleID
+        )
+    }
+
+    private func openExecutionSession(
+        sessionID: String,
+        aiToolRawValue: String,
+        stage: String,
+        cycleID: String
+    ) {
         guard let workspace,
-              let sessionID = trimmedNonEmptyText(entry.sessionID),
-              let aiToolRawValue = entry.aiToolRawValue,
               let aiTool = AIChatTool(rawValue: aiToolRawValue) else { return }
 
         let cached = appState.cachedAISession(
@@ -1953,8 +1967,7 @@ struct EvolutionPipelineView: View {
             aiTool: aiTool,
             sessionId: sessionID
         )
-        let fallbackTitle = trimmedNonEmptyText(entry.agent)
-            ?? trimmedNonEmptyText(entry.stage)
+        let fallbackTitle = trimmedNonEmptyText(stage)
             ?? cycleID
         let session = AISessionInfo(
             projectName: project,
@@ -1970,9 +1983,8 @@ struct EvolutionPipelineView: View {
         appState.sessionPanelAction = .loadSession(session)
     }
 
-    private func canOpenStageChat(stage: String, status: String) -> Bool {
-        let normalized = normalizedStageStatus(status)
-        return normalized == "running" || isCompletedStatus(normalized)
+    private func canOpenStageSession(stage: String) -> Bool {
+        currentItem?.latestResolvedExecution(forExactStage: stage) != nil
     }
 
     // MARK: - 计划文档
@@ -2498,7 +2510,6 @@ struct PipelineCycleDetailPayload: Identifiable, Equatable {
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let timelineEntries: [PipelineCycleTimelineEntry]
-    let allowsChatNavigation: Bool
 }
 
 struct PipelineCycleHistory: Identifiable, Equatable {

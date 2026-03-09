@@ -613,23 +613,6 @@ impl EvolutionManager {
         Ok(())
     }
 
-    pub(super) async fn open_stage_chat(
-        &self,
-        project: &str,
-        workspace: &str,
-        cycle_id: &str,
-        stage: &str,
-    ) -> Option<(String, String)> {
-        let key = workspace_key(project, workspace);
-        let state = self.state.lock().await;
-        let entry = state.workspaces.get(&key)?;
-        if entry.cycle_id != cycle_id {
-            return None;
-        }
-        let session = entry.stage_sessions.get(stage)?.clone();
-        Some((session.ai_tool, session.session_id))
-    }
-
     pub(super) async fn build_snapshot(&self, _ctx: &HandlerContext) -> SnapshotResult {
         let state = self.state.lock().await;
         let running_count = state
