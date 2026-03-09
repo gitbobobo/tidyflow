@@ -43,7 +43,7 @@ extension AppState {
                     name: item.name,
                     root: item.root,
                     status: item.status,
-                    isDefault: item.name == "default",
+                    isDefault: WorkspaceKeySemantics.normalizeWorkspaceName(item.name) == "default",
                     sidebarStatus: workspaceSidebarStatusModel(from: item.sidebarStatus)
                 )
             }
@@ -95,7 +95,7 @@ extension AppState {
                 name: result.workspace.name,
                 root: result.workspace.root,
                 status: result.workspace.status,
-                isDefault: false,
+                isDefault: WorkspaceKeySemantics.normalizeWorkspaceName(result.workspace.name) == "default",
                 sidebarStatus: workspaceSidebarStatusModel(from: result.workspace.sidebarStatus)
             )
             projects[index].workspaces.append(newWorkspace)
@@ -116,7 +116,13 @@ extension AppState {
             if let index = projects.firstIndex(where: { $0.name == result.project }) {
                 projects[index].workspaces.removeAll { $0.name == result.workspace }
                 if selectedWorkspaceKey == result.workspace {
-                    selectedWorkspaceKey = projects[index].workspaces.first?.name
+                    let fallback = defaultWorkspace(for: projects[index]) ?? projects[index].workspaces.first
+                    if let fallback {
+                        selectWorkspace(projectId: projects[index].id, workspaceName: fallback.name)
+                    } else {
+                        selectedProjectId = nil
+                        selectedWorkspaceKey = nil
+                    }
                 }
             }
             // 清理残留缓存（包括文件索引、Git、文件列表、目录展开状态）

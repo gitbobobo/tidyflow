@@ -265,7 +265,7 @@
 "bottomPanel.category.terminal" = "终端";
 "bottomPanel.category.edit" = "编辑";
 "bottomPanel.category.diff" = "差异";
-"bottomPanel.category.settings" = "设置";
+"bottomPanel.category.projectConfig" = "项目配置";
 
 /* 底部面板空状态 */
 "bottomPanel.empty.terminal.title" = "暂无终端";
@@ -274,8 +274,8 @@
 "bottomPanel.empty.edit.message" = "打开文件后，这里会显示当前工作区的编辑实例。";
 "bottomPanel.empty.diff.title" = "暂无差异内容";
 "bottomPanel.empty.diff.message" = "打开差异视图后，这里会显示当前工作区的差异实例。";
-"bottomPanel.empty.settings.title" = "暂无设置内容";
-"bottomPanel.empty.settings.message" = "当前还没有在底部面板中打开设置实例。";
+"bottomPanel.empty.projectConfig.title" = "暂无项目配置";
+"bottomPanel.empty.projectConfig.message" = "当前项目的配置内容暂不可用。";
 
 /* Tab 内容 */
 "tabContent.selectOrAdd" = "选择或添加项目开始";

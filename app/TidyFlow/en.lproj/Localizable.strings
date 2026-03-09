@@ -263,7 +263,7 @@
 "bottomPanel.category.terminal" = "Terminal";
 "bottomPanel.category.edit" = "Edit";
 "bottomPanel.category.diff" = "Diff";
-"bottomPanel.category.settings" = "Settings";
+"bottomPanel.category.projectConfig" = "Project Config";
 
 /* Bottom Panel Empty States */
 "bottomPanel.empty.terminal.title" = "No terminals yet";
@@ -272,8 +272,8 @@
 "bottomPanel.empty.edit.message" = "Open a file to show editor instances for the current workspace here.";
 "bottomPanel.empty.diff.title" = "No diffs yet";
 "bottomPanel.empty.diff.message" = "Open a diff view to show diff instances for the current workspace here.";
-"bottomPanel.empty.settings.title" = "No settings view yet";
-"bottomPanel.empty.settings.message" = "There is no settings instance open in the bottom panel right now.";
+"bottomPanel.empty.projectConfig.title" = "No project config available";
+"bottomPanel.empty.projectConfig.message" = "The current project's configuration content is unavailable.";
 
 /* Tab Content */
 "tabContent.selectOrAdd" = "Select or Add a Project";

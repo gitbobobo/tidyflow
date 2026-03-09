@@ -29,27 +29,25 @@ enum TabKind: String, Codable {
     case terminal
     case editor
     case diff
-    case settings
     
     var iconName: String {
         switch self {
         case .terminal: return "terminal"
         case .editor: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
-        case .settings: return "gearshape"
         }
     }
 }
 
 enum BottomPanelCategory: String, Codable, CaseIterable {
-    case settings
+    case projectConfig
     case terminal
     case edit
     case diff
 
     var titleKey: String {
         switch self {
-        case .settings: return "bottomPanel.category.settings"
+        case .projectConfig: return "bottomPanel.category.projectConfig"
         case .terminal: return "bottomPanel.category.terminal"
         case .edit: return "bottomPanel.category.edit"
         case .diff: return "bottomPanel.category.diff"
@@ -58,7 +56,7 @@ enum BottomPanelCategory: String, Codable, CaseIterable {
 
     var iconName: String {
         switch self {
-        case .settings: return "gearshape"
+        case .projectConfig: return "slider.horizontal.3"
         case .terminal: return "terminal"
         case .edit: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
@@ -70,7 +68,6 @@ enum BottomPanelCategory: String, Codable, CaseIterable {
         case .terminal: return .terminal
         case .editor: return .edit
         case .diff: return .diff
-        case .settings: return .settings
         }
     }
 }

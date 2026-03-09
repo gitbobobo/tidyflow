@@ -1,42 +1,22 @@
 import SwiftUI
 
-/// 项目配置页面 - 在主内容区域显示
 struct ProjectConfigView: View {
-    let projectName: String
     @EnvironmentObject var appState: AppState
     @State private var showEditSheet = false
     @State private var editingCommand: ProjectCommand?
 
     /// 当前项目
     private var project: ProjectModel? {
-        appState.projects.first(where: { $0.name == projectName })
+        appState.projects.first(where: { $0.name == appState.selectedProjectName })
+    }
+
+    private var projectName: String {
+        project?.name ?? appState.selectedProjectName
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部标题栏
-            HStack {
-                Image(systemName: "folder.fill")
-                    .foregroundColor(.accentColor)
-                    .font(.system(size: 20))
-                Text(projectName)
-                    .font(.title2.bold())
-                Spacer()
-                Button {
-                    appState.selectedProjectForConfig = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("common.close".localized)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(.regularMaterial)
-
-            Divider()
+            header
 
             Form {
                 if let project = project {
@@ -105,6 +85,29 @@ struct ProjectConfigView: View {
                     appState.addProjectCommand(projectName: projectName, newCmd)
                 }
             }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder.badge.gearshape")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("bottomPanel.category.projectConfig".localized)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(projectName)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Divider()
         }
     }
 

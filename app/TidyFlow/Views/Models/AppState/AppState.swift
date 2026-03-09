@@ -307,8 +307,6 @@ class AppState: ObservableObject {
     // UX-2: Project Import State
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?
-    // 项目配置页面：当前选中配置的项目名称
-    @Published var selectedProjectForConfig: String?
     // v1.40: 工作流模板
     @Published var templates: [TemplateInfo] = []
 

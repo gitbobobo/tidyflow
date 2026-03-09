@@ -158,8 +158,8 @@ struct ProjectsSidebarView: View {
             let projectBinding = $appState.projects[index]
             let project = projectBinding.wrappedValue
             rows.append(.project(projectBinding))
-            // 项目始终展开
-            for workspace in project.workspaces {
+            // 项目始终展开，但隐藏 default 工作区，由项目行承担其语义。
+            for workspace in appState.sidebarVisibleWorkspaces(for: project) {
                 rows.append(.workspace(workspace, projectId: project.id, projectName: project.name))
             }
         }
@@ -198,9 +198,58 @@ struct ProjectRowView: View {
     @Binding var project: ProjectModel
     @EnvironmentObject var appState: AppState
     @State private var showDeleteConfirmation = false
+    @State private var showEndWorkConfirmation = false
 
     /// 项目路径（项目根目录），用于复制与在编辑器中打开
     private var projectPath: String? { project.path }
+    private var defaultWorkspace: WorkspaceModel? {
+        appState.defaultWorkspace(for: project) ?? project.workspaces.first
+    }
+    private var defaultWorkspacePath: String? {
+        defaultWorkspace?.root ?? project.path
+    }
+    private var defaultGlobalWorkspaceKey: String? {
+        guard let defaultWorkspace else { return nil }
+        return appState.globalWorkspaceKey(projectName: project.name, workspaceName: defaultWorkspace.name)
+    }
+    private var currentShortcutKey: String? {
+        guard let defaultGlobalWorkspaceKey else { return nil }
+        return appState.getWorkspaceShortcutKey(workspaceKey: defaultGlobalWorkspaceKey)
+    }
+    private var shortcutDisplayText: String? {
+        guard let key = currentShortcutKey else { return nil }
+        return "⌘\(key)"
+    }
+    private var terminalCount: Int {
+        guard let defaultGlobalWorkspaceKey else { return 0 }
+        return appState.workspaceTabs[defaultGlobalWorkspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
+    }
+    private var hasOpenTabs: Bool {
+        guard let defaultGlobalWorkspaceKey else { return false }
+        return !(appState.workspaceTabs[defaultGlobalWorkspaceKey] ?? []).isEmpty
+    }
+    private var isDeleting: Bool {
+        guard let defaultGlobalWorkspaceKey else { return false }
+        return appState.deletingWorkspaces.contains(defaultGlobalWorkspaceKey)
+    }
+    private var hasUnseenCompletion: Bool {
+        guard let defaultGlobalWorkspaceKey else { return false }
+        return appState.taskManager.taskStore.unseenCompletionKeys.contains(defaultGlobalWorkspaceKey)
+    }
+    private var defaultWorkspaceActivityIndicators: [TreeRowActivityIndicator] {
+        guard let sidebarStatus = defaultWorkspace?.sidebarStatus else { return [] }
+        var items: [TreeRowActivityIndicator] = []
+        if sidebarStatus.hasStreamingChat {
+            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
+        }
+        if sidebarStatus.hasActiveEvolutionLoop {
+            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
+        }
+        if let taskIcon = sidebarStatus.taskIconName {
+            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon))
+        }
+        return items
+    }
 
     /// 菜单项图标尺寸
     private let menuIconSize: CGFloat = 16
@@ -209,68 +258,121 @@ struct ProjectRowView: View {
         FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
     }
 
+    @ViewBuilder
+    private var terminalCountBadge: some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.opacity(0.85))
+            Text("\(terminalCount)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
     var body: some View {
-        TreeRowView(
-            isExpandable: false,
-            isExpanded: true,
-            iconName: "folder.fill",
-            iconColor: .accentColor,
-            title: project.name,
-            depth: 0,
-            isSelected: appState.selectedProjectForConfig == project.name,
-            onTap: {
-                // 点击项目名称打开项目配置页面
-                if appState.selectedProjectForConfig == project.name {
-                    appState.selectedProjectForConfig = nil
-                } else {
-                    appState.selectedProjectForConfig = project.name
-                    // 清除工作空间选中状态，避免工具栏和右侧面板显示旧数据
-                    appState.selectedWorkspaceKey = nil
-                    appState.selectedProjectId = nil
-                }
+        Group {
+            if terminalCount > 0 {
+                TreeRowView(
+                    isExpandable: false,
+                    isExpanded: true,
+                    iconName: "",
+                    iconColor: .clear,
+                    title: project.name,
+                    depth: 0,
+                    isSelected: appState.isSelectedProjectDefaultWorkspace(project),
+                    trailingText: shortcutDisplayText,
+                    trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
+                    activityIndicators: defaultWorkspaceActivityIndicators,
+                    isLoading: isDeleting,
+                    customIconView: terminalCountBadge,
+                    onTap: {
+                        if !isDeleting {
+                            appState.selectProjectDefaultWorkspace(project)
+                        }
+                    }
+                )
+            } else {
+                TreeRowView(
+                    isExpandable: false,
+                    isExpanded: true,
+                    iconName: "folder.fill",
+                    iconColor: .accentColor,
+                    title: project.name,
+                    depth: 0,
+                    isSelected: appState.isSelectedProjectDefaultWorkspace(project),
+                    trailingText: shortcutDisplayText,
+                    trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
+                    activityIndicators: defaultWorkspaceActivityIndicators,
+                    isLoading: isDeleting,
+                    onTap: {
+                        if !isDeleting {
+                            appState.selectProjectDefaultWorkspace(project)
+                        }
+                    }
+                )
             }
-        )
+        }
         // 项目右键菜单：路径操作 → 项目操作 → 危险操作
         .contextMenu {
-            // ── 路径 / 打开 ──
-            if let path = projectPath {
-                Button {
-                    copyPathToPasteboard(path)
-                } label: {
-                    Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
-                }
-                Button {
-                    openInFinder(path)
-                } label: {
-                    Label("sidebar.openInFinder".localized, systemImage: "folder")
-                }
-                Menu {
-                    ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                        Button {
-                            _ = appState.openPathInEditor(path, editor: editor)
-                        } label: {
-                            Label {
-                                Text(editor.rawValue)
-                            } icon: {
-                                editorMenuIcon(editor)
-                            }
-                        }
-                        .disabled(!editor.isInstalled)
+            if !isDeleting {
+                if let path = defaultWorkspacePath ?? projectPath {
+                    Button {
+                        copyPathToPasteboard(path)
+                    } label: {
+                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
                     }
-                } label: {
-                    Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
+                    Button {
+                        openInFinder(path)
+                    } label: {
+                        Label("sidebar.openInFinder".localized, systemImage: "folder")
+                    }
+                    Menu {
+                        ForEach(ExternalEditor.allCases, id: \.self) { editor in
+                            Button {
+                                _ = appState.openPathInEditor(path, editor: editor)
+                            } label: {
+                                Label {
+                                    Text(editor.rawValue)
+                                } icon: {
+                                    editorMenuIcon(editor)
+                                }
+                            }
+                            .disabled(!editor.isInstalled)
+                        }
+                    } label: {
+                        Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
+                    }
+                    Divider()
                 }
-                Divider()
+
+                if defaultWorkspace != nil {
+                    Button {
+                        triggerAICommit()
+                    } label: {
+                        Label("git.aiCommit".localized, systemImage: "sparkles")
+                    }
+
+                    Button {
+                        showEndWorkConfirmation = true
+                    } label: {
+                        Label("sidebar.endWork".localized, systemImage: "xmark.circle")
+                    }
+                    .disabled(!hasOpenTabs)
+
+                    Divider()
+                }
             }
 
             // ── 项目操作 ──
-            Button {
-                appState.createWorkspace(projectName: project.name)
-            } label: {
-                Label("sidebar.newWorkspace".localized, systemImage: "plus.square.on.square")
-            }
+            if !isDeleting {
+                Button {
+                    appState.createWorkspace(projectName: project.name)
+                } label: {
+                    Label("sidebar.newWorkspace".localized, systemImage: "plus.square.on.square")
+                }
 
-            Divider()
+                Divider()
+            }
 
             // ── 危险操作 ──
             Button(role: .destructive) {
@@ -287,6 +389,28 @@ struct ProjectRowView: View {
         } message: {
             Text(String(format: "sidebar.removeProject.message".localized, project.name))
         }
+        .alert("sidebar.endWork.confirm.title".localized, isPresented: $showEndWorkConfirmation) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.confirm".localized) {
+                guard let defaultGlobalWorkspaceKey else { return }
+                appState.forceCloseAllTabs(workspaceKey: defaultGlobalWorkspaceKey)
+            }
+        } message: {
+            Text("sidebar.endWork.confirm.message".localized)
+        }
+    }
+
+    private func triggerAICommit() {
+        guard let defaultWorkspace, let path = defaultWorkspacePath else { return }
+        appState.submitBackgroundTask(
+            type: .aiCommit,
+            context: .aiCommit(AICommitContext(
+                projectName: project.name,
+                workspaceKey: defaultWorkspace.name,
+                workspacePath: path,
+                projectPath: project.path
+            ))
+        )
     }
 }
 

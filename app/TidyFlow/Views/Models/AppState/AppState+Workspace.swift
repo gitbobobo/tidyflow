@@ -3,6 +3,24 @@ import Foundation
 extension AppState {
     // MARK: - UX-1: Project/Workspace Selection
 
+    func defaultWorkspace(for project: ProjectModel) -> WorkspaceModel? {
+        WorkspaceSelectionSemantics.defaultWorkspace(project.workspaces, nameExtractor: \.name)
+    }
+
+    func sidebarVisibleWorkspaces(for project: ProjectModel) -> [WorkspaceModel] {
+        WorkspaceSelectionSemantics.sidebarVisibleWorkspaces(project.workspaces, nameExtractor: \.name)
+    }
+
+    func selectProjectDefaultWorkspace(_ project: ProjectModel) {
+        guard let workspace = defaultWorkspace(for: project) ?? project.workspaces.first else { return }
+        selectWorkspace(projectId: project.id, workspaceName: workspace.name)
+    }
+
+    func isSelectedProjectDefaultWorkspace(_ project: ProjectModel) -> Bool {
+        guard let workspace = defaultWorkspace(for: project) ?? project.workspaces.first else { return false }
+        return selectedProjectId == project.id && selectedWorkspaceKey == workspace.name
+    }
+
     /// 当前选中的工作区身份标识（共享语义层）。
     /// 由 `selectedProjectId`、`selectedProjectName`、`selectedWorkspaceKey` 派生，
     /// 视图层与业务逻辑统一通过此属性获取当前工作区上下文，不再各自拼装。
@@ -37,8 +55,6 @@ extension AppState {
         selectedProjectName = projectName
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
-        // 选中工作空间时关闭项目配置页面
-        selectedProjectForConfig = nil
         // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
         clearAISelectorBootstrapContexts()
         // 切换工作空间时清理会话列表分页状态，避免旧请求残留导致界面串页。

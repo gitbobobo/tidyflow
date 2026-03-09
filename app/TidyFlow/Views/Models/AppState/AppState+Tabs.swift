@@ -58,7 +58,7 @@ extension AppState {
             workspaceTabs[workspaceKey] = []
         }
         if activeBottomPanelCategoryByWorkspace[workspaceKey] == nil {
-            activeBottomPanelCategoryByWorkspace[workspaceKey] = .settings
+            activeBottomPanelCategoryByWorkspace[workspaceKey] = .projectConfig
         }
     }
 
@@ -94,6 +94,14 @@ extension AppState {
         activeBottomPanelCategoryByWorkspace[workspaceKey] = category
         let categoryTabs = tabs(in: category, workspaceKey: workspaceKey)
         guard !categoryTabs.isEmpty else {
+            if category == .projectConfig {
+                activeTabIdByWorkspace[workspaceKey] = nil
+                workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+                #if os(macOS)
+                expandBottomPanelIfNeeded()
+                #endif
+                return
+            }
             if category == .terminal {
                 addTerminalTab(workspaceKey: workspaceKey)
                 return
@@ -302,7 +310,7 @@ extension AppState {
         if let firstTab = workspaceTabs[workspaceKey]?.first {
             return firstTab.bottomPanelCategory
         }
-        return .settings
+        return .projectConfig
     }
 
     private func recordTabActivation(workspaceKey: String, tabId: UUID) {

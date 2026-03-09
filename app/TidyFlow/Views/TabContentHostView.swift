@@ -44,7 +44,7 @@ private struct BottomPanelWorkspaceContent: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if displayedTabs.count > 1 {
+            if activeCategory != .projectConfig && displayedTabs.count > 1 {
                 BottomPanelVerticalTabList(
                     workspaceKey: workspaceKey,
                     category: activeCategory,
@@ -55,7 +55,10 @@ private struct BottomPanelWorkspaceContent: View {
             }
 
             Group {
-                if let activeTab {
+                if activeCategory == .projectConfig {
+                    ProjectConfigView()
+                        .environmentObject(appState)
+                } else if let activeTab {
                     content(for: activeTab)
                 } else {
                     BottomPanelCategoryEmptyView(category: activeCategory)
@@ -77,10 +80,6 @@ private struct BottomPanelWorkspaceContent: View {
         case .diff:
             NativeDiffContentView(path: tab.payload)
                 .id("\(tab.payload)-\(tab.diffMode ?? "working")")
-        case .settings:
-            SettingsContentView()
-                .environmentObject(appState)
-                .id(tab.id)
         }
     }
 }
@@ -281,8 +280,8 @@ private struct BottomPanelCategoryEmptyView: View {
             return "bottomPanel.empty.edit.title".localized
         case .diff:
             return "bottomPanel.empty.diff.title".localized
-        case .settings:
-            return "bottomPanel.empty.settings.title".localized
+        case .projectConfig:
+            return "bottomPanel.empty.projectConfig.title".localized
         }
     }
 }

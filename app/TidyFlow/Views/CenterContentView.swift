@@ -29,15 +29,7 @@ struct CenterContentView: View {
                     }
                 }
             } else {
-                // 未选择工作空间
-                ZStack {
-                    if let projectName = appState.selectedProjectForConfig {
-                        ProjectConfigView(projectName: projectName)
-                            .transition(.opacity)
-                    } else {
-                        NoActiveTabView()
-                    }
-                }
+                NoActiveTabView()
             }
         }
         .alert("tabContent.unsavedChanges".localized, isPresented: $editorStore.showUnsavedChangesAlert) {
@@ -94,14 +86,7 @@ struct CenterContentView: View {
             )
 
             if appState.tabPanelExpanded {
-                ZStack {
-                    if let projectName = appState.selectedProjectForConfig {
-                        ProjectConfigView(projectName: projectName)
-                            .transition(.opacity)
-                    } else {
-                        TabContentHostView()
-                    }
-                }
+                TabContentHostView()
             }
         }
     }
