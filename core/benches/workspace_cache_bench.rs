@@ -13,9 +13,7 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use tidyflow_core::workspace::cache_metrics::{
-    self, FileCacheMetricsSample, WorkspaceCacheSnapshot, REBUILD_BUDGET_THRESHOLD,
-};
+use tidyflow_core::workspace::cache_metrics::{self, WorkspaceCacheSnapshot};
 
 // ============================================================================
 // 工具：多项目、多工作区测试场景构造器
@@ -184,7 +182,10 @@ fn bench_eviction_scan(c: &mut Criterion) {
     c.bench_function("workspace_cache/eviction_scan_multi_ws", |b| {
         b.iter(|| {
             for (_, _, root) in &scenario.entries {
-                cache_metrics::record_file_cache_eviction(black_box(root), black_box("ttl_expired"));
+                cache_metrics::record_file_cache_eviction(
+                    black_box(root),
+                    black_box("ttl_expired"),
+                );
                 cache_metrics::record_git_cache_eviction(black_box(root), black_box("ttl_expired"));
             }
         })

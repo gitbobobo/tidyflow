@@ -1,4 +1,7 @@
-use std::sync::{atomic::{AtomicU64, Ordering}, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 
 use tracing::info;
 

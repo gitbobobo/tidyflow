@@ -11,13 +11,13 @@ use crate::server::protocol::{
     EvolutionWorkspaceItem, ServerMessage,
 };
 
+use super::consts::compare_runtime_stage_names;
 use super::stage::{agent_name, build_agents};
 use super::utils::{evolution_workspace_dir, read_json, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
     BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT, STAGES,
 };
-use super::consts::compare_runtime_stage_names;
 
 fn initial_global_loop_round() -> u32 {
     1
@@ -114,7 +114,10 @@ fn parse_cycle_stage_history_entries(
 
     let mut stages = Vec::new();
     for stage in stage_names {
-        let Some(runtime) = stage_runtime.get(&stage).and_then(|value| value.as_object()) else {
+        let Some(runtime) = stage_runtime
+            .get(&stage)
+            .and_then(|value| value.as_object())
+        else {
             continue;
         };
         let status =

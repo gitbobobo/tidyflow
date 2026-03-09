@@ -35,7 +35,15 @@ pub(crate) async fn handle_git_rebase(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                 },
             )
             .await?;
@@ -99,7 +107,15 @@ pub(crate) async fn handle_git_rebase_continue(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                 },
             )
             .await?;
@@ -163,7 +179,15 @@ pub(crate) async fn handle_git_rebase_abort(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                 },
             )
             .await?;
@@ -255,7 +279,15 @@ pub(crate) async fn handle_git_rebase_onto_default(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },
@@ -321,7 +353,15 @@ pub(crate) async fn handle_git_rebase_onto_default_continue(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },
@@ -387,7 +427,15 @@ pub(crate) async fn handle_git_rebase_onto_default_abort(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },

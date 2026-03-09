@@ -256,20 +256,69 @@ pub(super) async fn handle_ai_read_via_http_required(
 ) -> Result<bool, String> {
     // 提取 action 名称与 project/workspace（用于多工作区归属提示）
     let (action, project, workspace) = match msg {
-        ClientMessage::AISessionList { project_name, workspace_name, .. } =>
-            (Some("ai_session_list"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AISessionMessages { project_name, workspace_name, .. } =>
-            (Some("ai_session_messages"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AISessionStatus { project_name, workspace_name, .. } =>
-            (Some("ai_session_status"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AIProviderList { project_name, workspace_name, .. } =>
-            (Some("ai_provider_list"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AIAgentList { project_name, workspace_name, .. } =>
-            (Some("ai_agent_list"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AISlashCommands { project_name, workspace_name, .. } =>
-            (Some("ai_slash_commands"), Some(project_name.clone()), Some(workspace_name.clone())),
-        ClientMessage::AISessionConfigOptions { project_name, workspace_name, .. } =>
-            (Some("ai_session_config_options"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AISessionList {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_session_list"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AISessionMessages {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_session_messages"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AISessionStatus {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_session_status"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AIProviderList {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_provider_list"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AIAgentList {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_agent_list"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AISlashCommands {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_slash_commands"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
+        ClientMessage::AISessionConfigOptions {
+            project_name,
+            workspace_name,
+            ..
+        } => (
+            Some("ai_session_config_options"),
+            Some(project_name.clone()),
+            Some(workspace_name.clone()),
+        ),
         _ => (None, None, None),
     };
     let Some(action) = action else {

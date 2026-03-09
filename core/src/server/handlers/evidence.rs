@@ -149,15 +149,35 @@ pub async fn handle_evidence_message(
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::EvidenceGetSnapshot { project, workspace } => {
-            send_read_via_http_required(socket, "evidence_get_snapshot", Some(project.clone()), Some(workspace.clone())).await?;
+            send_read_via_http_required(
+                socket,
+                "evidence_get_snapshot",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
             Ok(true)
         }
         ClientMessage::EvidenceGetRebuildPrompt { project, workspace } => {
-            send_read_via_http_required(socket, "evidence_get_rebuild_prompt", Some(project.clone()), Some(workspace.clone())).await?;
+            send_read_via_http_required(
+                socket,
+                "evidence_get_rebuild_prompt",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
             Ok(true)
         }
-        ClientMessage::EvidenceReadItem { project, workspace, .. } => {
-            send_read_via_http_required(socket, "evidence_read_item", Some(project.clone()), Some(workspace.clone())).await?;
+        ClientMessage::EvidenceReadItem {
+            project, workspace, ..
+        } => {
+            send_read_via_http_required(
+                socket,
+                "evidence_read_item",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
             Ok(true)
         }
         _ => Ok(false),

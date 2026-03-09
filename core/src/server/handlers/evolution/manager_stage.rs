@@ -23,9 +23,8 @@ use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::consts::{
     implement_stage_name, parse_implement_stage_instance, parse_reimplement_stage_instance,
-    parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file,
-    verify_stage_name, ImplementationStageKind, IMPLEMENTATION_STAGE_KINDS,
-    STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+    parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file, verify_stage_name,
+    ImplementationStageKind, IMPLEMENTATION_STAGE_KINDS, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
 };
 use super::profile::profile_for_stage;
 use super::utils::{
@@ -1466,14 +1465,20 @@ fn collect_repair_item_ids(items: &[VerifyRepairItem], label: &str) -> Result<Ve
             return Err(format!("{}[{}].repair_item_id 不能为空", label, idx));
         }
         if !seen.insert(repair_item_id.to_string()) {
-            return Err(format!("{} 存在重复 repair_item_id: {}", label, repair_item_id));
+            return Err(format!(
+                "{} 存在重复 repair_item_id: {}",
+                label, repair_item_id
+            ));
         }
         ids.push(repair_item_id.to_string());
     }
     Ok(ids)
 }
 
-fn validate_repair_item_dependencies(items: &[VerifyRepairItem], label: &str) -> Result<(), String> {
+fn validate_repair_item_dependencies(
+    items: &[VerifyRepairItem],
+    label: &str,
+) -> Result<(), String> {
     let known_ids: HashSet<String> = items
         .iter()
         .map(|item| item.repair_item_id.trim().to_string())
@@ -1487,16 +1492,25 @@ fn validate_repair_item_dependencies(items: &[VerifyRepairItem], label: &str) ->
         for (dep_idx, dep) in item.depends_on.iter().enumerate() {
             let dep = dep.trim();
             if dep.is_empty() {
-                return Err(format!("{}[{}].depends_on[{}] 不能为空", label, idx, dep_idx));
+                return Err(format!(
+                    "{}[{}].depends_on[{}] 不能为空",
+                    label, idx, dep_idx
+                ));
             }
             if dep == item_id {
                 return Err(format!("{}[{}] 不能依赖自身", label, idx));
             }
             if !known_ids.contains(dep) {
-                return Err(format!("{}[{}] 依赖未知 repair_item_id: {}", label, idx, dep));
+                return Err(format!(
+                    "{}[{}] 依赖未知 repair_item_id: {}",
+                    label, idx, dep
+                ));
             }
             if !seen_dep.insert(dep.to_string()) {
-                return Err(format!("{}[{}].depends_on 存在重复依赖: {}", label, idx, dep));
+                return Err(format!(
+                    "{}[{}].depends_on 存在重复依赖: {}",
+                    label, idx, dep
+                ));
             }
             dependents
                 .entry(dep.to_string())
@@ -1807,11 +1821,7 @@ fn implement_stage_template(
     )
 }
 
-fn reimplement_stage_template(
-    stage: &str,
-    cycle_id: &str,
-    verify_iteration: u32,
-) -> String {
+fn reimplement_stage_template(stage: &str, cycle_id: &str, verify_iteration: u32) -> String {
     render_jsonc_template(
         r#"{
   // 重实现阶段模板：仅回填系统分配的 repair items 执行结果
@@ -2196,10 +2206,7 @@ impl EvolutionManager {
     }
 
     #[cfg(test)]
-    pub(super) fn issues_to_fix_for_stage(
-        cycle_dir: &Path,
-        stage: &str,
-    ) -> Result<String, String> {
+    pub(super) fn issues_to_fix_for_stage(cycle_dir: &Path, stage: &str) -> Result<String, String> {
         Self::repair_items_to_complete_for_stage(cycle_dir, stage)
     }
 
@@ -2462,10 +2469,7 @@ impl EvolutionManager {
             }
         }
 
-        let missing_ids: Vec<String> = expected_set
-            .difference(&result_ids)
-            .cloned()
-            .collect();
+        let missing_ids: Vec<String> = expected_set.difference(&result_ids).cloned().collect();
         if !missing_ids.is_empty() {
             report.push(format!(
                 "{}.repair_item_results 未完整覆盖 assigned_repair_plan: {:?}",
@@ -2497,7 +2501,11 @@ impl EvolutionManager {
         ));
         report.capture(ensure_stage_field_matches(&file_name, &verify_value, stage));
         if let Some(ctx) = validation_ctx {
-            report.capture(ensure_cycle_id_matches(&file_name, &verify_value, &ctx.cycle_id));
+            report.capture(ensure_cycle_id_matches(
+                &file_name,
+                &verify_value,
+                &ctx.cycle_id,
+            ));
             report.capture(ensure_artifact_freshness(
                 &file_name,
                 &verify_value,
@@ -2512,14 +2520,16 @@ impl EvolutionManager {
         match verify_file_iteration {
             Some(file_iteration) if file_iteration != verify_iteration => report.push(format!(
                 "{}.verify_iteration 不匹配: {} != {}",
-                file_name,
-                file_iteration, verify_iteration
+                file_name, file_iteration, verify_iteration
             )),
             Some(_) => {}
             None => report.push(format!("{} 缺少 verify_iteration", file_name)),
         }
 
-        match verify_value.get("verify_iteration_limit").and_then(|v| v.as_u64()) {
+        match verify_value
+            .get("verify_iteration_limit")
+            .and_then(|v| v.as_u64())
+        {
             Some(0) => report.push(format!("{}.verify_iteration_limit 必须大于 0", file_name)),
             Some(_) => {}
             None => report.push(format!("{} 缺少 verify_iteration_limit", file_name)),
@@ -2546,7 +2556,8 @@ impl EvolutionManager {
             .pointer("/verification_plan/checks")
             .and_then(|v| v.as_array())
             .map(|items| {
-                items.iter()
+                items
+                    .iter()
                     .filter_map(|item| id_from_value(item, &["id"]))
                     .collect()
             })
@@ -2555,7 +2566,8 @@ impl EvolutionManager {
             .get("work_items")
             .and_then(|v| v.as_array())
             .map(|items| {
-                items.iter()
+                items
+                    .iter()
                     .filter_map(|item| id_from_value(item, &["id"]))
                     .collect()
             })
@@ -2621,7 +2633,10 @@ impl EvolutionManager {
             .pointer("/adjudication/criteria_judgement")
             .and_then(|v| v.as_array());
         if criteria_judgement.is_none() {
-            report.push(format!("{} 缺少 adjudication.criteria_judgement", file_name));
+            report.push(format!(
+                "{} 缺少 adjudication.criteria_judgement",
+                file_name
+            ));
         }
         let mut judgement_criteria = HashSet::new();
         if let Some(criteria_judgement) = criteria_judgement {
@@ -2671,7 +2686,10 @@ impl EvolutionManager {
                 "{}.adjudication.overall_result.result 必须是 pass 或 fail",
                 file_name
             )),
-            None => report.push(format!("{} 缺少 adjudication.overall_result.result", file_name)),
+            None => report.push(format!(
+                "{} 缺少 adjudication.overall_result.result",
+                file_name
+            )),
         }
 
         let repair_plan = match extract_verify_repair_plan(&verify_value) {
@@ -2726,7 +2744,10 @@ impl EvolutionManager {
             }
             for check_id in &item.linked_check_ids {
                 if !known_check_ids.contains(check_id) {
-                    report.push(format!("{}.linked_check_ids 包含未知 check_id: {}", label, check_id));
+                    report.push(format!(
+                        "{}.linked_check_ids 包含未知 check_id: {}",
+                        label, check_id
+                    ));
                 }
             }
             for criteria_id in &item.source_criteria_ids {
@@ -2813,11 +2834,10 @@ impl EvolutionManager {
                         );
                     }
                 }
-                None => report
-                    .push(format!(
-                        "{} 缺少 carryover_verification.summary（重实现轮必须提供）",
-                        file_name
-                    )),
+                None => report.push(format!(
+                    "{} 缺少 carryover_verification.summary（重实现轮必须提供）",
+                    file_name
+                )),
             }
 
             match carry_items {
@@ -2847,11 +2867,10 @@ impl EvolutionManager {
                         }
                     }
                 }
-                None => report
-                    .push(format!(
-                        "{} 缺少 carryover_verification.items（重实现轮必须提供）",
-                        file_name
-                    )),
+                None => report.push(format!(
+                    "{} 缺少 carryover_verification.items（重实现轮必须提供）",
+                    file_name
+                )),
             }
         }
 
@@ -2967,23 +2986,19 @@ impl EvolutionManager {
                 backlog_contract_version,
                 validation_ctx,
             ),
-            _ if is_runtime_implement_stage(stage) => {
-                Self::validate_implement_artifact(
-                    stage,
-                    cycle_dir,
-                    verify_iteration,
-                    backlog_contract_version,
-                    validation_ctx,
-                )
-            }
-            _ if is_runtime_reimplement_stage(stage) => {
-                Self::validate_reimplement_artifact(
-                    stage,
-                    cycle_dir,
-                    verify_iteration,
-                    validation_ctx,
-                )
-            }
+            _ if is_runtime_implement_stage(stage) => Self::validate_implement_artifact(
+                stage,
+                cycle_dir,
+                verify_iteration,
+                backlog_contract_version,
+                validation_ctx,
+            ),
+            _ if is_runtime_reimplement_stage(stage) => Self::validate_reimplement_artifact(
+                stage,
+                cycle_dir,
+                verify_iteration,
+                validation_ctx,
+            ),
             _ => Ok(()),
         }
     }
@@ -3381,8 +3396,8 @@ impl EvolutionManager {
                 )?;
             }
             _ if is_runtime_reimplement_stage(stage) => {
-                let artifact_file =
-                    stage_artifact_file(stage).ok_or_else(|| format!("未知重实现阶段: {}", stage))?;
+                let artifact_file = stage_artifact_file(stage)
+                    .ok_or_else(|| format!("未知重实现阶段: {}", stage))?;
                 Self::ensure_jsonc_template(
                     &cycle_dir.join(artifact_file),
                     &reimplement_stage_template(stage, &cycle_id, verify_iteration),
@@ -3712,10 +3727,9 @@ impl EvolutionManager {
                     }
                 }
                 if let Some(file_name) = stage_artifact_file(stage) {
-                    let mut files = vec![file_name, "plan.jsonc".to_string(), "plan.md".to_string()];
-                    if is_runtime_implement_stage(stage) {
-                        files.push("对应 verify.<n>.jsonc".to_string());
-                    } else if is_runtime_reimplement_stage(stage) {
+                    let mut files =
+                        vec![file_name, "plan.jsonc".to_string(), "plan.md".to_string()];
+                    if is_runtime_implement_stage(stage) || is_runtime_reimplement_stage(stage) {
                         files.push("对应 verify.<n>.jsonc".to_string());
                     }
                     return files.join(" / ");
@@ -5307,7 +5321,9 @@ impl EvolutionManager {
                             next_stage = Self::next_initial_implementation_stage(&cycle_dir, stage)
                                 .ok()
                                 .flatten()
-                                .unwrap_or_else(|| verify_stage_name_for_iteration(entry.verify_iteration));
+                                .unwrap_or_else(|| {
+                                    verify_stage_name_for_iteration(entry.verify_iteration)
+                                });
                         }
                         Err(err) => {
                             entry.status = "failed_system".to_string();
@@ -5404,7 +5420,9 @@ impl EvolutionManager {
                 };
                 reimplement_stage_name(entry.verify_iteration)
             };
-            if let Err(err) = Self::persist_assigned_repair_plan(&cycle_dir, &reimplement_stage, &repair_plan) {
+            if let Err(err) =
+                Self::persist_assigned_repair_plan(&cycle_dir, &reimplement_stage, &repair_plan)
+            {
                 self.mark_failed_with_code(key, "evo_repair_plan_missing", &err, ctx)
                     .await;
                 return false;
@@ -5693,20 +5711,17 @@ impl EvolutionManager {
             // WI-003: Evolution 系统故障写入健康注册表，供修复执行器消费
             {
                 let registry = crate::server::health::global();
-                match registry.try_write() {
-                    Ok(mut reg) => {
-                        reg.record_log_error(
-                            format!("evo:{}", code),
-                            normalized_err.chars().take(120).collect::<String>(),
-                            crate::server::protocol::health::HealthContext {
-                                project: Some(project.clone()),
-                                workspace: Some(workspace.clone()),
-                                session_id: None,
-                                cycle_id: Some(cycle_id.clone()),
-                            },
-                        );
-                    }
-                    Err(_) => {}
+                if let Ok(mut reg) = registry.try_write() {
+                    reg.record_log_error(
+                        format!("evo:{}", code),
+                        normalized_err.chars().take(120).collect::<String>(),
+                        crate::server::protocol::health::HealthContext {
+                            project: Some(project.clone()),
+                            workspace: Some(workspace.clone()),
+                            session_id: None,
+                            cycle_id: Some(cycle_id.clone()),
+                        },
+                    );
                 };
             }
             self.persist_cycle_file(key).await.ok();
@@ -5739,10 +5754,9 @@ mod tests {
         auto_commit_stage_template, check_workspace_boundary, direction_stage_template,
         ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
         log_evolution_error, parse_adjudication_result_from_json, plan_markdown_template,
-        plan_stage_template, reimplement_stage_template,
-        should_force_advanced_reimplementation, should_start_next_round,
-        verify_stage_template, ArtifactValidationError, EvolutionManager, ImplementLane,
-        StageValidationContext, PLAN_MARKDOWN_FILE,
+        plan_stage_template, reimplement_stage_template, should_force_advanced_reimplementation,
+        should_start_next_round, verify_stage_template, ArtifactValidationError, EvolutionManager,
+        ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -5893,9 +5907,11 @@ mod tests {
                 }
             }),
         );
-        let outcome =
-            EvolutionManager::resolve_stage_outcome_from_validated_artifacts("verify.1", dir.path())
-                .expect("verify outcome should be readable after validation");
+        let outcome = EvolutionManager::resolve_stage_outcome_from_validated_artifacts(
+            "verify.1",
+            dir.path(),
+        )
+        .expect("verify outcome should be readable after validation");
         assert_eq!(outcome, Some(true));
     }
 
@@ -6292,7 +6308,11 @@ mod tests {
 
         let implement = implement_stage_template("implement.general.1", "c-42", 1, 2);
         assert!(implement.contains("\"work_item_results\""));
-        assert!(implement.contains("\"backlog_contract_version\": __BACKLOG_CONTRACT_VERSION__".replace("__BACKLOG_CONTRACT_VERSION__", "2").as_str()));
+        assert!(implement.contains(
+            "\"backlog_contract_version\": __BACKLOG_CONTRACT_VERSION__"
+                .replace("__BACKLOG_CONTRACT_VERSION__", "2")
+                .as_str()
+        ));
 
         let reimplement = reimplement_stage_template("reimplement.1", "c-42", 1);
         assert!(reimplement.contains("\"repair_item_results\""));
@@ -6301,12 +6321,12 @@ mod tests {
         let verify = verify_stage_template("verify.2", "c-42", 1, 3);
         assert!(verify.contains("// criteria_id 集必须与 plan.acceptance_criteria 完全一致"));
         assert!(verify.contains("//   \"criteria_id\": \"AC-001\""));
-        assert!(verify.contains("// 需要重实现时必须输出 repair_plan；pass 时 repair_items 必须为空数组"));
+        assert!(verify
+            .contains("// 需要重实现时必须输出 repair_plan；pass 时 repair_items 必须为空数组"));
 
         let auto_commit = auto_commit_stage_template("c-42");
         assert!(auto_commit
             .contains("// 若无可提交变更，需明确写出“无可提交变更”或 no changes to commit"));
-
     }
 
     #[test]
@@ -6752,10 +6772,7 @@ mod tests {
                 }
             }),
         );
-        write_json(
-            &dir.path().join("verify.1.jsonc"),
-            serde_json::json!({}),
-        );
+        write_json(&dir.path().join("verify.1.jsonc"), serde_json::json!({}));
         write_json(
             &dir.path().join("reimplement.1.jsonc"),
             serde_json::json!({
@@ -6906,7 +6923,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_validate_implement_general_without_backlog_contract_fields() {
+    fn validate_stage_artifacts_should_validate_implement_general_without_backlog_contract_fields()
+    {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
@@ -7574,8 +7592,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_reject_verify_first_iteration_missing_source_work_item_ids(
-    ) {
+    fn validate_stage_artifacts_should_reject_verify_first_iteration_missing_source_work_item_ids()
+    {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -7657,8 +7675,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_accept_verify_first_iteration_complete_repair_plan(
-    ) {
+    fn validate_stage_artifacts_should_accept_verify_first_iteration_complete_repair_plan() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -7739,7 +7756,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_stage_artifacts_should_accept_verify_repair_plan_with_multiple_source_criteria_ids() {
+    fn validate_stage_artifacts_should_accept_verify_repair_plan_with_multiple_source_criteria_ids()
+    {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("cycle.jsonc"),

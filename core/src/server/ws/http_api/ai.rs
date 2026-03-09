@@ -88,8 +88,8 @@ pub(in crate::server::ws) async fn ai_session_messages_handler(
     Query(query): Query<SessionMessagesQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace)
-        .with_session(&path.session_id);
+    let qctx =
+        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
     let response = crate::server::handlers::ai::session::query_ai_session_messages(
         &ctx.app_state,
         &ctx.ai_state,
@@ -112,8 +112,8 @@ pub(in crate::server::ws) async fn ai_session_status_handler(
     Query(query): Query<OptionalSessionQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace)
-        .with_session(&path.session_id);
+    let qctx =
+        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
     let response = crate::server::handlers::ai::session::query_ai_session_status(
         &ctx.app_state,
         &ctx.ai_state,

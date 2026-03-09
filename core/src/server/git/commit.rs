@@ -413,7 +413,10 @@ pub fn git_conflict_detail(
     };
 
     let conflict_markers_count = if !is_binary {
-        current_content.lines().filter(|l| l.starts_with("<<<<<<<")).count()
+        current_content
+            .lines()
+            .filter(|l| l.starts_with("<<<<<<<"))
+            .count()
     } else {
         0
     };

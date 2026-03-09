@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
-use crate::server::protocol::{
-    ServerMessage, WorkspaceCacheMetricsInfo, FileCacheMetricsInfo, GitCacheMetricsInfo,
-    WorkspaceInfo, PROTOCOL_VERSION,
-};
 use crate::server::protocol::health::{
     HealthIncident, RepairActionRequest, RepairAuditEntry, SystemHealthSnapshot,
+};
+use crate::server::protocol::{
+    FileCacheMetricsInfo, GitCacheMetricsInfo, ServerMessage, WorkspaceCacheMetricsInfo,
+    WorkspaceInfo, PROTOCOL_VERSION,
 };
 use crate::workspace::cache_metrics::WorkspaceCacheSnapshot;
 use crate::workspace::state::DEFAULT_WORKSPACE_NAME;
@@ -163,7 +163,10 @@ fn evolution_index_from_items(
 async fn build_workspace_items_and_metrics(
     app_state: &SharedAppState,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
-) -> (Vec<SystemSnapshotWorkspaceItem>, Vec<WorkspaceCacheMetricsInfo>) {
+) -> (
+    Vec<SystemSnapshotWorkspaceItem>,
+    Vec<WorkspaceCacheMetricsInfo>,
+) {
     let mut items = Vec::new();
     let mut cache_metrics_list = Vec::new();
 
@@ -424,9 +427,11 @@ mod tests {
     async fn title_should_be_propagated_when_present() {
         let items = vec![test_item("cycle-2", Some("本轮标题"), None, None, None)];
         let idx = evolution_index_from_items(&items);
-        let (result, _) =
-            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(make_test_state())), &idx)
-                .await;
+        let (result, _) = build_workspace_items_and_metrics(
+            &Arc::new(tokio::sync::RwLock::new(make_test_state())),
+            &idx,
+        )
+        .await;
         let default_item = result
             .iter()
             .find(|it| it.project == "demo" && it.workspace == "default")
@@ -438,9 +443,11 @@ mod tests {
     #[tokio::test]
     async fn workspace_items_should_include_default_and_not_started_when_no_evolution() {
         let state = make_test_state();
-        let (items, cache_metrics) =
-            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
-                .await;
+        let (items, cache_metrics) = build_workspace_items_and_metrics(
+            &Arc::new(tokio::sync::RwLock::new(state)),
+            &HashMap::new(),
+        )
+        .await;
         let default_item = items
             .iter()
             .find(|it| it.project == "demo" && it.workspace == "default")
@@ -449,7 +456,9 @@ mod tests {
         assert_eq!(default_item.evolution_cycle_id, None);
         assert_eq!(default_item.title, None);
         // cache_metrics 应包含 default 工作区的指标条目
-        assert!(cache_metrics.iter().any(|m| m.project == "demo" && m.workspace == "default"));
+        assert!(cache_metrics
+            .iter()
+            .any(|m| m.project == "demo" && m.workspace == "default"));
     }
 
     #[tokio::test]
@@ -473,9 +482,11 @@ mod tests {
             workspaces: HashMap::new(),
             commands: Vec::new(),
         });
-        let (items, _) =
-            build_workspace_items_and_metrics(&Arc::new(tokio::sync::RwLock::new(state)), &HashMap::new())
-                .await;
+        let (items, _) = build_workspace_items_and_metrics(
+            &Arc::new(tokio::sync::RwLock::new(state)),
+            &HashMap::new(),
+        )
+        .await;
         let keys = items
             .into_iter()
             .map(|it| format!("{}/{}", it.project, it.workspace))

@@ -85,7 +85,9 @@ pub async fn list_workspaces_message(
         branch: default_branch,
         status: "ready".to_string(),
         sidebar_status: crate::application::sidebar_status::workspace_sidebar_status(
-            ctx, project, DEFAULT_WORKSPACE_NAME,
+            ctx,
+            project,
+            DEFAULT_WORKSPACE_NAME,
         )
         .await,
     });

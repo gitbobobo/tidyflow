@@ -16,12 +16,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::warn;
 
+use crate::server::context::SharedAppState;
 use crate::server::protocol::health::{
     HealthContext, HealthIncident, IncidentRecoverability, IncidentSeverity, IncidentSource,
     RepairActionKind, RepairActionRequest, RepairAuditEntry, RepairOutcome, SystemHealthSnapshot,
     SystemHealthStatus,
 };
-use crate::server::context::SharedAppState;
 
 // ============================================================================
 // 时间工具
@@ -61,7 +61,6 @@ pub type HealthProbe = Box<dyn Fn() -> Vec<HealthIncident> + Send + Sync>;
 
 /// 探针注册信息
 struct ProbeEntry {
-    name: String,
     probe: HealthProbe,
 }
 
@@ -78,8 +77,6 @@ pub struct HealthRegistry {
     client_report_ts: HashMap<String, u64>,
     /// Core 近期错误计数（由 file_logger 写入）
     recent_error_count: u64,
-    /// 最近 core 错误条目（source: core_log）
-    recent_log_errors: Vec<HealthIncident>,
 }
 
 impl HealthRegistry {
@@ -91,38 +88,43 @@ impl HealthRegistry {
             client_incidents: HashMap::new(),
             client_report_ts: HashMap::new(),
             recent_error_count: 0,
-            recent_log_errors: Vec::new(),
         }
     }
 
     /// 注册健康探针
-    pub fn register_probe(&mut self, name: impl Into<String>, probe: HealthProbe) {
-        self.probes.push(ProbeEntry {
-            name: name.into(),
-            probe,
-        });
+    pub fn register_probe(&mut self, _name: impl Into<String>, probe: HealthProbe) {
+        self.probes.push(ProbeEntry { probe });
     }
 
     /// 记录 Core 日志层的错误（由 file_logger 调用）
-    pub fn record_log_error(&mut self, root_cause: impl Into<String>, summary: impl Into<String>,
-                             context: HealthContext) {
+    pub fn record_log_error(
+        &mut self,
+        root_cause: impl Into<String>,
+        summary: impl Into<String>,
+        context: HealthContext,
+    ) {
         let root_cause = root_cause.into();
         let now = unix_ms();
-        let incident_id = format!("core_log:{}:{}:{}",
+        let incident_id = format!(
+            "core_log:{}:{}:{}",
             root_cause,
             context.project.as_deref().unwrap_or(""),
-            context.workspace.as_deref().unwrap_or(""));
-        let entry = self.active_incidents.entry(incident_id.clone()).or_insert_with(|| HealthIncident {
-            incident_id: incident_id.clone(),
-            severity: IncidentSeverity::Warning,
-            recoverability: IncidentRecoverability::Recoverable,
-            source: IncidentSource::CoreLog,
-            root_cause: root_cause.clone(),
-            summary: Some(summary.into()),
-            first_seen_at: now,
-            last_seen_at: now,
-            context: context.clone(),
-        });
+            context.workspace.as_deref().unwrap_or("")
+        );
+        let entry = self
+            .active_incidents
+            .entry(incident_id.clone())
+            .or_insert_with(|| HealthIncident {
+                incident_id: incident_id.clone(),
+                severity: IncidentSeverity::Warning,
+                recoverability: IncidentRecoverability::Recoverable,
+                source: IncidentSource::CoreLog,
+                root_cause: root_cause.clone(),
+                summary: Some(summary.into()),
+                first_seen_at: now,
+                last_seen_at: now,
+                context: context.clone(),
+            });
         entry.last_seen_at = now;
         self.recent_error_count += 1;
     }
@@ -134,13 +136,16 @@ impl HealthRegistry {
         incidents: Vec<HealthIncident>,
     ) {
         let now = unix_ms();
-        self.client_incidents.insert(client_session_id.to_string(), incidents);
-        self.client_report_ts.insert(client_session_id.to_string(), now);
+        self.client_incidents
+            .insert(client_session_id.to_string(), incidents);
+        self.client_report_ts
+            .insert(client_session_id.to_string(), now);
         self.evict_expired_client_reports(now);
     }
 
     fn evict_expired_client_reports(&mut self, now: u64) {
-        let expired: Vec<String> = self.client_report_ts
+        let expired: Vec<String> = self
+            .client_report_ts
             .iter()
             .filter(|(_, ts)| now.saturating_sub(**ts) > CLIENT_INCIDENT_TTL_MS)
             .map(|(k, _)| k.clone())
@@ -159,13 +164,14 @@ impl HealthRegistry {
         for entry in &self.probes {
             let incidents = (entry.probe)();
             for incident in incidents {
-                let e = self.active_incidents.entry(incident.incident_id.clone()).or_insert_with(|| {
-                    HealthIncident {
+                let e = self
+                    .active_incidents
+                    .entry(incident.incident_id.clone())
+                    .or_insert_with(|| HealthIncident {
                         first_seen_at: now,
                         last_seen_at: now,
                         ..incident.clone()
-                    }
-                });
+                    });
                 e.last_seen_at = now;
                 e.severity = incident.severity;
                 e.summary = incident.summary;
@@ -174,28 +180,36 @@ impl HealthRegistry {
 
         // 合并客户端上报的 incidents
         self.evict_expired_client_reports(now);
-        let client_incidents: Vec<HealthIncident> = self.client_incidents
-            .values()
-            .flatten()
-            .cloned()
-            .collect();
+        let client_incidents: Vec<HealthIncident> =
+            self.client_incidents.values().flatten().cloned().collect();
         for incident in client_incidents {
-            let e = self.active_incidents.entry(incident.incident_id.clone()).or_insert_with(|| {
-                HealthIncident {
+            let e = self
+                .active_incidents
+                .entry(incident.incident_id.clone())
+                .or_insert_with(|| HealthIncident {
                     first_seen_at: now,
                     last_seen_at: now,
                     ..incident.clone()
-                }
-            });
+                });
             e.last_seen_at = now;
         }
 
         // 收集并排序
         let mut incidents: Vec<HealthIncident> = self.active_incidents.values().cloned().collect();
-        incidents.sort_by(|a, b| b.severity.cmp(&a.severity).then(b.last_seen_at.cmp(&a.last_seen_at)));
+        incidents.sort_by(|a, b| {
+            b.severity
+                .cmp(&a.severity)
+                .then(b.last_seen_at.cmp(&a.last_seen_at))
+        });
 
         let overall_status = compute_overall_status(&incidents);
-        let recent_repairs = self.repair_audits.iter().rev().take(MAX_RECENT_REPAIRS).cloned().collect();
+        let recent_repairs = self
+            .repair_audits
+            .iter()
+            .rev()
+            .take(MAX_RECENT_REPAIRS)
+            .cloned()
+            .collect();
 
         SystemHealthSnapshot {
             snapshot_at: now,
@@ -229,7 +243,12 @@ impl HealthRegistry {
 
     /// 获取修复审计列表（最近 N 条）
     pub fn recent_repairs(&self, limit: usize) -> Vec<RepairAuditEntry> {
-        self.repair_audits.iter().rev().take(limit).cloned().collect()
+        self.repair_audits
+            .iter()
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect()
     }
 }
 
@@ -238,9 +257,15 @@ impl HealthRegistry {
 // ============================================================================
 
 fn compute_overall_status(incidents: &[HealthIncident]) -> SystemHealthStatus {
-    if incidents.iter().any(|i| i.severity == IncidentSeverity::Critical) {
+    if incidents
+        .iter()
+        .any(|i| i.severity == IncidentSeverity::Critical)
+    {
         SystemHealthStatus::Unhealthy
-    } else if incidents.iter().any(|i| i.severity == IncidentSeverity::Warning) {
+    } else if incidents
+        .iter()
+        .any(|i| i.severity == IncidentSeverity::Warning)
+    {
         SystemHealthStatus::Degraded
     } else {
         SystemHealthStatus::Healthy
@@ -264,9 +289,10 @@ pub fn register_builtin_probes(app_state: SharedAppState) {
 
     // 工作区缓存探针
     let state_clone = app_state.clone();
-    reg.register_probe("core.workspace_cache", Box::new(move || {
-        probe_workspace_cache(&state_clone)
-    }));
+    reg.register_probe(
+        "core.workspace_cache",
+        Box::new(move || probe_workspace_cache(&state_clone)),
+    );
 }
 
 /// 工作区缓存探针：检查是否有工作区缓存预算超出或驱逐异常
@@ -318,8 +344,7 @@ pub async fn execute_repair(
     app_state: SharedAppState,
 ) -> RepairAuditEntry {
     let started_at = unix_ms();
-    let (outcome, result_summary, incident_resolved) =
-        do_repair(&request, app_state.clone()).await;
+    let (outcome, result_summary, incident_resolved) = do_repair(&request, app_state.clone()).await;
     let duration_ms = unix_ms().saturating_sub(started_at);
 
     let audit = RepairAuditEntry {
@@ -338,25 +363,26 @@ pub async fn execute_repair(
     // 写入审计日志
     {
         let registry = global();
-        match registry.try_write() {
-            Ok(mut reg) => {
-                // 如果修复成功并有关联 incident，清除它
-                if incident_resolved {
-                    if let Some(ref iid) = request.incident_id {
-                        reg.resolve_incident(iid);
-                    }
-                    // workspace 缓存修复后清除该工作区所有相关 incidents
-                    if let (Some(project), Some(workspace)) = (&request.context.project, &request.context.workspace) {
-                        if matches!(request.action,
-                            RepairActionKind::InvalidateWorkspaceCache |
-                            RepairActionKind::RebuildWorkspaceCache) {
-                            reg.resolve_workspace_incidents(project, workspace);
-                        }
+        if let Ok(mut reg) = registry.try_write() {
+            // 如果修复成功并有关联 incident，清除它
+            if incident_resolved {
+                if let Some(ref iid) = request.incident_id {
+                    reg.resolve_incident(iid);
+                }
+                // workspace 缓存修复后清除该工作区所有相关 incidents
+                if let (Some(project), Some(workspace)) =
+                    (&request.context.project, &request.context.workspace)
+                {
+                    if matches!(
+                        request.action,
+                        RepairActionKind::InvalidateWorkspaceCache
+                            | RepairActionKind::RebuildWorkspaceCache
+                    ) {
+                        reg.resolve_workspace_incidents(project, workspace);
                     }
                 }
-                reg.append_audit(audit.clone());
             }
-            Err(_) => {}
+            reg.append_audit(audit.clone());
         };
     }
 
@@ -370,7 +396,11 @@ async fn do_repair(
     match &request.action {
         RepairActionKind::RefreshHealthSnapshot => {
             // 无副作用：仅触发快照刷新（调用方在 HTTP 层重新聚合即可）
-            (RepairOutcome::Success, Some("健康快照已刷新".to_string()), false)
+            (
+                RepairOutcome::Success,
+                Some("健康快照已刷新".to_string()),
+                false,
+            )
         }
 
         RepairActionKind::InvalidateWorkspaceCache => {
@@ -400,7 +430,11 @@ async fn do_repair(
             let (outcome, summary, resolved) =
                 invalidate_workspace_cache(project, workspace, &app_state).await;
             if outcome == RepairOutcome::Success {
-                (RepairOutcome::Success, Some("缓存已失效，将在下次访问时自动重建".to_string()), resolved)
+                (
+                    RepairOutcome::Success,
+                    Some("缓存已失效，将在下次访问时自动重建".to_string()),
+                    resolved,
+                )
             } else {
                 (outcome, summary, resolved)
             }
@@ -466,7 +500,12 @@ async fn restore_subscriptions(
 mod tests {
     use super::*;
 
-    fn make_incident(id: &str, severity: IncidentSeverity, project: Option<&str>, workspace: Option<&str>) -> HealthIncident {
+    fn make_incident(
+        id: &str,
+        severity: IncidentSeverity,
+        project: Option<&str>,
+        workspace: Option<&str>,
+    ) -> HealthIncident {
         HealthIncident {
             incident_id: id.to_string(),
             severity,
@@ -493,7 +532,10 @@ mod tests {
     #[test]
     fn overall_status_degraded_when_only_warnings() {
         let incidents = vec![make_incident("i1", IncidentSeverity::Warning, None, None)];
-        assert_eq!(compute_overall_status(&incidents), SystemHealthStatus::Degraded);
+        assert_eq!(
+            compute_overall_status(&incidents),
+            SystemHealthStatus::Degraded
+        );
     }
 
     #[test]
@@ -502,7 +544,10 @@ mod tests {
             make_incident("i1", IncidentSeverity::Warning, None, None),
             make_incident("i2", IncidentSeverity::Critical, None, None),
         ];
-        assert_eq!(compute_overall_status(&incidents), SystemHealthStatus::Unhealthy);
+        assert_eq!(
+            compute_overall_status(&incidents),
+            SystemHealthStatus::Unhealthy
+        );
     }
 
     #[test]
@@ -531,8 +576,14 @@ mod tests {
     #[test]
     fn registry_resolve_workspace_incidents() {
         let mut reg = HealthRegistry::new();
-        reg.active_incidents.insert("i1".to_string(), make_incident("i1", IncidentSeverity::Warning, Some("proj"), Some("ws1")));
-        reg.active_incidents.insert("i2".to_string(), make_incident("i2", IncidentSeverity::Warning, Some("proj"), Some("ws2")));
+        reg.active_incidents.insert(
+            "i1".to_string(),
+            make_incident("i1", IncidentSeverity::Warning, Some("proj"), Some("ws1")),
+        );
+        reg.active_incidents.insert(
+            "i2".to_string(),
+            make_incident("i2", IncidentSeverity::Warning, Some("proj"), Some("ws2")),
+        );
         reg.resolve_workspace_incidents("proj", "ws1");
         assert!(!reg.active_incidents.contains_key("i1"));
         assert!(reg.active_incidents.contains_key("i2"));

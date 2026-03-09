@@ -208,7 +208,9 @@ mod tests {
     use crate::server::terminal_registry::TerminalRegistry;
     use crate::workspace::state::AppState;
 
-    fn make_handler_context(task_broadcast_tx: broadcast::Sender<TaskBroadcastEvent>) -> HandlerContext {
+    fn make_handler_context(
+        task_broadcast_tx: broadcast::Sender<TaskBroadcastEvent>,
+    ) -> HandlerContext {
         let (save_tx, _) = mpsc::channel(1);
         let (scrollback_tx, _) = mpsc::channel(1);
         let (agg_tx, _) = mpsc::channel(1);
@@ -281,7 +283,9 @@ mod tests {
         let key = "demo::default".to_string();
         {
             let mut state = manager.state.lock().await;
-            state.workspaces.insert(key.clone(), make_workspace_run_state());
+            state
+                .workspaces
+                .insert(key.clone(), make_workspace_run_state());
         }
 
         manager
@@ -336,10 +340,16 @@ mod tests {
 
         sleep(Duration::from_millis(280)).await;
 
-        let event = rx.recv().await.expect("应收到合并后的 evo_cycle_updated 广播");
+        let event = rx
+            .recv()
+            .await
+            .expect("应收到合并后的 evo_cycle_updated 广播");
         match event.message {
             ServerMessage::EvoCycleUpdated { agents, .. } => {
-                let plan_agent = agents.iter().find(|agent| agent.stage == "plan").expect("plan agent");
+                let plan_agent = agents
+                    .iter()
+                    .find(|agent| agent.stage == "plan")
+                    .expect("plan agent");
                 assert_eq!(plan_agent.tool_call_count, 2);
             }
             other => panic!("unexpected message: {:?}", other),
@@ -353,7 +363,9 @@ mod tests {
         let key = "demo::default".to_string();
         {
             let mut state = manager.state.lock().await;
-            state.workspaces.insert(key.clone(), make_workspace_run_state());
+            state
+                .workspaces
+                .insert(key.clone(), make_workspace_run_state());
         }
 
         let (tx, mut rx) = broadcast::channel(8);

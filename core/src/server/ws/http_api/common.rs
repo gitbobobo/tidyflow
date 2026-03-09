@@ -90,13 +90,12 @@ pub(in crate::server::ws) fn map_query_error(err: String) -> ApiError {
 ///
 /// 所有需要 `(project, workspace)` 边界的 HTTP 处理器共享此结构，
 /// 避免各 domain 各自手写字段解析导致漂移。
-/// session_id 和 cycle_id 在各自 domain 的上下文中按需填入。
+/// session_id 在各自 domain 的上下文中按需填入。
 #[derive(Debug, Clone)]
 pub(in crate::server::ws) struct WorkspaceQueryContext {
     pub project: String,
     pub workspace: String,
     pub session_id: Option<String>,
-    pub cycle_id: Option<String>,
 }
 
 impl WorkspaceQueryContext {
@@ -106,7 +105,6 @@ impl WorkspaceQueryContext {
             project: project.into(),
             workspace: workspace.into(),
             session_id: None,
-            cycle_id: None,
         }
     }
 
@@ -115,15 +113,6 @@ impl WorkspaceQueryContext {
         let id = session_id.into();
         if !id.is_empty() {
             self.session_id = Some(id);
-        }
-        self
-    }
-
-    /// 附加 cycle_id（Evolution 相关查询）。
-    pub fn with_cycle(mut self, cycle_id: impl Into<String>) -> Self {
-        let id = cycle_id.into();
-        if !id.is_empty() {
-            self.cycle_id = Some(id);
         }
         self
     }

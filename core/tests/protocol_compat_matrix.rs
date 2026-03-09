@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -20,17 +21,16 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 static NEXT_PORT: AtomicU16 = AtomicU16::new(49100);
 
 /// 全局测试串行化互斥锁：确保同一时刻只有一个测试服务器在运行。
-/// 使用 std::sync::Mutex 而非 tokio::sync::Semaphore，因为测试跨多个独立的
-/// tokio runtime（每个 #[tokio::test] 有独立 runtime），tokio 同步原语不能
-/// 跨 runtime 可靠传递唤醒信号。std::sync::Mutex 在 OS 线程层面阻塞，
-/// 对 current_thread runtime 的 block_on 安全有效。
+/// 使用 tokio::sync::Mutex 配合 lock_owned()，令 guard 持有 Arc 引用而非生命周期借用，
+/// 从而可安全跨 await 持有，同时兼容不同 tokio runtime 之间的唤醒通知。
 static TEST_LOCK: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
 
-fn acquire_test_lock() -> MutexGuard<'static, ()> {
-    match TEST_LOCK.get_or_init(|| Arc::new(Mutex::new(()))).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(), // 前序测试 panic 导致 mutex 中毒时，继续使用
-    }
+async fn acquire_test_lock() -> OwnedMutexGuard<()> {
+    TEST_LOCK
+        .get_or_init(|| Arc::new(Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await
 }
 
 fn next_test_port() -> u16 {
@@ -261,7 +261,7 @@ async fn wait_for_error_with_code(
 /// 测试 system 域的消息路由
 #[tokio::test]
 async fn test_system_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -288,7 +288,7 @@ async fn test_system_domain_matrix() {
 /// 测试 terminal 域的消息路由
 #[tokio::test]
 async fn test_terminal_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -328,7 +328,7 @@ async fn test_terminal_domain_matrix() {
 /// 测试 project 域的消息路由
 #[tokio::test]
 async fn test_project_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -365,7 +365,7 @@ async fn test_project_domain_matrix() {
 /// 测试 file 域的消息路由
 #[tokio::test]
 async fn test_file_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -388,7 +388,7 @@ async fn test_file_domain_matrix() {
 /// 测试 git 域的消息路由
 #[tokio::test]
 async fn test_git_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -411,7 +411,7 @@ async fn test_git_domain_matrix() {
 /// 测试 settings 域的消息路由
 #[tokio::test]
 async fn test_settings_domain_matrix() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -435,7 +435,7 @@ async fn test_settings_domain_matrix() {
 /// 测试未知 domain 路由到 misc
 #[tokio::test]
 async fn test_misc_domain_fallback() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -461,7 +461,7 @@ async fn test_misc_domain_fallback() {
 /// 测试协议版本一致性
 #[tokio::test]
 async fn test_protocol_version_consistency() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (_, mut read) = connect(port).await.expect("连接失败");
@@ -507,7 +507,7 @@ async fn test_protocol_version_consistency() {
 /// 且响应携带 project/workspace 字段（多工作区边界约束）。
 #[tokio::test]
 async fn test_ai_ws_read_via_http_required() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -547,7 +547,7 @@ async fn test_ai_ws_read_via_http_required() {
 /// 且响应携带 project/workspace 字段。
 #[tokio::test]
 async fn test_evolution_ws_read_via_http_required() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");
@@ -583,7 +583,7 @@ async fn test_evolution_ws_read_via_http_required() {
 /// 且响应携带 project/workspace 字段。
 #[tokio::test]
 async fn test_evidence_ws_read_via_http_required() {
-    let _lock = acquire_test_lock();
+    let _lock = acquire_test_lock().await;
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
     let (mut write, mut read) = connect(port).await.expect("连接失败");

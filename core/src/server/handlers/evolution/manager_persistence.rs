@@ -485,26 +485,28 @@ impl EvolutionManager {
                         .and_then(|item| item.duration_ms)
                 });
             let preserved_stage_entry = preserved_stage_runtime.get(stage.as_str());
-            let validation_attempts =
-                sanitize_validation_attempts(preserved_stage_entry.and_then(|value| value.get("validation_attempts")));
+            let validation_attempts = sanitize_validation_attempts(
+                preserved_stage_entry.and_then(|value| value.get("validation_attempts")),
+            );
             let mut stage_payload = serde_json::json!({
-                    "status": entry.stage_statuses.get(stage.as_str()).cloned().unwrap_or_else(|| "pending".to_string()),
-                    "ai_tool": latest_ai_tool,
-                    "timing": {
-                        "started_at": started_at,
-                        "completed_at": completed_at,
-                        "duration_ms": duration_ms,
-                    },
-                    "tool_call_count": entry.stage_tool_call_counts.get(stage.as_str()).copied().unwrap_or(0),
-                    "session_ids": session_ids,
-                    "validation_attempts": validation_attempts,
-                });
+                "status": entry.stage_statuses.get(stage.as_str()).cloned().unwrap_or_else(|| "pending".to_string()),
+                "ai_tool": latest_ai_tool,
+                "timing": {
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "duration_ms": duration_ms,
+                },
+                "tool_call_count": entry.stage_tool_call_counts.get(stage.as_str()).copied().unwrap_or(0),
+                "session_ids": session_ids,
+                "validation_attempts": validation_attempts,
+            });
             if let Some(assigned_repair_plan) = preserved_stage_entry
                 .and_then(|value| value.get("assigned_repair_plan"))
                 .cloned()
             {
                 if let Some(stage_payload_obj) = stage_payload.as_object_mut() {
-                    stage_payload_obj.insert("assigned_repair_plan".to_string(), assigned_repair_plan);
+                    stage_payload_obj
+                        .insert("assigned_repair_plan".to_string(), assigned_repair_plan);
                 }
             }
             stage_runtime.insert(stage.to_string(), stage_payload);

@@ -1,5 +1,5 @@
-use crate::server::protocol::ClientMessage;
 use crate::server::protocol::health::HealthContext;
+use crate::server::protocol::ClientMessage;
 use crate::util::file_logger::FileLogger;
 
 /// 处理客户端日志上报消息
@@ -42,15 +42,12 @@ pub fn handle_log_message(client_msg: &ClientMessage) -> Result<bool, String> {
                     cycle_id: cycle_id.clone(),
                 };
                 let registry = crate::server::health::global();
-                match registry.try_write() {
-                    Ok(mut reg) => {
-                        reg.record_log_error(
-                            root_cause,
-                            msg.chars().take(120).collect::<String>(),
-                            context,
-                        );
-                    }
-                    Err(_) => {}
+                if let Ok(mut reg) = registry.try_write() {
+                    reg.record_log_error(
+                        root_cause,
+                        msg.chars().take(120).collect::<String>(),
+                        context,
+                    );
                 };
             }
 

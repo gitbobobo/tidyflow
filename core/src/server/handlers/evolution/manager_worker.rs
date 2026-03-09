@@ -768,12 +768,12 @@ mod tests {
 
     use crate::ai::{AiMessage, AiPart};
 
+    use super::super::consts::MAX_STAGE_RUNTIME_SECS;
     use super::{
         extract_rate_limit_resume_at_from_messages, extract_rate_limit_resume_at_from_text,
         is_rate_limit_error_text, is_retryable_session_error_text, is_round_limit_exceeded,
         is_terminal_status, should_stop_worker_after_stage,
     };
-    use super::super::consts::MAX_STAGE_RUNTIME_SECS;
 
     #[test]
     fn terminal_status_should_include_failed_exhausted_and_failed_system() {
@@ -932,7 +932,7 @@ mod tests {
             attempt3 <= SESSION_RETRY_BACKOFF_MAX_SECS,
             "退避时间不超过上限"
         );
-        assert!(MAX_SESSION_RETRY_ATTEMPTS >= 3, "最大重试次数不得少于 3 次");
+        const { assert!(MAX_SESSION_RETRY_ATTEMPTS >= 3, "最大重试次数不得少于 3 次") };
     }
 
     #[test]

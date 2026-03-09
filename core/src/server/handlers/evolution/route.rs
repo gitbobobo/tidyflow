@@ -83,7 +83,13 @@ pub(super) async fn handle_message(
             Ok(true)
         }
         ClientMessage::EvoGetSnapshot { project, workspace } => {
-            send_read_via_http_required(socket, "evo_get_snapshot", project.clone(), workspace.clone()).await?;
+            send_read_via_http_required(
+                socket,
+                "evo_get_snapshot",
+                project.clone(),
+                workspace.clone(),
+            )
+            .await?;
             Ok(true)
         }
         ClientMessage::EvoUpdateAgentProfile {
@@ -121,7 +127,13 @@ pub(super) async fn handle_message(
                 "Inbound EvoGetAgentProfile: conn_id={}, remote={}, project={}, workspace={}",
                 ctx.conn_meta.conn_id, ctx.conn_meta.is_remote, project, workspace
             );
-            send_read_via_http_required(socket, "evo_get_agent_profile", Some(project.clone()), Some(workspace.clone())).await?;
+            send_read_via_http_required(
+                socket,
+                "evo_get_agent_profile",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
             Ok(true)
         }
         ClientMessage::EvoResolveBlockers {
@@ -136,7 +148,13 @@ pub(super) async fn handle_message(
             Ok(true)
         }
         ClientMessage::EvoListCycleHistory { project, workspace } => {
-            send_read_via_http_required(socket, "evo_list_cycle_history", Some(project.clone()), Some(workspace.clone())).await?;
+            send_read_via_http_required(
+                socket,
+                "evo_list_cycle_history",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
             Ok(true)
         }
         ClientMessage::EvoAdjustLoopRound {

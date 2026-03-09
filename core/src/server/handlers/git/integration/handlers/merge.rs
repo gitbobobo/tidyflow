@@ -131,7 +131,15 @@ pub(crate) async fn handle_git_merge_to_default(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },
@@ -196,7 +204,15 @@ pub(crate) async fn handle_git_merge_continue(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },
@@ -261,7 +277,15 @@ pub(crate) async fn handle_git_merge_abort(
                     state: r.state,
                     message: r.message,
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head_sha: r.head_sha,
                     integration_path: r.integration_path,
                 },
@@ -498,16 +522,15 @@ pub(crate) async fn handle_git_conflict_action(
     let path_owned = path.to_string();
     let context_owned = context.to_string();
     let action_owned = action.to_string();
-    let result = tokio::task::spawn_blocking(move || {
-        match action_owned.as_str() {
-            "accept_ours" => git::git_conflict_accept_ours(&root, &path_owned, &context_owned),
-            "accept_theirs" => git::git_conflict_accept_theirs(&root, &path_owned, &context_owned),
-            "accept_both" => git::git_conflict_accept_both(&root, &path_owned, &context_owned),
-            "mark_resolved" => git::git_conflict_mark_resolved(&root, &path_owned, &context_owned),
-            other => Err(crate::server::git::GitError::CommandFailed(
-                format!("Unknown conflict action: {}", other),
-            )),
-        }
+    let result = tokio::task::spawn_blocking(move || match action_owned.as_str() {
+        "accept_ours" => git::git_conflict_accept_ours(&root, &path_owned, &context_owned),
+        "accept_theirs" => git::git_conflict_accept_theirs(&root, &path_owned, &context_owned),
+        "accept_both" => git::git_conflict_accept_both(&root, &path_owned, &context_owned),
+        "mark_resolved" => git::git_conflict_mark_resolved(&root, &path_owned, &context_owned),
+        other => Err(crate::server::git::GitError::CommandFailed(format!(
+            "Unknown conflict action: {}",
+            other
+        ))),
     })
     .await;
 
@@ -516,11 +539,16 @@ pub(crate) async fn handle_git_conflict_action(
             let context_str = r.snapshot.context.clone();
             let snapshot = crate::server::protocol::ConflictSnapshotInfo {
                 context: r.snapshot.context,
-                files: r.snapshot.files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo {
-                    path: f.path.clone(),
-                    conflict_type: f.conflict_type.clone(),
-                    staged: f.staged,
-                }).collect(),
+                files: r
+                    .snapshot
+                    .files
+                    .iter()
+                    .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                        path: f.path.clone(),
+                        conflict_type: f.conflict_type.clone(),
+                        staged: f.staged,
+                    })
+                    .collect(),
                 all_resolved: r.snapshot.all_resolved,
             };
             crate::server::ws::send_message(

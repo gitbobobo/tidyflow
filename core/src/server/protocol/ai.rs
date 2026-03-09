@@ -56,17 +56,12 @@ pub struct AiSessionStatusUpdate {
 }
 
 /// AI 会话信息（归属到某个 project/workspace）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AiSessionOrigin {
+    #[default]
     User,
     EvolutionSystem,
-}
-
-impl Default for AiSessionOrigin {
-    fn default() -> Self {
-        Self::User
-    }
 }
 
 /// AI 会话信息（归属到某个 project/workspace）

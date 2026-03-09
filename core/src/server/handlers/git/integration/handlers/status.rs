@@ -31,7 +31,15 @@ pub(crate) async fn handle_git_op_status(
                     workspace: workspace.to_string(),
                     state: r.state.as_str().to_string(),
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head: r.head,
                     onto: r.onto,
                 },
@@ -96,7 +104,15 @@ pub(crate) async fn handle_git_integration_status(
                     project: project.to_string(),
                     state: r.state.as_str().to_string(),
                     conflicts: r.conflicts,
-                    conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                    conflict_files: r
+                        .conflict_files
+                        .iter()
+                        .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                            path: f.path.clone(),
+                            conflict_type: f.conflict_type.clone(),
+                            staged: f.staged,
+                        })
+                        .collect(),
                     head: r.head,
                     default_branch: r.default_branch,
                     path: r.path,
@@ -214,7 +230,15 @@ pub(crate) async fn handle_git_check_branch_up_to_date(
                             project: project.to_string(),
                             state: r.state.as_str().to_string(),
                             conflicts: r.conflicts,
-                            conflict_files: r.conflict_files.iter().map(|f| crate::server::protocol::ConflictFileEntryInfo { path: f.path.clone(), conflict_type: f.conflict_type.clone(), staged: f.staged }).collect(),
+                            conflict_files: r
+                                .conflict_files
+                                .iter()
+                                .map(|f| crate::server::protocol::ConflictFileEntryInfo {
+                                    path: f.path.clone(),
+                                    conflict_type: f.conflict_type.clone(),
+                                    staged: f.staged,
+                                })
+                                .collect(),
                             head: r.head,
                             default_branch: r.default_branch,
                             path: r.path,

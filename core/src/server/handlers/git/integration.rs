@@ -105,7 +105,10 @@ pub async fn handle_message(
             path,
             context,
         } => {
-            handlers::handle_git_conflict_detail(project, workspace, path, context, socket, app_state).await
+            handlers::handle_git_conflict_detail(
+                project, workspace, path, context, socket, app_state,
+            )
+            .await
         }
 
         ClientMessage::GitConflictAcceptOurs {
@@ -114,7 +117,16 @@ pub async fn handle_message(
             path,
             context,
         } => {
-            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_ours", socket, app_state).await
+            handlers::handle_git_conflict_action(
+                project,
+                workspace,
+                path,
+                context,
+                "accept_ours",
+                socket,
+                app_state,
+            )
+            .await
         }
 
         ClientMessage::GitConflictAcceptTheirs {
@@ -123,7 +135,16 @@ pub async fn handle_message(
             path,
             context,
         } => {
-            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_theirs", socket, app_state).await
+            handlers::handle_git_conflict_action(
+                project,
+                workspace,
+                path,
+                context,
+                "accept_theirs",
+                socket,
+                app_state,
+            )
+            .await
         }
 
         ClientMessage::GitConflictAcceptBoth {
@@ -132,7 +153,16 @@ pub async fn handle_message(
             path,
             context,
         } => {
-            handlers::handle_git_conflict_action(project, workspace, path, context, "accept_both", socket, app_state).await
+            handlers::handle_git_conflict_action(
+                project,
+                workspace,
+                path,
+                context,
+                "accept_both",
+                socket,
+                app_state,
+            )
+            .await
         }
 
         ClientMessage::GitConflictMarkResolved {
@@ -141,7 +171,16 @@ pub async fn handle_message(
             path,
             context,
         } => {
-            handlers::handle_git_conflict_action(project, workspace, path, context, "mark_resolved", socket, app_state).await
+            handlers::handle_git_conflict_action(
+                project,
+                workspace,
+                path,
+                context,
+                "mark_resolved",
+                socket,
+                app_state,
+            )
+            .await
         }
 
         ClientMessage::GitAIMerge {

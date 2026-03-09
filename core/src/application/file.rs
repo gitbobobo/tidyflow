@@ -91,7 +91,9 @@ pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: 
                     entry.items.iter().map(|s| s.as_str()).collect();
                 rel_paths
                     .iter()
-                    .filter(|rel| !existing.contains(rel.as_str()) && root.join(rel.as_str()).is_file())
+                    .filter(|rel| {
+                        !existing.contains(rel.as_str()) && root.join(rel.as_str()).is_file()
+                    })
                     .cloned()
                     .collect()
             };

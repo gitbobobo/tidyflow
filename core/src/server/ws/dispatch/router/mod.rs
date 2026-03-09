@@ -38,9 +38,7 @@ pub(super) async fn dispatch_domain_handler(
         DomainRoute::Evolution => {
             core_domains::handle_evolution_domain(client_msg, socket, ctx).await?
         }
-        DomainRoute::Health => {
-            core_domains::handle_health_domain(client_msg, socket, ctx).await?
-        }
+        DomainRoute::Health => core_domains::handle_health_domain(client_msg, socket, ctx).await?,
     };
     Ok(handled)
 }
