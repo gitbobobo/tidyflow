@@ -21,17 +21,12 @@ struct EvolutionPipelineView: View {
 
     /// 已完成会话的时间线记录（本轮）
     @State private var completedTimeline: [PipelineTimelineEntry] = []
-    /// 历史循环汇总（每轮结束后的合并记录）
-    @State private var cycleHistories: [PipelineCycleHistory] = []
     /// 上次记录的轮次
     @State private var lastRecordedRound: Int = 0
     /// 当前循环的开始时间
     @State private var cycleStartDate: Date = Date()
     /// 当前时间线快照签名（用于跳过重复重算）
     @State private var timelineSnapshotSignature: Int = 0
-    /// 历史循环快照签名（用于跳过重复映射）
-    @State private var cycleHistorySnapshotSignature: Int = 0
-
     private let untitledCycleTitle = "Untitled"
 
     private struct EvolutionPipelineBlockerDraft {
@@ -53,6 +48,16 @@ struct EvolutionPipelineView: View {
     private var currentItem: EvolutionWorkspaceItemV2? {
         guard let workspace else { return nil }
         return appState.evolutionItem(project: project, workspace: workspace)
+    }
+
+    /// 历史循环直接从共享状态派生，避免本地镜像与页面生命周期错位。
+    private var cycleHistories: [PipelineCycleHistory] {
+        guard let ws = workspace else { return [] }
+        let key = appState.globalWorkspaceKey(
+            projectName: project,
+            workspaceName: appState.normalizeEvolutionWorkspaceName(ws)
+        )
+        return (appState.evolutionCycleHistories[key] ?? []).map(mapCycleHistory)
     }
 
     private var controlCapability: EvolutionControlCapability {
@@ -139,24 +144,20 @@ struct EvolutionPipelineView: View {
         }
         .onAppear {
             syncStartOptions()
-            syncCycleHistoriesFromAPI()
             refreshData()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetLocalTimeline()
             syncStartOptions()
-            syncCycleHistoriesFromAPI()
             refreshData()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             resetLocalTimeline()
             syncStartOptions()
-            syncCycleHistoriesFromAPI()
             refreshData()
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
-            syncCycleHistoriesFromAPI()
             refreshData()
         }
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
@@ -165,9 +166,6 @@ struct EvolutionPipelineView: View {
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in
             syncBlockerSheetState(value)
-        }
-        .onReceive(appState.$evolutionCycleHistories) { _ in
-            syncCycleHistoriesFromAPI()
         }
         .sheet(item: $selectedCycleDetail) { payload in
             cycleDetailSheet(payload)
@@ -1852,80 +1850,68 @@ struct EvolutionPipelineView: View {
 
     private func resetLocalTimeline() {
         resetCurrentCycleTimeline()
-        cycleHistories.removeAll()
-        cycleHistorySnapshotSignature = 0
     }
 
-    /// 将 API 返回的历史循环数据同步到本地视图模型
-    private func syncCycleHistoriesFromAPI() {
-        guard let ws = workspace else { return }
-        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(ws))
-        guard let apiCycles = appState.evolutionCycleHistories[key] else { return }
-        let signature = cycleHistorySnapshotSignature(for: apiCycles)
-        guard signature != cycleHistorySnapshotSignature else { return }
-        cycleHistorySnapshotSignature = signature
-
-        cycleHistories = apiCycles.map { cycle in
-            let startDate = Self.rfc3339Formatter.date(from: cycle.createdAt)
-                ?? Self.rfc3339FallbackFormatter.date(from: cycle.createdAt)
-                ?? Date()
-            let entries: [PipelineCycleStageEntry] = {
-                let executionEntries = cycle.executions
-                    .filter { isExecutionCompletedStatus($0.status) }
-                    .sorted { lhs, rhs in
-                        switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
-                        case (false, false):
-                            if lhs.startedAt != rhs.startedAt {
-                                return lhs.startedAt < rhs.startedAt
-                            }
-                        case (false, true):
-                            return true
-                        case (true, false):
-                            return false
-                        case (true, true):
-                            break
+    private func mapCycleHistory(_ cycle: EvolutionCycleHistoryItemV2) -> PipelineCycleHistory {
+        let startDate = Self.rfc3339Formatter.date(from: cycle.createdAt)
+            ?? Self.rfc3339FallbackFormatter.date(from: cycle.createdAt)
+            ?? Date()
+        let entries: [PipelineCycleStageEntry] = {
+            let executionEntries = cycle.executions
+                .filter { isExecutionCompletedStatus($0.status) }
+                .sorted { lhs, rhs in
+                    switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                    case (false, false):
+                        if lhs.startedAt != rhs.startedAt {
+                            return lhs.startedAt < rhs.startedAt
                         }
-                        return lhs.sessionID < rhs.sessionID
+                    case (false, true):
+                        return true
+                    case (true, false):
+                        return false
+                    case (true, true):
+                        break
                     }
-                    .map { execution in
-                        PipelineCycleStageEntry(
-                            id: "\(cycle.cycleID)_\(execution.sessionID)_\(execution.startedAt)",
-                            stage: normalizedStageKey(execution.stage),
-                            agent: execution.agent,
-                            aiToolName: execution.aiTool,
-                            aiToolRawValue: trimmedNonEmptyText(execution.aiTool),
-                            sessionID: execution.sessionID,
-                            startedAt: trimmedNonEmptyText(execution.startedAt),
-                            status: execution.status,
-                            durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                        )
-                    }
-                if !executionEntries.isEmpty {
-                    return executionEntries
+                    return lhs.sessionID < rhs.sessionID
                 }
-                return cycle.stages.map { stage in
+                .map { execution in
                     PipelineCycleStageEntry(
-                        id: "\(cycle.cycleID)_\(stage.stage)",
-                        stage: normalizedStageKey(stage.stage),
-                        agent: stage.agent,
-                        aiToolName: stage.aiTool,
-                        aiToolRawValue: trimmedNonEmptyText(stage.aiTool),
-                        status: stage.status,
-                        durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                        id: "\(cycle.cycleID)_\(execution.sessionID)_\(execution.startedAt)",
+                        stage: normalizedStageKey(execution.stage),
+                        agent: execution.agent,
+                        aiToolName: execution.aiTool,
+                        aiToolRawValue: trimmedNonEmptyText(execution.aiTool),
+                        sessionID: execution.sessionID,
+                        startedAt: trimmedNonEmptyText(execution.startedAt),
+                        status: execution.status,
+                        durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
                     )
                 }
-            }()
-            return PipelineCycleHistory(
-                id: cycle.cycleID,
-                title: cycle.title,
-                round: cycle.globalLoopRound,
-                stages: entries.map(\.stage),
-                startDate: startDate,
-                stageEntries: entries,
-                terminalReasonCode: cycle.terminalReasonCode,
-                terminalErrorMessage: cycle.terminalErrorMessage
-            )
-        }
+            if !executionEntries.isEmpty {
+                return executionEntries
+            }
+            return cycle.stages.map { stage in
+                PipelineCycleStageEntry(
+                    id: "\(cycle.cycleID)_\(stage.stage)",
+                    stage: normalizedStageKey(stage.stage),
+                    agent: stage.agent,
+                    aiToolName: stage.aiTool,
+                    aiToolRawValue: trimmedNonEmptyText(stage.aiTool),
+                    status: stage.status,
+                    durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                )
+            }
+        }()
+        return PipelineCycleHistory(
+            id: cycle.cycleID,
+            title: cycle.title,
+            round: cycle.globalLoopRound,
+            stages: entries.map(\.stage),
+            startDate: startDate,
+            stageEntries: entries,
+            terminalReasonCode: cycle.terminalReasonCode,
+            terminalErrorMessage: cycle.terminalErrorMessage
+        )
     }
 
     // MARK: - Stage Session
@@ -2350,28 +2336,6 @@ struct EvolutionPipelineView: View {
                 hasher.combine(agent.startedAt ?? "")
                 hasher.combine(agent.durationMs ?? 0)
             }
-        }
-        return hasher.finalize()
-    }
-
-    /// 历史循环签名：用于跳过未变化时的日期解析和视图模型重建。
-    private func cycleHistorySnapshotSignature(for cycles: [EvolutionCycleHistoryItemV2]) -> Int {
-        var hasher = Hasher()
-        hasher.combine(cycles.count)
-        for cycle in cycles {
-            hasher.combine(cycle.cycleID)
-            hasher.combine(cycle.globalLoopRound)
-            hasher.combine(cycle.status)
-            hasher.combine(cycle.createdAt)
-            hasher.combine(cycle.updatedAt)
-            hasher.combine(cycle.executions.count)
-            if let lastExecution = cycle.executions.last {
-                hasher.combine(lastExecution.sessionID)
-                hasher.combine(lastExecution.status)
-                hasher.combine(lastExecution.completedAt ?? "")
-                hasher.combine(lastExecution.durationMs ?? 0)
-            }
-            hasher.combine(cycle.stages.count)
         }
         return hasher.finalize()
     }

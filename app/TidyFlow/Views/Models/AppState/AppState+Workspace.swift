@@ -65,6 +65,9 @@ extension AppState {
             gitCache.fetchGitStatus(workspaceKey: workspaceName)
             gitCache.fetchGitBranches(workspaceKey: workspaceName)
             gitCache.fetchGitLog(workspaceKey: workspaceName)
+            // 预热自主进化面板数据，避免首次切换到页面时才开始补拉历史。
+            requestEvolutionSnapshot(project: projectName, workspace: workspaceName)
+            requestEvolutionCycleHistory(project: projectName, workspace: workspaceName)
 
         }
 
