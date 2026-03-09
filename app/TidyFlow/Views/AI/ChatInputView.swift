@@ -124,13 +124,13 @@ struct ChatInputView: View {
             RoundedRectangle(cornerRadius: floatingCardCornerRadius, style: .continuous)
                 .stroke(floatingCardBorderColor, lineWidth: 0.8)
         }
-        .shadow(color: floatingCardPrimaryShadowColor, radius: 20, x: 0, y: 8)
+        .shadow(color: floatingCardPrimaryShadowColor, radius: 14, x: 0, y: 6)
         .shadow(color: floatingCardSecondaryShadowColor, radius: 3, x: 0, y: 1)
     }
 
     #if os(iOS)
     private var iOSInputSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             inputEditor
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(minHeight: editorMinHeight, alignment: .topLeading)
@@ -173,9 +173,9 @@ struct ChatInputView: View {
     }
 
     private var iOSFloatingToolbar: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 8) {
             ScrollView(.horizontal) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     iOSInputModeToggleButton
                     agentButton
                     modelButton
@@ -513,7 +513,7 @@ struct ChatInputView: View {
                     imagePreviewItem(attachment)
                 }
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, 6)
         }
     }
 
@@ -646,7 +646,7 @@ struct ChatInputView: View {
     // MARK: - 工具栏
 
     private var toolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             imageUploadButton
             agentButton
             modelButton
@@ -687,7 +687,6 @@ struct ChatInputView: View {
                     }
                 } label: {
                     toolbarMenuLabel(
-                        systemImage: "cpu",
                         title: selectedAgent ?? agents.first?.name ?? "Agent",
                         showsChevron: false
                     )
@@ -733,7 +732,6 @@ struct ChatInputView: View {
                     }
                 } label: {
                     toolbarMenuLabel(
-                        systemImage: "sparkle",
                         title: selectedModelDisplayName
                     )
                 }
@@ -757,7 +755,6 @@ struct ChatInputView: View {
                     }
                 } label: {
                     toolbarMenuLabel(
-                        systemImage: "brain",
                         title: selectedThoughtLevelDisplayName
                     )
                 }
@@ -812,8 +809,8 @@ struct ChatInputView: View {
                 .foregroundStyle(dropdownSecondaryTextColor)
         }
         .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(toolbarChipBackgroundColor, in: .capsule)
         .overlay {
             Capsule()
@@ -1159,13 +1156,15 @@ struct ChatInputView: View {
     #endif
 
     private func toolbarMenuLabel(
-        systemImage: String,
+        systemImage: String? = nil,
         title: String,
         showsChevron: Bool = true
     ) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.system(size: chipFontSize, weight: .semibold))
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: chipFontSize, weight: .semibold))
+            }
             Text(title)
                 .font(.system(size: chipFontSize, weight: .medium))
                 .lineLimit(1)
@@ -1177,8 +1176,8 @@ struct ChatInputView: View {
             }
         }
         .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(toolbarChipBackgroundColor, in: .capsule)
         .overlay {
             Capsule()
@@ -1227,13 +1226,45 @@ struct ChatInputView: View {
 
     private var outerHorizontalPadding: CGFloat {
         #if os(iOS)
-        return 14
+        return 10
         #else
-        return 16
+        return 12
         #endif
     }
 
     private var outerTopPadding: CGFloat {
+        #if os(iOS)
+        return 6
+        #else
+        return 8
+        #endif
+    }
+
+    private var outerBottomPadding: CGFloat {
+        #if os(iOS)
+        return 8
+        #else
+        return 10
+        #endif
+    }
+
+    private var cardHorizontalPadding: CGFloat {
+        #if os(iOS)
+        return 12
+        #else
+        return 14
+        #endif
+    }
+
+    private var cardTopPadding: CGFloat {
+        #if os(iOS)
+        return 12
+        #else
+        return 14
+        #endif
+    }
+
+    private var cardBottomPadding: CGFloat {
         #if os(iOS)
         return 10
         #else
@@ -1241,47 +1272,15 @@ struct ChatInputView: View {
         #endif
     }
 
-    private var outerBottomPadding: CGFloat {
-        #if os(iOS)
-        return 12
-        #else
-        return 14
-        #endif
-    }
-
-    private var cardHorizontalPadding: CGFloat {
-        #if os(iOS)
-        return 16
-        #else
-        return 18
-        #endif
-    }
-
-    private var cardTopPadding: CGFloat {
-        #if os(iOS)
-        return 16
-        #else
-        return 18
-        #endif
-    }
-
-    private var cardBottomPadding: CGFloat {
-        #if os(iOS)
-        return 14
-        #else
-        return 16
-        #endif
-    }
-
     private var cardContentSpacing: CGFloat {
-        14
+        10
     }
 
     private var floatingCardCornerRadius: CGFloat {
         #if os(iOS)
-        return 24
+        return 18
         #else
-        return 22
+        return 18
         #endif
     }
 
@@ -1302,11 +1301,11 @@ struct ChatInputView: View {
     }
 
     private var floatingCardPrimaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.24) : Color.black.opacity(0.1)
+        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.08)
     }
 
     private var floatingCardSecondaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.04)
+        colorScheme == .dark ? Color.black.opacity(0.12) : Color.black.opacity(0.03)
     }
 
     private var toolbarChipBackgroundColor: Color {
@@ -1327,9 +1326,9 @@ struct ChatInputView: View {
 
     private var editorMinHeight: CGFloat {
         #if os(iOS)
-        return 84
-        #else
         return 72
+        #else
+        return 60
         #endif
     }
 
@@ -1343,9 +1342,9 @@ struct ChatInputView: View {
 
     private var editorExpandedMaxHeight: CGFloat {
         #if os(iOS)
-        return 124
+        return 108
         #else
-        return 112
+        return 96
         #endif
     }
 
@@ -1354,11 +1353,11 @@ struct ChatInputView: View {
     }
 
     private var editorHorizontalInset: CGFloat {
-        10
+        8
     }
 
     private var editorVerticalInset: CGFloat {
-        10
+        8
     }
 
     private var chipFontSize: CGFloat {
@@ -1371,41 +1370,41 @@ struct ChatInputView: View {
 
     private var accessoryButtonDiameter: CGFloat {
         #if os(iOS)
-        return 34
+        return 30
         #else
-        return 32
+        return 28
         #endif
     }
 
     private var accessoryIconFontSize: CGFloat {
         #if os(iOS)
-        return 15
+        return 13
         #else
-        return 14
+        return 12
         #endif
     }
 
     private var selectorLabelMaxWidth: CGFloat {
         #if os(iOS)
-        return 140
+        return 128
         #else
-        return 180
+        return 160
         #endif
     }
 
     private var actionButtonDiameter: CGFloat {
         #if os(iOS)
-        return 40
-        #else
         return 36
+        #else
+        return 32
         #endif
     }
 
     private var actionIconFontSize: CGFloat {
         #if os(iOS)
-        return 16
+        return 15
         #else
-        return 14
+        return 13
         #endif
     }
 
