@@ -94,7 +94,7 @@ private struct BottomPanelVerticalTabList: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 4) {
+            LazyVStack(spacing: 3) {
                 ForEach(tabs) { tab in
                     BottomPanelInstanceItemView(
                         tab: tab,
@@ -103,9 +103,9 @@ private struct BottomPanelVerticalTabList: View {
                     )
                 }
             }
-            .padding(6)
+            .padding(4)
         }
-        .frame(width: 196)
+        .frame(width: 172)
         .background(Color(NSColor.windowBackgroundColor))
         .accessibilityIdentifier("tf.mac.bottomPanel.instance-list.\(category.rawValue)")
     }
@@ -135,48 +135,26 @@ private struct BottomPanelInstanceItemView: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            leadingIndicator
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    if tab.isDirty {
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(.orange)
-                    } else {
-                        CommandIconView(iconName: effectiveIconName, size: 11)
-                            .foregroundStyle(isActive ? .primary : .secondary)
-                    }
-
-                    Text(displayTitle)
-                        .font(.system(size: 12, weight: isActive ? .semibold : .regular))
-                        .foregroundStyle(isActive ? .primary : .secondary)
-                        .lineLimit(1)
-                }
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+        HStack(spacing: 6) {
+            Text(displayTitle)
+                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                .foregroundStyle(isActive ? .primary : .secondary)
+                .lineLimit(1)
 
             Spacer(minLength: 4)
 
             trailingIndicators
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
         .background(backgroundColor)
-        .clipShape(.rect(cornerRadius: 6))
+        .clipShape(.rect(cornerRadius: 4))
         .overlay(alignment: .leading) {
             if isActive {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(Color.accentColor)
                     .frame(width: 2)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 4)
             }
         }
         .contentShape(Rectangle())
@@ -256,33 +234,9 @@ private struct BottomPanelInstanceItemView: View {
         return tab.title
     }
 
-    private var subtitle: String? {
-        switch tab.kind {
-        case .editor, .diff:
-            return tab.payload
-        case .terminal:
-            return tab.title == "Terminal" ? nil : tab.title
-        case .settings:
-            return nil
-        }
-    }
-
-    @ViewBuilder
-    private var leadingIndicator: some View {
-        if tab.kind == .terminal && aiStatus.isVisible {
-            Circle()
-                .fill(aiStatus.color)
-                .frame(width: 7, height: 7)
-                .help(aiStatus.hint)
-        } else {
-            Color.clear
-                .frame(width: 7, height: 7)
-        }
-    }
-
     @ViewBuilder
     private var trailingIndicators: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if tab.kind == .terminal && tab.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
