@@ -20,6 +20,25 @@ mod ai_session_update_test;
 pub const PROTOCOL_VERSION: u32 = 7;
 
 // ============================================================================
+// 多工作区边界字段约束（v7 协议层权威声明）
+//
+// 所有 ServerMessage 变体在适用时**必须**携带以下字段，用于客户端按
+// (project, workspace) 二元组将事件/结果路由到正确的缓存桶：
+//
+//   project    : 所属项目名称（全部 domain 的事件和 HTTP 响应）
+//   workspace  : 所属工作区名称（同上）
+//   session_id : AI 会话 ID（AI 相关消息中条件必须）
+//   cycle_id   : Evolution 循环 ID（Evolution 相关消息中条件必须）
+//
+// 约束规则：
+// - 客户端不允许仅凭 workspace 名称路由（不同项目可能有同名工作区）。
+// - 不允许以 "default" 或当前激活工作区作为隐含单例上下文。
+// - HTTP snapshot 与 WS 流式事件共用兼容的 (project, workspace, session_id, cycle_id) 语义，
+//   不允许两套键规则并存。
+// - 来自其他工作区的消息不允许覆盖当前激活工作区的 UI 状态。
+// ============================================================================
+
+// ============================================================================
 // v6 包络结构（在 v7 继续沿用）
 // ============================================================================
 
@@ -1608,6 +1627,9 @@ pub enum ServerMessage {
     },
     #[serde(rename = "ai_session_subscribe_ack")]
     AISessionSubscribeAck {
+        /// 订阅确认必须携带 project/workspace，客户端按四元组 (project, workspace, ai_tool, session_id) 路由
+        project_name: String,
+        workspace_name: String,
         session_id: String,
         session_key: String,
     },
