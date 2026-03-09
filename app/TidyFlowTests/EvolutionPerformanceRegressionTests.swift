@@ -103,6 +103,193 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
         )
     }
 
+    func testBackgroundCycleUpdateAppliesWithoutCrashingOrFallback() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+
+        var scheduledRequests: [(String, String, [URLQueryItem])] = []
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+        appState.wsClient.onHTTPRequestScheduled = { domain, path, queryItems in
+            scheduledRequests.append((domain, path, queryItems))
+        }
+
+        let existing = makeItem(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            status: "running",
+            currentStage: "plan",
+            globalLoopRound: 1
+        )
+        appState.replaceEvolutionWorkspaceItems([existing])
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            appState.handleEvolutionCycleUpdated(
+                EvoCycleUpdatedV2(
+                    project: "proj",
+                    workspace: "ws",
+                    cycleID: "cycle-1",
+                    title: "Cycle",
+                    status: "running",
+                    currentStage: "implement.general.1",
+                    globalLoopRound: 2,
+                    loopRoundLimit: 3,
+                    verifyIteration: 0,
+                    verifyIterationLimit: 3,
+                    agents: [],
+                    executions: [],
+                    terminalReasonCode: nil,
+                    terminalErrorMessage: nil,
+                    rateLimitErrorMessage: nil
+                )
+            )
+        }
+
+        waitForEvolutionAsyncWork()
+
+        XCTAssertTrue(scheduledRequests.isEmpty, "命中已有工作区时不应触发 snapshot fallback")
+        XCTAssertEqual(
+            appState.evolutionItem(project: "proj", workspace: "ws")?.currentStage,
+            "implement.general.1"
+        )
+        XCTAssertEqual(
+            appState.evolutionItem(project: "proj", workspace: "ws")?.globalLoopRound,
+            2
+        )
+    }
+
+    func testMissingCycleUpdateFallsBackToTargetedSnapshotFromBackground() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+
+        var scheduledRequests: [(String, String, [URLQueryItem])] = []
+        appState.wsClient.onHTTPRequestScheduled = { domain, path, queryItems in
+            scheduledRequests.append((domain, path, queryItems))
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            appState.handleEvolutionCycleUpdated(
+                EvoCycleUpdatedV2(
+                    project: "proj",
+                    workspace: "ws",
+                    cycleID: "cycle-1",
+                    title: "Cycle",
+                    status: "running",
+                    currentStage: "plan",
+                    globalLoopRound: 1,
+                    loopRoundLimit: 3,
+                    verifyIteration: 0,
+                    verifyIterationLimit: 3,
+                    agents: [],
+                    executions: [],
+                    terminalReasonCode: nil,
+                    terminalErrorMessage: nil,
+                    rateLimitErrorMessage: nil
+                )
+            )
+        }
+
+        waitForEvolutionAsyncWork()
+
+        XCTAssertEqual(scheduledRequests.count, 1)
+        XCTAssertEqual(scheduledRequests[0].0, "evolution")
+        XCTAssertEqual(scheduledRequests[0].1, "/api/v1/evolution/snapshot")
+        XCTAssertTrue(
+            scheduledRequests[0].2.contains(URLQueryItem(name: "project", value: "proj"))
+        )
+        XCTAssertTrue(
+            scheduledRequests[0].2.contains(URLQueryItem(name: "workspace", value: "ws"))
+        )
+    }
+
+    func testCycleUpdateAndSnapshotKeepProjectionConsistent() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let existing = makeItem(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            status: "running",
+            currentStage: "plan",
+            globalLoopRound: 1
+        )
+        appState.replaceEvolutionWorkspaceItems([existing])
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            appState.handleEvolutionCycleUpdated(
+                EvoCycleUpdatedV2(
+                    project: "proj",
+                    workspace: "ws",
+                    cycleID: "cycle-1",
+                    title: "Cycle",
+                    status: "running",
+                    currentStage: "implement.general.1",
+                    globalLoopRound: 2,
+                    loopRoundLimit: 3,
+                    verifyIteration: 0,
+                    verifyIterationLimit: 3,
+                    agents: [],
+                    executions: [],
+                    terminalReasonCode: nil,
+                    terminalErrorMessage: nil,
+                    rateLimitErrorMessage: nil
+                )
+            )
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            appState.handleEvolutionSnapshot(
+                EvolutionSnapshotV2(
+                    scheduler: .empty,
+                    workspaceItems: [
+                        self.makeItem(
+                            project: "proj",
+                            workspace: "ws",
+                            cycleID: "cycle-1",
+                            status: "running",
+                            currentStage: "verify.1",
+                            globalLoopRound: 2
+                        ),
+                        self.makeItem(
+                            project: "proj",
+                            workspace: "ws-2",
+                            cycleID: "cycle-2",
+                            status: "queued",
+                            currentStage: "plan",
+                            globalLoopRound: 1
+                        )
+                    ]
+                )
+            )
+        }
+
+        waitForEvolutionAsyncWork()
+
+        XCTAssertEqual(appState.evolutionWorkspaceItems.count, 2)
+        XCTAssertEqual(appState.evolutionWorkspaceItemIndexByKey.count, 2)
+        for item in appState.evolutionWorkspaceItems {
+            let indexed = appState.evolutionWorkspaceItemIndexByKey[item.workspaceKey]
+            XCTAssertEqual(indexed?.projectionSignature, item.projectionSignature)
+        }
+    }
+
     private func makeItem(
         project: String,
         workspace: String,
@@ -128,5 +315,13 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
             terminalErrorMessage: nil,
             rateLimitErrorMessage: nil
         )
+    }
+
+    private func waitForEvolutionAsyncWork() {
+        let wait = expectation(description: "等待 Evolution 异步更新完成")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            wait.fulfill()
+        }
+        wait(for: [wait], timeout: 1.0)
     }
 }

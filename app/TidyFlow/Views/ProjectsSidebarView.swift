@@ -8,13 +8,10 @@ import AppKit
 struct ProjectsSidebarView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var terminalStore: TerminalStore
-
-    /// 缓存排序后的项目索引，避免每次 body 重算都执行 O(n log n) 排序
-    @State private var cachedSortedIndices: [Int] = []
-    /// 排序防抖定时器
-    @State private var sortDebounceTask: DispatchWorkItem?
+    @StateObject private var projectionStore = MacSidebarProjectionStore()
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         VStack(spacing: 0) {
             // 标题栏
             HStack {
@@ -26,7 +23,7 @@ struct ProjectsSidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            if appState.projects.isEmpty {
+            if projectionStore.projects.isEmpty && appState.projects.isEmpty {
                 emptyStateView
             } else {
                 TreeRowActivityPhaseProvider {
@@ -36,20 +33,15 @@ struct ProjectsSidebarView: View {
         }
         .frame(minWidth: 200)
         .onAppear {
-            cachedSortedIndices = computeSortedIndices()
+            projectionStore.bind(
+                appState: appState,
+                terminalStore: terminalStore,
+                taskStore: appState.taskManager.taskStore
+            )
         }
-        // 项目列表变化（增删、名称修改等）时重新排序（防抖 100ms）
-        .onChange(of: appState.projects.map { $0.id }) {
-            debouncedSort()
-        }
-        // 快捷键分配或终端打开时间变化时重新排序
-        .onChange(of: terminalStore.workspaceTerminalOpenTime) {
-            debouncedSort()
-        }
-        // 工作空间删除状态变化时重新排序
-        .onChange(of: appState.deletingWorkspaces) {
-            debouncedSort()
-        }
+        .tfRenderProbe("ProjectsSidebar", metadata: [
+            "selected_workspace": appState.currentGlobalWorkspaceKey ?? "none"
+        ])
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: {
@@ -89,80 +81,28 @@ struct ProjectsSidebarView: View {
 
     /// 扁平化的列表行类型
     private enum SidebarRow: Identifiable {
-        case project(Binding<ProjectModel>)
-        case workspace(WorkspaceModel, projectId: UUID, projectName: String)
+        case project(SidebarProjectProjection)
+        case workspace(SidebarWorkspaceProjection, projectId: UUID)
 
         var id: String {
             switch self {
-            case .project(let binding):
-                return "project-\(binding.wrappedValue.id)"
-            case .workspace(let ws, let projectId, _):
-                return "workspace-\(projectId)-\(ws.id)"
+            case .project(let projection):
+                return projection.id
+            case .workspace(let projection, _):
+                return projection.id
             }
         }
-    }
-
-    /// 获取项目中最早的终端创建时间（用于排序）
-    private func projectEarliestTerminalTime(_ project: ProjectModel) -> Date? {
-        var earliest: Date?
-        for workspace in project.workspaces {
-            let key = "\(project.name):\(workspace.name)"
-            if let time = terminalStore.workspaceTerminalOpenTime[key] {
-                if earliest == nil || time < earliest! {
-                    earliest = time
-                }
-            }
-        }
-        return earliest
-    }
-
-    /// 获取项目的最小快捷键编号（用于排序，0视为10以排在最后）
-    private func projectMinShortcutKey(_ project: ProjectModel) -> Int {
-        var minKey = Int.max
-        for workspace in project.workspaces {
-            let workspaceKey = workspace.isDefault
-                ? "\(project.name)/(default)"
-                : "\(project.name)/\(workspace.name)"
-            if let shortcutKey = appState.getWorkspaceShortcutKey(workspaceKey: workspaceKey),
-               let num = Int(shortcutKey) {
-                // 0 视为 10，排在最后
-                let sortValue = num == 0 ? 10 : num
-                minKey = min(minKey, sortValue)
-            }
-        }
-        return minKey
-    }
-
-    /// 计算项目排序索引（委托到 ProjectSortingSemantics 共享排序规则）
-    private func computeSortedIndices() -> [Int] {
-        ProjectSortingSemantics.sortedIndices(
-            appState.projects,
-            shortcutKeyFinder: { self.projectMinShortcutKey($0) },
-            earliestTerminalTimeFinder: { self.projectEarliestTerminalTime($0) }
-        )
-    }
-
-    /// 防抖排序：100ms 内多次触发只执行最后一次
-    private func debouncedSort() {
-        sortDebounceTask?.cancel()
-        let task = DispatchWorkItem { [self] in
-            cachedSortedIndices = computeSortedIndices()
-        }
-        sortDebounceTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
     }
 
     /// 将项目和工作空间扁平化为单一列表（使用缓存的排序索引）
     /// 项目始终展开，不可折叠
     private var flattenedRows: [SidebarRow] {
         var rows: [SidebarRow] = []
-        for index in cachedSortedIndices where index < appState.projects.count {
-            let projectBinding = $appState.projects[index]
-            let project = projectBinding.wrappedValue
-            rows.append(.project(projectBinding))
-            // 项目始终展开，但隐藏 default 工作区，由项目行承担其语义。
-            for workspace in appState.sidebarVisibleWorkspaces(for: project) {
-                rows.append(.workspace(workspace, projectId: project.id, projectName: project.name))
+        for project in displayedProjects {
+            rows.append(.project(project))
+            guard let projectId = project.projectID else { continue }
+            for workspace in project.visibleWorkspaces {
+                rows.append(.workspace(workspace, projectId: projectId))
             }
         }
         return rows
@@ -173,17 +113,15 @@ struct ProjectsSidebarView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(flattenedRows) { row in
                     switch row {
-                    case .project(let binding):
-                        ProjectRowView(project: binding)
+                    case .project(let projection):
+                        if let projectId = projection.projectID,
+                           let binding = projectBinding(for: projectId) {
+                            ProjectRowView(project: binding, projection: projection)
+                                .environmentObject(appState)
+                        }
+                    case .workspace(let projection, let projectId):
+                        WorkspaceRowView(projection: projection, projectId: projectId, isSelected: projection.isSelected)
                             .environmentObject(appState)
-                    case .workspace(let workspace, let projectId, let projectName):
-                        WorkspaceRowView(
-                            workspace: workspace,
-                            projectId: projectId,
-                            projectName: projectName,
-                            isSelected: appState.selectedProjectId == projectId && appState.selectedWorkspaceKey == workspace.name
-                        )
-                        .environmentObject(appState)
                     }
                 }
             }
@@ -192,65 +130,56 @@ struct ProjectsSidebarView: View {
         .padding(.horizontal, 4)
         .accessibilityIdentifier("tf.mac.sidebar.workspace-list")
     }
+
+    private var displayedProjects: [SidebarProjectProjection] {
+        if !projectionStore.projects.isEmpty {
+            return projectionStore.projects
+        }
+        return SidebarProjectionSemantics.buildMacProjects(
+            appState: appState,
+            terminalStore: terminalStore,
+            unseenCompletionKeys: appState.taskManager.taskStore.unseenCompletionKeys
+        )
+    }
+
+    private func projectBinding(for projectId: UUID) -> Binding<ProjectModel>? {
+        guard let index = appState.projects.firstIndex(where: { $0.id == projectId }) else {
+            return nil
+        }
+        return $appState.projects[index]
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.projectsSidebarPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
+        }
+    }
 }
 
 // MARK: - Project Row (Collapsible)
 
 struct ProjectRowView: View {
     @Binding var project: ProjectModel
+    let projection: SidebarProjectProjection
     @EnvironmentObject var appState: AppState
     @State private var showDeleteConfirmation = false
     @State private var showEndWorkConfirmation = false
 
     /// 项目路径（项目根目录），用于复制与在编辑器中打开
-    private var projectPath: String? { project.path }
-    private var defaultWorkspace: WorkspaceModel? {
-        appState.defaultWorkspace(for: project) ?? project.workspaces.first
-    }
-    private var defaultWorkspacePath: String? {
-        defaultWorkspace?.root ?? project.path
-    }
-    private var defaultGlobalWorkspaceKey: String? {
-        guard let defaultWorkspace else { return nil }
-        return appState.globalWorkspaceKey(projectName: project.name, workspaceName: defaultWorkspace.name)
-    }
-    private var currentShortcutKey: String? {
-        guard let defaultGlobalWorkspaceKey else { return nil }
-        return appState.getWorkspaceShortcutKey(workspaceKey: defaultGlobalWorkspaceKey)
-    }
-    private var shortcutDisplayText: String? {
-        guard let key = currentShortcutKey else { return nil }
-        return "⌘\(key)"
-    }
-    private var terminalCount: Int {
-        guard let defaultGlobalWorkspaceKey else { return 0 }
-        return appState.workspaceTabs[defaultGlobalWorkspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
-    }
-    private var hasOpenTabs: Bool {
-        guard let defaultGlobalWorkspaceKey else { return false }
-        return !(appState.workspaceTabs[defaultGlobalWorkspaceKey] ?? []).isEmpty
-    }
-    private var isDeleting: Bool {
-        guard let defaultGlobalWorkspaceKey else { return false }
-        return appState.deletingWorkspaces.contains(defaultGlobalWorkspaceKey)
-    }
-    private var hasUnseenCompletion: Bool {
-        guard let defaultGlobalWorkspaceKey else { return false }
-        return appState.taskManager.taskStore.unseenCompletionKeys.contains(defaultGlobalWorkspaceKey)
-    }
+    private var projectPath: String? { projection.projectPath }
+    private var defaultWorkspacePath: String? { projection.defaultWorkspacePath }
+    private var defaultGlobalWorkspaceKey: String? { projection.defaultGlobalWorkspaceKey }
+    private var shortcutDisplayText: String? { projection.shortcutDisplayText }
+    private var terminalCount: Int { projection.terminalCount }
+    private var hasOpenTabs: Bool { projection.hasOpenTabs }
+    private var isDeleting: Bool { projection.isDeleting }
+    private var hasUnseenCompletion: Bool { projection.hasUnseenCompletion }
     private var defaultWorkspaceActivityIndicators: [TreeRowActivityIndicator] {
-        guard let sidebarStatus = defaultWorkspace?.sidebarStatus else { return [] }
-        var items: [TreeRowActivityIndicator] = []
-        if sidebarStatus.hasStreamingChat {
-            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
-        }
-        if sidebarStatus.hasActiveEvolutionLoop {
-            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
-        }
-        if let taskIcon = sidebarStatus.taskIconName {
-            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon))
-        }
-        return items
+        projection.activityIndicators.map { TreeRowActivityIndicator(id: $0.id, iconName: $0.iconName) }
     }
 
     /// 菜单项图标尺寸
@@ -281,7 +210,7 @@ struct ProjectRowView: View {
                     iconColor: .clear,
                     title: project.name,
                     depth: 0,
-                    isSelected: appState.isSelectedProjectDefaultWorkspace(project),
+                    isSelected: projection.isSelectedDefaultWorkspace,
                     trailingText: shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     activityIndicators: defaultWorkspaceActivityIndicators,
@@ -301,7 +230,7 @@ struct ProjectRowView: View {
                     iconColor: .accentColor,
                     title: project.name,
                     depth: 0,
-                    isSelected: appState.isSelectedProjectDefaultWorkspace(project),
+                    isSelected: projection.isSelectedDefaultWorkspace,
                     trailingText: shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     activityIndicators: defaultWorkspaceActivityIndicators,
@@ -347,7 +276,7 @@ struct ProjectRowView: View {
                     Divider()
                 }
 
-                if defaultWorkspace != nil {
+                if projection.defaultWorkspaceName != nil {
                     Button {
                         triggerAICommit()
                     } label: {
@@ -403,14 +332,15 @@ struct ProjectRowView: View {
     }
 
     private func triggerAICommit() {
-        guard let defaultWorkspace, let path = defaultWorkspacePath else { return }
+        guard let defaultWorkspaceName = projection.defaultWorkspaceName,
+              let path = defaultWorkspacePath else { return }
         appState.submitBackgroundTask(
             type: .aiCommit,
             context: .aiCommit(AICommitContext(
                 projectName: project.name,
-                workspaceKey: defaultWorkspace.name,
+                workspaceKey: defaultWorkspaceName,
                 workspacePath: path,
-                projectPath: project.path
+                projectPath: projection.projectPath
             ))
         )
     }
@@ -433,23 +363,16 @@ private func openInFinder(_ path: String) {}
 // MARK: - Workspace Row
 
 struct WorkspaceRowView: View {
-    let workspace: WorkspaceModel
+    let projection: SidebarWorkspaceProjection
     let projectId: UUID
-    let projectName: String
     let isSelected: Bool
     @EnvironmentObject var appState: AppState
-    @EnvironmentObject var taskManager: BackgroundTaskManager
     @State private var showDeleteConfirmation = false
     @State private var showEndWorkConfirmation = false
     @State private var showNoAgentAlert = false
 
     /// 工作空间路径，用于复制与在编辑器中打开
-    private var workspacePath: String? { workspace.root }
-
-    /// 当前工作空间绑定的快捷键（基于终端打开时间自动分配）
-    private var currentShortcutKey: String? {
-        appState.getWorkspaceShortcutKey(workspaceKey: globalWorkspaceKey)
-    }
+    private var workspacePath: String? { projection.workspacePath }
 
     /// 菜单项图标尺寸
     private let menuIconSize: CGFloat = 16
@@ -458,25 +381,19 @@ struct WorkspaceRowView: View {
         FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
     }
 
-    /// 快捷键显示文本（如 "⌘1"）
-    private var shortcutDisplayText: String? {
-        guard let key = currentShortcutKey else { return nil }
-        return "⌘\(key)"
-    }
-
     /// 工作空间全局键，用于获取终端数量
     private var globalWorkspaceKey: String {
-        return "\(projectName):\(workspace.name)"
+        projection.globalWorkspaceKey
     }
 
     /// 当前工作空间的终端数量
     private var terminalCount: Int {
-        appState.workspaceTabs[globalWorkspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
+        projection.terminalCount
     }
 
     /// 当前工作空间是否有打开的标签页（任意类型）
     private var hasOpenTabs: Bool {
-        !(appState.workspaceTabs[globalWorkspaceKey] ?? []).isEmpty
+        projection.hasOpenTabs
     }
 
     /// 终端数量徽章视图
@@ -493,27 +410,17 @@ struct WorkspaceRowView: View {
 
     /// 当前工作空间是否正在删除中
     private var isDeleting: Bool {
-        appState.deletingWorkspaces.contains(globalWorkspaceKey)
+        projection.isDeleting
     }
 
     /// 该工作空间是否有未读完成的后台任务（侧边栏铃铛提示）
     private var hasUnseenCompletion: Bool {
-        taskManager.taskStore.unseenCompletionKeys.contains(globalWorkspaceKey)
+        projection.hasUnseenCompletion
     }
 
     /// 右侧活动图标：聊天流式 / 自主进化 / 后台任务（可并存）
     private var workspaceActivityIndicators: [TreeRowActivityIndicator] {
-        var items: [TreeRowActivityIndicator] = []
-        if workspace.sidebarStatus.hasStreamingChat {
-            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
-        }
-        if workspace.sidebarStatus.hasActiveEvolutionLoop {
-            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
-        }
-        if let taskIcon = workspace.sidebarStatus.taskIconName {
-            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon))
-        }
-        return items
+        projection.activityIndicators.map { TreeRowActivityIndicator(id: $0.id, iconName: $0.iconName) }
     }
 
     var body: some View {
@@ -524,17 +431,17 @@ struct WorkspaceRowView: View {
                     isExpanded: false,
                     iconName: "",
                     iconColor: .clear,
-                    title: workspace.name,
+                    title: projection.workspaceName,
                     depth: 1,
                     isSelected: isSelected,
-                    trailingText: shortcutDisplayText,
+                    trailingText: projection.shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     activityIndicators: workspaceActivityIndicators,
                     isLoading: isDeleting,
                     customIconView: terminalCountBadge,
                     onTap: {
                         if !isDeleting {
-                            appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                            appState.selectWorkspace(projectId: projectId, workspaceName: projection.workspaceName)
                         }
                     }
                 )
@@ -544,23 +451,23 @@ struct WorkspaceRowView: View {
                     isExpanded: false,
                     iconName: "square.grid.2x2",
                     iconColor: .secondary,
-                    title: workspace.name,
+                    title: projection.workspaceName,
                     depth: 1,
                     isSelected: isSelected,
-                    trailingText: shortcutDisplayText,
+                    trailingText: projection.shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     activityIndicators: workspaceActivityIndicators,
                     isLoading: isDeleting,
                     onTap: {
                         if !isDeleting {
-                            appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                            appState.selectWorkspace(projectId: projectId, workspaceName: projection.workspaceName)
                         }
                     }
                 )
             }
         }
-        .tag(workspace.name)
-        .accessibilityIdentifier("tf.mac.sidebar.workspace.\(workspace.name)")
+        .tag(projection.workspaceName)
+        .accessibilityIdentifier("tf.mac.sidebar.workspace.\(projection.workspaceName)")
         // 工作空间右键菜单：删除中时不显示
         .contextMenu {
             if !isDeleting {
@@ -603,7 +510,7 @@ struct WorkspaceRowView: View {
                     Label("git.aiCommit".localized, systemImage: "sparkles")
                 }
 
-                if !workspace.isDefault {
+                if !projection.isDefault {
                     Button {
                         triggerAIMerge()
                     } label: {
@@ -622,7 +529,7 @@ struct WorkspaceRowView: View {
                 .disabled(!hasOpenTabs)
 
                 // ── 危险操作 ──
-                if !workspace.isDefault {
+                if !projection.isDefault {
                     Divider()
 
                     Button(role: .destructive) {
@@ -636,10 +543,13 @@ struct WorkspaceRowView: View {
         .alert("sidebar.deleteWorkspace".localized, isPresented: $showDeleteConfirmation) {
             Button("common.cancel".localized, role: .cancel) { }
             Button("common.delete".localized, role: .destructive) {
-                appState.removeWorkspace(projectName: projectName, workspaceName: workspace.name)
+                appState.removeWorkspace(
+                    projectName: projection.projectName,
+                    workspaceName: projection.workspaceName
+                )
             }
         } message: {
-            Text(String(format: "sidebar.deleteWorkspace.message".localized, workspace.name))
+            Text(String(format: "sidebar.deleteWorkspace.message".localized, projection.workspaceName))
         }
         .alert("sidebar.endWork.confirm.title".localized, isPresented: $showEndWorkConfirmation) {
             Button("common.cancel".localized, role: .cancel) { }
@@ -666,8 +576,8 @@ struct WorkspaceRowView: View {
         appState.submitBackgroundTask(
             type: .aiMerge,
             context: .aiMerge(AIMergeContext(
-                projectName: projectName,
-                workspaceName: workspace.name
+                projectName: projection.projectName,
+                workspaceName: projection.workspaceName
             ))
         )
     }
@@ -675,14 +585,13 @@ struct WorkspaceRowView: View {
     /// 触发 AI 智能提交（后台任务）
     private func triggerAICommit() {
         guard let path = workspacePath else { return }
-        let projPath = appState.projects.first(where: { $0.name == projectName })?.path
         appState.submitBackgroundTask(
             type: .aiCommit,
             context: .aiCommit(AICommitContext(
-                projectName: projectName,
-                workspaceKey: workspace.name,
+                projectName: projection.projectName,
+                workspaceKey: projection.workspaceName,
                 workspacePath: path,
-                projectPath: projPath
+                projectPath: projection.projectPath
             ))
         )
     }

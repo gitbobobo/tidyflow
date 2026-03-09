@@ -39,6 +39,19 @@ struct AITabView: View {
     private let compactSidebarCollapseWidth: CGFloat = 920
     private let compactSidebarMaxWidth: CGFloat = 320
 
+    private var chatPresentation: AIChatPresentationProjection {
+        AIChatPresentationSemantics.make(
+            tool: appState.aiChatTool,
+            currentSessionId: aiChatStore.currentSessionId,
+            messages: aiChatStore.messages,
+            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
+            historyHasMore: aiChatStore.historyHasMore,
+            historyIsLoading: aiChatStore.historyIsLoading,
+            canSwitchTool: canSwitchAITool,
+            scrollSessionToken: mainMessageListScrollSessionToken
+        )
+    }
+
     private var controlBackgroundColor: Color {
         #if os(macOS)
         return Color(NSColor.controlBackgroundColor)
@@ -56,11 +69,16 @@ struct AITabView: View {
     }
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         mainPane
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         #if os(macOS)
         .background(Color(NSColor.windowBackgroundColor))
         #endif
+        .tfRenderProbe("AITabView", metadata: [
+            "tool": appState.aiChatTool.rawValue,
+            "session": aiChatStore.currentSessionId ?? "none"
+        ])
         .onAppear {
             sidebarState.bind(appState: appState)
             restoreAIContextOnAppear()
@@ -463,30 +481,23 @@ struct AITabView: View {
         )
     }
 
-    private var isLoadingMessages: Bool {
-        aiChatStore.currentSessionId != nil &&
-            aiChatStore.messages.isEmpty &&
-            aiChatStore.recentHistoryIsLoading
-    }
-
     private var messageArea: some View {
         ZStack {
             Color.clear
 
-            if aiChatStore.messages.isEmpty {
+            if chatPresentation.showsEmptyState {
                 AIChatEmptyStateView(
-                    currentTool: appState.aiChatTool,
+                    currentTool: chatPresentation.tool,
                     selectedTool: $appState.aiChatTool,
-                    canSwitchTool: canSwitchAITool && !isLoadingMessages,
-                    isLoading: isLoadingMessages
+                    canSwitchTool: chatPresentation.canSwitchTool,
+                    isLoading: chatPresentation.isLoadingMessages
                 )
             } else {
-                let currentSessionId = aiChatStore.currentSessionId ?? ""
                 MessageListView(
                     messages: aiChatStore.messages,
-                    sessionToken: aiChatStore.currentSessionId,
-                    canLoadOlderMessages: aiChatStore.currentSessionId != nil && aiChatStore.historyHasMore,
-                    isLoadingOlderMessages: aiChatStore.historyIsLoading,
+                    sessionToken: chatPresentation.currentSessionId,
+                    canLoadOlderMessages: chatPresentation.canLoadOlderMessages,
+                    isLoadingOlderMessages: chatPresentation.isLoadingOlderMessages,
                     onLoadOlderMessages: loadOlderMessages,
                     onQuestionReply: handleQuestionReply,
                     onQuestionReject: handleQuestionReject,
@@ -495,10 +506,20 @@ struct AITabView: View {
                         openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                     }
                 )
-                .id("main-session-\(appState.aiChatTool.rawValue)-\(currentSessionId)-\(mainMessageListScrollSessionToken)")
+                .id(chatPresentation.messageListIdentity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.aiChatRootPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
+        }
     }
 
     private func openLinkedSessionDetail(sessionId: String, sourceToolName: String) {

@@ -3,6 +3,12 @@ import Foundation
 extension AppState {
     // MARK: - Evolution
 
+    /// Evolution 工作区索引与投影是 UI 状态真源，只允许在主线程访问。
+    @inline(__always)
+    func assertEvolutionStateAccessOnMainThread() {
+        dispatchPrecondition(condition: .onQueue(.main))
+    }
+
     func requestEvolutionSnapshot(project: String? = nil, workspace: String? = nil) {
         wsClient.requestEvoSnapshot(project: project, workspace: workspace)
     }
@@ -12,6 +18,7 @@ extension AppState {
         workspace: String,
         reason: String
     ) {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         evolutionSnapshotFallbackWorkItems[key]?.cancel()
@@ -30,6 +37,7 @@ extension AppState {
     }
 
     func cancelEvolutionSnapshotFallback(project: String, workspace: String) {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         if let work = evolutionSnapshotFallbackWorkItems[key] {
@@ -39,12 +47,14 @@ extension AppState {
     }
 
     func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         return evolutionWorkspaceItemIndexByKey[key]
     }
 
     func replaceEvolutionWorkspaceItems(_ items: [EvolutionWorkspaceItemV2]) {
+        assertEvolutionStateAccessOnMainThread()
         evolutionWorkspaceItemIndexByKey = Dictionary(
             uniqueKeysWithValues: items.map { ($0.workspaceKey, $0) }
         )
@@ -52,6 +62,7 @@ extension AppState {
     }
 
     func mergeEvolutionWorkspaceItems(_ items: [EvolutionWorkspaceItemV2]) {
+        assertEvolutionStateAccessOnMainThread()
         for item in items {
             evolutionWorkspaceItemIndexByKey[item.workspaceKey] = item
         }
@@ -62,6 +73,7 @@ extension AppState {
     }
 
     func upsertEvolutionWorkspaceItem(_ item: EvolutionWorkspaceItemV2) -> Bool {
+        assertEvolutionStateAccessOnMainThread()
         let existing = evolutionWorkspaceItemIndexByKey[item.workspaceKey]
         guard existing?.projectionSignature != item.projectionSignature else {
             return false
@@ -75,6 +87,7 @@ extension AppState {
     }
 
     private func publishEvolutionWorkspaceProjection(keys: [String]) {
+        assertEvolutionStateAccessOnMainThread()
         let projectedItems = keys.compactMap { evolutionWorkspaceItemIndexByKey[$0] }
         let currentKeys = evolutionWorkspaceItems.map(\.workspaceKey)
         let currentSignatures = evolutionWorkspaceItems.map(\.projectionSignature)
@@ -403,6 +416,7 @@ extension AppState {
     }
 
     func evolutionControlCapability(project: String, workspace: String?) -> EvolutionControlCapability {
+        assertEvolutionStateAccessOnMainThread()
         guard let workspace else {
             return EvolutionControlCapability.evaluate(
                 workspaceReady: false,
@@ -426,6 +440,7 @@ extension AppState {
         action: EvolutionControlAction,
         requestedLoopRoundLimit: Int? = nil
     ) {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         evolutionPendingActionByWorkspace[key] = EvolutionPendingActionState(
@@ -435,6 +450,7 @@ extension AppState {
     }
 
     func clearEvolutionPendingAction(project: String, workspace: String) {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         evolutionPendingActionByWorkspace.removeValue(forKey: key)

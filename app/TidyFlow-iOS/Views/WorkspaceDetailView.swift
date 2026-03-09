@@ -45,6 +45,7 @@ struct WorkspaceDetailView: View {
     }
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         List {
             // 冲突提示行（有冲突时在代码变更区顶部展示）
             if hasActiveConflicts {
@@ -344,6 +345,16 @@ struct WorkspaceDetailView: View {
             Image(systemName: "ellipsis.circle")
         }
     }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.workspaceDetailPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
+        }
+    }
 }
 
 /// iOS 资源管理器（轻交互）：目录浏览 + 新建/重命名/删除 + 文本预览
@@ -609,6 +620,20 @@ private struct ExplorerFileRowView: View {
                     }
                 }
             }
+        }
+        .tfRenderProbe("WorkspaceDetailView", metadata: [
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.workspaceDetailPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
         }
     }
 }

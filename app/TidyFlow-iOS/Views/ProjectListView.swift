@@ -3,18 +3,17 @@ import SwiftUI
 /// 项目列表视图
 struct ProjectListView: View {
     @EnvironmentObject var appState: MobileAppState
+    @StateObject private var projectionStore = MobileSidebarProjectionStore()
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         List {
-            if appState.sortedProjectsForSidebar.isEmpty {
+            if projectionStore.projects.isEmpty && appState.projects.isEmpty {
                 ContentUnavailableView("暂无项目", systemImage: "folder")
             } else {
-                ForEach(appState.sortedProjectsForSidebar, id: \.name) { project in
-                    let workspaces = appState.workspacesForProject(project.name)
-                    let primaryWorkspace = appState.defaultWorkspaceForProject(project.name) ?? workspaces.first
-                    let visibleWorkspaces = appState.sidebarVisibleWorkspacesForProject(project.name)
+                ForEach(displayedProjects) { project in
                     Section {
-                        if workspaces.isEmpty {
+                        if project.isLoadingWorkspaces {
                             HStack(spacing: 8) {
                                 ProgressView()
                                     .scaleEffect(0.85)
@@ -22,32 +21,32 @@ struct ProjectListView: View {
                                     .foregroundColor(.secondary)
                             }
                             .onAppear {
-                                appState.requestWorkspacesIfNeeded(project: project.name)
+                                appState.requestWorkspacesIfNeeded(project: project.projectName)
                             }
                         } else {
-                            ForEach(visibleWorkspaces, id: \.name) { workspace in
+                            ForEach(project.visibleWorkspaces) { workspace in
                                 NavigationLink(value: MobileRoute.workspaceDetail(
-                                    project: project.name,
-                                    workspace: workspace.name
+                                    project: project.projectName,
+                                    workspace: workspace.workspaceName
                                 )) {
                                     HStack(spacing: 8) {
                                         VStack(alignment: .leading, spacing: 3) {
-                                            Text(workspace.name)
+                                            Text(workspace.workspaceName)
                                                 .font(.body)
                                             HStack(spacing: 8) {
-                                                Text(workspace.branch)
-                                                Text(workspace.status)
+                                                if let branch = workspace.branch, !branch.isEmpty {
+                                                    Text(branch)
+                                                }
+                                                if let statusText = workspace.statusText, !statusText.isEmpty {
+                                                    Text(statusText)
+                                                }
                                             }
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                         }
                                         Spacer(minLength: 8)
-                                        let indicators = workspaceActivityIndicators(
-                                            project: project.name,
-                                            workspace: workspace.name
-                                        )
-                                        if !indicators.isEmpty {
-                                            MobileWorkspaceActivityIconsView(indicators: indicators)
+                                        if !workspace.activityIndicators.isEmpty {
+                                            MobileWorkspaceActivityIconsView(indicators: workspace.activityIndicators)
                                         }
                                     }
                                     .padding(.vertical, 2)
@@ -55,7 +54,7 @@ struct ProjectListView: View {
                             }
                         }
                     } header: {
-                        projectHeader(project: project, primaryWorkspace: primaryWorkspace, loading: workspaces.isEmpty)
+                        projectHeader(project: project)
                     }
                 }
             }
@@ -74,36 +73,43 @@ struct ProjectListView: View {
             appState.refreshProjectTree()
         }
         .onAppear {
+            projectionStore.bind(appState: appState)
             appState.refreshProjectTree()
         }
+        .tfRenderProbe("ProjectListView", metadata: [
+            "project_count": String(displayedProjects.count)
+        ])
+    }
+
+    private var displayedProjects: [SidebarProjectProjection] {
+        if !projectionStore.projects.isEmpty {
+            return projectionStore.projects
+        }
+        return SidebarProjectionSemantics.buildMobileProjects(appState: appState)
     }
 
     @ViewBuilder
-    private func projectHeader(project: ProjectInfo, primaryWorkspace: WorkspaceInfo?, loading: Bool) -> some View {
-        if let primaryWorkspace {
+    private func projectHeader(project: SidebarProjectProjection) -> some View {
+        if let primaryWorkspaceName = project.primaryWorkspaceName {
             Button {
                 appState.navigationPath.append(
-                    MobileRoute.workspaceDetail(project: project.name, workspace: primaryWorkspace.name)
+                    MobileRoute.workspaceDetail(project: project.projectName, workspace: primaryWorkspaceName)
                 )
             } label: {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(project.name)
+                        Text(project.projectName)
                             .font(.headline)
                             .foregroundColor(.primary)
-                        if !project.root.isEmpty {
-                            Text(project.root)
+                        if let projectPath = project.projectPath, !projectPath.isEmpty {
+                            Text(projectPath)
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
                     Spacer(minLength: 8)
-                    let indicators = workspaceActivityIndicators(
-                        project: project.name,
-                        workspace: primaryWorkspace.name
-                    )
-                    if !indicators.isEmpty {
-                        MobileWorkspaceActivityIconsView(indicators: indicators)
+                    if !project.activityIndicators.isEmpty {
+                        MobileWorkspaceActivityIconsView(indicators: project.activityIndicators)
                     }
                 }
                 .padding(.vertical, 2)
@@ -113,64 +119,42 @@ struct ProjectListView: View {
         } else {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(project.name)
+                    Text(project.projectName)
                         .font(.headline)
-                    if !project.root.isEmpty {
-                        Text(project.root)
+                    if let projectPath = project.projectPath, !projectPath.isEmpty {
+                        Text(projectPath)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
-                if loading {
+                if project.isLoadingWorkspaces {
                     ProgressView()
                         .scaleEffect(0.75)
                 }
             }
             .contentShape(Rectangle())
             .onAppear {
-                if loading {
-                    appState.requestWorkspacesIfNeeded(project: project.name)
+                if project.isLoadingWorkspaces {
+                    appState.requestWorkspacesIfNeeded(project: project.projectName)
                 }
             }
         }
     }
 
-    private func workspaceActivityIndicators(project: String, workspace: String) -> [MobileWorkspaceActivityIndicator] {
-        var items: [MobileWorkspaceActivityIndicator] = []
-        if let status = appState.workspaceAIStatus(project: project, workspace: workspace) {
-            switch status.normalizedStatus {
-            case "running":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bolt.circle.fill"))
-            case "awaiting_input":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "hourglass.circle.fill"))
-            case "success":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "checkmark.circle.fill"))
-            case "failure", "error":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "xmark.octagon.fill"))
-            case "cancelled":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "minus.circle.fill"))
-            default:
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
-            }
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.projectListPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
         }
-        if appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
-        }
-        if let taskIcon = appState.activeTaskIconForWorkspace(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "task", iconName: taskIcon))
-        }
-        return items
     }
 }
 
-private struct MobileWorkspaceActivityIndicator: Identifiable {
-    let id: String
-    let iconName: String
-}
-
 private struct MobileWorkspaceActivityIconsView: View {
-    let indicators: [MobileWorkspaceActivityIndicator]
+    let indicators: [SidebarActivityIndicatorProjection]
 
     var body: some View {
         HStack(spacing: 4) {

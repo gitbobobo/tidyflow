@@ -5,6 +5,7 @@ struct TabContentHostView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         Group {
             if let globalKey = appState.currentGlobalWorkspaceKey {
                 if let specialPage = appState.workspaceSpecialPageByWorkspace[globalKey] {
@@ -22,6 +23,19 @@ struct TabContentHostView: View {
             } else {
                 NoActiveTabView()
             }
+        }
+        .tfRenderProbe("TabContentHostView", metadata: [
+            "workspace": appState.currentGlobalWorkspaceKey ?? "none"
+        ])
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.tabContentHostPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
         }
     }
 }

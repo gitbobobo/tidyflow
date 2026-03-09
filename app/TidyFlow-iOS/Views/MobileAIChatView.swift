@@ -23,6 +23,19 @@ struct MobileAIChatView: View {
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
 
+    private var chatPresentation: AIChatPresentationProjection {
+        AIChatPresentationSemantics.make(
+            tool: appState.aiChatTool,
+            currentSessionId: appState.aiCurrentSessionId,
+            messages: aiChatStore.messages,
+            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
+            historyHasMore: aiChatStore.historyHasMore,
+            historyIsLoading: aiChatStore.historyIsLoading,
+            canSwitchTool: appState.canSwitchAIChatTool,
+            scrollSessionToken: mainMessageListScrollSessionToken
+        )
+    }
+
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
             get: { appState.aiChatTool },
@@ -47,6 +60,7 @@ struct MobileAIChatView: View {
     }
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         messageArea
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -197,30 +211,28 @@ struct MobileAIChatView: View {
             codexPlanProposalPartIDInCurrentTurn = nil
         }
         .accessibilityIdentifier("tf.ios.ai.chat-area")
-    }
-
-    private var isLoadingMessages: Bool {
-        appState.aiCurrentSessionId != nil &&
-            aiChatStore.messages.isEmpty &&
-            aiChatStore.recentHistoryIsLoading
+        .tfRenderProbe("MobileAIChatView", metadata: [
+            "project": project,
+            "workspace": workspace,
+            "session": appState.aiCurrentSessionId ?? "none"
+        ])
     }
 
     private var messageArea: some View {
         ZStack {
-            if aiChatStore.messages.isEmpty {
+            if chatPresentation.showsEmptyState {
                 AIChatEmptyStateView(
-                    currentTool: appState.aiChatTool,
+                    currentTool: chatPresentation.tool,
                     selectedTool: aiToolBinding,
-                    canSwitchTool: appState.canSwitchAIChatTool && !isLoadingMessages,
-                    isLoading: isLoadingMessages
+                    canSwitchTool: chatPresentation.canSwitchTool,
+                    isLoading: chatPresentation.isLoadingMessages
                 )
             } else {
-                let currentSessionId = appState.aiCurrentSessionId ?? ""
                 MessageListView(
                     messages: aiChatStore.messages,
-                    sessionToken: appState.aiCurrentSessionId,
-                    canLoadOlderMessages: appState.aiCurrentSessionId != nil && aiChatStore.historyHasMore,
-                    isLoadingOlderMessages: aiChatStore.historyIsLoading,
+                    sessionToken: chatPresentation.currentSessionId,
+                    canLoadOlderMessages: chatPresentation.canLoadOlderMessages,
+                    isLoadingOlderMessages: chatPresentation.isLoadingOlderMessages,
                     onLoadOlderMessages: loadOlderMessages,
                     onQuestionReply: { request, answers in
                         handleQuestionReply(request: request, answers: answers)
@@ -243,10 +255,20 @@ struct MobileAIChatView: View {
                     }
                 )
                 .environmentObject(aiChatStore)
-                .id("main-session-\(appState.aiChatTool.rawValue)-\(currentSessionId)-\(mainMessageListScrollSessionToken)")
+                .id(chatPresentation.messageListIdentity)
             }
         }
         .background(systemGroupedBackgroundColor)
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.mobileAIChatRootPrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
+        }
     }
 
     private func consumeOneShotHintIfNeeded() {

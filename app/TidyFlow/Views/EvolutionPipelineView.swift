@@ -8,6 +8,7 @@ import SwiftUI
 /// 聚焦当前轮次执行流程，以流水线动画展示代理执行状态
 struct EvolutionPipelineView: View {
     @EnvironmentObject var appState: AppState
+    @StateObject private var projectionStore = EvolutionPipelineProjectionStore()
 
     // MARK: - 本地状态
 
@@ -37,28 +38,13 @@ struct EvolutionPipelineView: View {
 
     // MARK: - 便捷属性
 
-    private var project: String { appState.selectedProjectName }
-    private var workspace: String? { appState.selectedWorkspaceKey }
-    private var workspaceReady: Bool { workspace != nil && !(workspace ?? "").isEmpty }
-    private var workspaceContextKey: String {
-        let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace ?? "")
-        return "\(project)/\(normalizedWorkspace)"
-    }
-
-    private var currentItem: EvolutionWorkspaceItemV2? {
-        guard let workspace else { return nil }
-        return appState.evolutionItem(project: project, workspace: workspace)
-    }
-
-    /// 历史循环直接从共享状态派生，避免本地镜像与页面生命周期错位。
-    private var cycleHistories: [PipelineCycleHistory] {
-        guard let ws = workspace else { return [] }
-        let key = appState.globalWorkspaceKey(
-            projectName: project,
-            workspaceName: appState.normalizeEvolutionWorkspaceName(ws)
-        )
-        return (appState.evolutionCycleHistories[key] ?? []).map(mapCycleHistory)
-    }
+    private var projection: EvolutionPipelineProjection { projectionStore.projection }
+    private var project: String { projection.project }
+    private var workspace: String? { projection.workspace }
+    private var workspaceReady: Bool { projection.workspaceReady }
+    private var workspaceContextKey: String { projection.workspaceContextKey }
+    private var currentItem: EvolutionWorkspaceItemV2? { projection.currentItem }
+    private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
 
     private var controlCapability: EvolutionControlCapability {
         appState.evolutionControlCapability(project: project, workspace: workspace)
@@ -119,6 +105,7 @@ struct EvolutionPipelineView: View {
     // MARK: - Body
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         VStack(spacing: 0) {
             // 标题
             pipelineHeader
@@ -143,9 +130,14 @@ struct EvolutionPipelineView: View {
             }
         }
         .onAppear {
+            projectionStore.bind(appState: appState, mapHistory: mapCycleHistory)
             syncStartOptions()
             refreshData()
         }
+        .tfRenderProbe("EvolutionPipelineView", metadata: [
+            "project": project,
+            "workspace": workspace ?? "none"
+        ])
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetLocalTimeline()
             syncStartOptions()
@@ -177,6 +169,16 @@ struct EvolutionPipelineView: View {
         }
         .sheet(isPresented: $isPlanDocumentSheetPresented) {
             planDocumentSheet
+        }
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.evolutionPipelinePrintChangesEnabled
+        ) {
+#if DEBUG
+            Self._printChanges()
+#endif
         }
     }
 

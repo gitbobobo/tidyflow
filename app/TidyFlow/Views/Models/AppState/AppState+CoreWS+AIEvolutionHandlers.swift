@@ -737,6 +737,7 @@ extension AppState {
     func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.assertEvolutionStateAccessOnMainThread()
             let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
             let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
             guard let existing = self.evolutionWorkspaceItemIndexByKey[key] else {
@@ -798,18 +799,17 @@ extension AppState {
     /// 若对应工作空间尚不存在则回退到 pulse（触发全量刷新）。
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) {
         let startedAt = CFAbsoluteTimeGetCurrent()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.assertEvolutionStateAccessOnMainThread()
             let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
             let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
             guard let existing = self.evolutionWorkspaceItemIndexByKey[key] else {
-                DispatchQueue.main.async {
-                    self.scheduleEvolutionSnapshotFallback(
-                        project: ev.project,
-                        workspace: workspace,
-                        reason: "missing_cycle_update_item"
-                    )
-                }
+                self.scheduleEvolutionSnapshotFallback(
+                    project: ev.project,
+                    workspace: workspace,
+                    reason: "missing_cycle_update_item"
+                )
                 return
             }
             let updated = EvolutionWorkspaceItemV2(
@@ -830,25 +830,23 @@ extension AppState {
                 rateLimitErrorMessage: ev.rateLimitErrorMessage
             )
             guard existing.projectionSignature != updated.projectionSignature else { return }
-            DispatchQueue.main.async {
-                let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-                TFLog.perf.info("perf evolution_item_apply_ms=\(itemApplyMs, privacy: .public) key=\(key, privacy: .public)")
-                let didUpdate = self.upsertEvolutionWorkspaceItem(updated)
-                if didUpdate {
-                    self.cancelEvolutionSnapshotFallback(project: ev.project, workspace: workspace)
-                    self.evolutionTargetedSnapshotMergeKeys.remove(key)
-                    self.scheduleWorkspaceSidebarStatusRefresh(
-                        projectNames: [ev.project],
-                        debounce: 0.2
-                    )
-                }
-                if let pendingAction = self.evolutionPendingActionByWorkspace[key],
-                   EvolutionControlCapability.shouldClearPendingAction(
-                    pendingAction,
-                    currentStatus: ev.status
-                ) {
-                    self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
-                }
+            let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            TFLog.perf.info("perf evolution_item_apply_ms=\(itemApplyMs, privacy: .public) key=\(key, privacy: .public)")
+            let didUpdate = self.upsertEvolutionWorkspaceItem(updated)
+            if didUpdate {
+                self.cancelEvolutionSnapshotFallback(project: ev.project, workspace: workspace)
+                self.evolutionTargetedSnapshotMergeKeys.remove(key)
+                self.scheduleWorkspaceSidebarStatusRefresh(
+                    projectNames: [ev.project],
+                    debounce: 0.2
+                )
+            }
+            if let pendingAction = self.evolutionPendingActionByWorkspace[key],
+               EvolutionControlCapability.shouldClearPendingAction(
+                pendingAction,
+                currentStatus: ev.status
+            ) {
+                self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
             }
         }
     }
@@ -871,6 +869,7 @@ extension AppState {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.assertEvolutionStateAccessOnMainThread()
                 if self.evolutionScheduler != snapshot.scheduler {
                     self.evolutionScheduler = snapshot.scheduler
                 }
@@ -946,6 +945,7 @@ extension AppState {
     }
 
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {
+        assertEvolutionStateAccessOnMainThread()
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
         evolutionBlockers = ev.unresolvedItems
         if ev.unresolvedCount > 0 {
@@ -986,6 +986,7 @@ extension AppState {
     }
 
     func handleEvolutionError(_ message: String, project: String? = nil, workspace: String? = nil) {
+        assertEvolutionStateAccessOnMainThread()
         evolutionReplayLoading = false
         evolutionReplayError = message
         if let project, let workspace {

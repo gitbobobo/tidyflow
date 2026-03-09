@@ -268,6 +268,10 @@ struct MessageListView: View {
             }
         }
         .coordinateSpace(name: scrollSpaceName)
+        .tfRenderProbe("AIMessageList", metadata: [
+            "session": sessionToken ?? "none",
+            "message_count": String(displayMessages.count)
+        ])
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
@@ -292,10 +296,13 @@ struct MessageListView: View {
     }
 
     private static func debugPrintChangesIfNeeded() {
+        SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
+            SwiftUIPerformanceDebug.aiMessageListPrintChangesEnabled
+        ) {
 #if DEBUG
-        guard SwiftUIPerformanceDebug.aiMessageListPrintChangesEnabled else { return }
-        Self._printChanges()
+            Self._printChanges()
 #endif
+        }
     }
 
     @ViewBuilder

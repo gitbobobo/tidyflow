@@ -177,6 +177,10 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		RMT00002 /* AppState+RemoteTerminals.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00012 /* AppState+RemoteTerminals.swift */; };
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
 		SPDG0001 /* SwiftUIPerformanceDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPDG0011 /* SwiftUIPerformanceDebug.swift */; };
+		SRD0001 /* SwiftUIRenderDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRD0011 /* SwiftUIRenderDiagnostics.swift */; };
+		SBP0001 /* SidebarProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SBP0011 /* SidebarProjectionStore.swift */; };
+		AIPJ0001 /* AIChatPresentationProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPJ0011 /* AIChatPresentationProjection.swift */; };
+		EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVP0011 /* EvolutionPipelineProjectionStore.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		SPL00003 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
@@ -243,6 +247,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST10038 /* MainThreadReliefRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003A /* MainThreadReliefRegressionTests.swift */; };
 		TST10039 /* AnyCodableFoundationBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003B /* AnyCodableFoundationBridgeTests.swift */; };
 		TST1003D /* TypedMessagePackEnvelopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003C /* TypedMessagePackEnvelopeTests.swift */; };
+		TST1003F /* SwiftUIPerformanceProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003E /* SwiftUIPerformanceProjectionTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -339,6 +344,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST1003A /* MainThreadReliefRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainThreadReliefRegressionTests.swift; sourceTree = "<group>"; };
 		TST1003B /* AnyCodableFoundationBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodableFoundationBridgeTests.swift; sourceTree = "<group>"; };
 		TST1003C /* TypedMessagePackEnvelopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedMessagePackEnvelopeTests.swift; sourceTree = "<group>"; };
+		TST1003E /* SwiftUIPerformanceProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIPerformanceProjectionTests.swift; sourceTree = "<group>"; };
 		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
 		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -447,6 +453,10 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		RMT00012 /* AppState+RemoteTerminals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+RemoteTerminals.swift"; sourceTree = "<group>"; };
 		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		SPDG0011 /* SwiftUIPerformanceDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIPerformanceDebug.swift; sourceTree = "<group>"; };
+		SRD0011 /* SwiftUIRenderDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIRenderDiagnostics.swift; sourceTree = "<group>"; };
+		SBP0011 /* SidebarProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarProjectionStore.swift; sourceTree = "<group>"; };
+		AIPJ0011 /* AIChatPresentationProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPresentationProjection.swift; sourceTree = "<group>"; };
+		EVP0011 /* EvolutionPipelineProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStore.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
@@ -731,6 +741,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST1003A /* MainThreadReliefRegressionTests.swift */,
 					TST1003B /* AnyCodableFoundationBridgeTests.swift */,
 					TST1003C /* TypedMessagePackEnvelopeTests.swift */,
+					TST1003E /* SwiftUIPerformanceProjectionTests.swift */,
 					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
@@ -846,7 +857,11 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000101 /* Notifications.swift */,
 				MDL000115 /* ProjectCommandModels.swift */,
 				MDL000107 /* ProjectWorkspaceModels.swift */,
+				SBP0011 /* SidebarProjectionStore.swift */,
+				AIPJ0011 /* AIChatPresentationProjection.swift */,
+				EVP0011 /* EvolutionPipelineProjectionStore.swift */,
 				SPDG0011 /* SwiftUIPerformanceDebug.swift */,
+				SRD0011 /* SwiftUIRenderDiagnostics.swift */,
 				TST00011 /* ToastManager.swift */,
 				MDL000103 /* TabModels.swift */,
 			);
@@ -1125,6 +1140,10 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				BGT00001 /* BackgroundTaskViews.swift in Sources */,
 				FAQ00001 /* FAQView.swift in Sources */,
 				SPDG0001 /* SwiftUIPerformanceDebug.swift in Sources */,
+				SRD0001 /* SwiftUIRenderDiagnostics.swift in Sources */,
+				SBP0001 /* SidebarProjectionStore.swift in Sources */,
+				AIPJ0001 /* AIChatPresentationProjection.swift in Sources */,
+				EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */,
 				TST00001 /* ToastManager.swift in Sources */,
 				TST00002 /* ToastOverlayView.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
@@ -1236,6 +1255,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST10038 /* MainThreadReliefRegressionTests.swift in Sources */,
 				TST10039 /* AnyCodableFoundationBridgeTests.swift in Sources */,
 				TST1003D /* TypedMessagePackEnvelopeTests.swift in Sources */,
+				TST1003F /* SwiftUIPerformanceProjectionTests.swift in Sources */,
 				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
