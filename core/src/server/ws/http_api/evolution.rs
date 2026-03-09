@@ -8,6 +8,7 @@ use serde::Deserialize;
 use super::auth::ensure_http_authorized;
 use super::common::{
     build_http_handler_context, json_from_server_message, map_query_error, ApiError,
+    WorkspaceQueryContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +58,7 @@ pub(in crate::server::ws) async fn evolution_agent_profile_handler(
     Query(query): Query<EvolutionTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
     let handler_ctx = build_http_handler_context(&ctx);
 
     let response = crate::server::handlers::evolution::query_evolution_agent_profile(
@@ -65,7 +67,7 @@ pub(in crate::server::ws) async fn evolution_agent_profile_handler(
         &handler_ctx,
     )
     .await
-    .map_err(map_query_error)?;
+    .map_err(|e| qctx.map_query_error(e))?;
     json_from_server_message(response)
 }
 
@@ -76,6 +78,7 @@ pub(in crate::server::ws) async fn evolution_cycle_history_handler(
     Query(query): Query<EvolutionTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
     let handler_ctx = build_http_handler_context(&ctx);
 
     let response = crate::server::handlers::evolution::query_evolution_cycle_history(
@@ -84,6 +87,6 @@ pub(in crate::server::ws) async fn evolution_cycle_history_handler(
         &handler_ctx,
     )
     .await
-    .map_err(map_query_error)?;
+    .map_err(|e| qctx.map_query_error(e))?;
     json_from_server_message(response)
 }

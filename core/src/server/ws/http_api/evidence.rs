@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use super::auth::ensure_http_authorized;
 use super::common::{
-    build_http_handler_context, json_from_server_message, map_query_error, ApiError,
+    build_http_handler_context, json_from_server_message, ApiError, WorkspaceQueryContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +46,7 @@ pub(in crate::server::ws) async fn evidence_snapshot_handler(
     Query(query): Query<EvidenceTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
     let handler_ctx = build_http_handler_context(&ctx);
 
     let response = crate::server::handlers::evidence::query_evidence_snapshot(
@@ -54,7 +55,7 @@ pub(in crate::server::ws) async fn evidence_snapshot_handler(
         &handler_ctx,
     )
     .await
-    .map_err(map_query_error)?;
+    .map_err(|e| qctx.map_query_error(e))?;
 
     json_from_server_message(response)
 }
@@ -66,6 +67,7 @@ pub(in crate::server::ws) async fn evidence_rebuild_prompt_handler(
     Query(query): Query<EvidenceTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
     let handler_ctx = build_http_handler_context(&ctx);
 
     let response = crate::server::handlers::evidence::query_evidence_rebuild_prompt(
@@ -74,7 +76,7 @@ pub(in crate::server::ws) async fn evidence_rebuild_prompt_handler(
         &handler_ctx,
     )
     .await
-    .map_err(map_query_error)?;
+    .map_err(|e| qctx.map_query_error(e))?;
 
     json_from_server_message(response)
 }
@@ -86,6 +88,7 @@ pub(in crate::server::ws) async fn evidence_item_chunk_handler(
     Query(query): Query<EvidenceChunkQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
     let handler_ctx = build_http_handler_context(&ctx);
 
     let response = crate::server::handlers::evidence::query_evidence_item_chunk(
@@ -97,7 +100,7 @@ pub(in crate::server::ws) async fn evidence_item_chunk_handler(
         &handler_ctx,
     )
     .await
-    .map_err(map_query_error)?;
+    .map_err(|e| qctx.map_query_error(e))?;
 
     json_from_server_message(response)
 }
