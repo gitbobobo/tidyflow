@@ -734,6 +734,8 @@ final class AIChatStore: ObservableObject {
         qos: .userInitiated
     )
     private static let streamCommitInterval: TimeInterval = 0.05
+    weak var performanceTracer: TFPerformanceTracer?
+    var performanceContextProvider: (() -> (project: String, workspace: String)?)?
 
     // MARK: - Snapshot
 
@@ -989,7 +991,23 @@ final class AIChatStore: ObservableObject {
         let rawEventCount = rawEvents.count
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            let perfTraceId: String? = {
+                guard let context = self.performanceContextProvider?(),
+                      let tracer = self.performanceTracer else { return nil }
+                return tracer.begin(TFPerformanceContext(
+                    event: .aiMessageTailFlush,
+                    project: context.project,
+                    workspace: context.workspace,
+                    metadata: [
+                        "events": String(events.count),
+                        "raw_events": String(rawEventCount),
+                    ]
+                ))
+            }()
             self.applyStreamEvents(events)
+            if let perfTraceId, let tracer = self.performanceTracer {
+                tracer.end(perfTraceId)
+            }
             TFLog.perf.debug(
                 "ai_stream_commit events=\(events.count, privacy: .public) raw_events=\(rawEventCount, privacy: .public)"
             )

@@ -189,6 +189,7 @@ struct TidyFlowApp: App {
             startupRootView
                 .environmentObject(appState)
                 .environmentObject(appState.aiChatStore)
+                .environmentObject(appState.aiSessionListStore)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
                 .environmentObject(appState.paletteState)
@@ -236,6 +237,7 @@ struct TidyFlowApp: App {
             SettingsContentView()
                 .environmentObject(appState)
                 .environmentObject(appState.aiChatStore)
+                .environmentObject(appState.aiSessionListStore)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
                 .environmentObject(appState.paletteState)

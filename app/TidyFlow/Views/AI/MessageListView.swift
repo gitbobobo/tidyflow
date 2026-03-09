@@ -237,6 +237,7 @@ struct MessageListView: View {
     }
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         ScrollViewReader { proxy in
             ScrollView {
                 messageStack()
@@ -288,6 +289,13 @@ struct MessageListView: View {
                 jumpToBottomButton
             }
         }
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+#if DEBUG
+        guard SwiftUIPerformanceDebug.aiMessageListPrintChangesEnabled else { return }
+        Self._printChanges()
+#endif
     }
 
     @ViewBuilder

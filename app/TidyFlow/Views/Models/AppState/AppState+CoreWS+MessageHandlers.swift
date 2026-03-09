@@ -238,10 +238,14 @@ final class AppStateErrorMessageHandlerAdapter: ErrorMessageHandler {
     }
 
     func handleClientError(_ message: String) {
-        appState?.handleClientErrorMessage(message)
+        Task { @MainActor [weak appState] in
+            appState?.handleClientErrorMessage(message)
+        }
     }
 
     func handleCoreError(_ error: CoreError) {
-        appState?.handleCoreError(error)
+        Task { @MainActor [weak appState] in
+            appState?.handleCoreError(error)
+        }
     }
 }

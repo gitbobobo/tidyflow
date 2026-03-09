@@ -69,8 +69,12 @@ enum TFPerformanceEvent: String, CaseIterable {
     case workspaceSwitch = "workspace_switch"
     case fileTreeRequest = "file_tree_request"
     case fileTreeExpand = "file_tree_expand"
+    case workspaceTreeRefresh = "workspace_tree_refresh"
     case aiSessionListRequest = "ai_session_list_request"
     case aiSessionListPage = "ai_session_list_page"
+    case aiSessionListRefresh = "ai_session_list_refresh"
+    case aiMessageTailFlush = "ai_message_tail_flush"
+    case evidencePageAppend = "evidence_page_append"
 
     var category: String { "perf" }
 }

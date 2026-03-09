@@ -142,42 +142,16 @@ extension AppState {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
-                self.markAISessionListRequestCompleted(
+                let pageState = self.aiSessionListStore.handleResponse(
                     project: ev.projectName,
                     workspace: ev.workspaceName,
-                    filter: filter
+                    filter: filter,
+                    sessions: sorted,
+                    hasMore: ev.hasMore,
+                    nextCursor: ev.nextCursor,
+                    performanceTracer: self.performanceTracer
                 )
-                var pageState = self.sessionListPageState(for: filter)
-                let mergedSessions = pageState.isLoadingNextPage
-                    ? (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
-                        result[session.sessionKey] = session
-                    }
-                    : sorted.reduce(into: [String: AISessionInfo]()) { result, session in
-                        result[session.sessionKey] = session
-                    }
-                let orderedMergedSessions: [AISessionInfo]
-                if pageState.isLoadingNextPage {
-                    let orderedKeys = (pageState.sessions + sorted).map(\.sessionKey)
-                    var seen = Set<String>()
-                    orderedMergedSessions = orderedKeys.compactMap { key in
-                        guard seen.insert(key).inserted else { return nil }
-                        return mergedSessions[key]
-                    }
-                } else {
-                    orderedMergedSessions = sorted
-                }
-                pageState.sessions = orderedMergedSessions
-                pageState.hasMore = ev.hasMore
-                pageState.nextCursor = ev.nextCursor
-                pageState.isLoadingInitial = false
-                pageState.isLoadingNextPage = false
-                self.updateSessionListPageState(
-                    pageState,
-                    project: ev.projectName,
-                    workspace: ev.workspaceName,
-                    filter: filter
-                )
-                self.mergeKnownAISessions(orderedMergedSessions)
+                self.mergeKnownAISessions(pageState.sessions)
             }
         }
     }
@@ -1187,13 +1161,9 @@ extension AppState {
         }
     }
 
+    @MainActor
     func handleClientErrorMessage(_ errorMsg: String) {
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var updated = state
-            updated.isLoadingInitial = false
-            updated.isLoadingNextPage = false
-            return updated
-        }
+        aiSessionListStore.handleClientError()
         if !evolutionPendingActionByWorkspace.isEmpty {
             let pendingCount = evolutionPendingActionByWorkspace.count
             evolutionPendingActionByWorkspace.removeAll()
@@ -1233,6 +1203,7 @@ extension AppState {
     /// 处理来自 Core 的结构化错误（通过 errorCode 决定状态迁移，避免字符串匹配漂移）
     ///
     /// 多工作区安全：错误仅影响归属的 project/workspace，不污染当前上下文。
+    @MainActor
     func handleCoreError(_ error: CoreError) {
         // 过滤：跨工作区的错误不影响当前选中工作区的状态
         let belongsToCurrentContext = error.belongsTo(

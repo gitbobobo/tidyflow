@@ -69,6 +69,7 @@ struct TidyFlowiOSApp: App {
                 }
                 .environmentObject(appState)
                 .environmentObject(appState.aiChatStore)
+                .environmentObject(appState.aiSessionListStore)
 
                 DisconnectBannerView()
                     .environmentObject(appState)

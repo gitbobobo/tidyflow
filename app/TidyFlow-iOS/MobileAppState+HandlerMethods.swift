@@ -698,12 +698,7 @@ extension MobileAppState {
 
     func handleClientError(_ message: String) {
         errorMessage = message
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var updated = state
-            updated.isLoadingInitial = false
-            updated.isLoadingNextPage = false
-            return updated
-        }
+        aiSessionListStore.handleClientError()
         if !evolutionPendingActionByWorkspace.isEmpty {
             let pendingCount = evolutionPendingActionByWorkspace.count
             evolutionPendingActionByWorkspace.removeAll()

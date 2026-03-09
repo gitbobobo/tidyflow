@@ -63,6 +63,7 @@
 		AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */; };
 		AIC00002 /* MessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00001 /* MessageListView.swift */; };
 		AIC00004 /* AIChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00003 /* AIChatModels.swift */; };
+		ASLS0001 /* AISessionListStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASLS0011 /* AISessionListStore.swift */; };
 		AISS0001 /* AISessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISS0011 /* AISessionSemantics.swift */; };
 		AISS0002 /* AISessionSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISS0011 /* AISessionSemantics.swift */; };
 		EXSL0001 /* ExplorerSemanticLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0011 /* ExplorerSemanticLayer.swift */; };
@@ -121,6 +122,7 @@
 		MOB00053 /* MobileCommandIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00043 /* MobileCommandIconView.swift */; };
 		MOB00055 /* DisconnectBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00054 /* DisconnectBannerView.swift */; };
 		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
+		EVDS0001 /* EvidenceViewerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVDS0011 /* EvidenceViewerStore.swift */; };
 		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
 		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
 		FAQ00001 /* FAQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAQ00011 /* FAQView.swift */; };
@@ -174,6 +176,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00011 /* RemoteTerminalIndicatorView.swift */; };
 		RMT00002 /* AppState+RemoteTerminals.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00012 /* AppState+RemoteTerminals.swift */; };
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
+		SPDG0001 /* SwiftUIPerformanceDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPDG0011 /* SwiftUIPerformanceDebug.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		SPL00003 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
@@ -357,6 +360,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AITabView.swift; sourceTree = "<group>"; };
 		AIC00001 /* MessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MessageListView.swift"; sourceTree = "<group>"; };
 		AIC00003 /* AIChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatModels.swift; sourceTree = "<group>"; };
+		ASLS0011 /* AISessionListStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionListStore.swift; sourceTree = "<group>"; };
 		AISS0011 /* AISessionSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionSemantics.swift; sourceTree = "<group>"; };
 		AISHC011 /* AISessionHistoryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionHistoryCoordinator.swift; sourceTree = "<group>"; };
 		AIC00028 /* AISessionStatusRequestLimiter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionStatusRequestLimiter.swift; sourceTree = "<group>"; };
@@ -392,6 +396,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
 		E4200012 /* TFLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFLogger.swift; sourceTree = "<group>"; };
 		EDS00002 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
+		EVDS0011 /* EvidenceViewerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceViewerStore.swift; sourceTree = "<group>"; };
 		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
 		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
 		FAQ00011 /* FAQView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FAQView.swift; sourceTree = "<group>"; };
@@ -441,6 +446,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		RMT00011 /* RemoteTerminalIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTerminalIndicatorView.swift; sourceTree = "<group>"; };
 		RMT00012 /* AppState+RemoteTerminals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+RemoteTerminals.swift"; sourceTree = "<group>"; };
 		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		SPDG0011 /* SwiftUIPerformanceDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIPerformanceDebug.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
@@ -818,6 +824,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 			children = (
 				MDL000105 /* AIModels.swift */,
 				AIC00003 /* AIChatModels.swift */,
+				ASLS0011 /* AISessionListStore.swift */,
 				AISS0011 /* AISessionSemantics.swift */,
 				AISHC011 /* AISessionHistoryCoordinator.swift */,
 				AIC00028 /* AISessionStatusRequestLimiter.swift */,
@@ -833,11 +840,13 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
+				EVDS0011 /* EvidenceViewerStore.swift */,
 				MDL000108 /* FileBrowserModels.swift */,
 				EXSL0011 /* ExplorerSemanticLayer.swift */,
 				MDL000101 /* Notifications.swift */,
 				MDL000115 /* ProjectCommandModels.swift */,
 				MDL000107 /* ProjectWorkspaceModels.swift */,
+				SPDG0011 /* SwiftUIPerformanceDebug.swift */,
 				TST00011 /* ToastManager.swift */,
 				MDL000103 /* TabModels.swift */,
 			);
@@ -1075,6 +1084,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
 				GCS000012 /* GitCacheState.swift in Sources */,
 				FCS000012 /* FileCacheState.swift in Sources */,
+				EVDS0001 /* EvidenceViewerStore.swift in Sources */,
 				SPL00041 /* GitCacheState+DiffStatus.swift in Sources */,
 				SPL00042 /* GitCacheState+Operations.swift in Sources */,
 				MDL000301 /* Notifications.swift in Sources */,
@@ -1114,6 +1124,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				RMT00002 /* AppState+RemoteTerminals.swift in Sources */,
 				BGT00001 /* BackgroundTaskViews.swift in Sources */,
 				FAQ00001 /* FAQView.swift in Sources */,
+				SPDG0001 /* SwiftUIPerformanceDebug.swift in Sources */,
 				TST00001 /* ToastManager.swift in Sources */,
 				TST00002 /* ToastOverlayView.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
@@ -1129,6 +1140,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				AIC00002 /* MessageListView.swift in Sources */,
 				AIC00018 /* MarkdownTextView.swift in Sources */,
 				AIC00004 /* AIChatModels.swift in Sources */,
+				ASLS0001 /* AISessionListStore.swift in Sources */,
 				AISS0001 /* AISessionSemantics.swift in Sources */,
 				AISHC001 /* AISessionHistoryCoordinator.swift in Sources */,
 				AIC0002A /* AISessionStatusRequestLimiter.swift in Sources */,

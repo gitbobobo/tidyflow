@@ -665,14 +665,8 @@ struct MobileEvidenceView: View {
     @State private var selectedTab: EvidenceTabType = .screenshot
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
-    @State private var itemLoading: Bool = false
-    @State private var itemPaging: Bool = false
-    @State private var itemError: String?
-    @State private var itemTextChunks: [String] = []
-    @State private var itemTextNextOffset: UInt64 = 0
-    @State private var itemTextHasMore: Bool = false
+    @StateObject private var evidenceViewer = EvidenceViewerStore()
     @State private var itemImage: UIImage?
-    @State private var itemByteCount: Int = 0
     @State private var headerHint: String?
     @State private var showingDetailSheet: Bool = false
     @State private var screenshotThumbnails: [String: UIImage] = [:]
@@ -720,6 +714,7 @@ struct MobileEvidenceView: View {
     }
 
     var body: some View {
+        let _ = Self.debugPrintChangesIfNeeded()
         List {
             // 重建按钮
             Section {
@@ -828,7 +823,7 @@ struct MobileEvidenceView: View {
             refreshEvidence()
             syncSelectionIfNeeded()
         }
-        .onReceive(appState.$evidenceSnapshotsByWorkspace) { _ in
+        .onChange(of: snapshot?.updatedAt) { _, _ in
             syncSelectionIfNeeded()
             pruneScreenshotThumbnailCache()
             processNextScreenshotThumbnailLoadIfNeeded()
@@ -1043,10 +1038,10 @@ struct MobileEvidenceView: View {
                 .cornerRadius(10)
                 
                 // 内容区域
-                if itemLoading {
+                if evidenceViewer.isLoading {
                     ProgressView("加载内容中...")
                         .frame(maxWidth: .infinity, minHeight: 200)
-                } else if let itemError {
+                } else if let itemError = evidenceViewer.errorMessage {
                     ContentUnavailableView(
                         "加载失败",
                         systemImage: "exclamationmark.triangle",
@@ -1058,17 +1053,17 @@ struct MobileEvidenceView: View {
                         .scaledToFit()
                         .frame(maxWidth: .infinity)
                         .clipShape(.rect(cornerRadius: 10))
-                } else if !itemTextChunks.isEmpty {
+                } else if !evidenceViewer.textChunks.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(itemTextChunks.indices, id: \.self) { idx in
-                            Text(itemTextChunks[idx])
+                        ForEach(evidenceViewer.textChunks) { chunk in
+                            Text(chunk.text)
                                 .font(.system(.footnote, design: .monospaced))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        if itemPaging || itemTextHasMore {
+                        if evidenceViewer.isPaging || evidenceViewer.hasMoreText {
                             HStack(spacing: 8) {
                                 ProgressView()
-                                Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
+                                Text(evidenceViewer.isPaging ? "加载更多中..." : "滚动到底部继续加载")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -1109,7 +1104,7 @@ struct MobileEvidenceView: View {
                 selectedLogID = item.itemID
             }
             loadItem(item)
-        } else if itemTextChunks.isEmpty && itemImage == nil && !itemLoading && itemError == nil {
+        } else if evidenceViewer.textChunks.isEmpty && itemImage == nil && !evidenceViewer.isLoading && evidenceViewer.errorMessage == nil {
             loadItem(item)
         }
     }
@@ -1133,14 +1128,8 @@ struct MobileEvidenceView: View {
     }
 
     private func clearPreview() {
-        itemLoading = false
-        itemPaging = false
-        itemError = nil
-        itemTextChunks = []
-        itemTextNextOffset = 0
-        itemTextHasMore = false
+        evidenceViewer.clear()
         itemImage = nil
-        itemByteCount = 0
     }
 
     private func stopScreenshotThumbnailPrefetch() {
@@ -1271,30 +1260,35 @@ struct MobileEvidenceView: View {
     }
 
     private func loadItem(_ item: EvidenceItemInfoV2) {
-        itemLoading = true
-        itemPaging = false
-        itemError = nil
-        itemTextChunks = []
-        itemTextNextOffset = 0
-        itemTextHasMore = false
+        evidenceViewer.beginLoading(itemID: item.itemID)
         itemImage = nil
-        itemByteCount = 0
 
         if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
             appState.readEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
                     let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
                     guard currentID == item.itemID else { return }
-                    itemLoading = false
                     if let payload {
-                        itemByteCount = payload.content.count
                         if let image = UIImage(data: Data(payload.content)) {
                             itemImage = image
+                            evidenceViewer.applyImageLoadResult(
+                                itemID: item.itemID,
+                                byteCount: payload.content.count,
+                                errorMessage: nil
+                            )
                             return
                         }
-                        itemError = "图片解码失败"
+                        evidenceViewer.applyImageLoadResult(
+                            itemID: item.itemID,
+                            byteCount: payload.content.count,
+                            errorMessage: "图片解码失败"
+                        )
                     } else {
-                        itemError = errorMessage ?? "未知错误"
+                        evidenceViewer.applyImageLoadResult(
+                            itemID: item.itemID,
+                            byteCount: 0,
+                            errorMessage: errorMessage ?? "未知错误"
+                        )
                     }
                 }
             }
@@ -1307,16 +1301,16 @@ struct MobileEvidenceView: View {
     private func loadNextTextPageIfNeeded(for item: EvidenceItemInfoV2) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         guard currentID == item.itemID else { return }
-        guard itemTextHasMore, !itemPaging, !itemLoading else { return }
+        guard evidenceViewer.shouldLoadNextPage(itemID: item.itemID) else { return }
         loadNextTextPage(for: item, reset: false)
     }
 
     private func loadNextTextPage(for item: EvidenceItemInfoV2, reset: Bool) {
-        let offset: UInt64 = reset ? 0 : itemTextNextOffset
+        let offset: UInt64 = reset ? 0 : evidenceViewer.nextOffset
         if !reset, offset == 0 {
             return
         }
-        itemPaging = true
+        evidenceViewer.beginPaging(itemID: item.itemID)
         appState.readEvidenceItemPage(
             project: project,
             workspace: workspace,
@@ -1327,23 +1321,41 @@ struct MobileEvidenceView: View {
             DispatchQueue.main.async {
                 let currentID = self.selectedTab == .screenshot ? self.selectedScreenshotID : self.selectedLogID
                 guard currentID == item.itemID else { return }
-                itemLoading = false
-                itemPaging = false
-                if let payload {
-                    itemByteCount = Int(payload.totalSizeBytes)
-                    let text = String(data: Data(payload.content), encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
-                    if reset {
-                        itemTextChunks = [text]
-                    } else {
-                        itemTextChunks.append(text)
-                    }
-                    itemTextNextOffset = payload.nextOffset
-                    itemTextHasMore = !payload.eof
-                    return
+                let perfTraceId: String? = {
+                    guard !reset, payload != nil else { return nil }
+                    return self.appState.performanceTracer.begin(TFPerformanceContext(
+                        event: .evidencePageAppend,
+                        project: self.project,
+                        workspace: self.workspace,
+                        metadata: ["item_id": item.itemID, "offset": String(offset)]
+                    ))
+                }()
+                self.evidenceViewer.applyTextPage(
+                    itemID: item.itemID,
+                    offset: offset,
+                    payload: payload.map {
+                        EvidenceTextPagePayload(
+                            content: $0.content,
+                            nextOffset: $0.nextOffset,
+                            totalSizeBytes: $0.totalSizeBytes,
+                            eof: $0.eof
+                        )
+                    },
+                    reset: reset,
+                    errorMessage: errorMessage
+                )
+                if let perfTraceId {
+                    self.appState.performanceTracer.end(perfTraceId)
                 }
-                itemError = errorMessage ?? "未知错误"
             }
         }
+    }
+
+    private static func debugPrintChangesIfNeeded() {
+#if DEBUG
+        guard SwiftUIPerformanceDebug.mobileEvidenceContainerPrintChangesEnabled else { return }
+        Self._printChanges()
+#endif
     }
 }
 

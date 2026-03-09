@@ -312,6 +312,8 @@ class AppState: ObservableObject {
 
     // 文件缓存状态（独立 ObservableObject，避免文件高频更新触发全局视图刷新）
     let fileCache = FileCacheState()
+    /// 文件树请求去重与最小节流（key: project:workspace:path）。
+    var fileListRequestLastSentAt: [String: Date] = [:]
 
     // 向后兼容：保留原属性访问路径，代理到 fileCache
     var fileIndexCache: [String: FileIndexCache] {
@@ -344,6 +346,7 @@ class AppState: ObservableObject {
 
     /// 共享性能追踪器，macOS/iOS 双端通过此对象暴露统一的性能观测结果。
     let performanceTracer = TFPerformanceTracer()
+    let aiSessionListStore = AISessionListStore()
     private var evolutionReplayStoreCancellable: AnyCancellable?
     private var subAgentViewerStoreCancellable: AnyCancellable?
     // WS 领域 handler 强引用（WSClient 侧为 weak）
@@ -390,13 +393,6 @@ class AppState: ObservableObject {
 
     /// 右侧面板会话列表当前筛选条件，默认展示全部工具。
     @Published var sessionPanelFilter: AISessionListFilter = .all
-    /// 当前工作区会话列表分页状态（按筛选维度分桶）。
-    @Published var aiSessionListPageStates: [String: AISessionListPageState] = [:]
-    /// AI 会话列表请求防重入与短期缓存（key: project::workspace::filter::cursor）。
-    var aiSessionListRequestInFlightAt: [String: Date] = [:]
-    var aiSessionListRequestLastSuccessAt: [String: Date] = [:]
-    var aiSessionListBootstrapWorkspaceKey: String?
-    var aiSessionListDedupDropTotal: Int = 0
 
     /// 右侧面板会话操作（由 SessionsPanelView 发起，AITabView 响应）
     enum SessionPanelAction: Equatable {
@@ -420,11 +416,7 @@ class AppState: ObservableObject {
         guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else {
             return .empty()
         }
-        return aiSessionListPageStates[sessionListPageKey(
-            project: selectedProjectName,
-            workspace: workspace,
-            filter: filter
-        )] ?? .empty()
+        return aiSessionListStore.pageState(project: selectedProjectName, workspace: workspace, filter: filter)
     }
 
     var displayedAISessionListState: AISessionListPageState {
@@ -446,73 +438,24 @@ class AppState: ObservableObject {
             return false
         }
 
-        // 性能追踪：AI 会话列表请求
-        let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
-        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
-            event: perfEvent,
-            project: selectedProjectName,
-            workspace: workspace,
-            metadata: ["filter": filter.id, "append": String(append)]
-        ))
-
-        let pageKey = sessionListPageKey(
-            project: selectedProjectName,
-            workspace: workspace,
-            filter: filter
-        )
-        let requestKey = sessionListRequestDedupKey(
+        return aiSessionListStore.request(
             project: selectedProjectName,
             workspace: workspace,
             filter: filter,
-            cursor: cursor
-        )
-        let now = Date()
-        if let startedAt = aiSessionListRequestInFlightAt[requestKey] {
-            if now.timeIntervalSince(startedAt) < 5 {
-                aiSessionListDedupDropTotal += 1
-                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiSessionListDedupDropTotal, privacy: .public)")
-                performanceTracer.end(perfTraceId)
-                return false
-            }
-            aiSessionListRequestInFlightAt.removeValue(forKey: requestKey)
-        }
-        if !force,
-           let lastSuccessAt = aiSessionListRequestLastSuccessAt[requestKey],
-           now.timeIntervalSince(lastSuccessAt) < 1 {
-            aiSessionListDedupDropTotal += 1
-            TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiSessionListDedupDropTotal, privacy: .public)")
-            performanceTracer.end(perfTraceId)
-            return false
-        }
-        var pageState = aiSessionListPageStates[pageKey] ?? .empty()
-        if append {
-            guard !pageState.isLoadingNextPage else {
-                performanceTracer.end(perfTraceId)
-                return false
-            }
-            pageState.isLoadingNextPage = true
-        } else {
-            guard !pageState.isLoadingInitial else {
-                performanceTracer.end(perfTraceId)
-                return false
-            }
-            if cursor == nil {
-                pageState = .empty()
-            }
-            pageState.isLoadingInitial = true
-            pageState.isLoadingNextPage = false
-        }
-        aiSessionListPageStates[pageKey] = pageState
-        aiSessionListRequestInFlightAt[requestKey] = now
-        wsClient.requestAISessionList(
-            projectName: selectedProjectName,
-            workspaceName: workspace,
-            filter: filter.tool,
+            limit: limit,
             cursor: cursor,
-            limit: limit
-        )
-        performanceTracer.end(perfTraceId)
-        return true
+            append: append,
+            force: force,
+            performanceTracer: performanceTracer
+        ) {
+            wsClient.requestAISessionList(
+                projectName: selectedProjectName,
+                workspaceName: workspace,
+                filter: filter.tool,
+                cursor: cursor,
+                limit: limit
+            )
+        }
     }
 
     @discardableResult
@@ -521,49 +464,39 @@ class AppState: ObservableObject {
         guard pageState.hasMore,
               let nextCursor = pageState.nextCursor,
               !nextCursor.isEmpty else { return false }
-        return requestAISessionList(
-            for: filter,
+        guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else { return false }
+        return aiSessionListStore.loadNextPage(
+            project: selectedProjectName,
+            workspace: workspace,
+            filter: filter,
             limit: limit,
-            cursor: nextCursor,
-            append: true
-        )
-    }
-
-    func sessionListRequestDedupKey(
-        project: String,
-        workspace: String,
-        filter: AISessionListFilter,
-        cursor: String?
-    ) -> String {
-        let normalizedCursor = cursor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return "\(project)::\(workspace)::\(filter.id)::\(normalizedCursor)"
-    }
-
-    func markAISessionListRequestCompleted(
-        project: String,
-        workspace: String,
-        filter: AISessionListFilter
-    ) {
-        let prefix = "\(project)::\(workspace)::\(filter.id)::"
-        let now = Date()
-        for key in aiSessionListRequestInFlightAt.keys.filter({ $0.hasPrefix(prefix) }) {
-            aiSessionListRequestInFlightAt.removeValue(forKey: key)
-            aiSessionListRequestLastSuccessAt[key] = now
+            performanceTracer: performanceTracer
+        ) { nextCursor in
+            wsClient.requestAISessionList(
+                projectName: selectedProjectName,
+                workspaceName: workspace,
+                filter: filter.tool,
+                cursor: nextCursor,
+                limit: limit
+            )
         }
     }
 
     @discardableResult
     func bootstrapAISessionListIfNeeded(limit: Int = 50) -> Bool {
         guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else { return false }
-        let globalKey = globalWorkspaceKey(projectName: selectedProjectName, workspaceName: workspace)
-        if aiSessionListBootstrapWorkspaceKey != globalKey {
-            aiSessionListBootstrapWorkspaceKey = globalKey
-            if sessionPanelFilter != .all {
-                sessionPanelFilter = .all
+        return aiSessionListStore.bootstrapIfNeeded(
+            project: selectedProjectName,
+            workspace: workspace,
+            resetFilter: { [weak self] in
+                guard let self, self.sessionPanelFilter != .all else { return }
+                self.sessionPanelFilter = .all
+            },
+            requestInitialPage: { [weak self] in
+                guard let self else { return false }
+                return self.requestAISessionList(for: .all, limit: limit, force: true)
             }
-            return requestAISessionList(for: .all, limit: limit, force: true)
-        }
-        return false
+        )
     }
 
     // AI Provider / Model / Agent 状态（当前工具上下文）
@@ -847,6 +780,8 @@ class AppState: ObservableObject {
         self.projects = []
         self.selectedProjectId = nil
         self.selectedWorkspaceKey = nil
+        configureAIStorePerformance(evolutionReplayStore)
+        configureAIStorePerformance(subAgentViewerStore)
         self.configureAIToolBuckets()
         self.switchAIContext(to: aiChatTool)
 
@@ -904,7 +839,9 @@ class AppState: ObservableObject {
 
     private func configureAIToolBuckets() {
         for tool in AIChatTool.allCases {
-            aiChatStoresByTool[tool] = AIChatStore()
+            let store = AIChatStore()
+            configureAIStorePerformance(store)
+            aiChatStoresByTool[tool] = store
             aiSessionsByTool[tool] = []
             aiProvidersByTool[tool] = []
             aiSelectedModelByTool[tool] = nil
@@ -935,12 +872,19 @@ class AppState: ObservableObject {
         workspace: String,
         filter: AISessionListFilter
     ) {
-        aiSessionListPageStates[sessionListPageKey(project: project, workspace: workspace, filter: filter)] = state
+        _ = aiSessionListStore.handleResponse(
+            project: project,
+            workspace: workspace,
+            filter: filter,
+            sessions: state.sessions,
+            hasMore: state.hasMore,
+            nextCursor: state.nextCursor,
+            performanceTracer: performanceTracer
+        )
     }
 
     func clearAISessionListPageStates() {
-        aiSessionListPageStates = [:]
-        aiSessionListRequestInFlightAt.removeAll()
+        aiSessionListStore.clear()
     }
 
     func replaceToolSessionIndex(_ sessions: [AISessionInfo], for tool: AIChatTool) {
@@ -958,8 +902,17 @@ class AppState: ObservableObject {
             return store
         }
         let store = AIChatStore()
+        configureAIStorePerformance(store)
         aiChatStoresByTool[tool] = store
         return store
+    }
+
+    private func configureAIStorePerformance(_ store: AIChatStore) {
+        store.performanceTracer = performanceTracer
+        store.performanceContextProvider = { [weak self] in
+            guard let self, let workspace = self.selectedWorkspaceKey, !workspace.isEmpty else { return nil }
+            return (self.selectedProjectName, workspace)
+        }
     }
 
     func switchAIContext(to tool: AIChatTool) {
@@ -998,27 +951,7 @@ class AppState: ObservableObject {
         sessions.removeAll { $0.sessionKey == session.sessionKey }
         sessions.insert(session, at: 0)
         setAISessions(sessions, for: tool)
-        aiSessionListPageStates = aiSessionListPageStates.reduce(into: [:]) { result, item in
-            let (key, state) = item
-            var updated = state
-            let allKey = sessionListPageKey(
-                project: session.projectName,
-                workspace: session.workspaceName,
-                filter: .all
-            )
-            let toolKey = sessionListPageKey(
-                project: session.projectName,
-                workspace: session.workspaceName,
-                filter: .tool(session.aiTool)
-            )
-            if key == allKey || key == toolKey {
-                updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
-                if session.isVisibleInDefaultSessionList {
-                    updated.sessions.insert(session, at: 0)
-                }
-            }
-            result[key] = updated
-        }
+        aiSessionListStore.upsertVisibleSession(session)
     }
 
     func mergeKnownAISessions(_ sessions: [AISessionInfo]) {
@@ -1040,11 +973,7 @@ class AppState: ObservableObject {
         aiSessionIndexByKey = aiSessionIndexByKey.filter {
             !($0.value.aiTool == tool && $0.value.id == sessionId)
         }
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var updated = state
-            updated.sessions.removeAll { $0.aiTool == tool && $0.id == sessionId }
-            return updated
-        }
+        aiSessionListStore.removeSession(sessionId: sessionId, tool: tool)
 
         // 同步清理状态缓存（仅按 sessionId 删除可能误删其他工作空间，因此这里做“全表扫描”）。
         let prefix = "::\(sessionId)"
@@ -1082,21 +1011,7 @@ class AppState: ObservableObject {
                 origin: cached.origin
             )
         }
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var updatedState = state
-            if let idx = updatedState.sessions.firstIndex(where: { $0.sessionKey == session.sessionKey }) {
-                updatedState.sessions[idx] = AISessionInfo(
-                    projectName: session.projectName,
-                    workspaceName: session.workspaceName,
-                    aiTool: session.aiTool,
-                    id: session.id,
-                    title: newTitle,
-                    updatedAt: session.updatedAt,
-                    origin: session.origin
-                )
-            }
-            return updatedState
-        }
+        aiSessionListStore.renameSession(session, newTitle: newTitle)
     }
 
     func cachedAISession(

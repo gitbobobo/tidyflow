@@ -11,6 +11,7 @@ final class AIChatSidebarState: ObservableObject {
     @Published private(set) var sessionStatusesBySessionKey: [String: AISessionStatusSnapshot] = [:]
 
     private weak var appState: AppState?
+    private weak var sessionListStore: AISessionListStore?
     private var cancellables: Set<AnyCancellable> = []
     private var currentStoreCancellable: AnyCancellable?
     private weak var observedStore: AIChatStore?
@@ -18,6 +19,7 @@ final class AIChatSidebarState: ObservableObject {
     func bind(appState: AppState) {
         if self.appState !== appState {
             self.appState = appState
+            self.sessionListStore = appState.aiSessionListStore
             cancellables.removeAll()
             currentStoreCancellable = nil
             observedStore = nil
@@ -27,7 +29,7 @@ final class AIChatSidebarState: ObservableObject {
                 .sink { [weak self] _ in self?.refresh() }
                 .store(in: &cancellables)
 
-            appState.$aiSessionListPageStates
+            appState.aiSessionListStore.$pageStates
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.refresh() }
                 .store(in: &cancellables)

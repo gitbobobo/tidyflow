@@ -248,8 +248,6 @@ final class MobileAppState: ObservableObject {
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
     /// 会话列表当前筛选条件，默认展示全部工具。
     @Published var sessionListFilter: AISessionListFilter = .all
-    /// 当前工作区会话列表分页状态（按筛选维度分桶）。
-    @Published var aiSessionListPageStates: [String: AISessionListPageState] = [:]
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection? {
         didSet {
@@ -273,6 +271,7 @@ final class MobileAppState: ObservableObject {
     @Published var isAILoadingModels: Bool = false
     @Published var isAILoadingAgents: Bool = false
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
+    private var explorerFileRequestLastSentAt: [String: Date] = [:]
     // Evolution 状态
     @Published var evolutionScheduler: EvolutionSchedulerInfoV2 = .empty
     @Published var evolutionWorkspaceItems: [EvolutionWorkspaceItemV2] = []
@@ -316,6 +315,7 @@ final class MobileAppState: ObservableObject {
 
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
+    let aiSessionListStore = AISessionListStore()
 
     // AI Chat：按工具分桶存储会话
     var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -479,6 +479,8 @@ final class MobileAppState: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     init() {
         setupWSCallbacks()
+        configureAIStorePerformance(aiChatStore)
+        configureAIStorePerformance(subAgentViewerStore)
         for tool in AIChatTool.allCases {
             aiSessionsByTool[tool] = []
             aiSlashCommandsByTool[tool] = []
@@ -829,11 +831,27 @@ final class MobileAppState: ObservableObject {
         }
 
         let key = explorerCacheKey(project: project, workspace: workspace, path: path)
+        let perfEvent: TFPerformanceEvent = path == "." ? .fileTreeRequest : .fileTreeExpand
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: perfEvent,
+            project: project,
+            workspace: workspace,
+            metadata: ["path": path]
+        ))
+        let now = Date()
+        if let lastSentAt = explorerFileRequestLastSentAt[key],
+           now.timeIntervalSince(lastSentAt) < 0.35,
+           explorerFileListCache[key]?.isLoading == true {
+            performanceTracer.end(perfTraceId)
+            return
+        }
         var cache = explorerFileListCache[key] ?? FileListCache.empty()
         cache.isLoading = true
         cache.error = nil
         explorerFileListCache[key] = cache
+        explorerFileRequestLastSentAt[key] = now
         wsClient.requestFileList(project: project, workspace: workspace, path: path)
+        performanceTracer.end(perfTraceId)
     }
 
     func isExplorerDirectoryExpanded(project: String, workspace: String, path: String) -> Bool {
@@ -2179,11 +2197,7 @@ final class MobileAppState: ObservableObject {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else {
             return .empty()
         }
-        return aiSessionListPageStates[sessionListPageKey(
-            project: aiActiveProject,
-            workspace: aiActiveWorkspace,
-            filter: filter
-        )] ?? .empty()
+        return aiSessionListStore.pageState(project: aiActiveProject, workspace: aiActiveWorkspace, filter: filter)
     }
 
     /// 拉取指定筛选条件的 AI 会话列表
@@ -2198,44 +2212,24 @@ final class MobileAppState: ObservableObject {
             return false
         }
 
-        // 性能追踪：AI 会话列表请求
-        let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
-        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
-            event: perfEvent,
+        return aiSessionListStore.request(
             project: aiActiveProject,
             workspace: aiActiveWorkspace,
-            metadata: ["filter": filter.id, "append": String(append)]
-        ))
-
-        let pageKey = sessionListPageKey(project: aiActiveProject, workspace: aiActiveWorkspace, filter: filter)
-        var pageState = aiSessionListPageStates[pageKey] ?? .empty()
-        if append {
-            guard !pageState.isLoadingNextPage else {
-                performanceTracer.end(perfTraceId)
-                return false
-            }
-            pageState.isLoadingNextPage = true
-        } else {
-            guard !pageState.isLoadingInitial else {
-                performanceTracer.end(perfTraceId)
-                return false
-            }
-            if cursor == nil {
-                pageState = .empty()
-            }
-            pageState.isLoadingInitial = true
-            pageState.isLoadingNextPage = false
-        }
-        aiSessionListPageStates[pageKey] = pageState
-        wsClient.requestAISessionList(
-            projectName: aiActiveProject,
-            workspaceName: aiActiveWorkspace,
-            filter: filter.tool,
+            filter: filter,
+            limit: limit,
             cursor: cursor,
-            limit: limit
-        )
-        performanceTracer.end(perfTraceId)
-        return true
+            append: append,
+            force: false,
+            performanceTracer: performanceTracer
+        ) {
+            wsClient.requestAISessionList(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                filter: filter.tool,
+                cursor: cursor,
+                limit: limit
+            )
+        }
     }
 
     @discardableResult
@@ -2244,7 +2238,21 @@ final class MobileAppState: ObservableObject {
         guard pageState.hasMore,
               let nextCursor = pageState.nextCursor,
               !nextCursor.isEmpty else { return false }
-        return requestAISessionList(for: filter, limit: limit, cursor: nextCursor, append: true)
+        return aiSessionListStore.loadNextPage(
+            project: aiActiveProject,
+            workspace: aiActiveWorkspace,
+            filter: filter,
+            limit: limit,
+            performanceTracer: performanceTracer
+        ) { nextCursor in
+            wsClient.requestAISessionList(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                filter: filter.tool,
+                cursor: nextCursor,
+                limit: limit
+            )
+        }
     }
 
     /// 加载指定会话消息
@@ -2357,11 +2365,7 @@ final class MobileAppState: ObservableObject {
             setAISessions(sessions, for: targetTool)
         }
         aiSessionIndexByKey.removeValue(forKey: session.sessionKey)
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var updated = state
-            updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
-            return updated
-        }
+        aiSessionListStore.removeSession(sessionId: session.id, tool: targetTool)
         if aiCurrentSessionId == session.id && aiChatTool == targetTool {
             aiCurrentSessionId = nil
             aiChatStore.setCurrentSessionId(nil)
@@ -3441,11 +3445,19 @@ final class MobileAppState: ObservableObject {
         workspace: String,
         filter: AISessionListFilter
     ) {
-        aiSessionListPageStates[sessionListPageKey(project: project, workspace: workspace, filter: filter)] = state
+        aiSessionListStore.handleResponse(
+            project: project,
+            workspace: workspace,
+            filter: filter,
+            sessions: state.sessions,
+            hasMore: state.hasMore,
+            nextCursor: state.nextCursor,
+            performanceTracer: performanceTracer
+        )
     }
 
     func clearAISessionListPageStates() {
-        aiSessionListPageStates = [:]
+        aiSessionListStore.clear()
     }
 
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
@@ -3480,32 +3492,20 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    private func configureAIStorePerformance(_ store: AIChatStore) {
+        store.performanceTracer = performanceTracer
+        store.performanceContextProvider = { [weak self] in
+            guard let self, !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty else { return nil }
+            return (self.aiActiveProject, self.aiActiveWorkspace)
+        }
+    }
+
     func upsertAISession(_ session: AISessionInfo, for tool: AIChatTool) {
         var sessions = aiSessionsByTool[tool] ?? []
         sessions.removeAll { $0.sessionKey == session.sessionKey }
         sessions.insert(session, at: 0)
         setAISessions(sessions, for: tool)
-        aiSessionListPageStates = aiSessionListPageStates.reduce(into: [:]) { result, item in
-            let (key, state) = item
-            var updated = state
-            let allKey = sessionListPageKey(
-                project: session.projectName,
-                workspace: session.workspaceName,
-                filter: .all
-            )
-            let toolKey = sessionListPageKey(
-                project: session.projectName,
-                workspace: session.workspaceName,
-                filter: .tool(session.aiTool)
-            )
-            if key == allKey || key == toolKey {
-                updated.sessions.removeAll { $0.sessionKey == session.sessionKey }
-                if session.isVisibleInDefaultSessionList {
-                    updated.sessions.insert(session, at: 0)
-                }
-            }
-            result[key] = updated
-        }
+        aiSessionListStore.upsertVisibleSession(session)
     }
 
     /// 获取指定工具的会话列表
@@ -4576,33 +4576,16 @@ extension MobileAppState {
             return $0.id < $1.id
         }
         let filter: AISessionListFilter = ev.filterAIChatTool.map { .tool($0) } ?? .all
-        var pageState = sessionListPageState(for: filter)
-        let orderedMergedSessions: [AISessionInfo]
-        if pageState.isLoadingNextPage {
-            let merged = (pageState.sessions + sorted).reduce(into: [String: AISessionInfo]()) { result, session in
-                result[session.sessionKey] = session
-            }
-            let orderedKeys = (pageState.sessions + sorted).map(\.sessionKey)
-            var seen = Set<String>()
-            orderedMergedSessions = orderedKeys.compactMap { key in
-                guard seen.insert(key).inserted else { return nil }
-                return merged[key]
-            }
-        } else {
-            orderedMergedSessions = sorted
-        }
-        pageState.sessions = orderedMergedSessions
-        pageState.hasMore = ev.hasMore
-        pageState.nextCursor = ev.nextCursor
-        pageState.isLoadingInitial = false
-        pageState.isLoadingNextPage = false
-        updateSessionListPageState(
-            pageState,
+        let pageState = aiSessionListStore.handleResponse(
             project: ev.projectName,
             workspace: ev.workspaceName,
-            filter: filter
+            filter: filter,
+            sessions: sorted,
+            hasMore: ev.hasMore,
+            nextCursor: ev.nextCursor,
+            performanceTracer: performanceTracer
         )
-        mergeKnownAISessions(orderedMergedSessions)
+        mergeKnownAISessions(pageState.sessions)
     }
 
     func handleAISessionMessages(_ ev: AISessionMessagesV2) {
@@ -4994,13 +4977,7 @@ extension MobileAppState {
             setAISessions(sessions, for: tool)
         }
         aiSessionIndexByKey[updated.sessionKey] = updated
-        aiSessionListPageStates = aiSessionListPageStates.mapValues { state in
-            var pageState = state
-            if let pageIndex = pageState.sessions.firstIndex(where: { $0.sessionKey == updated.sessionKey }) {
-                pageState.sessions[pageIndex] = updated
-            }
-            return pageState
-        }
+        aiSessionListStore.renameSession(updated, newTitle: updated.title)
     }
 }
 

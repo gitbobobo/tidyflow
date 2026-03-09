@@ -61,14 +61,16 @@ struct FileTreeView: View {
             )
 
             // 文件列表
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    FileListContent(workspace: workspace, path: ".", depth: 0)
-                        .environmentObject(appState)
+            TreeRowActivityPhaseProvider {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        FileListContent(workspace: workspace, path: ".", depth: 0)
+                            .environmentObject(appState)
+                    }
+                    .padding(4)
+                    // 撑满空白区域以响应右键
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
                 }
-                .padding(4)
-                // 撑满空白区域以响应右键
-                .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
             }
             .contextMenu {
                 // 新建文件（根目录）

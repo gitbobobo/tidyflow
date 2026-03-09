@@ -275,11 +275,20 @@ extension AppState {
             return
         }
 
+        let now = Date()
+        if let lastSentAt = fileListRequestLastSentAt[key],
+           now.timeIntervalSince(lastSentAt) < 0.35,
+           fileListCache[key]?.isLoading == true {
+            performanceTracer.end(perfTraceId)
+            return
+        }
+
         // 设置加载状态
         var cache = fileListCache[key] ?? FileListCache.empty()
         cache.isLoading = true
         cache.error = nil
         fileListCache[key] = cache
+        fileListRequestLastSentAt[key] = now
 
         // 发送请求（追踪 ID 随请求上下文传递，handleFileListResult 中结束追踪）
         wsClient.requestFileList(project: project, workspace: workspaceKey, path: path)
@@ -310,6 +319,12 @@ extension AppState {
         guard let ws = selectedWorkspaceKey else { return }
         let project = selectedProjectName
         let prefix = WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: ws)
+        let perfTraceId = performanceTracer.begin(TFPerformanceContext(
+            event: .workspaceTreeRefresh,
+            project: project,
+            workspace: ws,
+            metadata: ["scope": "expanded_paths"]
+        ))
 
         // 收集当前工作区下所有展开的目录路径
         let expandedPaths = directoryExpandState
@@ -322,6 +337,7 @@ extension AppState {
         for path in expandedPaths where path != "." {
             fetchFileList(project: project, workspaceKey: ws, path: path)
         }
+        performanceTracer.end(perfTraceId)
     }
 
     /// 切换目录展开状态

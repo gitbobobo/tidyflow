@@ -175,18 +175,41 @@ struct TreeRowActivityIndicator: Identifiable {
     let iconName: String
 }
 
+private struct TreeRowActivityPhaseKey: EnvironmentKey {
+    static let defaultValue: Double? = nil
+}
+
+extension EnvironmentValues {
+    var treeRowActivityPhase: Double? {
+        get { self[TreeRowActivityPhaseKey.self] }
+        set { self[TreeRowActivityPhaseKey.self] = newValue }
+    }
+}
+
+struct TreeRowActivityPhaseProvider<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { timeline in
+            let cycle = timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 1.8) / 1.8
+            content()
+                .environment(\.treeRowActivityPhase, cycle)
+        }
+    }
+}
+
 private struct TreeRowActivityIndicatorsView: View {
     let indicators: [TreeRowActivityIndicator]
+    @Environment(\.treeRowActivityPhase) private var sharedPhase
 
     var body: some View {
         indicatorIcons(maskStyle: false)
             .overlay {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: indicators.isEmpty)) { timeline in
+                if let sharedPhase, !indicators.isEmpty {
                     GeometryReader { proxy in
-                        let cycle = timeline.date.timeIntervalSinceReferenceDate
-                            .truncatingRemainder(dividingBy: 1.8) / 1.8
                         let width = max(8, proxy.size.width * 0.45)
-                        let offset = (cycle * 1.6 - 0.3) * proxy.size.width
+                        let offset = (sharedPhase * 1.6 - 0.3) * proxy.size.width
                         LinearGradient(
                             colors: [
                                 .clear,
@@ -200,9 +223,9 @@ private struct TreeRowActivityIndicatorsView: View {
                         .rotationEffect(.degrees(16))
                         .offset(x: offset, y: -proxy.size.height * 0.3)
                     }
+                    .mask(indicatorIcons(maskStyle: true))
+                    .allowsHitTesting(false)
                 }
-                .mask(indicatorIcons(maskStyle: true))
-                .allowsHitTesting(false)
             }
     }
 

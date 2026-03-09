@@ -183,8 +183,8 @@ struct MobileAIChatView: View {
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
-        .onReceive(aiChatStore.$messages) { messages in
-            observeCodexPlanProposal(messages)
+        .onChange(of: aiChatStore.tailRevision) { _, _ in
+            observeCodexPlanProposal(aiChatStore.messages)
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             if isStreaming {

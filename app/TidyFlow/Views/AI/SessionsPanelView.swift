@@ -5,6 +5,7 @@ import SwiftUI
 /// 顶部下拉菜单支持“全部/单工具”筛选，统一展示当前工作区历史会话
 struct SessionsPanelView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var sessionListStore: AISessionListStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,7 +69,7 @@ struct SessionsPanelView: View {
             Divider()
 
             // 会话列表
-            let pageState = appState.displayedAISessionListState
+            let pageState = currentPageState
             let sessions = pageState.sessions
             let displayPhase = AISessionListDisplayPhase.from(
                 isLoadingInitial: pageState.isLoadingInitial, sessions: sessions
@@ -155,6 +156,11 @@ struct SessionsPanelView: View {
         .accessibilityIdentifier("tf.mac.ai.sessions-panel")
     }
 
+    private var currentPageState: AISessionListPageState {
+        guard let workspace = appState.selectedWorkspaceKey, !workspace.isEmpty else { return .empty() }
+        return sessionListStore.pageState(project: appState.selectedProjectName, workspace: workspace, filter: appState.sessionPanelFilter)
+    }
+
     /// 向服务端请求指定筛选条件的 AI 会话列表
     private func requestSessionList(for filter: AISessionListFilter) {
         _ = appState.requestAISessionList(for: filter, limit: 50)
@@ -164,6 +170,7 @@ struct SessionsPanelView: View {
 #Preview {
     SessionsPanelView()
         .environmentObject(AppState())
+        .environmentObject(AISessionListStore())
         .frame(width: 300, height: 500)
 }
 #endif

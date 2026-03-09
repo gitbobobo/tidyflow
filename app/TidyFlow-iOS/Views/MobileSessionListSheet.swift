@@ -5,6 +5,7 @@ import SwiftUI
 /// 确保切换工作区时共享状态清理逻辑能统一生效。
 struct MobileSessionListSheet: View {
     @EnvironmentObject var appState: MobileAppState
+    @EnvironmentObject var sessionListStore: AISessionListStore
     @Binding var showSessionList: Bool
     var onLoadSession: (AISessionInfo) -> Void
     var onCreateNewSession: () -> Void
@@ -33,7 +34,7 @@ struct MobileSessionListSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
 
-                let pageState = appState.sessionListPageState(for: appState.sessionListFilter)
+                let pageState = currentPageState
                 let sessions = pageState.sessions
                 let displayPhase = AISessionListDisplayPhase.from(
                     isLoadingInitial: pageState.isLoadingInitial, sessions: sessions
@@ -165,6 +166,15 @@ struct MobileSessionListSheet: View {
             requestSessionList(for: newFilter)
         }
         .accessibilityIdentifier("tf.ios.ai.sessions-panel")
+    }
+
+    private var currentPageState: AISessionListPageState {
+        guard !appState.aiActiveProject.isEmpty, !appState.aiActiveWorkspace.isEmpty else { return .empty() }
+        return sessionListStore.pageState(
+            project: appState.aiActiveProject,
+            workspace: appState.aiActiveWorkspace,
+            filter: appState.sessionListFilter
+        )
     }
 
     /// 向服务端请求指定筛选条件的 AI 会话列表
