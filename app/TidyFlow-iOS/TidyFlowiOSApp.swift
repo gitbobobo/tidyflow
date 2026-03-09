@@ -35,11 +35,11 @@ struct TidyFlowiOSApp: App {
                         .navigationDestination(for: MobileRoute.self) { route in
                             switch route {
                             case .projects:
-                                ProjectListView()
+                                ProjectListView(appState: appState)
                             case .settings:
                                 MobileSettingsView()
                             case .workspaceDetail(let project, let workspace):
-                                WorkspaceDetailView(project: project, workspace: workspace)
+                                WorkspaceDetailView(appState: appState, project: project, workspace: workspace)
                             case .workspaceExplorer(let project, let workspace):
                                 WorkspaceExplorerView(project: project, workspace: workspace)
                             case .workspaceTasks(let project, let workspace):
@@ -59,11 +59,24 @@ struct TidyFlowiOSApp: App {
                             case .terminalAttach(let project, let workspace, let termId):
                                 MobileTerminalView(project: project, workspace: workspace, termId: termId)
                             case .aiChat(let project, let workspace):
-                                MobileAIChatView(project: project, workspace: workspace)
+                                MobileAIChatView(
+                                    appState: appState,
+                                    aiChatStore: appState.aiChatStore,
+                                    project: project,
+                                    workspace: workspace
+                                )
                             case .evolution(let project, let workspace):
-                                MobileEvolutionView(project: project, workspace: workspace)
+                                MobileEvolutionView(
+                                    appState: appState,
+                                    project: project,
+                                    workspace: workspace
+                                )
                             case .evidence(let project, let workspace):
-                                MobileEvidenceView(project: project, workspace: workspace)
+                                MobileEvidenceView(
+                                    appState: appState,
+                                    project: project,
+                                    workspace: workspace
+                                )
                             }
                         }
                 }

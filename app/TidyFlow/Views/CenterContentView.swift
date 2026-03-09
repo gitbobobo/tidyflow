@@ -14,10 +14,11 @@ struct CenterContentView: View {
                     let totalHeight = geo.size.height
                     VStack(spacing: 0) {
                         // 上方：AI 聊天面板（始终可见）
-                        AITabView()
-                            .environmentObject(appState)
-                            .environmentObject(appState.aiChatStore)
-                            .environmentObject(appState.fileCache)
+                        AITabView(
+                            appState: appState,
+                            aiChatStore: appState.aiChatStore,
+                            fileCache: appState.fileCache
+                        )
                             .frame(
                                 maxWidth: .infinity,
                                 minHeight: BottomPanelLayoutSemantics.minChatPanelHeight,
@@ -86,7 +87,7 @@ struct CenterContentView: View {
             )
 
             if appState.tabPanelExpanded {
-                TabContentHostView()
+                TabContentHostView(appState: appState)
             }
         }
     }

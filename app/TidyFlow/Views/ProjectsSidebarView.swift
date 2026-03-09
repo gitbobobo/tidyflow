@@ -6,8 +6,8 @@ import AppKit
 /// Project Tree Sidebar - Shows Projects > Workspaces hierarchy
 /// UX-1: Replaces flat workspace list with collapsible project tree
 struct ProjectsSidebarView: View {
-    @EnvironmentObject var appState: AppState
-    @EnvironmentObject var terminalStore: TerminalStore
+    let appState: AppState
+    let terminalStore: TerminalStore
     @StateObject private var projectionStore = MacSidebarProjectionStore()
 
     var body: some View {
@@ -42,6 +42,13 @@ struct ProjectsSidebarView: View {
         .tfRenderProbe("ProjectsSidebar", metadata: [
             "selected_workspace": appState.currentGlobalWorkspaceKey ?? "none"
         ])
+        .tfHotspotBaseline(
+            .macSidebar,
+            renderProbeName: "ProjectsSidebar",
+            metadata: [
+                "selected_workspace": appState.currentGlobalWorkspaceKey ?? "none"
+            ]
+        )
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: {
@@ -146,7 +153,10 @@ struct ProjectsSidebarView: View {
         guard let index = appState.projects.firstIndex(where: { $0.id == projectId }) else {
             return nil
         }
-        return $appState.projects[index]
+        return Binding(
+            get: { appState.projects[index] },
+            set: { appState.projects[index] = $0 }
+        )
     }
 
     private static func debugPrintChangesIfNeeded() {

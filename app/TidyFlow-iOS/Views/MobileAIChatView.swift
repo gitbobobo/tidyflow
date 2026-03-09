@@ -6,8 +6,8 @@ private struct MobileSubAgentSessionRoute: Identifiable {
 }
 
 struct MobileAIChatView: View {
-    @EnvironmentObject var appState: MobileAppState
-    @EnvironmentObject var aiChatStore: AIChatStore
+    let appState: MobileAppState
+    let aiChatStore: AIChatStore
 
     let project: String
     let workspace: String
@@ -22,24 +22,42 @@ struct MobileAIChatView: View {
     @State private var presentedSubAgentSession: MobileSubAgentSessionRoute?
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
-
-    private var chatPresentation: AIChatPresentationProjection {
-        AIChatPresentationSemantics.make(
-            tool: appState.aiChatTool,
-            currentSessionId: appState.aiCurrentSessionId,
-            messages: aiChatStore.messages,
-            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
-            historyHasMore: aiChatStore.historyHasMore,
-            historyIsLoading: aiChatStore.historyIsLoading,
-            canSwitchTool: appState.canSwitchAIChatTool,
-            scrollSessionToken: mainMessageListScrollSessionToken
-        )
-    }
+    @State private var projectionStore = AIChatShellProjectionStore()
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
             get: { appState.aiChatTool },
             set: { appState.switchAIChatTool($0) }
+        )
+    }
+
+    private var aiSelectedModelBinding: Binding<AIModelSelection?> {
+        Binding(
+            get: { appState.aiSelectedModel },
+            set: { newValue in
+                guard appState.aiSelectedModel != newValue else { return }
+                appState.aiSelectedModel = newValue
+            }
+        )
+    }
+
+    private var aiSelectedAgentBinding: Binding<String?> {
+        Binding(
+            get: { appState.aiSelectedAgent },
+            set: { newValue in
+                guard appState.aiSelectedAgent != newValue else { return }
+                appState.aiSelectedAgent = newValue
+            }
+        )
+    }
+
+    private var aiSelectedThoughtLevelBinding: Binding<String?> {
+        Binding(
+            get: { appState.aiSelectedThoughtLevel },
+            set: { newValue in
+                guard appState.aiSelectedThoughtLevel != newValue else { return }
+                appState.aiSelectedThoughtLevel = newValue
+            }
         )
     }
 
@@ -181,6 +199,7 @@ struct MobileAIChatView: View {
             consumeOneShotHintIfNeeded()
             requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
+            refreshShellProjection()
         }
         .onDisappear {
             referenceSearchTask?.cancel()
@@ -192,13 +211,16 @@ struct MobileAIChatView: View {
             mainMessageListScrollSessionToken += 1
             requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
+            refreshShellProjection()
         }
         .onChange(of: aiChatStore.isStreaming) { _, _ in
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
+            refreshShellProjection()
         }
         .onChange(of: aiChatStore.tailRevision) { _, _ in
             observeCodexPlanProposal(aiChatStore.messages)
+            refreshShellProjection()
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             if isStreaming {
@@ -210,16 +232,29 @@ struct MobileAIChatView: View {
             sawCodexPlanProposalInCurrentTurn = false
             codexPlanProposalPartIDInCurrentTurn = nil
         }
+        .onChange(of: appState.aiSessionStatusesByTool) { _, _ in
+            refreshShellProjection()
+        }
         .accessibilityIdentifier("tf.ios.ai.chat-area")
         .tfRenderProbe("MobileAIChatView", metadata: [
             "project": project,
             "workspace": workspace,
-            "session": appState.aiCurrentSessionId ?? "none"
+            "session": projectionStore.projection.presentation.currentSessionId ?? "none"
         ])
+        .tfHotspotBaseline(
+            .iosAIChat,
+            renderProbeName: "MobileAIChatView",
+            metadata: [
+                "project": project,
+                "workspace": workspace,
+                "session": projectionStore.projection.presentation.currentSessionId ?? "none"
+            ]
+        )
     }
 
     private var messageArea: some View {
-        ZStack {
+        let chatPresentation = projectionStore.projection.presentation
+        return ZStack {
             if chatPresentation.showsEmptyState {
                 AIChatEmptyStateView(
                     currentTool: chatPresentation.tool,
@@ -261,6 +296,36 @@ struct MobileAIChatView: View {
         .background(systemGroupedBackgroundColor)
     }
 
+    private func refreshShellProjection() {
+        let sessionStatus: AISessionStatusSnapshot? = {
+            guard let sessionId = appState.aiCurrentSessionId, !sessionId.isEmpty else { return nil }
+            let session = AISessionInfo(
+                projectName: appState.aiActiveProject,
+                workspaceName: appState.aiActiveWorkspace,
+                aiTool: appState.aiChatTool,
+                id: sessionId,
+                title: "",
+                updatedAt: 0
+            )
+            return appState.aiSessionStatus(for: session)
+        }()
+        projectionStore.refresh(
+            tool: appState.aiChatTool,
+            currentSessionId: appState.aiCurrentSessionId,
+            messages: aiChatStore.messages,
+            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
+            historyHasMore: aiChatStore.historyHasMore,
+            historyIsLoading: aiChatStore.historyIsLoading,
+            canSwitchTool: appState.canSwitchAIChatTool,
+            scrollSessionToken: mainMessageListScrollSessionToken,
+            sessionStatus: sessionStatus,
+            localIsStreaming: aiChatStore.isStreaming,
+            awaitingUserEcho: aiChatStore.awaitingUserEcho,
+            abortPendingSessionId: aiChatStore.abortPendingSessionId,
+            hasPendingFirstContent: aiChatStore.hasPendingFirstContent
+        )
+    }
+
     private static func debugPrintChangesIfNeeded() {
         SwiftUIPerformanceDebug.runPrintChangesIfEnabled(
             SwiftUIPerformanceDebug.mobileAIChatRootPrintChangesEnabled
@@ -283,35 +348,24 @@ struct MobileAIChatView: View {
     }
 
     private var inputArea: some View {
-        let contextRemainingPercent: Double? = {
-            guard let sessionId = appState.aiCurrentSessionId else { return nil }
-            let session = AISessionInfo(
-                projectName: appState.aiActiveProject,
-                workspaceName: appState.aiActiveWorkspace,
-                aiTool: appState.aiChatTool,
-                id: sessionId,
-                title: "",
-                updatedAt: 0
-            )
-            return appState.aiSessionStatus(for: session)?.contextRemainingPercent
-        }()
+        let shellProjection = projectionStore.projection
 
         return ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
+            isStreaming: shellProjection.effectiveStreaming,
             autoFocusOnAppear: true,
-            canStopStreaming: appState.aiCurrentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
-            isSendingPending: aiChatStore.hasPendingFirstContent,
+            canStopStreaming: shellProjection.canStopStreaming,
+            isSendingPending: shellProjection.isSendingPending,
             onSend: { sendMessage() },
             onStop: { stopStreaming() },
             providers: appState.aiProviders,
-            selectedModel: $appState.aiSelectedModel,
-            contextRemainingPercent: contextRemainingPercent,
+            selectedModel: aiSelectedModelBinding,
+            contextRemainingPercent: shellProjection.contextRemainingPercent,
             agents: appState.aiAgents,
-            selectedAgent: $appState.aiSelectedAgent,
+            selectedAgent: aiSelectedAgentBinding,
             thoughtLevelOptions: appState.thoughtLevelOptions(),
-            selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
+            selectedThoughtLevel: aiSelectedThoughtLevelBinding,
             isLoadingModels: appState.isAILoadingModels,
             isLoadingAgents: appState.isAILoadingAgents,
             autocomplete: nil,

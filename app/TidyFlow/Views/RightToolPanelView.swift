@@ -110,11 +110,9 @@ struct InspectorContentView: View {
                     // 会话列表已移至聊天界面左侧侧边栏，右侧面板不再显示
                     EmptyView()
                 case .evidence:
-                    EvidenceTabView()
-                        .environmentObject(appState)
+                    EvidenceTabView(appState: appState)
                 case .evolution:
-                    EvolutionPipelineView()
-                        .environmentObject(appState)
+                    EvolutionPipelineView(appState: appState)
                 case .none:
                     NoToolSelectedView()
                 }

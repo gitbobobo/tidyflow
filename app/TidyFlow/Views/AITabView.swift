@@ -7,9 +7,9 @@ private struct SubAgentSessionRoute: Identifiable {
 }
 
 struct AITabView: View {
-    @EnvironmentObject var appState: AppState
-    @EnvironmentObject var aiChatStore: AIChatStore
-    @EnvironmentObject var fileCache: FileCacheState
+    let appState: AppState
+    let aiChatStore: AIChatStore
+    let fileCache: FileCacheState
 
     @State private var inputText: String = ""
     @State private var imageAttachments: [ImageAttachment] = []
@@ -32,25 +32,13 @@ struct AITabView: View {
     @State private var sessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     @StateObject private var sidebarState = AIChatSidebarState()
     @State private var isCompactSidebarDrawerPresented = false
+    @State private var projectionStore = AIChatShellProjectionStore()
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
     private let sessionStatusMinInterval: TimeInterval = 1.2
     private let persistentSidebarWidth: CGFloat = 260
     private let compactSidebarCollapseWidth: CGFloat = 920
     private let compactSidebarMaxWidth: CGFloat = 320
-
-    private var chatPresentation: AIChatPresentationProjection {
-        AIChatPresentationSemantics.make(
-            tool: appState.aiChatTool,
-            currentSessionId: aiChatStore.currentSessionId,
-            messages: aiChatStore.messages,
-            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
-            historyHasMore: aiChatStore.historyHasMore,
-            historyIsLoading: aiChatStore.historyIsLoading,
-            canSwitchTool: canSwitchAITool,
-            scrollSessionToken: mainMessageListScrollSessionToken
-        )
-    }
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -77,13 +65,22 @@ struct AITabView: View {
         #endif
         .tfRenderProbe("AITabView", metadata: [
             "tool": appState.aiChatTool.rawValue,
-            "session": aiChatStore.currentSessionId ?? "none"
+            "session": projectionStore.projection.presentation.currentSessionId ?? "none"
         ])
+        .tfHotspotBaseline(
+            .macAIChat,
+            renderProbeName: "AITabView",
+            metadata: [
+                "tool": appState.aiChatTool.rawValue,
+                "session": projectionStore.projection.presentation.currentSessionId ?? "none"
+            ]
+        )
         .onAppear {
             sidebarState.bind(appState: appState)
             restoreAIContextOnAppear()
             requestCurrentSessionStatus()
             consumeOneShotHintIfNeeded()
+            refreshShellProjection()
         }
         .onDisappear {
             // 用 previousSnapshotKey（onAppear 时记录的工作空间）而非 currentSnapshotKey，
@@ -99,15 +96,18 @@ struct AITabView: View {
             isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
+            refreshShellProjection()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
+            refreshShellProjection()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             mainMessageListScrollSessionToken += 1
             requestCurrentSessionStatus(force: true)
+            refreshShellProjection()
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -152,6 +152,7 @@ struct AITabView: View {
             } else {
                 reloadCurrentSessionIfNeeded(for: newTool)
             }
+            refreshShellProjection()
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
             // user echo 到达时不再需要清空输入——已在发送时立即清空。
@@ -161,6 +162,7 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             requestCurrentSessionStatus()
+            refreshShellProjection()
             if isStreaming {
                 sawCodexPlanProposalInCurrentTurn = false
                 codexPlanProposalPartIDInCurrentTurn = nil
@@ -172,11 +174,18 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
             requestCurrentSessionStatus()
+            refreshShellProjection()
         }
         .onChange(of: appState.sessionPanelAction) { _, action in
             guard let action else { return }
             handleSessionPanelAction(action)
             appState.sessionPanelAction = nil
+        }
+        .onChange(of: aiChatStore.tailRevision) { _, _ in
+            refreshShellProjection()
+        }
+        .onChange(of: appState.aiSessionStatusesByTool) { _, _ in
+            refreshShellProjection()
         }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
@@ -482,13 +491,14 @@ struct AITabView: View {
     }
 
     private var messageArea: some View {
-        ZStack {
+        let chatPresentation = projectionStore.projection.presentation
+        return ZStack {
             Color.clear
 
             if chatPresentation.showsEmptyState {
                 AIChatEmptyStateView(
                     currentTool: chatPresentation.tool,
-                    selectedTool: $appState.aiChatTool,
+                    selectedTool: aiChatToolBinding,
                     canSwitchTool: chatPresentation.canSwitchTool,
                     isLoading: chatPresentation.isLoadingMessages
                 )
@@ -510,6 +520,37 @@ struct AITabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func refreshShellProjection() {
+        let sessionStatus: AISessionStatusSnapshot? = {
+            guard let sessionId = aiChatStore.currentSessionId,
+                  let workspace = appState.selectedWorkspaceKey else { return nil }
+            let session = AISessionInfo(
+                projectName: appState.selectedProjectName,
+                workspaceName: workspace,
+                aiTool: appState.aiChatTool,
+                id: sessionId,
+                title: "",
+                updatedAt: 0
+            )
+            return appState.aiSessionStatus(for: session)
+        }()
+        projectionStore.refresh(
+            tool: appState.aiChatTool,
+            currentSessionId: aiChatStore.currentSessionId,
+            messages: aiChatStore.messages,
+            recentHistoryIsLoading: aiChatStore.recentHistoryIsLoading,
+            historyHasMore: aiChatStore.historyHasMore,
+            historyIsLoading: aiChatStore.historyIsLoading,
+            canSwitchTool: canSwitchAITool,
+            scrollSessionToken: mainMessageListScrollSessionToken,
+            sessionStatus: sessionStatus,
+            localIsStreaming: aiChatStore.isStreaming,
+            awaitingUserEcho: aiChatStore.awaitingUserEcho,
+            abortPendingSessionId: aiChatStore.abortPendingSessionId,
+            hasPendingFirstContent: aiChatStore.hasPendingFirstContent
+        )
     }
 
     private static func debugPrintChangesIfNeeded() {
@@ -548,37 +589,14 @@ struct AITabView: View {
     }
 
     private var inputArea: some View {
-        let sessionStatus: AISessionStatusSnapshot? = {
-            guard let sessionId = aiChatStore.currentSessionId,
-                  let ws = appState.selectedWorkspaceKey else { return nil }
-            let session = AISessionInfo(
-                projectName: appState.selectedProjectName,
-                workspaceName: ws,
-                aiTool: appState.aiChatTool,
-                id: sessionId,
-                title: "",
-                updatedAt: 0
-            )
-            return appState.aiSessionStatus(for: session)
-        }()
-        let sessionActive = sessionStatus?.isActive == true
-        let contextRemainingPercent = sessionStatus?.contextRemainingPercent
-        let localStreaming =
-            aiChatStore.isStreaming ||
-            aiChatStore.awaitingUserEcho
-        let effectiveStreaming =
-            aiChatStore.abortPendingSessionId != nil ||
-            sessionActive ||
-            localStreaming
+        let shellProjection = projectionStore.projection
 
         return ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: effectiveStreaming,
-            canStopStreaming: aiChatStore.currentSessionId != nil &&
-                aiChatStore.abortPendingSessionId == nil &&
-                (sessionActive || localStreaming),
-            isSendingPending: aiChatStore.hasPendingFirstContent,
+            isStreaming: shellProjection.effectiveStreaming,
+            canStopStreaming: shellProjection.canStopStreaming,
+            isSendingPending: shellProjection.isSendingPending,
             onSend: {
                 sendMessage()
             },
@@ -586,12 +604,12 @@ struct AITabView: View {
                 stopStreaming()
             },
             providers: appState.aiProviders,
-            selectedModel: $appState.aiSelectedModel,
-            contextRemainingPercent: contextRemainingPercent,
+            selectedModel: aiSelectedModelBinding,
+            contextRemainingPercent: shellProjection.contextRemainingPercent,
             agents: appState.aiAgents,
-            selectedAgent: $appState.aiSelectedAgent,
+            selectedAgent: aiSelectedAgentBinding,
             thoughtLevelOptions: appState.thoughtLevelOptions(for: appState.aiChatTool),
-            selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
+            selectedThoughtLevel: aiSelectedThoughtLevelBinding,
             isLoadingModels: appState.isAILoadingModels,
             isLoadingAgents: appState.isAILoadingAgents,
             autocomplete: autocomplete,
@@ -653,6 +671,46 @@ struct AITabView: View {
             // 结束组合后，基于最终已上屏文本刷新补全
             refreshAutocomplete(text: inputText)
         }
+    }
+
+    private var aiChatToolBinding: Binding<AIChatTool> {
+        Binding(
+            get: { appState.aiChatTool },
+            set: { newValue in
+                guard appState.aiChatTool != newValue else { return }
+                appState.aiChatTool = newValue
+            }
+        )
+    }
+
+    private var aiSelectedModelBinding: Binding<AIModelSelection?> {
+        Binding(
+            get: { appState.aiSelectedModel },
+            set: { newValue in
+                guard appState.aiSelectedModel != newValue else { return }
+                appState.aiSelectedModel = newValue
+            }
+        )
+    }
+
+    private var aiSelectedAgentBinding: Binding<String?> {
+        Binding(
+            get: { appState.aiSelectedAgent },
+            set: { newValue in
+                guard appState.aiSelectedAgent != newValue else { return }
+                appState.aiSelectedAgent = newValue
+            }
+        )
+    }
+
+    private var aiSelectedThoughtLevelBinding: Binding<String?> {
+        Binding(
+            get: { appState.aiSelectedThoughtLevel },
+            set: { newValue in
+                guard appState.aiSelectedThoughtLevel != newValue else { return }
+                appState.aiSelectedThoughtLevel = newValue
+            }
+        )
     }
 
     /// 生成当前工作空间的快照 key
@@ -1694,10 +1752,14 @@ struct AITabView: View {
 
 struct AITabView_Previews: PreviewProvider {
     static var previews: some View {
-        AITabView()
-            .environmentObject(AppState())
-            .environmentObject(AIChatStore())
-            .environmentObject(FileCacheState())
+        let appState = AppState()
+        AITabView(
+            appState: appState,
+            aiChatStore: appState.aiChatStore,
+            fileCache: appState.fileCache
+        )
+        .environmentObject(appState)
+        .environmentObject(appState.fileCache)
     }
 }
 #endif

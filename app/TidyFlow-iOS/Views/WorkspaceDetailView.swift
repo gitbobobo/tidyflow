@@ -3,52 +3,17 @@ import UIKit
 
 /// 工作空间详情页：终端、后台任务、代码变更汇总与工具栏操作。
 struct WorkspaceDetailView: View {
-    @EnvironmentObject var appState: MobileAppState
+    let appState: MobileAppState
     let project: String
     let workspace: String
-
-    private var terminals: [TerminalSessionInfo] {
-        appState.terminalsForWorkspace(project: project, workspace: workspace)
-    }
-
-    private var runningTasks: [WorkspaceTaskItem] {
-        appState.runningTasksForWorkspace(project: project, workspace: workspace)
-    }
-
-    private var allTasks: [WorkspaceTaskItem] {
-        appState.tasksForWorkspace(project: project, workspace: workspace)
-    }
-
-    private var completedTaskCount: Int {
-        allTasks.filter { !$0.status.isActive }.count
-    }
-
-    private var pendingTodoCount: Int {
-        appState.pendingTodoCountForWorkspace(project: project, workspace: workspace)
-    }
-
-    /// 使用共享语义快照，消除与 MobileWorkspaceGitSummary 的重复状态
-    private var gitSnapshot: GitPanelSemanticSnapshot {
-        appState.gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot
-    }
-
-    private var projectCommands: [ProjectCommand] {
-        appState.projectCommands(for: project)
-    }
-
-    /// 是否有未解决冲突（工作区或集成工作树）
-    private var hasActiveConflicts: Bool {
-        let wsKey = "\(project):\(workspace)"
-        let intKey = "\(project):integration"
-        return (appState.conflictWizardCache[wsKey]?.hasActiveConflicts == true) ||
-               (appState.conflictWizardCache[intKey]?.hasActiveConflicts == true)
-    }
+    @State private var projectionStore = WorkspaceOverviewProjectionStore()
 
     var body: some View {
         let _ = Self.debugPrintChangesIfNeeded()
+        let projection = projectionStore.projection
         List {
             // 冲突提示行（有冲突时在代码变更区顶部展示）
-            if hasActiveConflicts {
+            if projection.hasActiveConflicts {
                 Section {
                     NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
                         HStack(spacing: 10) {
@@ -67,12 +32,12 @@ struct WorkspaceDetailView: View {
             Section("代码变更") {
                 NavigationLink(value: MobileRoute.workspaceGit(project: project, workspace: workspace)) {
                     HStack(spacing: 16) {
-                        Label("+\(gitSnapshot.totalAdditions)", systemImage: "plus")
+                        Label("+\(projection.gitSnapshot.totalAdditions)", systemImage: "plus")
                             .foregroundColor(.green)
-                        Label("-\(gitSnapshot.totalDeletions)", systemImage: "minus")
+                        Label("-\(projection.gitSnapshot.totalDeletions)", systemImage: "minus")
                             .foregroundColor(.red)
                         Spacer()
-                        if let branch = gitSnapshot.defaultBranch, !branch.isEmpty {
+                        if let branch = projection.gitSnapshot.defaultBranch, !branch.isEmpty {
                             Label(branch, systemImage: "arrow.triangle.branch")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -93,69 +58,73 @@ struct WorkspaceDetailView: View {
             }
 
             Section("活跃终端") {
-                if terminals.isEmpty {
+                if projection.terminals.isEmpty {
                     Text("暂无活跃终端")
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(Array(terminals.enumerated()), id: \.element.termId) { index, term in
+                    ForEach(projection.terminals) { terminal in
                         NavigationLink(value: MobileRoute.terminalAttach(
                             project: project,
                             workspace: workspace,
-                            termId: term.termId
+                            termId: terminal.termId
                         )) {
                             HStack(spacing: 10) {
-                                let presentation = appState.terminalPresentation(for: term.termId)
                                 MobileCommandIconView(
-                                    iconName: presentation?.icon ?? "terminal",
+                                    iconName: terminal.iconName,
                                     size: 18
                                 )
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(presentation?.name ?? "终端 \(index + 1)")
+                                    Text(terminal.title)
                                         .font(.body)
-                                    Text(String(term.termId.prefix(8)))
+                                    Text(terminal.shortId)
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
-                                if presentation?.isPinned == true {
+                                if terminal.isPinned {
                                     Image(systemName: "pin.fill")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
-                                // 工作区级终端 AI 状态（非空闲时展示，语义与 macOS TabItemView 一致）
-                                let termAIStatus = appState.terminalAIStatus(projectName: project, workspaceName: workspace)
-                                if termAIStatus.isVisible {
+                                if terminal.aiStatus.isVisible {
                                     Spacer()
-                                    Image(systemName: termAIStatus.iconName)
+                                    Image(systemName: terminal.aiStatus.iconName)
                                         .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(termAIStatus.color)
-                                        .accessibilityLabel(termAIStatus.hint)
+                                        .foregroundColor(terminal.aiStatus.color)
+                                        .accessibilityLabel(terminal.aiStatus.hint)
                                 }
                             }
                             .padding(.vertical, 2)
                         }
                         .contextMenu {
-                            Button(appState.isTerminalPinned(termId: term.termId) ? "取消固定" : "固定") {
-                                appState.toggleTerminalPinned(termId: term.termId)
+                            Button(appState.isTerminalPinned(termId: terminal.termId) ? "取消固定" : "固定") {
+                                appState.toggleTerminalPinned(termId: terminal.termId)
                             }
                             Divider()
                             Button("关闭其他") {
-                                appState.closeOtherTerminals(project: project, workspace: workspace, keepTermId: term.termId)
+                                appState.closeOtherTerminals(
+                                    project: project,
+                                    workspace: workspace,
+                                    keepTermId: terminal.termId
+                                )
                             }
-                            let hasRight = index < terminals.count - 1
                             Button("关闭右侧") {
-                                appState.closeTerminalsToRight(project: project, workspace: workspace, termId: term.termId)
+                                appState.closeTerminalsToRight(
+                                    project: project,
+                                    workspace: workspace,
+                                    termId: terminal.termId
+                                )
                             }
-                            .disabled(!hasRight)
+                            .disabled(!terminal.hasTerminalsToRight)
                             Divider()
                             Button(role: .destructive) {
-                                appState.closeTerminal(termId: term.termId)
+                                appState.closeTerminal(termId: terminal.termId)
                             } label: {
                                 Label("终止", systemImage: "xmark.circle")
                             }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                appState.closeTerminal(termId: term.termId)
+                                appState.closeTerminal(termId: terminal.termId)
                             } label: {
                                 Label("终止", systemImage: "xmark.circle")
                             }
@@ -165,11 +134,11 @@ struct WorkspaceDetailView: View {
             }
 
             Section("后台任务") {
-                if runningTasks.isEmpty {
+                if projection.runningTasks.isEmpty {
                     Text("当前无进行中的后台任务")
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(runningTasks) { task in
+                    ForEach(projection.runningTasks) { task in
                         HStack(spacing: 10) {
                             MobileCommandIconView(iconName: task.iconName, size: 16)
                             VStack(alignment: .leading, spacing: 2) {
@@ -180,9 +149,12 @@ struct WorkspaceDetailView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            if appState.canCancelTask(task) {
+                            if task.canCancel {
                                 Button {
-                                    appState.cancelTask(task)
+                                    if let source = appState.runningTasksForWorkspace(project: project, workspace: workspace)
+                                        .first(where: { $0.id == task.id }) {
+                                        appState.cancelTask(source)
+                                    }
                                 } label: {
                                     Image(systemName: "stop.circle")
                                         .foregroundColor(.red)
@@ -200,8 +172,8 @@ struct WorkspaceDetailView: View {
                     HStack {
                         Text("查看全部任务")
                         Spacer()
-                        if completedTaskCount > 0 {
-                            Text("\(completedTaskCount)")
+                        if projection.completedTaskCount > 0 {
+                            Text("\(projection.completedTaskCount)")
                                 .font(.caption)
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 7)
@@ -218,8 +190,8 @@ struct WorkspaceDetailView: View {
                     HStack {
                         Text("查看待办")
                         Spacer()
-                        if pendingTodoCount > 0 {
-                            Text("\(pendingTodoCount)")
+                        if projection.pendingTodoCount > 0 {
+                            Text("\(projection.pendingTodoCount)")
                                 .font(.caption)
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 7)
@@ -234,6 +206,14 @@ struct WorkspaceDetailView: View {
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("tf.ios.workspace.detail.\(workspace)")
+        .tfHotspotBaseline(
+            .iosWorkspaceDetail,
+            renderProbeName: "WorkspaceDetailView",
+            metadata: [
+                "project": project,
+                "workspace": workspace
+            ]
+        )
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 evidenceButton
@@ -246,6 +226,7 @@ struct WorkspaceDetailView: View {
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
         }
         .onAppear {
+            projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.selectWorkspaceContext(project: project, workspace: workspace)
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
         }
@@ -325,10 +306,10 @@ struct WorkspaceDetailView: View {
             }
 
             Menu("执行") {
-                if projectCommands.isEmpty {
+                if projectionStore.projection.projectCommands.isEmpty {
                     Text("当前项目未配置命令")
                 } else {
-                    ForEach(projectCommands) { command in
+                    ForEach(projectionStore.projection.projectCommands) { command in
                         Button {
                             appState.runProjectCommand(project: project, workspace: workspace, command: command)
                         } label: {
@@ -682,11 +663,11 @@ private struct ExplorerFilePreviewSheet: View {
 // MobileEvidenceTabType 已统一为 EvidenceTabType（定义于 TabContentHostView.swift），两端共享语义。
 
 struct MobileEvidenceView: View {
-    @EnvironmentObject var appState: MobileAppState
-
+    let appState: MobileAppState
     let project: String
     let workspace: String
 
+    @State private var projectionStore = EvidenceProjectionStore()
     @State private var selectedTab: EvidenceTabType = .screenshot
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
@@ -701,47 +682,12 @@ struct MobileEvidenceView: View {
     @State private var screenshotThumbnailActiveID: String?
     @State private var screenshotThumbnailRequestSequence: UInt64 = 0
 
-    private var snapshot: EvidenceSnapshotV2? {
-        appState.evidenceSnapshot(project: project, workspace: workspace)
-    }
-
-    private var snapshotLoading: Bool {
-        appState.isEvidenceLoading(project: project, workspace: workspace)
-    }
-
-    private var snapshotError: String? {
-        appState.evidenceError(project: project, workspace: workspace)
-    }
-    
-    /// 根据当前选中的标签页获取对应的证据条目
-    private var currentTabItems: [EvidenceItemInfoV2] {
-        guard let snapshot else { return [] }
-        return selectedTab.filteredItems(from: snapshot)
-    }
-    
-    /// 获取当前标签页下的设备类型列表（保持原有顺序）
-    private var currentTabDeviceTypes: [String] {
-        let deviceTypes = currentTabItems.map { $0.deviceType }
-        var seen = Set<String>()
-        var result: [String] = []
-        for type in deviceTypes {
-            if !seen.contains(type) {
-                seen.insert(type)
-                result.append(type)
-            }
-        }
-        return result
-    }
-    
-    /// 获取指定设备类型的条目
-    private func items(for deviceType: String) -> [EvidenceItemInfoV2] {
-        currentTabItems.filter { $0.deviceType == deviceType }
-    }
+    private var projection: EvidenceProjection { projectionStore.projection }
+    private var currentTabItems: [EvidenceItemProjection] { projection.currentTabItems }
 
     var body: some View {
         let _ = Self.debugPrintChangesIfNeeded()
         List {
-            // 重建按钮
             Section {
                 Button("重建全链路证据") {
                     rebuildEvidence()
@@ -754,8 +700,7 @@ struct MobileEvidenceView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
-            // 类型切换 Tab 栏（与 macOS TabContentHostView 按钮式 Tab 栏语义对齐）
+
             Section {
                 HStack(spacing: 0) {
                     ForEach(EvidenceTabType.allCases) { tab in
@@ -764,13 +709,19 @@ struct MobileEvidenceView: View {
                                 selectedTab = tab
                             }
                             clearPreview()
+                            projectionStore.refresh(
+                                appState: appState,
+                                project: project,
+                                workspace: workspace,
+                                selectedTab: tab
+                            )
                             stopScreenshotThumbnailPrefetch()
                             processNextScreenshotThumbnailLoadIfNeeded()
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: tab.iconName)
                                     .font(.system(size: 12))
-                                Text("\(tab.displayName)(\(snapshot.map { tab.itemCount(in: $0) } ?? 0))")
+                                Text("\(tab.displayName)(\(projection.tabCount(for: tab)))")
                                     .font(.system(size: 12))
                             }
                             .frame(maxWidth: .infinity)
@@ -795,7 +746,7 @@ struct MobileEvidenceView: View {
                 .listRowInsets(EdgeInsets())
             }
 
-            if snapshotLoading && snapshot == nil {
+            if projection.snapshotLoading && !projection.snapshotAvailable {
                 Section {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -803,7 +754,7 @@ struct MobileEvidenceView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-            } else if let snapshotError, snapshot == nil {
+            } else if let snapshotError = projection.snapshotError, !projection.snapshotAvailable {
                 Section {
                     Text(snapshotError)
                         .foregroundColor(.red)
@@ -811,17 +762,16 @@ struct MobileEvidenceView: View {
                         refreshEvidence()
                     }
                 }
-            } else if currentTabItems.isEmpty {
+            } else if projection.currentTabItemCount == 0 {
                 Section {
                     ContentUnavailableView(
                         selectedTab.emptyStateText,
                         systemImage: selectedTab.iconName
                     )
                 }
-            } else if snapshot != nil {
-                // 按设备类型分组展示
-                ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
-                    deviceSection(deviceType: deviceType, items: items(for: deviceType))
+            } else if projection.snapshotAvailable {
+                ForEach(projection.deviceSections) { section in
+                    deviceSection(section)
                 }
             } else {
                 Section {
@@ -845,10 +795,16 @@ struct MobileEvidenceView: View {
             detailSheet
         }
         .onAppear {
+            projectionStore.bind(
+                appState: appState,
+                project: project,
+                workspace: workspace,
+                selectedTab: selectedTab
+            )
             refreshEvidence()
             syncSelectionIfNeeded()
         }
-        .onChange(of: snapshot?.updatedAt) { _, _ in
+        .onChange(of: projection.snapshotUpdatedAt) { _, _ in
             syncSelectionIfNeeded()
             pruneScreenshotThumbnailCache()
             processNextScreenshotThumbnailLoadIfNeeded()
@@ -865,27 +821,24 @@ struct MobileEvidenceView: View {
             }
         }
     }
-    
-    /// 设备分组 Section
+
     @ViewBuilder
-    private func deviceSection(deviceType: String, items: [EvidenceItemInfoV2]) -> some View {
+    private func deviceSection(_ section: EvidenceDeviceSectionProjection) -> some View {
         if selectedTab == .screenshot {
-            // 截图使用网格布局
-            Section("\(deviceType) (\(items.count)张)") {
-                screenshotGrid(items: items)
+            Section("\(section.deviceType) (\(section.items.count)张)") {
+                screenshotGrid(items: section.items)
             }
         } else {
-            // 日志使用列表布局
-            Section(deviceType) {
-                ForEach(items, id: \.itemID) { item in
+            Section(section.deviceType) {
+                ForEach(section.items, id: \.itemID) { item in
                     logRow(item: item)
                 }
             }
         }
     }
 
-    private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
-        return LazyVGrid(
+    private func screenshotGrid(items: [EvidenceItemProjection]) -> some View {
+        LazyVGrid(
             columns: [
                 GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 12)
             ],
@@ -898,9 +851,8 @@ struct MobileEvidenceView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
     }
-    
-    /// 截图缩略图
-    private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
+
+    private func screenshotThumbnail(item: EvidenceItemProjection) -> some View {
         let thumbnailHeight: CGFloat = 64
         return Button {
             selectedScreenshotID = item.itemID
@@ -935,7 +887,7 @@ struct MobileEvidenceView: View {
                         )
                 )
                 .clipShape(.rect(cornerRadius: 6))
-                
+
                 Text("#\(item.order)")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -946,9 +898,8 @@ struct MobileEvidenceView: View {
             enqueueScreenshotThumbnailLoad(for: item)
         }
     }
-    
-    /// 日志列表行
-    private func logRow(item: EvidenceItemInfoV2) -> some View {
+
+    private func logRow(item: EvidenceItemProjection) -> some View {
         Button {
             selectedLogID = item.itemID
             showingDetailSheet = true
@@ -958,28 +909,28 @@ struct MobileEvidenceView: View {
                     Text("#\(item.order) \(item.title)")
                         .font(.body)
                         .foregroundColor(.primary)
-                    
+
                     if !item.description.isEmpty && item.description != item.title {
                         Text(item.description)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
-                    
+
                     Text(item.path)
                         .font(.caption2)
                         .foregroundColor(.secondary.opacity(0.8))
                         .lineLimit(1)
                 }
-                
+
                 Spacer()
-                
+
                 if item.sizeBytes > 0 {
                     Text(formatByteCount(item.sizeBytes))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundColor(.secondary.opacity(0.6))
@@ -992,24 +943,21 @@ struct MobileEvidenceView: View {
             selectedLogID == item.itemID ? Color.accentColor.opacity(0.12) : Color.clear
         )
     }
-    
-    /// 格式化字节数
+
     private func formatByteCount(_ bytes: UInt64) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
     }
-    
-    /// 当前选中的条目
-    private var currentSelectedItem: EvidenceItemInfoV2? {
+
+    private var currentSelectedItem: EvidenceItemProjection? {
         let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if let id = selectedID {
             return currentTabItems.first { $0.itemID == id }
         }
         return nil
     }
-    
-    /// 详情 Sheet
+
     private var detailSheet: some View {
         NavigationStack {
             Group {
@@ -1030,13 +978,11 @@ struct MobileEvidenceView: View {
             }
         }
     }
-    
-    /// 详情内容
+
     @ViewBuilder
-    private func detailContent(for item: EvidenceItemInfoV2) -> some View {
+    private func detailContent(for item: EvidenceItemProjection) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                // 信息卡片
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.title)
                         .font(.headline)
@@ -1060,9 +1006,8 @@ struct MobileEvidenceView: View {
                 }
                 .padding()
                 .background(Color(.systemGray6))
-                .cornerRadius(10)
-                
-                // 内容区域
+                .clipShape(.rect(cornerRadius: 10))
+
                 if evidenceViewer.isLoading {
                     ProgressView("加载内容中...")
                         .frame(maxWidth: .infinity, minHeight: 200)
@@ -1101,7 +1046,7 @@ struct MobileEvidenceView: View {
                     }
                     .padding()
                     .background(Color(.systemBackground))
-                    .cornerRadius(10)
+                    .clipShape(.rect(cornerRadius: 10))
                 } else {
                     ContentUnavailableView(
                         "无法预览",
@@ -1119,8 +1064,8 @@ struct MobileEvidenceView: View {
             loadItem(item)
         }
     }
-    
-    private func loadItemIfNeeded(_ item: EvidenceItemInfoV2) {
+
+    private func loadItemIfNeeded(_ item: EvidenceItemProjection) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if currentID != item.itemID {
             if selectedTab == .screenshot {
@@ -1135,15 +1080,14 @@ struct MobileEvidenceView: View {
     }
 
     private func syncSelectionIfNeeded() {
-        guard let snapshot else { return }
         var shouldClearPreview = false
         if let screenshotID = selectedScreenshotID,
-           !snapshot.items.contains(where: { $0.itemID == screenshotID }) {
+           !projection.allItemIDs.contains(screenshotID) {
             selectedScreenshotID = nil
             shouldClearPreview = shouldClearPreview || selectedTab == .screenshot
         }
         if let logID = selectedLogID,
-           !snapshot.items.contains(where: { $0.itemID == logID }) {
+           !projection.allItemIDs.contains(logID) {
             selectedLogID = nil
             shouldClearPreview = shouldClearPreview || selectedTab == .log
         }
@@ -1165,20 +1109,13 @@ struct MobileEvidenceView: View {
     }
 
     private func pruneScreenshotThumbnailCache() {
-        guard let snapshot else {
+        guard projection.snapshotAvailable else {
             screenshotThumbnails.removeAll()
             screenshotThumbnailLoadFailedIDs.removeAll()
             stopScreenshotThumbnailPrefetch()
             return
         }
-        let validIDs = Set(
-            snapshot.items.compactMap { item -> String? in
-                if item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/") {
-                    return item.itemID
-                }
-                return nil
-            }
-        )
+        let validIDs = projection.screenshotItemIDs
         screenshotThumbnails = screenshotThumbnails.filter { validIDs.contains($0.key) }
         screenshotThumbnailLoadFailedIDs = screenshotThumbnailLoadFailedIDs.intersection(validIDs)
         screenshotThumbnailPendingIDs.removeAll { !validIDs.contains($0) }
@@ -1192,13 +1129,13 @@ struct MobileEvidenceView: View {
         selectedTab == .screenshot && !showingDetailSheet
     }
 
-    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemInfoV2) {
+    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemProjection) {
         guard canPrefetchScreenshotThumbnails else { return }
         guard screenshotThumbnails[item.itemID] == nil else { return }
         guard !screenshotThumbnailLoadingIDs.contains(item.itemID) else { return }
         guard !screenshotThumbnailLoadFailedIDs.contains(item.itemID) else { return }
         guard !screenshotThumbnailPendingIDs.contains(item.itemID) else { return }
-        guard item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" else { return }
+        guard item.isScreenshotLike else { return }
         screenshotThumbnailPendingIDs.append(item.itemID)
         processNextScreenshotThumbnailLoadIfNeeded()
     }
@@ -1212,7 +1149,7 @@ struct MobileEvidenceView: View {
             guard screenshotThumbnails[itemID] == nil else { continue }
             guard !screenshotThumbnailLoadFailedIDs.contains(itemID) else { continue }
             guard let item = currentTabItems.first(where: { $0.itemID == itemID }) else { continue }
-            guard item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" else { continue }
+            guard item.isScreenshotLike else { continue }
 
             screenshotThumbnailActiveID = itemID
             screenshotThumbnailLoadingIDs.insert(itemID)
@@ -1284,11 +1221,11 @@ struct MobileEvidenceView: View {
         }
     }
 
-    private func loadItem(_ item: EvidenceItemInfoV2) {
+    private func loadItem(_ item: EvidenceItemProjection) {
         evidenceViewer.beginLoading(itemID: item.itemID)
         itemImage = nil
 
-        if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
+        if item.isScreenshotLike {
             appState.readEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
                     let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
@@ -1323,14 +1260,14 @@ struct MobileEvidenceView: View {
         loadNextTextPage(for: item, reset: true)
     }
 
-    private func loadNextTextPageIfNeeded(for item: EvidenceItemInfoV2) {
+    private func loadNextTextPageIfNeeded(for item: EvidenceItemProjection) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         guard currentID == item.itemID else { return }
         guard evidenceViewer.shouldLoadNextPage(itemID: item.itemID) else { return }
         loadNextTextPage(for: item, reset: false)
     }
 
-    private func loadNextTextPage(for item: EvidenceItemInfoV2, reset: Bool) {
+    private func loadNextTextPage(for item: EvidenceItemProjection, reset: Bool) {
         let offset: UInt64 = reset ? 0 : evidenceViewer.nextOffset
         if !reset, offset == 0 {
             return
@@ -1395,11 +1332,11 @@ private struct EvolutionProfileDraft: Identifiable {
 }
 
 struct MobileEvolutionView: View {
-    @EnvironmentObject var appState: MobileAppState
-
+    let appState: MobileAppState
     let project: String
     let workspace: String
 
+    @State private var projectionStore = EvolutionPipelineProjectionStore()
     @State private var loopRoundLimitText: String = "1"
     @State private var profiles: [EvolutionProfileDraft] = []
     @State private var isApplyingRemoteProfiles: Bool = false
@@ -1418,19 +1355,12 @@ struct MobileEvolutionView: View {
         var answerText: String
     }
 
-    private var item: EvolutionWorkspaceItemV2? {
-        appState.evolutionItem(project: project, workspace: workspace)
-    }
-    private var controlState: (
-        canStart: Bool,
-        canStop: Bool,
-        canResume: Bool,
-        isStartPending: Bool,
-        isStopPending: Bool,
-        isResumePending: Bool
-    ) {
-        appState.evolutionControlState(project: project, workspace: workspace)
-    }
+    private var projection: EvolutionPipelineProjection { projectionStore.projection }
+    private var item: EvolutionWorkspaceItemV2? { projection.currentItem }
+    private var scheduler: EvolutionSchedulerInfoV2 { projection.scheduler }
+    private var controlState: EvolutionControlProjection { projection.control }
+    private var activeBlockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
+    private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
     private var primaryControlShowsStop: Bool {
         controlState.canStop || controlState.isStopPending
     }
@@ -1457,16 +1387,16 @@ struct MobileEvolutionView: View {
                 LabeledContent("evolution.page.scheduler.activation".localized) {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(isSchedulerActive(appState.evolutionScheduler.activationState) ? Color.green : Color.secondary)
+                            .fill(isSchedulerActive(scheduler.activationState) ? Color.green : Color.secondary)
                             .frame(width: 8, height: 8)
-                        Text(localizedSchedulerActivationDisplay(appState.evolutionScheduler.activationState))
+                        Text(localizedSchedulerActivationDisplay(scheduler.activationState))
                     }
                 }
                 LabeledContent("evolution.page.scheduler.maxParallel".localized) {
-                    Text("\(appState.evolutionScheduler.maxParallelWorkspaces)")
+                    Text("\(scheduler.maxParallelWorkspaces)")
                 }
                 LabeledContent("evolution.page.scheduler.runningQueued".localized) {
-                    Text("\(appState.evolutionScheduler.runningCount) / \(appState.evolutionScheduler.queuedCount)")
+                    Text("\(scheduler.runningCount) / \(scheduler.queuedCount)")
                 }
             }
 
@@ -1841,11 +1771,13 @@ struct MobileEvolutionView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("common.refresh".localized) {
                     appState.refreshEvolution(project: project, workspace: workspace)
+                    projectionStore.refresh(appState: appState, project: project, workspace: workspace)
                     loadProfiles()
                 }
             }
         }
         .onAppear {
+            projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.openEvolution(project: project, workspace: workspace)
             loadProfiles()
             syncStartOptionsFromItem()
@@ -1854,15 +1786,16 @@ struct MobileEvolutionView: View {
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             loadProfiles()
         }
-        .onReceive(appState.$evolutionWorkspaceItems) { _ in
+        .onChange(of: item?.statusStageRoundSignature) { _, _ in
             syncStartOptionsFromItem()
         }
-        .onReceive(appState.$evolutionBlockingRequired) { value in
+        .onChange(of: activeBlockingRequest) { _, value in
             syncBlockingDrafts(value)
         }
         .onChange(of: appState.isConnected) { _, connected in
             guard connected else { return }
             appState.refreshEvolution(project: project, workspace: workspace)
+            projectionStore.refresh(appState: appState, project: project, workspace: workspace)
             loadProfiles()
         }
     }
@@ -2311,16 +2244,8 @@ struct MobileEvolutionView: View {
         trimmedNonEmptyText(value) ?? "Untitled"
     }
 
-    private var activeBlockingRequest: EvolutionBlockingRequiredV2? {
-        guard let blocking = appState.evolutionBlockingRequired else { return nil }
-        guard blocking.project == project else { return nil }
-        let lhs = normalizeWorkspace(blocking.workspace)
-        let rhs = normalizeWorkspace(workspace)
-        return lhs == rhs ? blocking : nil
-    }
-
-    private func syncBlockingDrafts(_ value: EvolutionBlockingRequiredV2?) {
-        guard let value = activeBlockingRequest else { return }
+    private func syncBlockingDrafts(_ value: EvolutionBlockingRequestProjection?) {
+        guard let value else { return }
         for item in value.unresolvedItems {
             if blockerDrafts[item.blockerID] != nil { continue }
             blockerDrafts[item.blockerID] = EvolutionBlockerDraft(
@@ -2364,7 +2289,7 @@ struct MobileEvolutionView: View {
         )
     }
 
-    private func submitBlockers(_ blocking: EvolutionBlockingRequiredV2) {
+    private func submitBlockers(_ blocking: EvolutionBlockingRequestProjection) {
         let resolutions = blocking.unresolvedItems.compactMap { item -> EvolutionBlockerResolutionInputV2? in
             let draft = blockerDrafts[item.blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
             guard draft.selected else { return nil }
@@ -2381,11 +2306,6 @@ struct MobileEvolutionView: View {
             workspace: blocking.workspace,
             resolutions: resolutions
         )
-    }
-
-    private func normalizeWorkspace(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "default" : trimmed
     }
 
     private func isSchedulerActive(_ status: String) -> Bool {
@@ -2507,47 +2427,16 @@ struct MobileEvolutionView: View {
         let allowsChatNavigation: Bool
     }
 
-    private func mobileCycleBarEntries(_ cycle: EvolutionCycleHistoryItemV2) -> [MobileCycleBarEntry] {
-        let executionEntries = cycle.executions
-            .filter { isExecutionCompletedStatus($0.status) }
-            .sorted { lhs, rhs in
-                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
-                case (false, false):
-                    if lhs.startedAt != rhs.startedAt {
-                        return lhs.startedAt < rhs.startedAt
-                    }
-                case (false, true):
-                    return true
-                case (true, false):
-                    return false
-                case (true, true):
-                    break
-                }
-                return lhs.sessionID < rhs.sessionID
-            }
-            .map { execution in
-                MobileCycleBarEntry(
-                    id: execution.sessionID + "|" + execution.startedAt,
-                    stage: execution.stage,
-                    agent: execution.agent,
-                    aiTool: execution.aiTool,
-                    startedAt: trimmedNonEmptyText(execution.startedAt),
-                    status: execution.status,
-                    durationMs: execution.durationMs
-                )
-            }
-        if !executionEntries.isEmpty {
-            return executionEntries
-        }
-        return cycle.stages.map { stage in
+    private func mobileCycleBarEntries(_ cycle: PipelineCycleHistory) -> [MobileCycleBarEntry] {
+        cycle.stageEntries.map { entry in
             MobileCycleBarEntry(
-                id: "\(cycle.cycleID)_\(stage.stage)",
-                stage: stage.stage,
-                agent: stage.agent,
-                aiTool: stage.aiTool,
-                startedAt: nil,
-                status: stage.status,
-                durationMs: stage.durationMs
+                id: entry.id,
+                stage: entry.stage,
+                agent: entry.agent,
+                aiTool: entry.aiToolRawValue ?? entry.aiToolName,
+                startedAt: entry.startedAt,
+                status: entry.status ?? "unknown",
+                durationMs: entry.durationSeconds > 0 ? UInt64(entry.durationSeconds * 1000) : nil
             )
         }
     }
@@ -2568,30 +2457,29 @@ struct MobileEvolutionView: View {
 
     @ViewBuilder
     private var mobileCycleHistorySection: some View {
-        let key = appState.globalWorkspaceKey(project: project, workspace: appState.normalizeEvolutionWorkspaceName(workspace))
-        if let cycles = appState.evolutionCycleHistories[key], !cycles.isEmpty {
+        if !cycleHistories.isEmpty {
             Section("evolution.page.pipeline.historyCycles".localized) {
-                ForEach(cycles, id: \.cycleID) { cycle in
+                ForEach(cycleHistories) { cycle in
                     let entries = mobileCycleBarEntries(cycle)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(mobileCycleDisplayTitle(cycle.title))
+                                Text(cycle.displayTitle)
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 HStack(spacing: 8) {
-                                    Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
+                                    Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                    Label(mobileCycleTimeLabel(cycle.createdAt), systemImage: "clock")
+                                    Label(mobileCycleTimeLabel(cycle.startDate), systemImage: "clock")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
                             }
                             Spacer()
                             Button {
-                                openPlanDocumentSheet(cycleID: cycle.cycleID)
+                                openPlanDocumentSheet(cycleID: cycle.id)
                             } label: {
                                 Image(systemName: "doc.text")
                                     .font(.caption.weight(.semibold))
@@ -2628,74 +2516,27 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private func mobileCycleDetailPayload(_ cycle: EvolutionCycleHistoryItemV2) -> MobileCycleDetailPayload {
-        let timelineEntries: [MobileCycleDetailTimelineEntry] = {
-            let executionEntries = cycle.executions
-                .sorted { lhs, rhs in
-                    switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
-                    case (false, false):
-                        if lhs.startedAt != rhs.startedAt {
-                            return lhs.startedAt < rhs.startedAt
-                        }
-                    case (false, true):
-                        return true
-                    case (true, false):
-                        return false
-                    case (true, true):
-                        break
-                    }
-                    return lhs.sessionID < rhs.sessionID
-                }
-                .map { execution in
-                    MobileCycleDetailTimelineEntry(
-                        id: execution.sessionID + "|" + execution.startedAt,
-                        stage: execution.stage,
-                        agent: execution.agent,
-                        aiTool: execution.aiTool,
-                        startedAt: trimmedNonEmptyText(execution.startedAt),
-                        status: execution.status,
-                        durationMs: execution.durationMs,
-                        sessionID: execution.sessionID
-                    )
-                }
-            if !executionEntries.isEmpty {
-                return executionEntries
-            }
-            return cycle.stages.enumerated().map { index, stage in
-                MobileCycleDetailTimelineEntry(
-                    id: "\(cycle.cycleID)_\(index)_\(stage.stage)",
-                    stage: stage.stage,
-                    agent: stage.agent,
-                    aiTool: stage.aiTool,
-                    startedAt: nil,
-                    status: stage.status,
-                    durationMs: stage.durationMs,
-                    sessionID: nil
-                )
-            }
-        }()
-
+    private func mobileCycleDetailPayload(_ cycle: PipelineCycleHistory) -> MobileCycleDetailPayload {
+        let timelineEntries = cycle.stageEntries.map { entry in
+            MobileCycleDetailTimelineEntry(
+                id: entry.id,
+                stage: entry.stage,
+                agent: entry.agent,
+                aiTool: entry.aiToolRawValue ?? entry.aiToolName,
+                startedAt: entry.startedAt,
+                status: entry.status ?? "unknown",
+                durationMs: entry.durationSeconds > 0 ? UInt64(entry.durationSeconds * 1000) : nil,
+                sessionID: entry.sessionID
+            )
+        }
         let totalDurationMs = timelineEntries.compactMap(\.durationMs).reduce(0, +)
-        let startTimeText: String = {
-            let earliest = timelineEntries
-                .compactMap { mobileParseISODate($0.startedAt) }
-                .min()
-            if let earliest {
-                return mobileCycleDateTimeLabel(earliest)
-            }
-            if let createdAt = mobileParseISODate(cycle.createdAt) {
-                return mobileCycleDateTimeLabel(createdAt)
-            }
-            return cycle.createdAt
-        }()
-
         return MobileCycleDetailPayload(
-            id: cycle.cycleID,
-            cycleID: cycle.cycleID,
-            title: mobileCycleDisplayTitle(cycle.title),
-            round: max(1, cycle.globalLoopRound),
-            status: cycle.status,
-            startTimeText: startTimeText,
+            id: cycle.id,
+            cycleID: cycle.id,
+            title: cycle.displayTitle,
+            round: max(1, cycle.round),
+            status: cycle.status ?? "unknown",
+            startTimeText: mobileCycleDateTimeLabel(cycle.startDate),
             totalDurationText: totalDurationMs > 0 ? mobileStageDuration(TimeInterval(totalDurationMs) / 1000.0) : nil,
             terminalReasonCode: cycle.terminalReasonCode,
             terminalErrorMessage: cycle.terminalErrorMessage,
@@ -2903,13 +2744,7 @@ struct MobileEvolutionView: View {
         return formatter.string(from: date)
     }
 
-    private func mobileCycleTimeLabel(_ isoString: String) -> String {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-        guard let date = isoFormatter.date(from: isoString) ?? fallbackFormatter.date(from: isoString) else {
-            return isoString
-        }
+    private func mobileCycleTimeLabel(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MM-dd HH:mm"
         return formatter.string(from: date)

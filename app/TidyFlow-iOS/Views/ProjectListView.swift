@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 项目列表视图
 struct ProjectListView: View {
-    @EnvironmentObject var appState: MobileAppState
+    let appState: MobileAppState
     @StateObject private var projectionStore = MobileSidebarProjectionStore()
 
     var body: some View {
@@ -72,13 +72,18 @@ struct ProjectListView: View {
         .refreshable {
             appState.refreshProjectTree()
         }
-        .onAppear {
+        .task {
             projectionStore.bind(appState: appState)
             appState.refreshProjectTree()
         }
         .tfRenderProbe("ProjectListView", metadata: [
             "project_count": String(displayedProjects.count)
         ])
+        .tfHotspotBaseline(
+            .iosProjectList,
+            renderProbeName: "ProjectListView",
+            metadata: ["project_count": String(displayedProjects.count)]
+        )
     }
 
     private var displayedProjects: [SidebarProjectProjection] {

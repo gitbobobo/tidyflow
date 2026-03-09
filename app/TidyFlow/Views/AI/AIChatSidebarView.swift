@@ -53,14 +53,6 @@ final class AIChatSidebarState: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.refreshSessionStatuses() }
                 .store(in: &cancellables)
-
-            appState.$aiChatStore
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] store in
-                    self?.bindCurrentStore(store)
-                    self?.refresh()
-                }
-                .store(in: &cancellables)
         }
 
         bindCurrentStore(appState.aiChatStore)
@@ -86,6 +78,7 @@ final class AIChatSidebarState: ObservableObject {
         filter = appState.sessionPanelFilter
         pageState = appState.displayedAISessionListState
         currentTool = appState.aiChatTool
+        bindCurrentStore(appState.aiChatStore)
         currentSessionId = appState.aiChatStore.currentSessionId
         refreshSessionStatuses()
     }

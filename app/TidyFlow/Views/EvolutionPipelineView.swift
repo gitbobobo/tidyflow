@@ -7,8 +7,8 @@ import SwiftUI
 /// 自主进化的流水线视图，显示在右侧 Inspector 面板中
 /// 聚焦当前轮次执行流程，以流水线动画展示代理执行状态
 struct EvolutionPipelineView: View {
-    @EnvironmentObject var appState: AppState
-    @StateObject private var projectionStore = EvolutionPipelineProjectionStore()
+    let appState: AppState
+    @State private var projectionStore = EvolutionPipelineProjectionStore()
 
     // MARK: - 本地状态
 
@@ -43,12 +43,11 @@ struct EvolutionPipelineView: View {
     private var workspace: String? { projection.workspace }
     private var workspaceReady: Bool { projection.workspaceReady }
     private var workspaceContextKey: String { projection.workspaceContextKey }
+    private var scheduler: EvolutionSchedulerInfoV2 { projection.scheduler }
+    private var controlCapability: EvolutionControlProjection { projection.control }
     private var currentItem: EvolutionWorkspaceItemV2? { projection.currentItem }
+    private var blockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
-
-    private var controlCapability: EvolutionControlCapability {
-        appState.evolutionControlCapability(project: project, workspace: workspace)
-    }
 
     /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
     private var primaryControlShowsStop: Bool {
@@ -130,7 +129,7 @@ struct EvolutionPipelineView: View {
             }
         }
         .onAppear {
-            projectionStore.bind(appState: appState, mapHistory: mapCycleHistory)
+            projectionStore.bind(appState: appState)
             syncStartOptions()
             refreshData()
         }
@@ -158,7 +157,7 @@ struct EvolutionPipelineView: View {
         .onChange(of: currentItem?.timelineSignature) { _, _ in
             updateTimeline()
         }
-        .onReceive(appState.$evolutionBlockingRequired) { value in
+        .onChange(of: blockingRequest) { _, value in
             syncBlockerSheetState(value)
         }
         .sheet(item: $selectedCycleDetail) { payload in
@@ -1859,68 +1858,6 @@ struct EvolutionPipelineView: View {
         resetCurrentCycleTimeline()
     }
 
-    private func mapCycleHistory(_ cycle: EvolutionCycleHistoryItemV2) -> PipelineCycleHistory {
-        let startDate = Self.rfc3339Formatter.date(from: cycle.createdAt)
-            ?? Self.rfc3339FallbackFormatter.date(from: cycle.createdAt)
-            ?? Date()
-        let entries: [PipelineCycleStageEntry] = {
-            let executionEntries = cycle.executions
-                .filter { isExecutionCompletedStatus($0.status) }
-                .sorted { lhs, rhs in
-                    switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
-                    case (false, false):
-                        if lhs.startedAt != rhs.startedAt {
-                            return lhs.startedAt < rhs.startedAt
-                        }
-                    case (false, true):
-                        return true
-                    case (true, false):
-                        return false
-                    case (true, true):
-                        break
-                    }
-                    return lhs.sessionID < rhs.sessionID
-                }
-                .map { execution in
-                    PipelineCycleStageEntry(
-                        id: "\(cycle.cycleID)_\(execution.sessionID)_\(execution.startedAt)",
-                        stage: normalizedStageKey(execution.stage),
-                        agent: execution.agent,
-                        aiToolName: execution.aiTool,
-                        aiToolRawValue: trimmedNonEmptyText(execution.aiTool),
-                        sessionID: execution.sessionID,
-                        startedAt: trimmedNonEmptyText(execution.startedAt),
-                        status: execution.status,
-                        durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                    )
-                }
-            if !executionEntries.isEmpty {
-                return executionEntries
-            }
-            return cycle.stages.map { stage in
-                PipelineCycleStageEntry(
-                    id: "\(cycle.cycleID)_\(stage.stage)",
-                    stage: normalizedStageKey(stage.stage),
-                    agent: stage.agent,
-                    aiToolName: stage.aiTool,
-                    aiToolRawValue: trimmedNonEmptyText(stage.aiTool),
-                    status: stage.status,
-                    durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                )
-            }
-        }()
-        return PipelineCycleHistory(
-            id: cycle.cycleID,
-            title: cycle.title,
-            round: cycle.globalLoopRound,
-            stages: entries.map(\.stage),
-            startDate: startDate,
-            stageEntries: entries,
-            terminalReasonCode: cycle.terminalReasonCode,
-            terminalErrorMessage: cycle.terminalErrorMessage
-        )
-    }
-
     // MARK: - Stage Session
 
     private func openStageSession(stage: String) {
@@ -2053,7 +1990,7 @@ struct EvolutionPipelineView: View {
     private var blockerSheet: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                if let blocking = appState.evolutionBlockingRequired {
+                if let blocking = blockingRequest {
                     Text("evolution.page.blocker.detectedHint".localized)
                         .font(.headline)
                     Text(
@@ -2151,7 +2088,7 @@ struct EvolutionPipelineView: View {
         )
     }
 
-    private func syncBlockerSheetState(_ value: EvolutionBlockingRequiredV2?) {
+    private func syncBlockerSheetState(_ value: EvolutionBlockingRequestProjection?) {
         guard let value,
               let ws = workspace,
               value.project == project,
@@ -2169,7 +2106,7 @@ struct EvolutionPipelineView: View {
         isBlockerSheetPresented = true
     }
 
-    private func submitBlockerAnswers(_ blocking: EvolutionBlockingRequiredV2) {
+    private func submitBlockerAnswers(_ blocking: EvolutionBlockingRequestProjection) {
         let resolutions: [EvolutionBlockerResolutionInputV2] = blocking.unresolvedItems.compactMap { item in
             let draft = blockerDrafts[item.blockerID] ?? EvolutionPipelineBlockerDraft(
                 selected: true,
@@ -2393,53 +2330,6 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
 }
 
 /// 历史循环中每个阶段的记录
-struct PipelineCycleStageEntry: Identifiable, Equatable {
-    let id: String
-    let stage: String
-    let agent: String
-    let aiToolName: String
-    let aiToolRawValue: String?
-    let sessionID: String?
-    /// 阶段开始时间（RFC3339）
-    let startedAt: String?
-    /// 阶段状态（运行中/已完成等）
-    let status: String?
-    /// 运行时长（秒）
-    let durationSeconds: TimeInterval
-
-    init(
-        id: String,
-        stage: String,
-        agent: String,
-        aiToolName: String = "",
-        aiToolRawValue: String? = nil,
-        sessionID: String? = nil,
-        startedAt: String? = nil,
-        status: String? = nil,
-        durationSeconds: TimeInterval
-    ) {
-        self.id = id
-        self.stage = stage
-        self.agent = agent
-        self.aiToolName = aiToolName
-        self.aiToolRawValue = aiToolRawValue
-        self.sessionID = sessionID
-        self.startedAt = startedAt
-        self.status = status
-        self.durationSeconds = durationSeconds
-    }
-
-    var formattedDuration: String {
-        if durationSeconds < 60 {
-            return "\(Int(durationSeconds))s"
-        } else {
-            let minutes = Int(durationSeconds) / 60
-            let seconds = Int(durationSeconds) % 60
-            return "\(minutes)m\(String(format: "%02d", seconds))s"
-        }
-    }
-}
-
 struct PipelineCycleTimelineEntry: Identifiable, Equatable {
     let id: String
     let stage: String
@@ -2481,46 +2371,6 @@ struct PipelineCycleDetailPayload: Identifiable, Equatable {
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
     let timelineEntries: [PipelineCycleTimelineEntry]
-}
-
-struct PipelineCycleHistory: Identifiable, Equatable {
-    let id: String
-    let title: String?
-    let round: Int
-    let stages: [String]
-    /// 循环开始时间
-    let startDate: Date
-    /// 每个阶段的详细记录（含运行时长）
-    let stageEntries: [PipelineCycleStageEntry]
-    /// 终止原因码
-    let terminalReasonCode: String?
-    /// 终止错误详情
-    let terminalErrorMessage: String?
-
-    var displayTitle: String {
-        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Untitled" : trimmed
-    }
-
-    init(
-        id: String,
-        title: String? = nil,
-        round: Int,
-        stages: [String],
-        startDate: Date,
-        stageEntries: [PipelineCycleStageEntry],
-        terminalReasonCode: String? = nil,
-        terminalErrorMessage: String? = nil
-    ) {
-        self.id = id
-        self.title = title
-        self.round = round
-        self.stages = stages
-        self.startDate = startDate
-        self.stageEntries = stageEntries
-        self.terminalReasonCode = terminalReasonCode
-        self.terminalErrorMessage = terminalErrorMessage
-    }
 }
 
 // MARK: - 横向换行布局（待命胶囊专用）

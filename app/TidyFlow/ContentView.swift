@@ -25,8 +25,10 @@ struct ContentView: View {
         ZStack {
             // 主布局：左侧边栏 + 中心内容
             NavigationSplitView {
-                ProjectsSidebarView()
-                    .environmentObject(appState)
+                ProjectsSidebarView(
+                    appState: appState,
+                    terminalStore: appState.terminalStore
+                )
                     .navigationSplitViewColumnWidth(min: 200, ideal: 250)
             } detail: {
                 CenterContentView()

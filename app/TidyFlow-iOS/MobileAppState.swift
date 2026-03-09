@@ -304,7 +304,7 @@ final class MobileAppState: ObservableObject {
     private var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
-    var evolutionPendingActionByWorkspace: [String: String] = [:]
+    @Published var evolutionPendingActionByWorkspace: [String: String] = [:]
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
 

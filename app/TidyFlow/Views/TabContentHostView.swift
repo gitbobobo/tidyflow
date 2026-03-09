@@ -2,13 +2,15 @@ import SwiftUI
 import AppKit
 
 struct TabContentHostView: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
+    @State private var projectionStore = BottomPanelProjectionStore()
 
     var body: some View {
         let _ = Self.debugPrintChangesIfNeeded()
+        let projection = projectionStore.projection
         Group {
-            if let globalKey = appState.currentGlobalWorkspaceKey {
-                if let specialPage = appState.workspaceSpecialPageByWorkspace[globalKey] {
+            if let globalKey = projection.workspaceKey {
+                if let specialPage = projection.specialPage {
                     switch specialPage {
                     case .aiChat:
                         EmptyView()
@@ -18,15 +20,27 @@ struct TabContentHostView: View {
                         EmptyView()
                     }
                 } else {
-                    BottomPanelWorkspaceContent(workspaceKey: globalKey)
+                    BottomPanelWorkspaceContent(
+                        appState: appState,
+                        workspaceKey: globalKey,
+                        projection: projection
+                    )
                 }
             } else {
                 NoActiveTabView()
             }
         }
         .tfRenderProbe("TabContentHostView", metadata: [
-            "workspace": appState.currentGlobalWorkspaceKey ?? "none"
+            "workspace": projection.workspaceKey ?? "none"
         ])
+        .tfHotspotBaseline(
+            .macBottomPanel,
+            renderProbeName: "TabContentHostView",
+            metadata: ["workspace": projection.workspaceKey ?? "none"]
+        )
+        .onAppear {
+            projectionStore.bind(appState: appState)
+        }
     }
 
     private static func debugPrintChangesIfNeeded() {
@@ -41,41 +55,31 @@ struct TabContentHostView: View {
 }
 
 private struct BottomPanelWorkspaceContent: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
     let workspaceKey: String
-
-    private var activeCategory: BottomPanelCategory {
-        appState.activeBottomPanelCategory(workspaceKey: workspaceKey)
-    }
-
-    private var displayedTabs: [TabModel] {
-        appState.displayedBottomPanelTabs(workspaceKey: workspaceKey)
-    }
-
-    private var activeTab: TabModel? {
-        appState.displayedBottomPanelTab(workspaceKey: workspaceKey)
-    }
+    let projection: BottomPanelProjection
 
     var body: some View {
         HStack(spacing: 0) {
-            if activeCategory != .projectConfig && displayedTabs.count > 1 {
+            if projection.activeCategory != .projectConfig && projection.displayedTabs.count > 1 {
                 BottomPanelVerticalTabList(
+                    appState: appState,
                     workspaceKey: workspaceKey,
-                    category: activeCategory,
-                    tabs: displayedTabs,
-                    activeTabId: activeTab?.id
+                    category: projection.activeCategory ?? .terminal,
+                    tabs: projection.displayedTabs,
+                    activeTabId: projection.activeTab?.id
                 )
                 Divider()
             }
 
             Group {
-                if activeCategory == .projectConfig {
+                if projection.activeCategory == .projectConfig {
                     ProjectConfigView()
                         .environmentObject(appState)
-                } else if let activeTab {
+                } else if let activeTab = projection.activeTab {
                     content(for: activeTab)
                 } else {
-                    BottomPanelCategoryEmptyView(category: activeCategory)
+                    BottomPanelCategoryEmptyView(category: projection.activeCategory ?? .terminal)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,7 +103,7 @@ private struct BottomPanelWorkspaceContent: View {
 }
 
 private struct BottomPanelVerticalTabList: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
     let workspaceKey: String
     let category: BottomPanelCategory
     let tabs: [TabModel]
@@ -110,6 +114,7 @@ private struct BottomPanelVerticalTabList: View {
             LazyVStack(spacing: 3) {
                 ForEach(tabs) { tab in
                     BottomPanelInstanceItemView(
+                        appState: appState,
                         tab: tab,
                         isActive: activeTabId == tab.id,
                         workspaceKey: workspaceKey
@@ -125,7 +130,7 @@ private struct BottomPanelVerticalTabList: View {
 }
 
 private struct BottomPanelInstanceItemView: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
 
     let tab: TabModel
     let isActive: Bool
@@ -1151,8 +1156,9 @@ struct DiffPlaceholderView: View {
 // EvidenceTabType 已移至 EvidenceTabSemantics.swift（Networking 层），macOS 与 iOS 共享同一定义。
 
 struct EvidenceTabView: View {
-    @EnvironmentObject var appState: AppState
+    let appState: AppState
 
+    @State private var projectionStore = EvidenceProjectionStore()
     @State private var selectedTab: EvidenceTabType = .screenshot
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
@@ -1167,50 +1173,10 @@ struct EvidenceTabView: View {
     @State private var screenshotThumbnailActiveID: String?
     @State private var screenshotThumbnailRequestSequence: UInt64 = 0
 
-    private var project: String { appState.selectedProjectName }
-    private var workspace: String? { appState.selectedWorkspaceKey }
-
-    private var snapshot: EvidenceSnapshotV2? {
-        guard let workspace else { return nil }
-        return appState.evidenceSnapshot(project: project, workspace: workspace)
-    }
-
-    private var snapshotLoading: Bool {
-        guard let workspace else { return false }
-        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(workspace))
-        return appState.evidenceLoadingByWorkspace[key] ?? false
-    }
-
-    private var snapshotError: String? {
-        guard let workspace else { return nil }
-        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(workspace))
-        return appState.evidenceErrorByWorkspace[key]
-    }
-    
-    /// 根据当前选中的标签页获取对应的证据条目
-    private var currentTabItems: [EvidenceItemInfoV2] {
-        guard let snapshot else { return [] }
-        return selectedTab.filteredItems(from: snapshot)
-    }
-    
-    /// 获取当前标签页下的设备类型列表（保持原有顺序）
-    private var currentTabDeviceTypes: [String] {
-        let deviceTypes = currentTabItems.map { $0.deviceType }
-        var seen = Set<String>()
-        var result: [String] = []
-        for type in deviceTypes {
-            if !seen.contains(type) {
-                seen.insert(type)
-                result.append(type)
-            }
-        }
-        return result
-    }
-    
-    /// 获取指定设备类型的条目
-    private func items(for deviceType: String) -> [EvidenceItemInfoV2] {
-        currentTabItems.filter { $0.deviceType == deviceType }
-    }
+    private var projection: EvidenceProjection { projectionStore.projection }
+    private var project: String { projection.project }
+    private var workspace: String? { projection.workspace }
+    private var currentTabItems: [EvidenceItemProjection] { projection.currentTabItems }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1223,7 +1189,7 @@ struct EvidenceTabView: View {
         .sheet(isPresented: $showDetailSheet) {
             if let item = currentSelectedItem {
                 EvidenceDetailSheetView(
-                    item: item,
+                    item: item.rawValue,
                     selectedTab: selectedTab,
                     viewer: evidenceViewer,
                     itemImage: $itemImage,
@@ -1232,16 +1198,10 @@ struct EvidenceTabView: View {
             }
         }
         .onAppear {
+            projectionStore.bind(appState: appState, selectedTab: selectedTab)
             refreshEvidence()
         }
-        .onChange(of: appState.selectedWorkspaceKey) { _, _ in
-            selectedScreenshotID = nil
-            selectedLogID = nil
-            clearItemPreview()
-            clearScreenshotThumbnailCache()
-            refreshEvidence()
-        }
-        .onChange(of: appState.selectedProjectName) { _, _ in
+        .onChange(of: projection.workspaceContextKey) { _, _ in
             selectedScreenshotID = nil
             selectedLogID = nil
             clearItemPreview()
@@ -1252,12 +1212,13 @@ struct EvidenceTabView: View {
             guard state == .connected else { return }
             refreshEvidence()
         }
-        .onChange(of: snapshot?.updatedAt) { _, _ in
+        .onChange(of: projection.snapshotUpdatedAt) { _, _ in
             syncSelectionIfNeeded()
             pruneScreenshotThumbnailCache()
             processNextScreenshotThumbnailLoadIfNeeded()
         }
         .onChange(of: selectedTab) { _, _ in
+            projectionStore.refresh(appState: appState, selectedTab: selectedTab)
             stopScreenshotThumbnailPrefetch()
             processNextScreenshotThumbnailLoadIfNeeded()
         }
@@ -1311,7 +1272,7 @@ struct EvidenceTabView: View {
                     HStack(spacing: 4) {
                         Image(systemName: tab.iconName)
                             .font(.system(size: 11))
-                        Text("\(tab.displayName)(\(itemsCount(for: tab)))")
+                        Text("\(tab.displayName)(\(projection.tabCount(for: tab)))")
                             .font(.system(size: 11))
                     }
                     .padding(.horizontal, 10)
@@ -1336,24 +1297,19 @@ struct EvidenceTabView: View {
         .padding(.horizontal, 6)
         .background(Color(NSColor.controlBackgroundColor))
     }
-    
-    private func itemsCount(for tab: EvidenceTabType) -> Int {
-        guard let snapshot else { return 0 }
-        return tab.itemCount(in: snapshot)
-    }
 
     @ViewBuilder
     private var content: some View {
-        if workspace == nil {
+        if !projection.workspaceReady {
             emptyStateView(icon: "photo.stack", text: "请先选择工作空间")
-        } else if snapshotLoading && snapshot == nil {
+        } else if projection.snapshotLoading && !projection.snapshotAvailable {
             ProgressView("读取证据中...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let snapshotError, snapshot == nil {
+        } else if let snapshotError = projection.snapshotError, !projection.snapshotAvailable {
             errorView(message: snapshotError)
-        } else if snapshot == nil {
+        } else if !projection.snapshotAvailable {
             emptyStateView(icon: "photo.stack", text: "暂无证据数据", showRefresh: true)
-        } else if currentTabItems.isEmpty {
+        } else if projection.currentTabItemCount == 0 {
             emptyStateView(
                 icon: selectedTab.iconName,
                 text: selectedTab.emptyStateText
@@ -1372,8 +1328,8 @@ struct EvidenceTabView: View {
     private var evidenceListPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
-                    deviceSection(deviceType: deviceType, items: items(for: deviceType))
+                ForEach(projection.deviceSections) { section in
+                    deviceSection(section)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1382,31 +1338,28 @@ struct EvidenceTabView: View {
     }
     
     @ViewBuilder
-    private func deviceSection(deviceType: String, items: [EvidenceItemInfoV2]) -> some View {
+    private func deviceSection(_ section: EvidenceDeviceSectionProjection) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 设备类型标题
             HStack {
-                Text(deviceType)
+                Text(section.deviceType)
                     .font(.headline)
                     .foregroundColor(.primary)
                 Spacer()
-                Text("\(items.count) 项")
+                Text("\(section.items.count) 项")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 4)
             
-            // 根据当前标签页选择布局方式
             if selectedTab == .screenshot {
-                screenshotGrid(items: items)
+                screenshotGrid(items: section.items)
             } else {
-                logList(items: items)
+                logList(items: section.items)
             }
         }
     }
     
-    /// 截图网格布局
-    private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
+    private func screenshotGrid(items: [EvidenceItemProjection]) -> some View {
         return LazyVGrid(
             columns: [
                 GridItem(.adaptive(minimum: 100, maximum: 140), spacing: 8)
@@ -1420,8 +1373,7 @@ struct EvidenceTabView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     
-    /// 截图缩略图卡片
-    private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
+    private func screenshotThumbnail(item: EvidenceItemProjection) -> some View {
         let thumbnailHeight: CGFloat = 80
         return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -1431,7 +1383,6 @@ struct EvidenceTabView: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
-                // 缩略图区域
                 ZStack {
                     if let thumbnail = screenshotThumbnails[item.itemID] {
                         Image(nsImage: thumbnail)
@@ -1461,13 +1412,11 @@ struct EvidenceTabView: View {
                 )
                 .clipShape(.rect(cornerRadius: 6))
                 
-                // 标题
                 Text(item.title)
                     .font(.caption)
                     .foregroundColor(.primary)
                     .lineLimit(1)
                 
-                // 序号
                 Text("#\(item.order)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
@@ -1479,8 +1428,7 @@ struct EvidenceTabView: View {
         }
     }
     
-    /// 日志列表布局
-    private func logList(items: [EvidenceItemInfoV2]) -> some View {
+    private func logList(items: [EvidenceItemProjection]) -> some View {
         VStack(spacing: 0) {
             ForEach(items, id: \.itemID) { item in
                 logRow(item: item)
@@ -1496,20 +1444,17 @@ struct EvidenceTabView: View {
         )
     }
     
-    /// 日志列表行
-    private func logRow(item: EvidenceItemInfoV2) -> some View {
+    private func logRow(item: EvidenceItemProjection) -> some View {
         Button {
             selectedLogID = item.itemID
             loadItem(item)
             showDetailSheet = true
         } label: {
             HStack(spacing: 8) {
-                // 文件图标
                 Image(systemName: "doc.text")
                     .font(.system(size: 12))
                     .foregroundColor(.accentColor)
                 
-                // 内容
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
                         .font(.system(size: 12))
@@ -1536,7 +1481,6 @@ struct EvidenceTabView: View {
         .buttonStyle(.plain)
     }
     
-    /// 空状态视图
     private func emptyStateView(icon: String, text: String, showRefresh: Bool = false) -> some View {
         VStack(spacing: 12) {
             Image(systemName: icon)
@@ -1554,7 +1498,6 @@ struct EvidenceTabView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    /// 错误视图
     private func errorView(message: String) -> some View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
@@ -1570,8 +1513,7 @@ struct EvidenceTabView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 当前选中的条目
-    private var currentSelectedItem: EvidenceItemInfoV2? {
+    private var currentSelectedItem: EvidenceItemProjection? {
         let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if let id = selectedID {
             return currentTabItems.first { $0.itemID == id }
@@ -1580,15 +1522,14 @@ struct EvidenceTabView: View {
     }
 
     private func syncSelectionIfNeeded() {
-        guard let snapshot else { return }
         var shouldClearPreview = false
         if let screenshotID = selectedScreenshotID,
-           !snapshot.items.contains(where: { $0.itemID == screenshotID }) {
+           !projection.allItemIDs.contains(screenshotID) {
             selectedScreenshotID = nil
             shouldClearPreview = shouldClearPreview || selectedTab == .screenshot
         }
         if let logID = selectedLogID,
-           !snapshot.items.contains(where: { $0.itemID == logID }) {
+           !projection.allItemIDs.contains(logID) {
             selectedLogID = nil
             shouldClearPreview = shouldClearPreview || selectedTab == .log
         }
@@ -1616,18 +1557,11 @@ struct EvidenceTabView: View {
     }
 
     private func pruneScreenshotThumbnailCache() {
-        guard let snapshot else {
+        guard projection.snapshotAvailable else {
             clearScreenshotThumbnailCache()
             return
         }
-        let validIDs = Set(
-            snapshot.items.compactMap { item -> String? in
-                if item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/") {
-                    return item.itemID
-                }
-                return nil
-            }
-        )
+        let validIDs = projection.screenshotItemIDs
         screenshotThumbnails = screenshotThumbnails.filter { validIDs.contains($0.key) }
         screenshotThumbnailLoadFailedIDs = screenshotThumbnailLoadFailedIDs.intersection(validIDs)
         screenshotThumbnailPendingIDs.removeAll { !validIDs.contains($0) }
@@ -1641,7 +1575,7 @@ struct EvidenceTabView: View {
         selectedTab == .screenshot && selectedScreenshotID == nil
     }
 
-    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemInfoV2) {
+    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemProjection) {
         guard canPrefetchScreenshotThumbnails else { return }
         guard screenshotThumbnails[item.itemID] == nil else { return }
         guard !screenshotThumbnailLoadingIDs.contains(item.itemID) else { return }
@@ -1740,7 +1674,7 @@ struct EvidenceTabView: View {
         }
     }
 
-    private func loadItem(_ item: EvidenceItemInfoV2) {
+    private func loadItem(_ item: EvidenceItemProjection) {
         guard let workspace, !workspace.isEmpty else { return }
         evidenceViewer.beginLoading(itemID: item.itemID)
         itemImage = nil
@@ -1781,14 +1715,14 @@ struct EvidenceTabView: View {
         loadNextTextPage(for: item, reset: true)
     }
 
-    private func loadNextTextPageIfNeeded(for item: EvidenceItemInfoV2) {
+    private func loadNextTextPageIfNeeded(for item: EvidenceItemProjection) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         guard currentID == item.itemID else { return }
         guard evidenceViewer.shouldLoadNextPage(itemID: item.itemID) else { return }
         loadNextTextPage(for: item, reset: false)
     }
 
-    private func loadNextTextPage(for item: EvidenceItemInfoV2, reset: Bool) {
+    private func loadNextTextPage(for item: EvidenceItemProjection, reset: Bool) {
         guard let workspace, !workspace.isEmpty else { return }
         let offset: UInt64 = reset ? 0 : evidenceViewer.nextOffset
         if !reset, offset == 0 {

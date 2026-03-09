@@ -378,7 +378,7 @@ class AppState: ObservableObject {
     var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
 
     // AI Chat 状态（按 ai_tool 分桶，当前工具上下文映射到这些兼容字段）
-    @Published var aiChatStore: AIChatStore = AIChatStore()
+    private(set) var aiChatStore: AIChatStore = AIChatStore()
     @Published var aiChatTool: AIChatTool = .opencode {
         didSet {
             guard oldValue != aiChatTool else { return }
@@ -544,7 +544,7 @@ class AppState: ObservableObject {
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
-    @Published var evolutionReplayStore: AIChatStore = AIChatStore()
+    let evolutionReplayStore: AIChatStore = AIChatStore()
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
     @Published var evolutionPlanDocumentContent: String?
@@ -560,7 +560,7 @@ class AppState: ObservableObject {
     @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
-    @Published var subAgentViewerStore: AIChatStore = AIChatStore()
+    let subAgentViewerStore: AIChatStore = AIChatStore()
     /// 最近一次 AI 代码审查结果（用于 Git 面板触发后跳转）
     @Published var latestAICodeReviewResult: AICodeReviewResult?
     /// 当前 AI 代码补全分片流（requestId -> 累计文本）
