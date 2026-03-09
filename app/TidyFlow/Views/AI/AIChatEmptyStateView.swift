@@ -43,6 +43,8 @@ struct AIChatEmptyStateView: View {
                 .foregroundStyle(.secondary)
         }
         .font(.title3)
+        // macOS 15 上 Menu 可能错误占满可用横向空间，固定为空状态标题的固有宽度。
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var toolMenu: some View {
