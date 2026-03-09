@@ -58,6 +58,30 @@ enum WorkspaceSelectionSemantics {
         }
     }
 
+    /// 解析项目的默认工作区：优先显式默认标记，回退到名称归一化后的 default。
+    static func defaultWorkspace<W: WorkspaceSortable>(
+        _ workspaces: [W],
+        nameExtractor: (W) -> String
+    ) -> W? {
+        if let explicit = workspaces.first(where: \.isDefaultWorkspace) {
+            return explicit
+        }
+        return workspaces.first {
+            WorkspaceKeySemantics.normalizeWorkspaceName(nameExtractor($0)) == "default"
+        }
+    }
+
+    /// 侧边栏/项目列表中可见的工作区：隐藏 default 工作区，只保留显式分支工作区。
+    static func sidebarVisibleWorkspaces<W: WorkspaceSortable>(
+        _ workspaces: [W],
+        nameExtractor: (W) -> String
+    ) -> [W] {
+        workspaces.filter {
+            !($0.isDefaultWorkspace ||
+              WorkspaceKeySemantics.normalizeWorkspaceName(nameExtractor($0)) == "default")
+        }
+    }
+
     /// 从项目列表中查找指定 projectId 对应的项目名。
     /// 若找不到则返回 fallback（通常为当前 selectedProjectName），并记录错误。
     static func resolveProjectName<P: ProjectIdentifiable>(

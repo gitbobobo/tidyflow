@@ -10,8 +10,10 @@ struct ProjectListView: View {
                 ContentUnavailableView("暂无项目", systemImage: "folder")
             } else {
                 ForEach(appState.sortedProjectsForSidebar, id: \.name) { project in
+                    let workspaces = appState.workspacesForProject(project.name)
+                    let primaryWorkspace = appState.defaultWorkspaceForProject(project.name) ?? workspaces.first
+                    let visibleWorkspaces = appState.sidebarVisibleWorkspacesForProject(project.name)
                     Section {
-                        let workspaces = appState.workspacesForProject(project.name)
                         if workspaces.isEmpty {
                             HStack(spacing: 8) {
                                 ProgressView()
@@ -23,7 +25,7 @@ struct ProjectListView: View {
                                 appState.requestWorkspacesIfNeeded(project: project.name)
                             }
                         } else {
-                            ForEach(workspaces, id: \.name) { workspace in
+                            ForEach(visibleWorkspaces, id: \.name) { workspace in
                                 NavigationLink(value: MobileRoute.workspaceDetail(
                                     project: project.name,
                                     workspace: workspace.name
@@ -53,15 +55,7 @@ struct ProjectListView: View {
                             }
                         }
                     } header: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(project.name)
-                                .font(.headline)
-                            if !project.root.isEmpty {
-                                Text(project.root)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+                        projectHeader(project: project, primaryWorkspace: primaryWorkspace, loading: workspaces.isEmpty)
                     }
                 }
             }
@@ -81,6 +75,64 @@ struct ProjectListView: View {
         }
         .onAppear {
             appState.refreshProjectTree()
+        }
+    }
+
+    @ViewBuilder
+    private func projectHeader(project: ProjectInfo, primaryWorkspace: WorkspaceInfo?, loading: Bool) -> some View {
+        if let primaryWorkspace {
+            Button {
+                appState.navigationPath.append(
+                    MobileRoute.workspaceDetail(project: project.name, workspace: primaryWorkspace.name)
+                )
+            } label: {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(project.name)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        if !project.root.isEmpty {
+                            Text(project.root)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    let indicators = workspaceActivityIndicators(
+                        project: project.name,
+                        workspace: primaryWorkspace.name
+                    )
+                    if !indicators.isEmpty {
+                        MobileWorkspaceActivityIconsView(indicators: indicators)
+                    }
+                }
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.name)
+                        .font(.headline)
+                    if !project.root.isEmpty {
+                        Text(project.root)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if loading {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                }
+            }
+            .contentShape(Rectangle())
+            .onAppear {
+                if loading {
+                    appState.requestWorkspacesIfNeeded(project: project.name)
+                }
+            }
         }
     }
 

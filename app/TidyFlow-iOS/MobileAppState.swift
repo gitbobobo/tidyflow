@@ -917,6 +917,20 @@ final class MobileAppState: ObservableObject {
         workspacesByProject[project] ?? []
     }
 
+    func defaultWorkspaceForProject(_ project: String) -> WorkspaceInfo? {
+        WorkspaceSelectionSemantics.defaultWorkspace(
+            workspacesForProject(project),
+            nameExtractor: \.name
+        )
+    }
+
+    func sidebarVisibleWorkspacesForProject(_ project: String) -> [WorkspaceInfo] {
+        WorkspaceSelectionSemantics.sidebarVisibleWorkspaces(
+            workspacesForProject(project),
+            nameExtractor: \.name
+        )
+    }
+
     func projectCommands(for project: String) -> [ProjectCommand] {
         projects.first(where: { $0.name == project })?.commands ?? []
     }
