@@ -28,6 +28,25 @@ struct ToolCardView: View {
         toolView?.displayTitle ?? name
     }
 
+    private var headerCommandSummary: String? {
+        let command = toolView?.headerCommandSummary?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let command, !command.isEmpty else { return nil }
+        return command
+    }
+
+    private var prefersCommandAsTitle: Bool {
+        guard headerCommandSummary != nil else { return false }
+        return resolvedToolID == "bash" || resolvedToolID == "terminal"
+    }
+
+    private var primaryHeaderText: String {
+        if let command = headerCommandSummary, prefersCommandAsTitle {
+            return command
+        }
+        return displayTitle
+    }
+
     private var hasExpandableContent: Bool {
         let hasSummary = !(toolView?.summary?.isEmpty ?? true)
         let hasSections = !(toolView?.sections.isEmpty ?? true)
@@ -188,10 +207,11 @@ struct ToolCardView: View {
                 Image(systemName: toolIconName(resolvedToolID))
                     .foregroundColor(.primary)
 
-                Text(displayTitle)
+                Text(primaryHeaderText)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(.primary)
                     .lineLimit(1)
+                    .truncationMode(prefersCommandAsTitle ? .middle : .tail)
 
                 Spacer()
 
@@ -219,7 +239,7 @@ struct ToolCardView: View {
                 }
             }
 
-            if let command = toolView?.headerCommandSummary, !command.isEmpty {
+            if let command = headerCommandSummary, !prefersCommandAsTitle {
                 Text(command)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
