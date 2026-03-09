@@ -33,12 +33,35 @@ jobs:
           COVERAGE_THRESHOLD: 70
 
   # ============================================================================
-  # Layer 2: Core 协议集成测试（自动启停）
+  # Layer 2: Core 代码质量门禁（fmt + clippy 零告警）
+  # ============================================================================
+  core-lint:
+    name: Core Lint (fmt + clippy zero warnings)
+    runs-on: ubuntu-latest
+    needs: core-unit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path core/Cargo.toml --all --check
+
+      - name: Clippy zero warnings
+        run: cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
+
+  # ============================================================================
+  # Layer 3: Core 协议集成测试（自动启停）
   # ============================================================================
   core-protocol:
     name: Core Protocol Integration Tests
     runs-on: ubuntu-latest
-    needs: core-unit
+    needs: core-lint
 
     steps:
       - name: Checkout
@@ -152,7 +175,7 @@ PY
   ci-pass:
     name: CI All Layers Pass
     runs-on: ubuntu-latest
-    needs: [core-unit, core-protocol, protocol-consistency, script-lint, evolution-quality-gate]
+    needs: [core-unit, core-lint, core-protocol, protocol-consistency, script-lint, evolution-quality-gate]
     if: success()
 
     steps:

@@ -38,6 +38,11 @@ print_usage() {
       - 协议 action 规则同步检查
       - 版本一致性检查
 
+  lint
+      运行 Core 代码质量门禁（fmt + clippy 零告警）：
+      - cargo fmt --check（格式一致性）
+      - cargo clippy -D warnings --all-targets（全量零告警）
+
   e2e [--device iphone|ipad|mac|all] [--run-id <run_id>]
       运行端到端测试，并由测试代码自动产出证据与 evidence.index.json
 
@@ -105,6 +110,14 @@ case "$cmd" in
         ./scripts/tools/gen_protocol_action_swift_rules.sh --check
         ./scripts/tools/check_protocol_action_sync.sh
         ./scripts/tools/check_version_consistency.sh
+        ;;
+    lint)
+        run_core_cargo \
+            lint \
+            cargo fmt --manifest-path core/Cargo.toml --all --check
+        run_core_cargo \
+            lint \
+            cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
         ;;
     e2e)
         exec ./scripts/e2e/main.sh "$@"
