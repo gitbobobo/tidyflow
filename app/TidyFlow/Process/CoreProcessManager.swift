@@ -592,6 +592,42 @@ class CoreProcessManager: ObservableObject {
         activeProcessGeneration = 0
     }
 
+    /// deinit 阶段不能再走 stop() 的异步链路，否则会在析构期间重新强持有 self。
+    /// 这里同步拆除观察与回调，并尽力终止进程，避免留下悬空引用或孤儿 Core。
+    private func cleanupForDeinit() {
+        let proc = process
+        let pid = proc?.processIdentifier
+
+        proc?.terminationHandler = nil
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+
+        stdoutPipe = nil
+        stderrPipe = nil
+        stdoutBuffer = ""
+        pendingBootstrap = nil
+        process = nil
+        launchedBindAddress = nil
+        currentWSToken = nil
+        startupFatalErrorMessage = nil
+        activeProcessGeneration = 0
+        isStarting = false
+        isStopping = true
+
+        guard let proc, proc.isRunning else { return }
+
+        proc.terminate()
+        let deadline = Date().addingTimeInterval(AppConfig.shutdownTimeout)
+        while proc.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        if proc.isRunning, let pid {
+            TFLog.core.warning("CoreProcessManager deinit 强制结束残留进程 PID: \(pid, privacy: .public)")
+            kill(pid, SIGKILL)
+        }
+    }
+
     private func handleStdoutChunk(_ data: Data, process: Process, generation: UInt64) {
         guard self.process === process, self.activeProcessGeneration == generation else { return }
         guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
@@ -779,6 +815,6 @@ class CoreProcessManager: ObservableObject {
     }
 
     deinit {
-        stop()
+        cleanupForDeinit()
     }
 }
