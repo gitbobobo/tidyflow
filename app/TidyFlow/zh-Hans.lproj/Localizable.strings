@@ -469,6 +469,7 @@
 "evolution.page.pipeline.timelineTitle" = "代理时间线";
 "evolution.page.pipeline.aiTool" = "AI 工具";
 "evolution.page.pipeline.noTimeline" = "暂无代理执行记录";
+"ai.title.assistant" = "AI 助手";
 
 "evolution.stage.direction" = "方向";
 "evolution.stage.plan" = "计划";

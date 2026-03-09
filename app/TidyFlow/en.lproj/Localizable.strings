@@ -467,6 +467,7 @@
 "evolution.page.pipeline.timelineTitle" = "Agent Timeline";
 "evolution.page.pipeline.aiTool" = "AI Tool";
 "evolution.page.pipeline.noTimeline" = "No agent execution records";
+"ai.title.assistant" = "AI Assistant";
 
 "evolution.stage.direction" = "Direction";
 "evolution.stage.plan" = "Plan";

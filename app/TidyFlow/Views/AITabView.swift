@@ -444,7 +444,7 @@ struct AITabView: View {
                 .accessibilityIdentifier("tf.mac.ai.session-drawer-toggle")
             }
 
-            Text("AI Assistant")
+            Text("ai.title.assistant".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
 
