@@ -342,14 +342,13 @@ struct ProjectRowView: View {
     }
 
     private func triggerAICommit() {
-        guard let defaultWorkspaceName = projection.defaultWorkspaceName,
-              let path = defaultWorkspacePath else { return }
+        guard let defaultWorkspaceName = projection.defaultWorkspaceName else { return }
         appState.submitBackgroundTask(
             type: .aiCommit,
             context: .aiCommit(AICommitContext(
                 projectName: project.name,
                 workspaceKey: defaultWorkspaceName,
-                workspacePath: path,
+                workspacePath: defaultWorkspacePath ?? projection.projectPath ?? "",
                 projectPath: projection.projectPath
             ))
         )
@@ -594,13 +593,12 @@ struct WorkspaceRowView: View {
 
     /// 触发 AI 智能提交（后台任务）
     private func triggerAICommit() {
-        guard let path = workspacePath else { return }
         appState.submitBackgroundTask(
             type: .aiCommit,
             context: .aiCommit(AICommitContext(
                 projectName: projection.projectName,
                 workspaceKey: projection.workspaceName,
-                workspacePath: path,
+                workspacePath: workspacePath ?? projection.projectPath ?? "",
                 projectPath: projection.projectPath
             ))
         )
