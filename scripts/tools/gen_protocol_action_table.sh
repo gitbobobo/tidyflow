@@ -10,6 +10,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+source "$PROJECT_ROOT/scripts/tools/diff_compat.sh"
+
 PROTOCOL_FILE="core/src/server/protocol/mod.rs"
 PROTOCOL_VERSION="$(
     sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$PROTOCOL_FILE" | head -n1
@@ -120,10 +122,12 @@ pub fn matches_action_domain(domain: &str, action: &str) -> bool {
 EOF
 
 if [ "$MODE" = "check" ]; then
-    if ! diff -u "$OUTPUT_FILE" "$generated" > "$tmp_dir/diff.out"; then
+    if ! run_unified_diff "$OUTPUT_FILE" "$generated" "$tmp_dir/diff.out"; then
         echo "[gen_action_table] ERROR: 生成结果与仓库文件不一致，请先执行："
         echo "  ./scripts/tools/gen_protocol_action_table.sh"
-        cat "$tmp_dir/diff.out"
+        if [ -f "$tmp_dir/diff.out" ]; then
+            cat "$tmp_dir/diff.out"
+        fi
         exit 1
     fi
     echo "[gen_action_table] OK: action_table.rs 与 schema 同步"

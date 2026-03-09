@@ -10,6 +10,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+source "$PROJECT_ROOT/scripts/tools/diff_compat.sh"
+
 PROTOCOL_FILE="core/src/server/protocol/mod.rs"
 PROTOCOL_VERSION="$(
     sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$PROTOCOL_FILE" | head -n1
@@ -284,22 +286,28 @@ BEGIN {
 ' "$WEB_TARGET_FILE" > "$generated_web_file"
 
 if [ "$MODE" = "check" ]; then
-    if ! diff -u "$TARGET_FILE" "$generated_file" > "$tmp_dir/diff.out"; then
+    if ! run_unified_diff "$TARGET_FILE" "$generated_file" "$tmp_dir/diff.out"; then
         echo "[gen_swift_rules] ERROR: Swift 规则未同步，请先执行："
         echo "  ./scripts/tools/gen_protocol_action_swift_rules.sh"
-        cat "$tmp_dir/diff.out"
+        if [ -f "$tmp_dir/diff.out" ]; then
+            cat "$tmp_dir/diff.out"
+        fi
         exit 1
     fi
-    if ! diff -u "$RECEIVE_TARGET_FILE" "$generated_receive_file" > "$tmp_dir/diff.receive.out"; then
+    if ! run_unified_diff "$RECEIVE_TARGET_FILE" "$generated_receive_file" "$tmp_dir/diff.receive.out"; then
         echo "[gen_swift_rules] ERROR: Swift 接收 catalog 未同步，请先执行："
         echo "  ./scripts/tools/gen_protocol_action_swift_rules.sh"
-        cat "$tmp_dir/diff.receive.out"
+        if [ -f "$tmp_dir/diff.receive.out" ]; then
+            cat "$tmp_dir/diff.receive.out"
+        fi
         exit 1
     fi
-    if ! diff -u "$WEB_TARGET_FILE" "$generated_web_file" > "$tmp_dir/diff.web.out"; then
+    if ! run_unified_diff "$WEB_TARGET_FILE" "$generated_web_file" "$tmp_dir/diff.web.out"; then
         echo "[gen_swift_rules] ERROR: Web 规则未同步，请先执行："
         echo "  ./scripts/tools/gen_protocol_action_swift_rules.sh"
-        cat "$tmp_dir/diff.web.out"
+        if [ -f "$tmp_dir/diff.web.out" ]; then
+            cat "$tmp_dir/diff.web.out"
+        fi
         exit 1
     fi
     echo "[gen_swift_rules] OK: Swift/Web action 规则与 schema 同步"
