@@ -1,4 +1,5 @@
 import SwiftUI
+import Shimmer
 
 // 已拆分：
 // - ExplorerView.swift       文件浏览器（ExplorerView, FileTreeView, FileListContent, FileRowView）
@@ -174,41 +175,20 @@ struct TreeRowActivityIndicator: Identifiable {
 
 private struct TreeRowActivityIndicatorsView: View {
     let indicators: [TreeRowActivityIndicator]
-    @State private var shimmerPhase: CGFloat = -0.3
-
-    private let cycleDuration: TimeInterval = 1.8
 
     var body: some View {
         indicatorIcons(maskStyle: false)
-            .overlay {
-                if !indicators.isEmpty {
-                    GeometryReader { proxy in
-                        let width = max(8, proxy.size.width * 0.45)
-                        let offset = shimmerPhase * proxy.size.width
-                        LinearGradient(
-                            colors: [
-                                .clear,
-                                Color.white.opacity(0.85),
-                                .clear
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(width: width, height: proxy.size.height * 1.6)
-                        .rotationEffect(.degrees(16))
-                        .offset(x: offset, y: -proxy.size.height * 0.3)
-                    }
-                    .mask(indicatorIcons(maskStyle: true))
-                    .allowsHitTesting(false)
-                }
-            }
-            .onAppear(perform: startShimmer)
-            .onChange(of: indicators.map(\.id).joined(separator: "|")) { _, _ in
-                startShimmer()
-            }
-            .onDisappear {
-                shimmerPhase = -0.3
-            }
+            .shimmering(
+                active: !indicators.isEmpty,
+                animation: .linear(duration: 1.8).repeatForever(autoreverses: false),
+                gradient: Gradient(colors: [
+                    .clear,
+                    Color.white.opacity(0.85),
+                    .clear
+                ]),
+                bandSize: 0.45,
+                mode: .overlay()
+            )
     }
 
     @ViewBuilder
@@ -218,14 +198,7 @@ private struct TreeRowActivityIndicatorsView: View {
                 CommandIconView(iconName: indicator.iconName, size: 11)
                     .foregroundColor(maskStyle ? .white : .secondary)
                     .frame(width: 12, height: 12)
-                }
-        }
-    }
-
-    private func startShimmer() {
-        shimmerPhase = -0.3
-        withAnimation(.linear(duration: cycleDuration).repeatForever(autoreverses: false)) {
-            shimmerPhase = 1.3
+            }
         }
     }
 }

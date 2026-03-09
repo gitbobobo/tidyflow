@@ -100,6 +100,7 @@
 		BD77E0F7459611D0A5EB331C /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
 		C595D88A861FB6AAAFD09E1D /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
+		SHMR001 /* Shimmer in Frameworks */ = {isa = PBXBuildFile; productRef = SHMR002 /* Shimmer */; };
 		SWTERM01 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = SWTERM02 /* SwiftTerm */; };
 		TXTL001 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = TXTL002 /* Textual */; };
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
@@ -518,6 +519,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			files = (
 				SHR03001 /* TidyFlowShared.framework in Frameworks */,
 				MSGPK001 /* MessagePacker in Frameworks */,
+				SHMR001 /* Shimmer in Frameworks */,
 				SWTERM01 /* SwiftTerm in Frameworks */,
 				TXTL001 /* Textual in Frameworks */,
 			);
@@ -939,6 +941,7 @@ TSST011 /* TerminalSessionStore.swift */,
 			name = TidyFlow;
 			packageProductDependencies = (
 				MSGPK002 /* MessagePacker */,
+				SHMR002 /* Shimmer */,
 				SWTERM02 /* SwiftTerm */,
 				TXTL002 /* Textual */,
 			);
@@ -1033,6 +1036,7 @@ TSST011 /* TerminalSessionStore.swift */,
 			mainGroup = A1000007;
 			packageReferences = (
 				MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */,
+				SHMR003 /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */,
 				SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				TXTL003 /* XCRemoteSwiftPackageReference "textual" */,
 			);
@@ -1958,6 +1962,14 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				minimumVersion = 0.4.7;
 			};
 		};
+		SHMR003 /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/markiv/SwiftUI-Shimmer.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.1;
+			};
+		};
 		SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
@@ -1981,6 +1993,11 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			isa = XCSwiftPackageProductDependency;
 			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
 			productName = MessagePacker;
+		};
+		SHMR002 /* Shimmer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = SHMR003 /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */;
+			productName = Shimmer;
 		};
 		SWTERM02 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
