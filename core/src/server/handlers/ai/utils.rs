@@ -2452,6 +2452,8 @@ mod tests {
             session_id: "session-done".to_string(),
             selection_hint: None,
             stop_reason: None,
+            route_decision: None,
+            budget_status: None,
         };
 
         assert!(should_broadcast_stream_message(&msg, 0));

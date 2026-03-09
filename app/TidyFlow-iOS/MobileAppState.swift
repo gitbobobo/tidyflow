@@ -326,6 +326,10 @@ final class MobileAppState: ObservableObject {
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
     private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    /// v1.42：按 project::workspace::aiTool::session 存储最新路由决策（按工作区隔离）
+    private var aiSessionRouteDecisionByKey: [String: AIRouteDecisionInfo] = [:]
+    /// v1.42：按 project::workspace 存储最新预算状态（按工作区隔离）
+    private var aiWorkspaceBudgetStatusByKey: [String: AIBudgetStatus] = [:]
     private enum AISelectorResourceKind {
         case providerList
         case agentList
@@ -3309,6 +3313,57 @@ final class MobileAppState: ObservableObject {
         return nil
     }
 
+    // MARK: - v1.42 路由决策与预算状态
+
+    private func aiSessionRouteKey(
+        projectName: String, workspaceName: String,
+        aiTool: AIChatTool, sessionId: String
+    ) -> String {
+        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
+    }
+
+    private func aiWorkspaceBudgetKey(projectName: String, workspaceName: String) -> String {
+        "\(projectName)::\(workspaceName)"
+    }
+
+    func upsertAISessionRouteDecision(
+        projectName: String, workspaceName: String,
+        aiTool: AIChatTool, sessionId: String,
+        routeDecision: AIRouteDecisionInfo?
+    ) {
+        guard let routeDecision else { return }
+        let key = aiSessionRouteKey(
+            projectName: projectName, workspaceName: workspaceName,
+            aiTool: aiTool, sessionId: sessionId
+        )
+        aiSessionRouteDecisionByKey[key] = routeDecision
+    }
+
+    func currentRouteDecision(
+        projectName: String, workspaceName: String,
+        aiTool: AIChatTool, sessionId: String
+    ) -> AIRouteDecisionInfo? {
+        let key = aiSessionRouteKey(
+            projectName: projectName, workspaceName: workspaceName,
+            aiTool: aiTool, sessionId: sessionId
+        )
+        return aiSessionRouteDecisionByKey[key]
+    }
+
+    func upsertAIWorkspaceBudgetStatus(
+        projectName: String, workspaceName: String,
+        budgetStatus: AIBudgetStatus?
+    ) {
+        guard let budgetStatus else { return }
+        let key = aiWorkspaceBudgetKey(projectName: projectName, workspaceName: workspaceName)
+        aiWorkspaceBudgetStatusByKey[key] = budgetStatus
+    }
+
+    func currentBudgetStatus(projectName: String, workspaceName: String) -> AIBudgetStatus? {
+        let key = aiWorkspaceBudgetKey(projectName: projectName, workspaceName: workspaceName)
+        return aiWorkspaceBudgetStatusByKey[key]
+    }
+
     private func applyAISessionSelectionHint(
         _ hint: AISessionSelectionHint?,
         sessionId: String,
@@ -4792,6 +4847,19 @@ extension MobileAppState {
             sessionId: ev.sessionId,
             for: ev.aiTool
         )
+        // v1.42：存储路由决策与预算状态（按 project/workspace/aiTool/session 隔离）
+        upsertAISessionRouteDecision(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            routeDecision: ev.routeDecision
+        )
+        upsertAIWorkspaceBudgetStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            budgetStatus: ev.budgetStatus
+        )
     }
 
     func handleAIChatError(_ ev: AIChatErrorV2) {
@@ -4811,6 +4879,14 @@ extension MobileAppState {
         aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
         guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
         aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        // v1.42：存储路由决策（即使出错也记录，便于排查）
+        upsertAISessionRouteDecision(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            routeDecision: ev.routeDecision
+        )
     }
 
     func handleAIProviderList(_ ev: AIProviderListResult) {

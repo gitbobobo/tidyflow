@@ -851,3 +851,56 @@ GET /api/v1/system/snapshot
 ```
 
 响应新增字段 `health_incidents` 和 `recent_repairs`，兼容原有字段。
+
+---
+
+## v1.42：AI 智能路由元数据（ai_chat_done / ai_chat_error 扩展）
+
+### 新增字段说明
+
+`ai_chat_done` 和 `ai_chat_error` 事件新增两个可选顶层字段，旧客户端忽略这些字段，不会解析错误。
+
+#### `route_decision`（可选）
+
+路由决策元数据，描述本次请求最终选定的 provider/model 及决策来源。
+
+```jsonc
+{
+  "provider_id": "anthropic",           // 最终选定的 provider ID
+  "model_id": "claude-3-5-sonnet",     // 最终选定的 model ID
+  "agent": "code",                      // 选定的 agent（可选）
+  "task_type": "code_generation",       // 任务类型：chat | code_generation | code_review | code_completion | documentation | debugging | system | unknown
+  "selected_by": "task_type_policy",    // 选择来源：explicit | task_type_policy | selection_hint | default
+  "is_fallback": false,                 // 是否为降级路由（首选失败后切换到候选）
+  "fallback_reason": null               // 降级原因（is_fallback=true 时有值）
+}
+```
+
+**`selected_by` 取值语义**：
+
+| 值 | 说明 |
+|---|---|
+| `explicit` | 用户显式指定 provider/model，优先级最高，策略不得覆盖 |
+| `task_type_policy` | 根据任务类型自动选择（路由策略决定） |
+| `selection_hint` | 从历史 session selection hint 恢复 |
+| `default` | 系统默认兜底 |
+
+#### `budget_status`（可选，仅 ai_chat_done 携带）
+
+工作区预算状态快照，仅在超出阈值或配置了预算限制时有意义。
+
+```jsonc
+{
+  "budget_exceeded": false,             // 是否已超阈值
+  "last_exceeded_reason": null,         // 最近超阈值原因（budget_exceeded=true 时有值）
+  "total_tokens": 12500,               // 当前工作区总 token 数（估算，可选）
+  "estimated_cost": 0.025              // 当前工作区估算成本（归一化单位，可选）
+}
+```
+
+### 多工作区隔离约束
+
+1. 路由决策按 `project_name + workspace_name + ai_tool + session_id` 四维键存储，切换工作区不会串台。
+2. 预算状态按 `project_name + workspace_name` 二维键存储，不同项目/工作区的预算独立计算。
+3. 显式选择（`selected_by=explicit`）不受预算触发的降级影响，保证用户意图优先。
+4. 降级记录只影响当前工作区的重试计数，不污染其它工作区状态。

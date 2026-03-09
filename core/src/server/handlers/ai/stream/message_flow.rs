@@ -447,6 +447,7 @@ pub(crate) async fn handle_ai_chat_send(
                     ai_tool: ai_tool.clone(),
                     session_id: session_id.clone(),
                     error: e,
+                route_decision: None,
                 },
             )
             .await;
@@ -611,6 +612,7 @@ pub(crate) async fn handle_ai_chat_send(
                         ai_tool: ai_tool.clone(),
                         session_id: session_id.clone(),
                         error: e,
+                route_decision: None,
                     },
                     &mut emit_state,
                 )
@@ -915,6 +917,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             error: message,
+                route_decision: None,
                                         },
                                         &mut emit_state,
                                     )
@@ -984,6 +987,8 @@ pub(crate) async fn handle_ai_chat_send(
                                             session_id: session_id.clone(),
                                             selection_hint,
                                             stop_reason,
+                                route_decision: None,
+                                budget_status: None,
                                         },
                                         &mut emit_state,
                                     )
@@ -1038,6 +1043,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     error: e,
+                route_decision: None,
                                 },
                                 &mut emit_state,
                             )
@@ -1096,6 +1102,8 @@ pub(crate) async fn handle_ai_chat_send(
                                     session_id: session_id.clone(),
                                     selection_hint,
                                     stop_reason: None,
+                                    route_decision: None,
+                                    budget_status: None,
                                 },
                                 &mut emit_state,
                             )
@@ -1232,6 +1240,7 @@ pub(crate) async fn handle_ai_chat_command(
                     ai_tool: ai_tool.clone(),
                     session_id: session_id.clone(),
                     error: e,
+                route_decision: None,
                 },
             )
             .await;
@@ -1388,6 +1397,7 @@ pub(crate) async fn handle_ai_chat_command(
                         ai_tool: ai_tool.clone(),
                         session_id: session_id.clone(),
                         error: e,
+                route_decision: None,
                     },
                     &mut emit_state,
                 )
@@ -1618,6 +1628,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             error: message,
+                route_decision: None,
                                         },
                                         &mut emit_state,
                                     )
@@ -1687,6 +1698,8 @@ pub(crate) async fn handle_ai_chat_command(
                                             session_id: session_id.clone(),
                                             selection_hint,
                                             stop_reason,
+                                route_decision: None,
+                                budget_status: None,
                                         },
                                         &mut emit_state,
                                     )
@@ -1737,6 +1750,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     error: e,
+                route_decision: None,
                                 },
                                 &mut emit_state,
                             )
@@ -1794,6 +1808,8 @@ pub(crate) async fn handle_ai_chat_command(
                                     session_id: session_id.clone(),
                                     selection_hint,
                                     stop_reason: None,
+                                    route_decision: None,
+                                    budget_status: None,
                                 },
                                 &mut emit_state,
                             )

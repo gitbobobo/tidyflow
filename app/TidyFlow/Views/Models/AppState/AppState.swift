@@ -594,6 +594,10 @@ class AppState: ObservableObject {
     }
     /// 历史会话自动恢复输入框选择的待应用提示（key: sessionId）
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    /// v1.42：按 project::workspace::aiTool::session 存储最新路由决策（供 UI 展示与追踪）
+    private var aiSessionRouteDecisionByKey: [String: AIRouteDecisionInfo] = [:]
+    /// v1.42：按 project::workspace 存储最新预算状态
+    private var aiWorkspaceBudgetStatusByKey: [String: AIBudgetStatus] = [:]
     /// 设置页在“未选中工作空间”场景触发 AI 列表请求时，按工具记录请求上下文。
     var aiSelectorBootstrapContextByTool: [AIChatTool: (
         project: String,
@@ -1626,6 +1630,65 @@ class AppState: ObservableObject {
             msg: "ai selection sync \(event)",
             detail: aiSelectionSyncDetailString(detail)
         )
+    }
+
+    // MARK: - v1.42 路由决策与预算状态
+
+    /// 按 project/workspace/aiTool/session 构造路由状态 key（用于隔离存储）
+    private func aiSessionRouteKey(
+        projectName: String, workspaceName: String,
+        aiTool: AIChatTool, sessionId: String
+    ) -> String {
+        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
+    }
+
+    /// 按 project/workspace 构造工作区预算 key
+    private func aiWorkspaceBudgetKey(projectName: String, workspaceName: String) -> String {
+        "\(projectName)::\(workspaceName)"
+    }
+
+    /// 存储会话路由决策（chat_done / chat_error 时调用）
+    func upsertAISessionRouteDecision(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        routeDecision: AIRouteDecisionInfo?
+    ) {
+        guard let routeDecision else { return }
+        let key = aiSessionRouteKey(
+            projectName: projectName, workspaceName: workspaceName,
+            aiTool: aiTool, sessionId: sessionId
+        )
+        aiSessionRouteDecisionByKey[key] = routeDecision
+    }
+
+    /// 读取会话路由决策
+    func currentRouteDecision(
+        projectName: String, workspaceName: String,
+        aiTool: AIChatTool, sessionId: String
+    ) -> AIRouteDecisionInfo? {
+        let key = aiSessionRouteKey(
+            projectName: projectName, workspaceName: workspaceName,
+            aiTool: aiTool, sessionId: sessionId
+        )
+        return aiSessionRouteDecisionByKey[key]
+    }
+
+    /// 存储工作区预算状态
+    func upsertAIWorkspaceBudgetStatus(
+        projectName: String, workspaceName: String,
+        budgetStatus: AIBudgetStatus?
+    ) {
+        guard let budgetStatus else { return }
+        let key = aiWorkspaceBudgetKey(projectName: projectName, workspaceName: workspaceName)
+        aiWorkspaceBudgetStatusByKey[key] = budgetStatus
+    }
+
+    /// 读取工作区预算状态
+    func currentBudgetStatus(projectName: String, workspaceName: String) -> AIBudgetStatus? {
+        let key = aiWorkspaceBudgetKey(projectName: projectName, workspaceName: workspaceName)
+        return aiWorkspaceBudgetStatusByKey[key]
     }
 
     /// 尝试应用历史会话的输入选择提示；若模型/代理列表尚未准备好则缓存待重试。

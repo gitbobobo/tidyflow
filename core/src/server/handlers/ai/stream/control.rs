@@ -136,6 +136,8 @@ pub(crate) async fn handle_ai_chat_abort(
                 session_id,
                 selection_hint: None,
                 stop_reason: None,
+                route_decision: None,
+                budget_status: None,
             },
         )
         .await;

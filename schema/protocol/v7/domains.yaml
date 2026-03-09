@@ -19,6 +19,13 @@ domains:
   # AI payload 兼容说明（字段定义在 core 协议 DTO 中）：
   # - ai_chat_send / ai_chat_command 现支持可选 audio_parts
   # - ACP content 双栈兼容：text/image/audio/resource/resource_link
+  # v1.42 路由元数据扩展（向后兼容，旧客户端忽略新字段）：
+  # ai_chat_done 新增可选字段：
+  #   route_decision: { provider_id, model_id, agent?, task_type, selected_by, is_fallback, fallback_reason? }
+  #   budget_status:  { budget_exceeded, last_exceeded_reason?, total_tokens?, estimated_cost? }
+  # ai_chat_error 新增可选字段：
+  #   route_decision: 同上
+  # selected_by 取值：explicit | task_type_policy | selection_hint | default
   - id: ai
     action_rule: prefix("ai_")
   - id: evidence

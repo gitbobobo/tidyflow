@@ -525,6 +525,19 @@ extension AppState {
         store.handleChatDone(sessionId: ev.sessionId)
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
+        // v1.42：存储路由决策与预算状态（按 project/workspace/aiTool/session 隔离）
+        upsertAISessionRouteDecision(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            routeDecision: ev.routeDecision
+        )
+        upsertAIWorkspaceBudgetStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            budgetStatus: ev.budgetStatus
+        )
     }
 
     func handleAIChatError(_ ev: AIChatErrorV2) {
@@ -572,6 +585,14 @@ extension AppState {
         store.handleChatError(sessionId: ev.sessionId, error: ev.error)
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
+        // v1.42：存储路由决策（即使出错也记录最后的路由，便于问题排查）
+        upsertAISessionRouteDecision(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            routeDecision: ev.routeDecision
+        )
     }
 
     func handleAIChatPending(_ ev: AIChatPendingV2) {

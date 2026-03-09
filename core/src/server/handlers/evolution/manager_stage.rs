@@ -4143,6 +4143,8 @@ impl EvolutionManager {
                                     session_id: session_id.to_string(),
                                     selection_hint,
                                     stop_reason,
+                                    route_decision: None,
+                                    budget_status: None,
                                 },
                             )
                             .await;
@@ -4170,6 +4172,7 @@ impl EvolutionManager {
                                     ai_tool: ai_tool.to_string(),
                                     session_id: session_id.to_string(),
                                     error: message.clone(),
+                                    route_decision: None,
                                 },
                             )
                             .await;

@@ -20,6 +20,7 @@ pub mod event_hub;
 pub mod kimi_adapter;
 pub mod manager;
 pub mod opencode;
+pub mod routing;
 pub mod session_status;
 pub mod shared;
 

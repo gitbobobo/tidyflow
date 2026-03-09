@@ -628,6 +628,53 @@ pub struct CodeCompletionResponse {
 // ============================================================================
 // 多项目上下文协议类型
 // ============================================================================
+// 路由决策与预算状态（v1.42：AI 智能路由元数据）
+// ============================================================================
+
+/// AI 路由决策（随 ai_chat_done / ai_chat_error 一起下发，客户端只读）
+///
+/// 字段兼容策略：所有字段均为 skip_serializing_if = None，
+/// 旧客户端忽略未知字段，不会解析错误。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RouteDecisionInfo {
+    /// 最终选定的 provider ID
+    pub provider_id: String,
+    /// 最终选定的 model ID
+    pub model_id: String,
+    /// 选定的 agent（若有）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// 任务类型（"chat" | "code_generation" | "code_completion" 等）
+    pub task_type: String,
+    /// 选择来源（"explicit" | "task_type_policy" | "selection_hint" | "default"）
+    pub selected_by: String,
+    /// 是否为降级路由（首选失败后切换到候选）
+    pub is_fallback: bool,
+    /// 降级原因（若 is_fallback = true）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+}
+
+/// AI 会话预算状态（随路由决策一起下发）
+///
+/// 所有字段由 Core 权威计算，客户端只消费。`budget_exceeded` 和 `last_eviction_reason`
+/// 均为可选，未超预算时不序列化，避免在正常路径下增加包体。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiBudgetStatus {
+    /// 是否已超阈值
+    pub budget_exceeded: bool,
+    /// 最近超阈值原因（仅 budget_exceeded=true 时有意义）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_exceeded_reason: Option<String>,
+    /// 当前工作区总 token 数（估算）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    /// 当前工作区估算成本（归一化单位，若有）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_cost: Option<f64>,
+}
+
+// ============================================================================
 
 /// 多项目上下文摘要（随 AI 消息附带的来源项目信息）
 #[derive(Debug, Clone, Serialize, Deserialize)]

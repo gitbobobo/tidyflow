@@ -881,6 +881,10 @@ public struct AIChatDoneV2 {
     public let sessionId: String
     public let selectionHint: AISessionSelectionHint?
     public let stopReason: String?
+    /// v1.42：路由决策元数据（旧版消息中可为 nil）
+    public let routeDecision: AIRouteDecisionInfo?
+    /// v1.42：预算状态（旧版消息中可为 nil）
+    public let budgetStatus: AIBudgetStatus?
 
     public static func from(json: [String: Any]) -> AIChatDoneV2? {
         guard let projectName = json["project_name"] as? String,
@@ -889,23 +893,29 @@ public struct AIChatDoneV2 {
               let sessionId = json["session_id"] as? String else { return nil }
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
         let stopReason = parseOptionalString(json["stop_reason"])
+        let routeDecision = AIRouteDecisionInfo.from(json: json["route_decision"] as? [String: Any])
+        let budgetStatus = AIBudgetStatus.from(json: json["budget_status"] as? [String: Any])
         return AIChatDoneV2(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
             selectionHint: selectionHint,
-            stopReason: stopReason
+            stopReason: stopReason,
+            routeDecision: routeDecision,
+            budgetStatus: budgetStatus
         )
     }
 
-    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, selectionHint: AISessionSelectionHint?, stopReason: String?) {
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, selectionHint: AISessionSelectionHint?, stopReason: String?, routeDecision: AIRouteDecisionInfo? = nil, budgetStatus: AIBudgetStatus? = nil) {
         self.projectName = projectName
         self.workspaceName = workspaceName
         self.aiTool = aiTool
         self.sessionId = sessionId
         self.selectionHint = selectionHint
         self.stopReason = stopReason
+        self.routeDecision = routeDecision
+        self.budgetStatus = budgetStatus
     }
 }
 
@@ -917,6 +927,8 @@ public struct AIChatErrorV2 {
     public let error: String
     /// 结构化错误码（与 Core 共享，用于状态迁移决策）
     public let errorCode: CoreErrorCode
+    /// v1.42：路由决策元数据（旧版消息中可为 nil）
+    public let routeDecision: AIRouteDecisionInfo?
 
     public static func from(json: [String: Any]) -> AIChatErrorV2? {
         guard let projectName = json["project_name"] as? String,
@@ -925,23 +937,26 @@ public struct AIChatErrorV2 {
               let sessionId = json["session_id"] as? String,
               let error = json["error"] as? String else { return nil }
         let errorCode = CoreErrorCode.parse(json["error_code"] as? String ?? "ai_session_error")
+        let routeDecision = AIRouteDecisionInfo.from(json: json["route_decision"] as? [String: Any])
         return AIChatErrorV2(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
             error: error,
-            errorCode: errorCode
+            errorCode: errorCode,
+            routeDecision: routeDecision
         )
     }
 
-    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, error: String, errorCode: CoreErrorCode) {
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, error: String, errorCode: CoreErrorCode, routeDecision: AIRouteDecisionInfo? = nil) {
         self.projectName = projectName
         self.workspaceName = workspaceName
         self.aiTool = aiTool
         self.sessionId = sessionId
         self.error = error
         self.errorCode = errorCode
+        self.routeDecision = routeDecision
     }
 }
 
@@ -1247,6 +1262,87 @@ private func parseByteArray(_ any: Any?) -> [UInt8] {
         }
     }
     return []
+}
+
+// MARK: - v1.42 路由决策与预算状态
+
+/// AI 路由决策元数据（由 Core 权威计算，客户端只消费）
+public struct AIRouteDecisionInfo {
+    /// 最终选定的 provider ID
+    public let providerId: String
+    /// 最终选定的 model ID
+    public let modelId: String
+    /// 选定的 agent（若有）
+    public let agent: String?
+    /// 任务类型（"chat" | "code_generation" | "code_completion" 等）
+    public let taskType: String
+    /// 选择来源（"explicit" | "task_type_policy" | "selection_hint" | "default"）
+    public let selectedBy: String
+    /// 是否为降级路由
+    public let isFallback: Bool
+    /// 降级原因（isFallback=true 时有值）
+    public let fallbackReason: String?
+
+    public static func from(json: [String: Any]?) -> AIRouteDecisionInfo? {
+        guard let json,
+              let providerId = json["provider_id"] as? String,
+              let modelId = json["model_id"] as? String,
+              let taskType = json["task_type"] as? String,
+              let selectedBy = json["selected_by"] as? String else { return nil }
+        let isFallback = (json["is_fallback"] as? Bool) ?? false
+        return AIRouteDecisionInfo(
+            providerId: providerId,
+            modelId: modelId,
+            agent: parseOptionalString(json["agent"]),
+            taskType: taskType,
+            selectedBy: selectedBy,
+            isFallback: isFallback,
+            fallbackReason: parseOptionalString(json["fallback_reason"])
+        )
+    }
+
+    public init(providerId: String, modelId: String, agent: String?, taskType: String, selectedBy: String, isFallback: Bool, fallbackReason: String?) {
+        self.providerId = providerId
+        self.modelId = modelId
+        self.agent = agent
+        self.taskType = taskType
+        self.selectedBy = selectedBy
+        self.isFallback = isFallback
+        self.fallbackReason = fallbackReason
+    }
+}
+
+/// AI 预算状态（由 Core 权威计算，客户端只消费）
+public struct AIBudgetStatus {
+    /// 是否已超阈值
+    public let budgetExceeded: Bool
+    /// 最近超阈值原因（budgetExceeded=true 时有值）
+    public let lastExceededReason: String?
+    /// 当前工作区总 token 数（估算，可选）
+    public let totalTokens: UInt64?
+    /// 当前工作区估算成本（归一化单位，可选）
+    public let estimatedCost: Double?
+
+    public static func from(json: [String: Any]?) -> AIBudgetStatus? {
+        guard let json else { return nil }
+        let budgetExceeded = (json["budget_exceeded"] as? Bool) ?? false
+        let totalTokens = (json["total_tokens"] as? UInt64)
+            ?? (json["total_tokens"] as? Int64).map { UInt64(max(0, $0)) }
+        let estimatedCost = json["estimated_cost"] as? Double
+        return AIBudgetStatus(
+            budgetExceeded: budgetExceeded,
+            lastExceededReason: parseOptionalString(json["last_exceeded_reason"]),
+            totalTokens: totalTokens,
+            estimatedCost: estimatedCost
+        )
+    }
+
+    public init(budgetExceeded: Bool, lastExceededReason: String?, totalTokens: UInt64?, estimatedCost: Double?) {
+        self.budgetExceeded = budgetExceeded
+        self.lastExceededReason = lastExceededReason
+        self.totalTokens = totalTokens
+        self.estimatedCost = estimatedCost
+    }
 }
 
 private extension AISessionSelectionHint {

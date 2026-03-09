@@ -1460,6 +1460,12 @@ pub enum ServerMessage {
         selection_hint: Option<ai::SessionSelectionHint>,
         #[serde(skip_serializing_if = "Option::is_none")]
         stop_reason: Option<String>,
+        /// v1.42：路由决策元数据（旧客户端忽略）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        route_decision: Option<ai::RouteDecisionInfo>,
+        /// v1.42：预算状态（旧客户端忽略）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        budget_status: Option<ai::AiBudgetStatus>,
     },
     #[serde(rename = "ai_chat_error")]
     AIChatErrorV2 {
@@ -1468,6 +1474,9 @@ pub enum ServerMessage {
         ai_tool: String,
         session_id: String,
         error: String,
+        /// v1.42：路由决策元数据（旧客户端忽略）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        route_decision: Option<ai::RouteDecisionInfo>,
     },
     #[serde(rename = "ai_question_asked")]
     AIQuestionAsked {
