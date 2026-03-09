@@ -296,6 +296,8 @@ class AppState: ObservableObject {
     @Published var tabPanelExpanded: Bool = false
     /// Tab 面板展开时的高度（会话内记忆，不持久化）
     @Published var tabPanelHeight: CGFloat = 0
+    /// 最近一次有效展开高度，用于收起后恢复。
+    @Published var tabPanelLastExpandedHeight: CGFloat?
     #endif
 
     // UX-1: Project Tree State

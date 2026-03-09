@@ -372,3 +372,119 @@ final class SharedDisplayPhaseRegressionTests: XCTestCase {
         }
     }
 }
+
+final class BottomPanelLayoutSemanticsTests: XCTestCase {
+
+    func testRestoreExpandedHeight_usesDefaultHeightOnFirstExpand() {
+        let restored = BottomPanelLayoutSemantics.restoredExpandedHeight(
+            currentHeight: 0,
+            lastExpandedHeight: nil
+        )
+        XCTAssertEqual(
+            restored,
+            BottomPanelLayoutSemantics.defaultExpandedTabPanelHeight,
+            "首次展开应使用默认高度"
+        )
+    }
+
+    func testRestoreExpandedHeight_prefersRememberedHeight() {
+        let restored = BottomPanelLayoutSemantics.restoredExpandedHeight(
+            currentHeight: 0,
+            lastExpandedHeight: 312
+        )
+        XCTAssertEqual(restored, 312, accuracy: 0.001, "再次展开应恢复上次有效高度")
+    }
+
+    func testCollapsedDragCanReopenWhenCrossingMinimumHeight() {
+        let totalHeight: CGFloat = 700
+        let startHeight = BottomPanelLayoutSemantics.dragStartPanelHeight(
+            isExpanded: false,
+            currentHeight: 0
+        )
+        let candidateHeight = startHeight - (-80)
+
+        XCTAssertTrue(
+            BottomPanelLayoutSemantics.shouldExpand(
+                candidateHeight: candidateHeight,
+                totalHeight: totalHeight
+            ),
+            "收起态向上拖拽超过最小高度后应重新展开"
+        )
+    }
+
+    func testDragBelowMinimumCollapsesWithoutDiscardingRememberedHeight() {
+        let totalHeight: CGFloat = 700
+        let rememberedHeight: CGFloat = 260
+        let startHeight = BottomPanelLayoutSemantics.dragStartPanelHeight(
+            isExpanded: true,
+            currentHeight: rememberedHeight
+        )
+        let candidateHeight = startHeight - 180
+
+        XCTAssertFalse(
+            BottomPanelLayoutSemantics.shouldExpand(
+                candidateHeight: candidateHeight,
+                totalHeight: totalHeight
+            ),
+            "拖拽高度低于最小值时应收起内容区"
+        )
+
+        let restored = BottomPanelLayoutSemantics.restoredExpandedHeight(
+            currentHeight: 0,
+            lastExpandedHeight: rememberedHeight
+        )
+        XCTAssertEqual(restored, rememberedHeight, accuracy: 0.001, "收起后应保留上次有效高度")
+    }
+
+    func testSmallWindowClampsDefaultAndRememberedHeight() {
+        let totalHeight: CGFloat = 280
+        let clampedDefault = BottomPanelLayoutSemantics.clampedExpandedHeight(
+            BottomPanelLayoutSemantics.defaultExpandedTabPanelHeight,
+            totalHeight: totalHeight
+        )
+        let clampedRemembered = BottomPanelLayoutSemantics.clampedExpandedHeight(
+            420,
+            totalHeight: totalHeight
+        )
+
+        XCTAssertEqual(clampedDefault, 60, accuracy: 0.001, "小窗口下默认高度应被限制到可用高度")
+        XCTAssertEqual(clampedRemembered, 60, accuracy: 0.001, "小窗口下记忆高度应被限制到可用高度")
+    }
+}
+
+final class BottomPanelCategorySemanticsTests: XCTestCase {
+
+    func testBottomPanelCategoryOrder_placesSettingsFirst() {
+        XCTAssertEqual(
+            BottomPanelCategory.allCases,
+            [.settings, .terminal, .edit, .diff],
+            "底部面板分类顺序应为设置、终端、编辑、差异"
+        )
+    }
+
+    func testNewWorkspaceDefaultsToSettingsCategory() {
+        let appState = AppState()
+        let workspaceKey = "proj::ws"
+
+        appState.ensureDefaultTab(for: workspaceKey)
+
+        XCTAssertEqual(
+            appState.activeBottomPanelCategory(workspaceKey: workspaceKey),
+            .settings,
+            "新工作区底部面板默认应选中设置分类"
+        )
+    }
+
+    func testActivateTerminalCategory_createsTerminalWhenEmpty() {
+        let appState = AppState()
+        let workspaceKey = "proj::ws"
+        appState.workspaceTabs[workspaceKey] = []
+
+        appState.activateBottomPanelCategory(workspaceKey: workspaceKey, category: .terminal)
+
+        let terminalTabs = appState.tabs(in: .terminal, workspaceKey: workspaceKey)
+        XCTAssertEqual(terminalTabs.count, 1, "打开终端分类且当前无终端时应自动创建一个终端实例")
+        XCTAssertEqual(terminalTabs.first?.kind, .terminal)
+        XCTAssertEqual(appState.activeBottomPanelCategory(workspaceKey: workspaceKey), .terminal)
+    }
+}

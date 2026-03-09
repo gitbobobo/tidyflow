@@ -57,7 +57,7 @@ struct VerticalSplitDivider: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in
                     guard isResizable else { return }
                     isDragging = true

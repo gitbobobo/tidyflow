@@ -4,20 +4,8 @@ struct CenterContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var editorStore: EditorStore
 
-    /// Tab 面板收起时的高度（仅显示 TabStripView 收起模式）
-    private let collapsedTabStripHeight: CGFloat = 28
-    /// 底部 Tab 面板最小高度
-    private let minTabPanelHeight: CGFloat = 100
-    /// 顶部聊天面板最小高度（保证输入框可见）
-    private let minChatPanelHeight: CGFloat = 220
-    /// 分割线热区高度，需要与 VerticalSplitDivider 保持一致
-    private let splitDividerHeight: CGFloat = 8
-    /// 拖拽开始时记录的 Tab 面板高度
-    @State private var dragStartTabPanelHeight: CGFloat?
-    /// 记录拖拽开始时面板是否已展开，避免拖拽过程中展开态来回切换导致跳变
-    @State private var dragStartWasExpanded: Bool = false
-    /// 拖拽过程中仅记录“应当收起”的意图，在 onEnded 再真正收起
-    @State private var shouldCollapseAfterDrag: Bool = false
+    /// 拖拽开始时记录的底部面板总高度（收起态为分类栏高度，展开态为面板实际高度）
+    @State private var dragStartBottomPanelHeight: CGFloat?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,36 +18,14 @@ struct CenterContentView: View {
                             .environmentObject(appState)
                             .environmentObject(appState.aiChatStore)
                             .environmentObject(appState.fileCache)
-                            .frame(maxWidth: .infinity, minHeight: minChatPanelHeight, maxHeight: .infinity)
-
-                        if appState.tabPanelExpanded {
-                            // 仅在展开态保留拖拽分割器；收起态直接由分类栏顶部分割线承接边界。
-                            VerticalSplitDivider(
-                                isResizable: true,
-                                onDrag: { delta in
-                                    handleDividerDrag(delta: delta, totalHeight: totalHeight)
-                                },
-                                onDragEnd: {
-                                    finalizeDividerDrag(totalHeight: totalHeight)
-                                },
-                                onDoubleTap: {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        appState.tabPanelExpanded = false
-                                        appState.tabPanelHeight = 0
-                                    }
-                                }
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: BottomPanelLayoutSemantics.minChatPanelHeight,
+                                maxHeight: .infinity
                             )
-                        }
 
-                        // 下方：Tab 面板
-                        if appState.tabPanelExpanded {
-                            // 展开状态：Tab 栏 + Tab 内容
-                            expandedTabPanel
-                                .frame(height: clampedTabPanelHeight(totalHeight: totalHeight))
-                        } else {
-                            // 收起状态：仅显示紧凑 Tab 条
-                            TabStripView(collapsed: true)
-                        }
+                        bottomPanel(totalHeight: totalHeight)
+                            .frame(height: bottomPanelHeight(totalHeight: totalHeight))
                     }
                 }
             } else {
@@ -108,108 +74,95 @@ struct CenterContentView: View {
         .accessibilityIdentifier("tf.mac.content.main")
     }
 
-    // MARK: - 展开状态的 Tab 面板
+    // MARK: - 底部面板
 
-    private var expandedTabPanel: some View {
+    private func bottomPanel(totalHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            TabStripView(collapsed: false)
-            ZStack {
-                if let projectName = appState.selectedProjectForConfig {
-                    ProjectConfigView(projectName: projectName)
-                        .transition(.opacity)
-                } else {
-                    TabContentHostView()
+            TabStripView(
+                collapsed: !appState.tabPanelExpanded,
+                onResizeDrag: { delta in
+                    handleBottomPanelDrag(delta: delta, totalHeight: totalHeight)
+                },
+                onResizeDragEnd: {
+                    finalizeBottomPanelDrag(totalHeight: totalHeight)
+                },
+                onResizeDoubleTap: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        appState.collapseBottomPanel()
+                    }
+                }
+            )
+
+            if appState.tabPanelExpanded {
+                ZStack {
+                    if let projectName = appState.selectedProjectForConfig {
+                        ProjectConfigView(projectName: projectName)
+                            .transition(.opacity)
+                    } else {
+                        TabContentHostView()
+                    }
                 }
             }
         }
     }
 
-    // MARK: - 分割线拖拽
+    // MARK: - 顶部线拖拽
 
-    private func handleDividerDrag(delta: CGFloat, totalHeight: CGFloat) {
-        guard appState.tabPanelExpanded else {
-            resetDividerDragSession()
-            return
+    private func handleBottomPanelDrag(delta: CGFloat, totalHeight: CGFloat) {
+        if dragStartBottomPanelHeight == nil {
+            let currentHeight = BottomPanelLayoutSemantics.clampedExpandedHeight(
+                appState.tabPanelHeight,
+                totalHeight: totalHeight
+            )
+            dragStartBottomPanelHeight = BottomPanelLayoutSemantics.dragStartPanelHeight(
+                isExpanded: appState.tabPanelExpanded,
+                currentHeight: currentHeight
+            )
         }
-        let maxTabHeight = maxTabPanelHeight(totalHeight: totalHeight)
-        guard maxTabHeight > 0 else {
-            appState.tabPanelExpanded = false
-            appState.tabPanelHeight = 0
-            resetDividerDragSession()
-            return
-        }
-        if dragStartTabPanelHeight == nil {
-            dragStartWasExpanded = appState.tabPanelExpanded
-            dragStartTabPanelHeight = appState.tabPanelExpanded
-                ? clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
-                : 0
-            shouldCollapseAfterDrag = false
-        }
-        guard let dragStartTabPanelHeight else { return }
-        // delta 正值 = 向下拖 = Tab 面板变小，负值 = 向上拖 = Tab 面板变大
-        let newHeight = dragStartTabPanelHeight - delta
-        let collapseThreshold = minEffectiveTabPanelHeight(totalHeight: totalHeight) / 2
+        guard let dragStartBottomPanelHeight else { return }
 
-        if newHeight < collapseThreshold {
-            shouldCollapseAfterDrag = true
-            if dragStartWasExpanded {
-                // 拖拽中保持展开结构稳定，避免在阈值附近来回切换造成界面跳变。
-                appState.tabPanelExpanded = true
-                appState.tabPanelHeight = minEffectiveTabPanelHeight(totalHeight: totalHeight)
-            } else {
-                appState.tabPanelExpanded = false
-                appState.tabPanelHeight = 0
-            }
-            return
-        }
-        shouldCollapseAfterDrag = false
-        appState.tabPanelExpanded = true
-        appState.tabPanelHeight = clampedTabPanelHeightValue(newHeight, totalHeight: totalHeight)
-        // 不重置 dragStartTabPanelHeight，因为 DragGesture 的 translation 是相对于起始点的累计值。
-    }
-
-    /// 拖拽结束后重置基线，并将状态高度归一化到当前布局范围内。
-    private func finalizeDividerDrag(totalHeight: CGFloat) {
-        defer { resetDividerDragSession() }
-        if shouldCollapseAfterDrag {
-            appState.tabPanelExpanded = false
-            appState.tabPanelHeight = 0
-            return
-        }
-        guard appState.tabPanelExpanded else { return }
-        let normalized = clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
-        if normalized <= 0 {
-            appState.tabPanelExpanded = false
-            appState.tabPanelHeight = 0
+        let candidateHeight = dragStartBottomPanelHeight - delta
+        if BottomPanelLayoutSemantics.shouldExpand(
+            candidateHeight: candidateHeight,
+            totalHeight: totalHeight
+        ) {
+            let clampedHeight = BottomPanelLayoutSemantics.clampedExpandedHeight(
+                candidateHeight,
+                totalHeight: totalHeight
+            )
+            appState.tabPanelExpanded = true
+            appState.tabPanelHeight = clampedHeight
+            appState.tabPanelLastExpandedHeight = clampedHeight
         } else {
-            appState.tabPanelHeight = normalized
+            appState.tabPanelExpanded = false
+            appState.tabPanelHeight = 0
         }
     }
 
-    private func resetDividerDragSession() {
-        dragStartTabPanelHeight = nil
-        dragStartWasExpanded = false
-        shouldCollapseAfterDrag = false
+    private func finalizeBottomPanelDrag(totalHeight: CGFloat) {
+        defer { dragStartBottomPanelHeight = nil }
+        guard appState.tabPanelExpanded else { return }
+
+        let normalizedHeight = BottomPanelLayoutSemantics.clampedExpandedHeight(
+            appState.tabPanelHeight,
+            totalHeight: totalHeight
+        )
+        if normalizedHeight <= 0 {
+            appState.collapseBottomPanel()
+        } else {
+            appState.tabPanelHeight = normalizedHeight
+            appState.tabPanelLastExpandedHeight = normalizedHeight
+        }
     }
 
-    private func minEffectiveTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
-        min(minTabPanelHeight, maxTabPanelHeight(totalHeight: totalHeight))
-    }
-
-    private func maxTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
-        max(0, totalHeight - minChatPanelHeight - splitDividerHeight)
-    }
-
-    private func clampedTabPanelHeightValue(_ value: CGFloat, totalHeight: CGFloat) -> CGFloat {
-        let maxTabHeight = maxTabPanelHeight(totalHeight: totalHeight)
-        guard maxTabHeight > 0 else { return 0 }
-        let minTabHeight = minEffectiveTabPanelHeight(totalHeight: totalHeight)
-        return min(max(value, minTabHeight), maxTabHeight)
-    }
-
-    /// 限制 Tab 面板高度在合理范围内
-    private func clampedTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
-        clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
+    private func bottomPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        if appState.tabPanelExpanded {
+            return BottomPanelLayoutSemantics.clampedExpandedHeight(
+                appState.tabPanelHeight,
+                totalHeight: totalHeight
+            )
+        }
+        return BottomPanelLayoutSemantics.collapsedTabStripHeight
     }
 }
 

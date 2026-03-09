@@ -5,6 +5,9 @@ struct TabStripView: View {
 
     /// 收起模式下仍显示顶层类别，只是整体高度更紧凑。
     var collapsed: Bool = false
+    var onResizeDrag: ((CGFloat) -> Void)? = nil
+    var onResizeDragEnd: (() -> Void)? = nil
+    var onResizeDoubleTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -28,10 +31,10 @@ struct TabStripView: View {
                 Spacer()
             }
         }
-        .frame(height: collapsed ? 28 : 34)
+        .frame(height: collapsed ? BottomPanelLayoutSemantics.collapsedTabStripHeight : BottomPanelLayoutSemantics.expandedTabStripHeight)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(alignment: .top) {
-            Divider()
+            topResizeHandle
         }
         .overlay(alignment: .bottom) {
             Divider()
@@ -60,19 +63,14 @@ struct TabStripView: View {
     private var panelToggleButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
-                if appState.tabPanelExpanded {
-                    appState.tabPanelExpanded = false
-                    appState.tabPanelHeight = 0
-                } else {
-                    appState.tabPanelExpanded = true
-                }
+                appState.toggleBottomPanel()
             }
         } label: {
-            Image(systemName: appState.tabPanelExpanded ? "chevron.down" : "chevron.up")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+            BottomPanelAccessoryIconLabel(
+                systemName: appState.tabPanelExpanded ? "chevron.down" : "chevron.up"
+            )
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(BottomPanelAccessoryButtonStyle())
         .help(appState.tabPanelExpanded ? "tab.panel.collapse.tooltip".localized : "tab.panel.expand.tooltip".localized)
     }
 
@@ -107,6 +105,26 @@ struct TabStripView: View {
             aiToolDisplayName: appState.aiChatTool.displayName
         )
         return status.isVisible ? status : nil
+    }
+
+    private var topResizeHandle: some View {
+        VerticalSplitDivider(
+            isResizable: true,
+            onDrag: { delta in
+                onResizeDrag?(delta)
+            },
+            onDragEnd: {
+                onResizeDragEnd?()
+            },
+            onDoubleTap: {
+                onResizeDoubleTap?()
+            }
+        )
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .offset(y: -BottomPanelLayoutSemantics.resizeHandleHitAreaHeight / 2)
+        .allowsHitTesting(onResizeDrag != nil)
     }
 }
 
@@ -182,11 +200,9 @@ struct NewTerminalButton: View {
             Button(action: {
                 appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
             }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                BottomPanelAccessoryIconLabel(systemName: "plus")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(BottomPanelAccessoryButtonStyle())
             .help("tab.newTerminal.tooltip".localized)
         } else {
             Menu {
@@ -210,14 +226,55 @@ struct NewTerminalButton: View {
                     }
                 }
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                BottomPanelAccessoryIconLabel(systemName: "plus")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .fixedSize()
             .help("tab.newTerminal.tooltip".localized)
         }
+    }
+}
+
+private struct BottomPanelAccessoryIconLabel: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(.rect)
+    }
+}
+
+private struct BottomPanelAccessoryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BottomPanelAccessoryButtonBody(configuration: configuration)
+    }
+}
+
+private struct BottomPanelAccessoryButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    @State private var isHovered = false
+
+    private var backgroundColor: Color {
+        if configuration.isPressed {
+            return Color(NSColor.controlBackgroundColor).opacity(0.9)
+        }
+        if isHovered {
+            return Color(NSColor.controlBackgroundColor).opacity(0.65)
+        }
+        return .clear
+    }
+
+    var body: some View {
+        configuration.label
+            .background(backgroundColor)
+            .clipShape(.rect(cornerRadius: 5))
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
 

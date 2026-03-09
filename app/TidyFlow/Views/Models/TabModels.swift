@@ -42,26 +42,26 @@ enum TabKind: String, Codable {
 }
 
 enum BottomPanelCategory: String, Codable, CaseIterable {
+    case settings
     case terminal
     case edit
     case diff
-    case settings
 
     var titleKey: String {
         switch self {
+        case .settings: return "bottomPanel.category.settings"
         case .terminal: return "bottomPanel.category.terminal"
         case .edit: return "bottomPanel.category.edit"
         case .diff: return "bottomPanel.category.diff"
-        case .settings: return "bottomPanel.category.settings"
         }
     }
 
     var iconName: String {
         switch self {
+        case .settings: return "gearshape"
         case .terminal: return "terminal"
         case .edit: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
-        case .settings: return "gearshape"
         }
     }
 
@@ -122,3 +122,59 @@ enum DiffMode: String, Codable {
 }
 
 typealias TabSet = [TabModel]
+
+#if os(macOS)
+/// 底部面板布局语义，集中维护默认高度、收起阈值与窗口约束。
+enum BottomPanelLayoutSemantics {
+    static let collapsedTabStripHeight: CGFloat = 28
+    static let expandedTabStripHeight: CGFloat = 34
+    static let minExpandedTabPanelHeight: CGFloat = 100
+    static let defaultExpandedTabPanelHeight: CGFloat = 240
+    static let resizeHandleHitAreaHeight: CGFloat = 8
+    static let minChatPanelHeight: CGFloat = 220
+
+    static func restoredExpandedHeight(
+        currentHeight: CGFloat,
+        lastExpandedHeight: CGFloat?
+    ) -> CGFloat {
+        if currentHeight > 0 {
+            return currentHeight
+        }
+        if let lastExpandedHeight, lastExpandedHeight > 0 {
+            return lastExpandedHeight
+        }
+        return defaultExpandedTabPanelHeight
+    }
+
+    static func dragStartPanelHeight(
+        isExpanded: Bool,
+        currentHeight: CGFloat
+    ) -> CGFloat {
+        if isExpanded, currentHeight > 0 {
+            return currentHeight
+        }
+        return collapsedTabStripHeight
+    }
+
+    static func maxExpandedTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        max(0, totalHeight - minChatPanelHeight)
+    }
+
+    static func effectiveMinExpandedTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        let maxHeight = maxExpandedTabPanelHeight(totalHeight: totalHeight)
+        guard maxHeight > 0 else { return 0 }
+        return min(minExpandedTabPanelHeight, maxHeight)
+    }
+
+    static func clampedExpandedHeight(_ height: CGFloat, totalHeight: CGFloat) -> CGFloat {
+        let maxHeight = maxExpandedTabPanelHeight(totalHeight: totalHeight)
+        guard maxHeight > 0 else { return 0 }
+        let minHeight = effectiveMinExpandedTabPanelHeight(totalHeight: totalHeight)
+        return min(max(height, minHeight), maxHeight)
+    }
+
+    static func shouldExpand(candidateHeight: CGFloat, totalHeight: CGFloat) -> Bool {
+        candidateHeight >= effectiveMinExpandedTabPanelHeight(totalHeight: totalHeight)
+    }
+}
+#endif

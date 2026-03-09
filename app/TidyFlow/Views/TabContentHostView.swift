@@ -307,20 +307,12 @@ private struct BottomPanelCategoryEmptyView: View {
     let category: BottomPanelCategory
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: category.iconName)
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-
+        VStack(spacing: 0) {
             Text(title)
-                .font(.headline)
-                .foregroundStyle(.primary)
-
-            Text(message)
-                .font(.subheadline)
+                .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.windowBackgroundColor))
@@ -337,19 +329,6 @@ private struct BottomPanelCategoryEmptyView: View {
             return "bottomPanel.empty.diff.title".localized
         case .settings:
             return "bottomPanel.empty.settings.title".localized
-        }
-    }
-
-    private var message: String {
-        switch category {
-        case .terminal:
-            return "bottomPanel.empty.terminal.message".localized
-        case .edit:
-            return "bottomPanel.empty.edit.message".localized
-        case .diff:
-            return "bottomPanel.empty.diff.message".localized
-        case .settings:
-            return "bottomPanel.empty.settings.message".localized
         }
     }
 }

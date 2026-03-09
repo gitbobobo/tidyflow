@@ -3,6 +3,36 @@ import Foundation
 extension AppState {
     // MARK: - Tab Helpers
 
+    #if os(macOS)
+    func expandBottomPanelIfNeeded() {
+        let restoredHeight = BottomPanelLayoutSemantics.restoredExpandedHeight(
+            currentHeight: tabPanelHeight,
+            lastExpandedHeight: tabPanelLastExpandedHeight
+        )
+        tabPanelExpanded = true
+        tabPanelHeight = restoredHeight
+        if restoredHeight > 0 {
+            tabPanelLastExpandedHeight = restoredHeight
+        }
+    }
+
+    func collapseBottomPanel() {
+        if tabPanelExpanded, tabPanelHeight > 0 {
+            tabPanelLastExpandedHeight = tabPanelHeight
+        }
+        tabPanelExpanded = false
+        tabPanelHeight = 0
+    }
+
+    func toggleBottomPanel() {
+        if tabPanelExpanded {
+            collapseBottomPanel()
+        } else {
+            expandBottomPanelIfNeeded()
+        }
+    }
+    #endif
+
     /// 打开工作空间级主页面（不新增 Tab）
     func showWorkspaceSpecialPage(workspaceKey: String, page: WorkspaceSpecialPage) {
         workspaceSpecialPageByWorkspace[workspaceKey] = page
@@ -28,7 +58,7 @@ extension AppState {
             workspaceTabs[workspaceKey] = []
         }
         if activeBottomPanelCategoryByWorkspace[workspaceKey] == nil {
-            activeBottomPanelCategoryByWorkspace[workspaceKey] = .terminal
+            activeBottomPanelCategoryByWorkspace[workspaceKey] = .settings
         }
     }
 
@@ -64,12 +94,14 @@ extension AppState {
         activeBottomPanelCategoryByWorkspace[workspaceKey] = category
         let categoryTabs = tabs(in: category, workspaceKey: workspaceKey)
         guard !categoryTabs.isEmpty else {
+            if category == .terminal {
+                addTerminalTab(workspaceKey: workspaceKey)
+                return
+            }
             activeTabIdByWorkspace[workspaceKey] = nil
             workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
             #if os(macOS)
-            if !tabPanelExpanded {
-                tabPanelExpanded = true
-            }
+            expandBottomPanelIfNeeded()
             #endif
             return
         }
@@ -255,9 +287,7 @@ extension AppState {
         recordTabActivation(workspaceKey: workspaceKey, tabId: newTab.id)
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
         #if os(macOS)
-        if !tabPanelExpanded {
-            tabPanelExpanded = true
-        }
+        expandBottomPanelIfNeeded()
         #endif
 
         if newTab.kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {
@@ -272,7 +302,7 @@ extension AppState {
         if let firstTab = workspaceTabs[workspaceKey]?.first {
             return firstTab.bottomPanelCategory
         }
-        return .terminal
+        return .settings
     }
 
     private func recordTabActivation(workspaceKey: String, tabId: UUID) {
@@ -282,9 +312,7 @@ extension AppState {
         rememberTab(workspaceKey: workspaceKey, category: tab.bottomPanelCategory, tabId: tabId)
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
         #if os(macOS)
-        if !tabPanelExpanded {
-            tabPanelExpanded = true
-        }
+        expandBottomPanelIfNeeded()
         #endif
     }
 
