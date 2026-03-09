@@ -249,6 +249,10 @@ class AppState: ObservableObject {
     @Published var mobilePairCodeLoading: Bool = false
 
     @Published var workspaceTabs: [String: TabSet] = [:]
+    /// 工作区当前选中的底部面板类别。
+    @Published var activeBottomPanelCategoryByWorkspace: [String: BottomPanelCategory] = [:]
+    /// 工作区内各类别最近一次激活的实例 tab。
+    @Published var lastActiveTabIdByWorkspaceByCategory: [String: [BottomPanelCategory: UUID]] = [:]
     @Published var activeTabIdByWorkspace: [String: UUID] = [:]
     /// 工作空间级主内容页面（聊天/自主进化），不占用 Tab 栏
     @Published var workspaceSpecialPageByWorkspace: [String: WorkspaceSpecialPage] = [:]

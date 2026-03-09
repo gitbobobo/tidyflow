@@ -18,21 +18,10 @@ struct VerticalSplitDivider: View {
 
     /// 分割线热区高度
     private let hitAreaHeight: CGFloat = 8
-    /// 可见线条高度
-    private let lineHeight: CGFloat = 1
-
     var body: some View {
-        ZStack {
-            // 可见分割线
-            Rectangle()
-                .fill(isDragging || isHovered ? Color.accentColor : Color(NSColor.separatorColor))
-                .frame(height: lineHeight)
-
-            // 扩大热区
-            Color.clear
-                .frame(height: hitAreaHeight)
-                .contentShape(Rectangle())
-        }
+        Color.clear
+            .frame(height: hitAreaHeight)
+            .contentShape(Rectangle())
         .frame(height: hitAreaHeight)
         .onHover { hovering in
             guard isResizable else {

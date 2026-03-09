@@ -6,44 +6,350 @@ struct TabContentHostView: View {
 
     var body: some View {
         Group {
-            // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
             if let globalKey = appState.currentGlobalWorkspaceKey {
                 if let specialPage = appState.workspaceSpecialPageByWorkspace[globalKey] {
                     switch specialPage {
                     case .aiChat:
-                        // macOS 端 AI 聊天已常驻在 CenterContentView 上方，此处不再渲染
                         EmptyView()
                     case .evolution:
-                        // Mac 端进化页面已移至右侧面板，此处不再渲染
                         EmptyView()
                     case .evidence:
-                        // Mac 端证据页面已移至右侧面板，此处不再渲染
                         EmptyView()
                     }
-                } else if let activeId = appState.activeTabIdByWorkspace[globalKey],
-                          let tabs = appState.workspaceTabs[globalKey],
-                          let activeTab = tabs.first(where: { $0.id == activeId }) {
-
-                    switch activeTab.kind {
-                    case .terminal:
-                        TerminalContentView(tab: activeTab)
-                            .id(activeTab.id)
-                    case .editor:
-                        NativeEditorContentView(path: activeTab.payload)
-                        .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
-                    case .diff:
-                        NativeDiffContentView(path: activeTab.payload)
-                    case .settings:
-                        SettingsContentView()
-                            .environmentObject(appState)
-                    }
                 } else {
-                    // 已选择工作空间但没有活跃 Tab，显示快捷操作视图
-                    QuickActionsView()
+                    BottomPanelWorkspaceContent(workspaceKey: globalKey)
                 }
             } else {
                 NoActiveTabView()
             }
+        }
+    }
+}
+
+private struct BottomPanelWorkspaceContent: View {
+    @EnvironmentObject var appState: AppState
+    let workspaceKey: String
+
+    private var activeCategory: BottomPanelCategory {
+        appState.activeBottomPanelCategory(workspaceKey: workspaceKey)
+    }
+
+    private var displayedTabs: [TabModel] {
+        appState.displayedBottomPanelTabs(workspaceKey: workspaceKey)
+    }
+
+    private var activeTab: TabModel? {
+        appState.displayedBottomPanelTab(workspaceKey: workspaceKey)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if displayedTabs.count > 1 {
+                BottomPanelVerticalTabList(
+                    workspaceKey: workspaceKey,
+                    category: activeCategory,
+                    tabs: displayedTabs,
+                    activeTabId: activeTab?.id
+                )
+                Divider()
+            }
+
+            Group {
+                if let activeTab {
+                    content(for: activeTab)
+                } else {
+                    BottomPanelCategoryEmptyView(category: activeCategory)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func content(for tab: TabModel) -> some View {
+        switch tab.kind {
+        case .terminal:
+            TerminalContentView(tab: tab)
+                .id(tab.id)
+        case .editor:
+            NativeEditorContentView(path: tab.payload)
+                .id(tab.payload)
+        case .diff:
+            NativeDiffContentView(path: tab.payload)
+                .id("\(tab.payload)-\(tab.diffMode ?? "working")")
+        case .settings:
+            SettingsContentView()
+                .environmentObject(appState)
+                .id(tab.id)
+        }
+    }
+}
+
+private struct BottomPanelVerticalTabList: View {
+    @EnvironmentObject var appState: AppState
+    let workspaceKey: String
+    let category: BottomPanelCategory
+    let tabs: [TabModel]
+    let activeTabId: UUID?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(tabs) { tab in
+                    BottomPanelInstanceItemView(
+                        tab: tab,
+                        isActive: activeTabId == tab.id,
+                        workspaceKey: workspaceKey
+                    )
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 196)
+        .background(Color(NSColor.windowBackgroundColor))
+        .accessibilityIdentifier("tf.mac.bottomPanel.instance-list.\(category.rawValue)")
+    }
+}
+
+private struct BottomPanelInstanceItemView: View {
+    @EnvironmentObject var appState: AppState
+
+    let tab: TabModel
+    let isActive: Bool
+    let workspaceKey: String
+
+    @State private var isHovered: Bool = false
+
+    private var aiStatus: TerminalAIStatus {
+        tab.kind == .terminal ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle) : .idle
+    }
+
+    private var backgroundColor: Color {
+        if isActive {
+            return Color(NSColor.controlBackgroundColor)
+        }
+        if isHovered {
+            return Color(NSColor.controlBackgroundColor).opacity(0.5)
+        }
+        return .clear
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            leadingIndicator
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if tab.isDirty {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 7))
+                            .foregroundStyle(.orange)
+                    } else {
+                        CommandIconView(iconName: effectiveIconName, size: 11)
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                    }
+
+                    Text(displayTitle)
+                        .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                        .foregroundStyle(isActive ? .primary : .secondary)
+                        .lineLimit(1)
+                }
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            trailingIndicators
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(backgroundColor)
+        .clipShape(.rect(cornerRadius: 6))
+        .overlay(alignment: .leading) {
+            if isActive {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentColor)
+                    .frame(width: 2)
+                    .padding(.vertical, 6)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .contextMenu {
+            if tab.kind == .terminal {
+                Button(tab.isPinned ? "tab.unpin".localized : "tab.pin".localized) {
+                    appState.toggleTerminalTabPinned(workspaceKey: workspaceKey, tabId: tab.id)
+                }
+                Divider()
+            }
+
+            Button("tab.close".localized) {
+                appState.closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+            }
+
+            if tab.kind == .editor {
+                Divider()
+                Button("editor.findReplace".localized) {
+                    appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+                    appState.editorStore.showFindReplacePanel = true
+                }
+                Button("editor.newFile".localized) {
+                    appState.createNewEditorFile()
+                }
+                Button("editor.saveAs".localized) {
+                    appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+                    appState.requestSaveAsForActiveEditor()
+                }
+            }
+
+            let otherTabs = appState.tabs(in: tab.bottomPanelCategory, workspaceKey: workspaceKey).filter { $0.id != tab.id }
+            Button("tab.closeOthers".localized) {
+                appState.closeOtherTabs(workspaceKey: workspaceKey, keepTabId: tab.id)
+            }
+            .disabled(otherTabs.isEmpty)
+
+            let sameCategoryTabs = appState.tabs(in: tab.bottomPanelCategory, workspaceKey: workspaceKey)
+            let tabIndex = sameCategoryTabs.firstIndex(where: { $0.id == tab.id }) ?? sameCategoryTabs.endIndex
+            let hasTabsBelow = tabIndex < sameCategoryTabs.count - 1
+            Button("tab.closeBelow".localized) {
+                appState.closeTabsBelow(workspaceKey: workspaceKey, ofTabId: tab.id)
+            }
+            .disabled(!hasTabsBelow)
+
+            Divider()
+
+            Button("tab.closeSaved".localized) {
+                appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+                appState.closeSavedTabs(workspaceKey: workspaceKey)
+            }
+
+            Button("tab.closeAll".localized) {
+                appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+                appState.closeAllTabs(workspaceKey: workspaceKey)
+            }
+        }
+        .accessibilityIdentifier("tf.mac.bottomPanel.instance.\(tab.id.uuidString)")
+    }
+
+    private var effectiveIconName: String {
+        if tab.kind == .terminal, let commandIcon = tab.commandIcon {
+            return commandIcon
+        }
+        return tab.kind.iconName
+    }
+
+    private var displayTitle: String {
+        if tab.kind == .editor || tab.kind == .diff {
+            return String(tab.payload.split(separator: "/").last ?? Substring(tab.title))
+        }
+        return tab.title
+    }
+
+    private var subtitle: String? {
+        switch tab.kind {
+        case .editor, .diff:
+            return tab.payload
+        case .terminal:
+            return tab.title == "Terminal" ? nil : tab.title
+        case .settings:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private var leadingIndicator: some View {
+        if tab.kind == .terminal && aiStatus.isVisible {
+            Circle()
+                .fill(aiStatus.color)
+                .frame(width: 7, height: 7)
+                .help(aiStatus.hint)
+        } else {
+            Color.clear
+                .frame(width: 7, height: 7)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingIndicators: some View {
+        HStack(spacing: 6) {
+            if tab.kind == .terminal && tab.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+
+            if isActive || isHovered {
+                Button {
+                    appState.closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+private struct BottomPanelCategoryEmptyView: View {
+    let category: BottomPanelCategory
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: category.iconName)
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.windowBackgroundColor))
+        .accessibilityIdentifier("tf.mac.bottomPanel.empty.\(category.rawValue)")
+    }
+
+    private var title: String {
+        switch category {
+        case .terminal:
+            return "bottomPanel.empty.terminal.title".localized
+        case .edit:
+            return "bottomPanel.empty.edit.title".localized
+        case .diff:
+            return "bottomPanel.empty.diff.title".localized
+        case .settings:
+            return "bottomPanel.empty.settings.title".localized
+        }
+    }
+
+    private var message: String {
+        switch category {
+        case .terminal:
+            return "bottomPanel.empty.terminal.message".localized
+        case .edit:
+            return "bottomPanel.empty.edit.message".localized
+        case .diff:
+            return "bottomPanel.empty.diff.message".localized
+        case .settings:
+            return "bottomPanel.empty.settings.message".localized
         }
     }
 }

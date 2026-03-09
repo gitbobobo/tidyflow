@@ -22,31 +22,78 @@ extension AppState {
         guard let globalKey = currentGlobalWorkspaceKey else { return nil }
         return workspaceSpecialPageByWorkspace[globalKey]
     }
-    
+
     func ensureDefaultTab(for workspaceKey: String) {
-        // 不再自动创建终端，仅确保字典有对应的键
         if workspaceTabs[workspaceKey] == nil {
             workspaceTabs[workspaceKey] = []
         }
-    }
-    
-    func activateTab(workspaceKey: String, tabId: UUID) {
-        activeTabIdByWorkspace[workspaceKey] = tabId
-        // 切回普通 Tab 时，退出工作空间级页面
-        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
-        #if os(macOS)
-        // macOS 端激活 Tab 时自动展开 Tab 面板
-        if !tabPanelExpanded {
-            tabPanelExpanded = true
+        if activeBottomPanelCategoryByWorkspace[workspaceKey] == nil {
+            activeBottomPanelCategoryByWorkspace[workspaceKey] = .terminal
         }
-        #endif
     }
-    
+
+    func tabs(in category: BottomPanelCategory, workspaceKey: String) -> [TabModel] {
+        (workspaceTabs[workspaceKey] ?? []).filter { $0.bottomPanelCategory == category }
+    }
+
+    func activeBottomPanelCategory(workspaceKey: String) -> BottomPanelCategory {
+        resolvedBottomPanelCategory(for: workspaceKey)
+    }
+
+    func displayedBottomPanelTabs(workspaceKey: String) -> [TabModel] {
+        tabs(in: resolvedBottomPanelCategory(for: workspaceKey), workspaceKey: workspaceKey)
+    }
+
+    func displayedBottomPanelTab(workspaceKey: String) -> TabModel? {
+        let category = resolvedBottomPanelCategory(for: workspaceKey)
+        let categoryTabs = tabs(in: category, workspaceKey: workspaceKey)
+        guard !categoryTabs.isEmpty else { return nil }
+        if let activeId = activeTabIdByWorkspace[workspaceKey],
+           let activeTab = categoryTabs.first(where: { $0.id == activeId }) {
+            return activeTab
+        }
+        if let rememberedId = lastActiveTabIdByWorkspaceByCategory[workspaceKey]?[category],
+           let rememberedTab = categoryTabs.first(where: { $0.id == rememberedId }) {
+            return rememberedTab
+        }
+        return categoryTabs.first
+    }
+
+    func activateBottomPanelCategory(workspaceKey: String, category: BottomPanelCategory) {
+        ensureDefaultTab(for: workspaceKey)
+        activeBottomPanelCategoryByWorkspace[workspaceKey] = category
+        let categoryTabs = tabs(in: category, workspaceKey: workspaceKey)
+        guard !categoryTabs.isEmpty else {
+            activeTabIdByWorkspace[workspaceKey] = nil
+            workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+            #if os(macOS)
+            if !tabPanelExpanded {
+                tabPanelExpanded = true
+            }
+            #endif
+            return
+        }
+
+        let rememberedId = lastActiveTabIdByWorkspaceByCategory[workspaceKey]?[category]
+        if let rememberedId,
+           categoryTabs.contains(where: { $0.id == rememberedId }) {
+            recordTabActivation(workspaceKey: workspaceKey, tabId: rememberedId)
+        } else if let first = categoryTabs.first {
+            recordTabActivation(workspaceKey: workspaceKey, tabId: first.id)
+        }
+    }
+
+    func activateTab(workspaceKey: String, tabId: UUID) {
+        guard let tab = workspaceTabs[workspaceKey]?.first(where: { $0.id == tabId }) else { return }
+        ensureDefaultTab(for: workspaceKey)
+        activeBottomPanelCategoryByWorkspace[workspaceKey] = tab.bottomPanelCategory
+        recordTabActivation(workspaceKey: workspaceKey, tabId: tabId)
+    }
+
     func closeTab(workspaceKey: String, tabId: UUID) {
         guard let tabs = workspaceTabs[workspaceKey] else { return }
         guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
 
-        // 编辑器 Tab 且有未保存更改时，弹出确认对话框
         if tab.kind == .editor && tab.isDirty {
             pendingCloseWorkspaceKey = workspaceKey
             pendingCloseTabId = tabId
@@ -57,22 +104,25 @@ extension AppState {
         performCloseTab(workspaceKey: workspaceKey, tabId: tabId)
     }
 
-    /// 关闭其他标签页（保留指定 tab）
+    /// 关闭其他标签页（仅作用于与 keepTab 同类别的实例）
     func closeOtherTabs(workspaceKey: String, keepTabId: UUID) {
-        guard let tabs = workspaceTabs[workspaceKey] else { return }
-        for tab in tabs where tab.id != keepTabId && !tab.isPinned {
+        guard let tabs = workspaceTabs[workspaceKey],
+              let keepTab = tabs.first(where: { $0.id == keepTabId }) else { return }
+        let sameCategoryTabs = tabs.filter { $0.bottomPanelCategory == keepTab.bottomPanelCategory }
+        for tab in sameCategoryTabs where tab.id != keepTabId && !tab.isPinned {
             closeTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
     }
 
-    /// 关闭右侧标签页
-    func closeTabsToRight(workspaceKey: String, ofTabId: UUID) {
-        guard let tabs = workspaceTabs[workspaceKey],
-              let index = tabs.firstIndex(where: { $0.id == ofTabId }) else { return }
-        let rightTabs = tabs.suffix(from: tabs.index(after: index))
-        for tab in rightTabs {
-            if tab.isPinned { continue }
-            closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+    /// 关闭下方标签页（竖向实例栏语义）
+    func closeTabsBelow(workspaceKey: String, ofTabId: UUID) {
+        let currentTabs = workspaceTabs[workspaceKey] ?? []
+        guard let tab = currentTabs.first(where: { $0.id == ofTabId }) else { return }
+        let sameCategoryTabs = currentTabs.filter { $0.bottomPanelCategory == tab.bottomPanelCategory }
+        guard let index = sameCategoryTabs.firstIndex(where: { $0.id == ofTabId }) else { return }
+        let tabsBelow = sameCategoryTabs.suffix(from: sameCategoryTabs.index(after: index))
+        for item in tabsBelow where !item.isPinned {
+            closeTab(workspaceKey: workspaceKey, tabId: item.id)
         }
     }
 
@@ -83,19 +133,17 @@ extension AppState {
         workspaceTabs[workspaceKey] = tabs
     }
 
-    /// 关闭已保存的标签页（跳过 dirty 的编辑器 tab）
+    /// 关闭已保存的标签页（仅作用于当前类别）
     func closeSavedTabs(workspaceKey: String) {
-        guard let tabs = workspaceTabs[workspaceKey] else { return }
-        for tab in tabs {
+        for tab in displayedBottomPanelTabs(workspaceKey: workspaceKey) {
             if tab.kind == .editor && tab.isDirty { continue }
             performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
     }
 
-    /// 全部关闭（dirty 的编辑器 tab 会弹确认）
+    /// 全部关闭（仅作用于当前类别）
     func closeAllTabs(workspaceKey: String) {
-        guard let tabs = workspaceTabs[workspaceKey] else { return }
-        for tab in tabs {
+        for tab in displayedBottomPanelTabs(workspaceKey: workspaceKey) {
             closeTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
     }
@@ -106,8 +154,9 @@ extension AppState {
         for tab in tabs {
             performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
-        // 工作空间被删除/结束工作时，同步清理工作空间级页面状态
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        activeBottomPanelCategoryByWorkspace.removeValue(forKey: workspaceKey)
+        lastActiveTabIdByWorkspaceByCategory.removeValue(forKey: workspaceKey)
     }
 
     /// 实际执行关闭 Tab（跳过 dirty 检查）
@@ -116,12 +165,14 @@ extension AppState {
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
 
         let tab = tabs[index]
-        let isActive = activeTabIdByWorkspace[workspaceKey] == tabId
+        let category = tab.bottomPanelCategory
+        let categoryTabsBefore = tabs.filter { $0.bottomPanelCategory == category }
+        let categoryIndexBefore = categoryTabsBefore.firstIndex(where: { $0.id == tabId })
+        let isDisplayedTab = activeTabIdByWorkspace[workspaceKey] == tabId
+        let isCurrentCategory = resolvedBottomPanelCategory(for: workspaceKey) == category
 
-        // Phase C1-2: Send terminal kill and clean up session mapping
         if tab.kind == .terminal {
             if let sessionId = terminalSessionByTabId[tabId] {
-                // 通过共享终端存储记录 detach 请求时间并清理追踪状态
                 terminalSessionStore.recordDetachRequest(termId: sessionId)
                 wsClient.requestTermClose(termId: sessionId)
                 terminalTabIdBySessionId.removeValue(forKey: sessionId)
@@ -129,29 +180,38 @@ extension AppState {
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
-            // WI-002：终端关闭时同步清除 AI 状态，防止脏状态残留到下次打开同 tab UUID
             terminalStore.clearTerminalAIStatus(for: tabId)
         }
 
-        // 编辑器 Tab 关闭时通知 JS 层清理缓存
         if tab.kind == .editor {
             onEditorTabClose?(tab.payload)
         }
 
         tabs.remove(at: index)
         workspaceTabs[workspaceKey] = tabs
+        forgetRememberedTab(workspaceKey: workspaceKey, tabId: tabId)
 
-        if isActive {
-            if tabs.isEmpty {
-                activeTabIdByWorkspace[workspaceKey] = nil
+        let categoryTabsAfter = tabs.filter { $0.bottomPanelCategory == category }
+        let replacementId = replacementTabId(
+            categoryTabs: categoryTabsAfter,
+            removedIndex: categoryIndexBefore
+        )
+        if let replacementId {
+            rememberTab(workspaceKey: workspaceKey, category: category, tabId: replacementId)
+        }
+
+        if isCurrentCategory {
+            activeBottomPanelCategoryByWorkspace[workspaceKey] = category
+            if isDisplayedTab {
+                activeTabIdByWorkspace[workspaceKey] = replacementId
+            } else if let activeId = activeTabIdByWorkspace[workspaceKey],
+                      tabs.contains(where: { $0.id == activeId }) {
+                // 保持当前显示实例不变。
             } else {
-                // Select previous tab if possible, else next
-                let newIndex = max(0, min(index, tabs.count - 1))
-                activeTabIdByWorkspace[workspaceKey] = tabs[newIndex].id
+                activeTabIdByWorkspace[workspaceKey] = replacementId
             }
         }
 
-        // 关闭终端后检查是否需要清除时间记录（用于自动快捷键）
         if tab.kind == .terminal {
             let remainingTerminals = workspaceTabs[workspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
             if remainingTerminals == 0 {
@@ -159,7 +219,7 @@ extension AppState {
             }
         }
     }
-    
+
     func addTab(workspaceKey: String, kind: TabKind, title: String, payload: String) {
         let newTab = TabModel(
             id: UUID(),
@@ -168,56 +228,83 @@ extension AppState {
             workspaceKey: workspaceKey,
             payload: payload
         )
-        
-        if workspaceTabs[workspaceKey] == nil {
-            workspaceTabs[workspaceKey] = []
-        }
-        
-        workspaceTabs[workspaceKey]?.append(newTab)
-        activeTabIdByWorkspace[workspaceKey] = newTab.id
-        // 打开普通 Tab 后，退出工作空间级页面
-        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
-        #if os(macOS)
-        // macOS 端添加 Tab 时自动展开 Tab 面板
-        if !tabPanelExpanded {
-            tabPanelExpanded = true
-        }
-        #endif
-
-        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
-        if kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {
-            workspaceTerminalOpenTime[workspaceKey] = Date()
-        }
-
+        appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }
-    
+
     func addTerminalTab(workspaceKey: String) {
         addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
     }
 
     /// 创建终端并执行自定义命令
     func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
-        // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload，命令图标用于 Tab 栏显示
         let newTab = TabModel(
             id: UUID(),
             title: command.name,
             kind: .terminal,
             workspaceKey: workspaceKey,
-            payload: command.command,  // 存储命令以便终端就绪后执行
+            payload: command.command,
             commandIcon: command.icon
         )
+        appendAndActivateTab(newTab, workspaceKey: workspaceKey)
+    }
 
-        if workspaceTabs[workspaceKey] == nil {
-            workspaceTabs[workspaceKey] = []
+    func appendAndActivateTab(_ newTab: TabModel, workspaceKey: String) {
+        ensureDefaultTab(for: workspaceKey)
+        workspaceTabs[workspaceKey, default: []].append(newTab)
+        activeBottomPanelCategoryByWorkspace[workspaceKey] = newTab.bottomPanelCategory
+        recordTabActivation(workspaceKey: workspaceKey, tabId: newTab.id)
+        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        #if os(macOS)
+        if !tabPanelExpanded {
+            tabPanelExpanded = true
         }
-        workspaceTabs[workspaceKey]?.append(newTab)
-        activeTabIdByWorkspace[workspaceKey] = newTab.id
+        #endif
 
-        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
-        if workspaceTerminalOpenTime[workspaceKey] == nil {
+        if newTab.kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
+    }
 
-        // 终端会在视图出现时创建/附着
+    private func resolvedBottomPanelCategory(for workspaceKey: String) -> BottomPanelCategory {
+        if let category = activeBottomPanelCategoryByWorkspace[workspaceKey] {
+            return category
+        }
+        if let firstTab = workspaceTabs[workspaceKey]?.first {
+            return firstTab.bottomPanelCategory
+        }
+        return .terminal
+    }
+
+    private func recordTabActivation(workspaceKey: String, tabId: UUID) {
+        guard let tab = workspaceTabs[workspaceKey]?.first(where: { $0.id == tabId }) else { return }
+        activeTabIdByWorkspace[workspaceKey] = tabId
+        activeBottomPanelCategoryByWorkspace[workspaceKey] = tab.bottomPanelCategory
+        rememberTab(workspaceKey: workspaceKey, category: tab.bottomPanelCategory, tabId: tabId)
+        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        #if os(macOS)
+        if !tabPanelExpanded {
+            tabPanelExpanded = true
+        }
+        #endif
+    }
+
+    private func rememberTab(workspaceKey: String, category: BottomPanelCategory, tabId: UUID) {
+        var remembered = lastActiveTabIdByWorkspaceByCategory[workspaceKey] ?? [:]
+        remembered[category] = tabId
+        lastActiveTabIdByWorkspaceByCategory[workspaceKey] = remembered
+    }
+
+    private func forgetRememberedTab(workspaceKey: String, tabId: UUID) {
+        guard var remembered = lastActiveTabIdByWorkspaceByCategory[workspaceKey] else { return }
+        for (category, rememberedId) in remembered where rememberedId == tabId {
+            remembered.removeValue(forKey: category)
+        }
+        lastActiveTabIdByWorkspaceByCategory[workspaceKey] = remembered
+    }
+
+    private func replacementTabId(categoryTabs: [TabModel], removedIndex: Int?) -> UUID? {
+        guard !categoryTabs.isEmpty else { return nil }
+        let candidateIndex = max(0, min(removedIndex ?? 0, categoryTabs.count - 1))
+        return categoryTabs[candidateIndex].id
     }
 }

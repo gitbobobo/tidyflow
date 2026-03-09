@@ -3,44 +3,27 @@ import Foundation
 extension AppState {
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)
     func spawnTerminalWithCommand(workspaceKey: String, command: String) {
-        // Create a new terminal tab
         let newTab = TabModel(
             id: UUID(),
             title: "AI Resolve",
             kind: .terminal,
             workspaceKey: workspaceKey,
-            payload: command  // Store command in payload for later execution
+            payload: command
         )
-
-        if workspaceTabs[workspaceKey] == nil {
-            workspaceTabs[workspaceKey] = []
-        }
-        workspaceTabs[workspaceKey]?.append(newTab)
-        activeTabIdByWorkspace[workspaceKey] = newTab.id
-
-        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
-        if workspaceTerminalOpenTime[workspaceKey] == nil {
-            workspaceTerminalOpenTime[workspaceKey] = Date()
-        }
-
-        // 终端会在视图出现时创建/附着
+        appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }
     
     func addEditorTab(workspaceKey: String, path: String, line: Int? = nil) {
         // Check if editor tab for this path already exists
         if let tabs = workspaceTabs[workspaceKey],
            let existingTab = tabs.first(where: { $0.kind == .editor && $0.payload == path }) {
-            // Activate existing tab
-            activeTabIdByWorkspace[workspaceKey] = existingTab.id
-            // Set pending reveal if line specified
+            activateTab(workspaceKey: workspaceKey, tabId: existingTab.id)
             if let line = line {
                 pendingEditorReveal = (path: path, line: line, highlightMs: 2000)
             }
             return
         }
-        // Create new tab
         addTab(workspaceKey: workspaceKey, kind: .editor, title: path, payload: path)
-        // Set pending reveal if line specified
         if let line = line {
             pendingEditorReveal = (path: path, line: line, highlightMs: 2000)
         }
@@ -50,9 +33,7 @@ extension AppState {
         // Check if diff tab for this path already exists
         if let tabs = workspaceTabs[workspaceKey],
            let existingTab = tabs.first(where: { $0.kind == .diff && $0.payload == path }) {
-            // Activate existing tab and update mode
-            activeTabIdByWorkspace[workspaceKey] = existingTab.id
-            // Update diff mode if different
+            activateTab(workspaceKey: workspaceKey, tabId: existingTab.id)
             if existingTab.diffMode != mode.rawValue {
                 if var tabs = workspaceTabs[workspaceKey],
                    let index = tabs.firstIndex(where: { $0.id == existingTab.id }) {
@@ -63,7 +44,6 @@ extension AppState {
             return
         }
 
-        // Create new diff tab
         var newTab = TabModel(
             id: UUID(),
             title: "Diff: \(path.split(separator: "/").last ?? Substring(path))",
@@ -73,12 +53,7 @@ extension AppState {
         )
         newTab.diffMode = mode.rawValue
 
-        if workspaceTabs[workspaceKey] == nil {
-            workspaceTabs[workspaceKey] = []
-        }
-
-        workspaceTabs[workspaceKey]?.append(newTab)
-        activeTabIdByWorkspace[workspaceKey] = newTab.id
+        appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }
 
     /// Close all diff tabs for a workspace (used after branch switch)
@@ -99,45 +74,12 @@ extension AppState {
         closeTab(workspaceKey: workspaceKey, tabId: tab.id)
     }
 
-    func nextTab() {
-        guard let ws = currentGlobalWorkspaceKey,
-              let tabs = workspaceTabs[ws], !tabs.isEmpty,
-              let activeId = activeTabIdByWorkspace[ws],
-              let index = tabs.firstIndex(where: { $0.id == activeId }) else { return }
-        
-        let nextIndex = (index + 1) % tabs.count
-        activeTabIdByWorkspace[ws] = tabs[nextIndex].id
-    }
-    
-    func prevTab() {
-        guard let ws = currentGlobalWorkspaceKey,
-              let tabs = workspaceTabs[ws], !tabs.isEmpty,
-              let activeId = activeTabIdByWorkspace[ws],
-              let index = tabs.firstIndex(where: { $0.id == activeId }) else { return }
-
-        let prevIndex = (index - 1 + tabs.count) % tabs.count
-        activeTabIdByWorkspace[ws] = tabs[prevIndex].id
-    }
-
-    /// 按索引切换 Tab，index 1-9 对应第 1-9 个 Tab
-    func switchToTabByIndex(_ index: Int) {
-        guard let ws = currentGlobalWorkspaceKey,
-              let tabs = workspaceTabs[ws], !tabs.isEmpty else { return }
-
-        let targetIndex = index - 1
-
-        guard targetIndex >= 0 && targetIndex < tabs.count else { return }
-        activeTabIdByWorkspace[ws] = tabs[targetIndex].id
-    }
-
     // MARK: - Editor Bridge Helpers
 
     /// Get the active tab for the current workspace
     func getActiveTab() -> TabModel? {
-        guard let ws = currentGlobalWorkspaceKey,
-              let activeId = activeTabIdByWorkspace[ws],
-              let tabs = workspaceTabs[ws] else { return nil }
-        return tabs.first { $0.id == activeId }
+        guard let ws = currentGlobalWorkspaceKey else { return nil }
+        return displayedBottomPanelTab(workspaceKey: ws)
     }
 
     /// Check if active tab is an editor tab

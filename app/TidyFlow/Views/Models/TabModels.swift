@@ -41,6 +41,40 @@ enum TabKind: String, Codable {
     }
 }
 
+enum BottomPanelCategory: String, Codable, CaseIterable {
+    case terminal
+    case edit
+    case diff
+    case settings
+
+    var titleKey: String {
+        switch self {
+        case .terminal: return "bottomPanel.category.terminal"
+        case .edit: return "bottomPanel.category.edit"
+        case .diff: return "bottomPanel.category.diff"
+        case .settings: return "bottomPanel.category.settings"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .terminal: return "terminal"
+        case .edit: return "doc.text"
+        case .diff: return "arrow.left.arrow.right"
+        case .settings: return "gearshape"
+        }
+    }
+
+    static func from(tabKind: TabKind) -> BottomPanelCategory {
+        switch tabKind {
+        case .terminal: return .terminal
+        case .editor: return .edit
+        case .diff: return .diff
+        case .settings: return .settings
+        }
+    }
+}
+
 /// 工作空间级主内容页面（不进入 Tab 列表）
 enum WorkspaceSpecialPage: String, Codable {
     case aiChat
@@ -75,6 +109,10 @@ struct TabModel: Identifiable, Codable, Equatable {
 
     // 编辑器 dirty 状态（文件有未保存更改）
     var isDirty: Bool = false
+
+    var bottomPanelCategory: BottomPanelCategory {
+        BottomPanelCategory.from(tabKind: kind)
+    }
 }
 
 // Phase C2-1: Diff mode enum for type safety

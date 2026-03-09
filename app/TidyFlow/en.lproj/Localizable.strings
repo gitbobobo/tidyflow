@@ -251,13 +251,29 @@
 "tab.pin" = "Pin";
 "tab.unpin" = "Unpin";
 "tab.closeOthers" = "Close Others";
-"tab.closeRight" = "Close Tabs to the Right";
+"tab.closeBelow" = "Close Tabs Below";
 "tab.closeSaved" = "Close Saved [⌘K U]";
 "tab.closeAll" = "Close All [⌘K W]";
 "tab.newTerminal" = "New Terminal";
-"tab.newTerminal.tooltip" = "New Terminal (⌘T)";
+"tab.newTerminal.tooltip" = "New Terminal";
 "tab.panel.expand.tooltip" = "Expand Bottom Panel";
 "tab.panel.collapse.tooltip" = "Collapse Bottom Panel";
+
+/* Bottom Panel Categories */
+"bottomPanel.category.terminal" = "Terminal";
+"bottomPanel.category.edit" = "Edit";
+"bottomPanel.category.diff" = "Diff";
+"bottomPanel.category.settings" = "Settings";
+
+/* Bottom Panel Empty States */
+"bottomPanel.empty.terminal.title" = "No terminals yet";
+"bottomPanel.empty.terminal.message" = "Create a terminal instance from the plus button in the top-right corner.";
+"bottomPanel.empty.edit.title" = "No editors yet";
+"bottomPanel.empty.edit.message" = "Open a file to show editor instances for the current workspace here.";
+"bottomPanel.empty.diff.title" = "No diffs yet";
+"bottomPanel.empty.diff.message" = "Open a diff view to show diff instances for the current workspace here.";
+"bottomPanel.empty.settings.title" = "No settings view yet";
+"bottomPanel.empty.settings.message" = "There is no settings instance open in the bottom panel right now.";
 
 /* Tab Content */
 "tabContent.selectOrAdd" = "Select or Add a Project";

@@ -3,131 +3,58 @@ import SwiftUI
 struct TabStripView: View {
     @EnvironmentObject var appState: AppState
 
-    /// 收起模式：仅显示 Tab 图标（类似 VSCode 底部状态条）
+    /// 收起模式下仍显示顶层类别，只是整体高度更紧凑。
     var collapsed: Bool = false
 
     var body: some View {
         HStack(spacing: 0) {
-            // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
-            if let globalKey = appState.currentGlobalWorkspaceKey,
-               let tabs = appState.workspaceTabs[globalKey] {
+            if let globalKey = appState.currentGlobalWorkspaceKey {
+                let activeCategory = appState.activeBottomPanelCategory(workspaceKey: globalKey)
+                categoryStrip(workspaceKey: globalKey)
+                Spacer(minLength: 8)
 
-                if collapsed {
-                    // 收起模式：紧凑图标，点击展开面板并激活对应 Tab
-                    collapsedContent(tabs: tabs, globalKey: globalKey)
-                } else {
-                    // 展开模式：完整 Tab 栏
-                    expandedContent(tabs: tabs, globalKey: globalKey)
+                if activeCategory == .terminal {
+                    NewTerminalButton(globalKey: globalKey)
+                        .environmentObject(appState)
+                        .padding(.horizontal, 4)
                 }
 
+                aiStatusIndicator(globalKey: globalKey)
+                    .padding(.horizontal, 2)
+
+                panelToggleButton
+                    .padding(.trailing, 6)
             } else {
                 Spacer()
             }
         }
         .frame(height: collapsed ? 28 : 34)
         .background(Color(NSColor.windowBackgroundColor))
-        .overlay(
-            Divider(), alignment: .bottom
-        )
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityIdentifier("tf.mac.bottomPanel.category-strip")
     }
 
-    // MARK: - 收起模式内容
-
     @ViewBuilder
-    private func collapsedContent(tabs: [TabModel], globalKey: String) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(tabs) { tab in
-                    let isActive = appState.activeTabIdByWorkspace[globalKey] == tab.id
-                    let tabAIStatus = tab.kind == .terminal
-                        ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle)
-                        : .idle
-                    Button {
-                        appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            appState.tabPanelExpanded = true
-                        }
-                    } label: {
-                        let effectiveIconName = (tab.kind == .terminal && tab.commandIcon != nil) ? tab.commandIcon! : tab.kind.iconName
-                        CommandIconView(iconName: effectiveIconName, size: 11)
-                            .foregroundColor(isActive ? .primary : .secondary)
-                            .frame(width: 22, height: 22)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(isActive ? Color(NSColor.controlBackgroundColor) : Color.clear)
-                            )
-                            .overlay(alignment: .bottomTrailing) {
-                                // 终端 tab 的 AI 状态小圆点（非空闲时显示）
-                                if tabAIStatus.isVisible {
-                                    Circle()
-                                        .fill(tabAIStatus.color)
-                                        .frame(width: 6, height: 6)
-                                        .offset(x: 2, y: 2)
-                                }
-                            }
-                    }
-                    .buttonStyle(.borderless)
-                    .help(tabAIStatus.isVisible ? "\(tab.title)  \(tabAIStatus.hint)" : tab.title)
+    private func categoryStrip(workspaceKey: String) -> some View {
+        let activeCategory = appState.activeBottomPanelCategory(workspaceKey: workspaceKey)
+        HStack(spacing: 4) {
+            ForEach(BottomPanelCategory.allCases, id: \.rawValue) { category in
+                BottomPanelCategoryButton(
+                    category: category,
+                    isActive: activeCategory == category,
+                    isCompact: collapsed,
+                    itemCount: appState.tabs(in: category, workspaceKey: workspaceKey).count
+                ) {
+                    appState.activateBottomPanelCategory(workspaceKey: workspaceKey, category: category)
                 }
             }
-            .padding(.leading, 6)
         }
-
-        aiStatusIndicator(globalKey: globalKey)
-            .padding(.horizontal, 2)
-
-        panelToggleButton
-            .padding(.horizontal, 2)
-
-        // 收起模式下的新建终端按钮
-        Button {
-            appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
-            withAnimation(.easeInOut(duration: 0.2)) {
-                appState.tabPanelExpanded = true
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-        }
-        .buttonStyle(.borderless)
-        .help("tab.newTerminal.tooltip".localized)
-        .padding(.horizontal, 6)
-    }
-
-    // MARK: - 展开模式内容
-
-    @ViewBuilder
-    private func expandedContent(tabs: [TabModel], globalKey: String) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(tabs) { tab in
-                    TabItemView(
-                        tab: tab,
-                        isActive: appState.activeTabIdByWorkspace[globalKey] == tab.id,
-                        workspaceKey: globalKey,
-                        onClose: {
-                            appState.closeTab(workspaceKey: globalKey, tabId: tab.id)
-                        },
-                        onActivate: {
-                            appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
-                        }
-                    )
-                }
-            }
-            .padding(.leading, 1)
-        }
-
-        // 新建终端按钮（根据是否有自定义命令显示不同UI）
-        NewTerminalButton(globalKey: globalKey)
-            .environmentObject(appState)
-            .padding(.horizontal, 4)
-
-        aiStatusIndicator(globalKey: globalKey)
-            .padding(.horizontal, 2)
-
-        panelToggleButton
-            .padding(.trailing, 6)
+        .padding(.leading, 6)
     }
 
     private var panelToggleButton: some View {
@@ -142,8 +69,8 @@ struct TabStripView: View {
             }
         } label: {
             Image(systemName: appState.tabPanelExpanded ? "chevron.down" : "chevron.up")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
         .buttonStyle(.borderless)
         .help(appState.tabPanelExpanded ? "tab.panel.collapse.tooltip".localized : "tab.panel.expand.tooltip".localized)
@@ -154,7 +81,7 @@ struct TabStripView: View {
         if let status = aiStatus() {
             Image(systemName: status.iconName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(status.color)
+                .foregroundStyle(status.color)
                 .help(status.hint)
                 .frame(width: 16, height: 16)
         }
@@ -183,153 +110,63 @@ struct TabStripView: View {
     }
 }
 
-// WorkspaceSpecialPageButton 已移除：macOS 端 AI 聊天常驻显示，不再需要切换按钮
-
-struct TabItemView: View {
-    @EnvironmentObject var appState: AppState
-    let tab: TabModel
+private struct BottomPanelCategoryButton: View {
+    let category: BottomPanelCategory
     let isActive: Bool
-    let workspaceKey: String
-    let onClose: () -> Void
-    let onActivate: () -> Void
-    
+    let isCompact: Bool
+    let itemCount: Int
+    let action: () -> Void
+
     @State private var isHovered: Bool = false
-    
-    /// tab 背景色
-    private var tabBackground: Color {
+
+    private var backgroundColor: Color {
         if isActive {
             return Color(NSColor.controlBackgroundColor)
-        } else if isHovered {
-            return Color(NSColor.controlBackgroundColor).opacity(0.5)
-        } else {
-            return Color.clear
         }
+        if isHovered {
+            return Color(NSColor.controlBackgroundColor).opacity(0.55)
+        }
+        return .clear
     }
 
     var body: some View {
-        let aiStatus: TerminalAIStatus = tab.kind == .terminal
-            ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle)
-            : .idle
-        HStack(spacing: 6) {
-            // 文件图标位置：dirty 时显示橙色圆点，否则显示类型图标（终端快捷命令 tab 使用 commandIcon）
-            if tab.isDirty {
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 7))
-                    .foregroundColor(.orange)
-                    .frame(width: 11)
-            } else {
-                let effectiveIconName = (tab.kind == .terminal && tab.commandIcon != nil) ? tab.commandIcon! : tab.kind.iconName
-                CommandIconView(iconName: effectiveIconName, size: 11)
-                    .foregroundColor(isActive ? .primary : .secondary)
-            }
-
-            Text(tab.title)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .foregroundColor(isActive ? .primary : .secondary)
-
-            if tab.kind == .terminal && tab.isPinned {
-                Image(systemName: "pin.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
-
-            // 终端 AI 状态指示器（非空闲时显示，替换关闭按钮占位）
-            if tab.kind == .terminal && aiStatus.isVisible {
-                Image(systemName: aiStatus.iconName)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(aiStatus.color)
-                    .frame(width: 14, height: 14)
-                    .help(aiStatus.hint)
-            }
-
-            if isActive || isHovered {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: category.iconName)
+                    .font(.system(size: isCompact ? 10 : 11))
+                Text(category.titleKey.localized)
+                    .font(.system(size: isCompact ? 11 : 12, weight: isActive ? .semibold : .regular))
+                if itemCount > 0 {
+                    Text("\(itemCount)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(isActive ? .primary : .secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.secondary.opacity(isActive ? 0.18 : 0.12))
+                        )
                 }
-                .buttonStyle(.plain)
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-                .foregroundColor(.secondary)
-            } else {
-                Spacer()
-                    .frame(width: 16)
+            }
+            .lineLimit(1)
+            .foregroundStyle(isActive ? .primary : .secondary)
+            .padding(.horizontal, 10)
+            .frame(height: isCompact ? 24 : 28)
+            .background(backgroundColor)
+            .clipShape(.rect(cornerRadius: 5))
+            .overlay(alignment: .bottom) {
+                if isActive {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.accentColor)
+                        .frame(height: 2)
+                        .padding(.horizontal, 8)
+                }
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(tabBackground)
-        .cornerRadius(4)
-        .overlay(alignment: .bottom) {
-            // 选中态底部指示条
-            if isActive {
-                RoundedRectangle(cornerRadius: 0.5)
-                    .fill(Color.accentColor)
-                    .frame(height: 2)
-                    .padding(.horizontal, 8)
-            }
-        }
-        .animation(.easeInOut(duration: 0.15), value: isActive)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
-        .onTapGesture {
-            onActivate()
-        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tf.mac.bottomPanel.category.\(category.rawValue)")
         .onHover { hovering in
             isHovered = hovering
-        }
-        .contextMenu {
-            if tab.kind == .terminal {
-                Button(tab.isPinned ? "tab.unpin".localized : "tab.pin".localized) {
-                    appState.toggleTerminalTabPinned(workspaceKey: workspaceKey, tabId: tab.id)
-                }
-                Divider()
-            }
-
-            Button("tab.close".localized) {
-                onClose()
-            }
-            .keyboardShortcut("w", modifiers: .command)
-
-            if tab.kind == .editor {
-                Divider()
-                Button("editor.findReplace".localized) {
-                    appState.editorStore.showFindReplacePanel = true
-                }
-                Button("editor.newFile".localized) {
-                    appState.createNewEditorFile()
-                }
-                Button("editor.saveAs".localized) {
-                    appState.requestSaveAsForActiveEditor()
-                }
-            }
-
-            let tabs = appState.workspaceTabs[workspaceKey] ?? []
-            let otherTabs = tabs.filter { $0.id != tab.id }
-
-            Button("tab.closeOthers".localized) {
-                appState.closeOtherTabs(workspaceKey: workspaceKey, keepTabId: tab.id)
-            }
-            .keyboardShortcut("t", modifiers: [.option, .command])
-            .disabled(otherTabs.isEmpty)
-
-            let tabIndex = tabs.firstIndex(where: { $0.id == tab.id }) ?? tabs.endIndex
-            let hasRightTabs = tabIndex < tabs.count - 1
-
-            Button("tab.closeRight".localized) {
-                appState.closeTabsToRight(workspaceKey: workspaceKey, ofTabId: tab.id)
-            }
-            .disabled(!hasRightTabs)
-
-            Divider()
-
-            Button("tab.closeSaved".localized) {
-                appState.closeSavedTabs(workspaceKey: workspaceKey)
-            }
-
-            Button("tab.closeAll".localized) {
-                appState.closeAllTabs(workspaceKey: workspaceKey)
-            }
         }
     }
 }
@@ -339,32 +176,28 @@ struct TabItemView: View {
 struct NewTerminalButton: View {
     @EnvironmentObject var appState: AppState
     let globalKey: String
-    
+
     var body: some View {
         if appState.clientSettings.customCommands.isEmpty {
-            // 没有自定义命令时，显示普通按钮
             Button(action: {
                 appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
             }) {
                 Image(systemName: "plus")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .help("tab.newTerminal.tooltip".localized)
         } else {
-            // 有自定义命令时，显示下拉菜单
             Menu {
-                // 新建空白终端
                 Button(action: {
                     appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
                 }) {
                     Label("tab.newTerminal".localized, systemImage: "terminal")
                 }
-                
+
                 Divider()
-                
-                // 自定义命令列表
+
                 ForEach(appState.clientSettings.customCommands) { command in
                     Button(action: {
                         appState.addTerminalWithCustomCommand(workspaceKey: globalKey, command: command)
@@ -379,7 +212,7 @@ struct NewTerminalButton: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -388,14 +221,13 @@ struct NewTerminalButton: View {
     }
 }
 
-// MARK: - 菜单图标视图（品牌图标用 FixedSizeAssetImage，与项目侧栏/工具栏菜单一致，macOS 按 intrinsic size 显示需在绘制时缩放到目标尺寸）
+// MARK: - 菜单图标视图
 
 struct CommandMenuIcon: View {
     let iconName: String
-    
-    /// 菜单项图标尺寸（与 ProjectsSidebarView、TopToolbarView 的 menuIconSize 一致）
+
     private let menuIconSize: CGFloat = 16
-    
+
     var body: some View {
         Group {
             if iconName.hasPrefix("brand:") {

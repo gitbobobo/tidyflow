@@ -121,6 +121,8 @@ extension AppState {
             }
             // 清理残留缓存（包括文件索引、Git、文件列表、目录展开状态）
             workspaceTabs.removeValue(forKey: globalKey)
+            activeBottomPanelCategoryByWorkspace.removeValue(forKey: globalKey)
+            lastActiveTabIdByWorkspaceByCategory.removeValue(forKey: globalKey)
             activeTabIdByWorkspace.removeValue(forKey: globalKey)
             workspaceTerminalOpenTime.removeValue(forKey: globalKey)
             workspaceDiagnostics.removeValue(forKey: globalKey)
@@ -260,18 +262,18 @@ extension AppState {
             Command(id: "workspace.refreshFileIndex", title: "Refresh File Index", subtitle: "Reload file list from Core", scope: .workspace, keyHint: nil) { app in
                 app.refreshFileIndex()
             },
-            Command(id: "workspace.newTerminal", title: "New Terminal", subtitle: nil, scope: .workspace, keyHint: "Cmd+T") { app in
+            Command(id: "workspace.newTerminal", title: "New Terminal", subtitle: nil, scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.currentGlobalWorkspaceKey else { return }
                 app.addTerminalTab(workspaceKey: ws)
             },
-            Command(id: "workspace.closeTab", title: "Close Active Tab", subtitle: nil, scope: .workspace, keyHint: "Cmd+W") { app in
+            Command(id: "workspace.closeTab", title: "Close Active Tab", subtitle: nil, scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.currentGlobalWorkspaceKey,
-                      let tabId = app.activeTabIdByWorkspace[ws] else { return }
+                      let tabId = app.displayedBottomPanelTab(workspaceKey: ws)?.id else { return }
                 app.closeTab(workspaceKey: ws, tabId: tabId)
             },
             Command(id: "workspace.closeOtherTabs", title: "Close Other Tabs", subtitle: nil, scope: .workspace, keyHint: "Opt+Cmd+T") { app in
                 guard let ws = app.currentGlobalWorkspaceKey,
-                      let tabId = app.activeTabIdByWorkspace[ws] else { return }
+                      let tabId = app.displayedBottomPanelTab(workspaceKey: ws)?.id else { return }
                 app.closeOtherTabs(workspaceKey: ws, keepTabId: tabId)
             },
             Command(id: "workspace.closeSavedTabs", title: "Close Saved Tabs", subtitle: nil, scope: .workspace, keyHint: "Cmd+K Cmd+U") { app in
@@ -281,12 +283,6 @@ extension AppState {
             Command(id: "workspace.closeAllTabs", title: "Close All Tabs", subtitle: nil, scope: .workspace, keyHint: "Cmd+K Cmd+W") { app in
                 guard let ws = app.currentGlobalWorkspaceKey else { return }
                 app.closeAllTabs(workspaceKey: ws)
-            },
-            Command(id: "workspace.nextTab", title: "Next Tab", subtitle: nil, scope: .workspace, keyHint: "Ctrl+Tab") { app in
-                app.nextTab()
-            },
-            Command(id: "workspace.prevTab", title: "Previous Tab", subtitle: nil, scope: .workspace, keyHint: "Ctrl+Shift+Tab") { app in
-                app.prevTab()
             },
             Command(id: "workspace.save", title: "Save File", subtitle: nil, scope: .workspace, keyHint: "Cmd+S") { app in
                  app.saveActiveEditorFile()

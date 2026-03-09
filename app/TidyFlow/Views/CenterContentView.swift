@@ -32,29 +32,24 @@ struct CenterContentView: View {
                             .environmentObject(appState.fileCache)
                             .frame(maxWidth: .infinity, minHeight: minChatPanelHeight, maxHeight: .infinity)
 
-                        // 可拖拽分割线
-                        VerticalSplitDivider(
-                            isResizable: appState.tabPanelExpanded,
-                            onDrag: { delta in
-                                handleDividerDrag(delta: delta, totalHeight: totalHeight)
-                            },
-                            onDragEnd: {
-                                finalizeDividerDrag(totalHeight: totalHeight)
-                            },
-                            onDoubleTap: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    appState.tabPanelExpanded.toggle()
-                                    if appState.tabPanelExpanded {
-                                        appState.tabPanelHeight = clampedTabPanelHeightValue(
-                                            totalHeight * 0.5,
-                                            totalHeight: totalHeight
-                                        )
-                                    } else {
+                        if appState.tabPanelExpanded {
+                            // 仅在展开态保留拖拽分割器；收起态直接由分类栏顶部分割线承接边界。
+                            VerticalSplitDivider(
+                                isResizable: true,
+                                onDrag: { delta in
+                                    handleDividerDrag(delta: delta, totalHeight: totalHeight)
+                                },
+                                onDragEnd: {
+                                    finalizeDividerDrag(totalHeight: totalHeight)
+                                },
+                                onDoubleTap: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        appState.tabPanelExpanded = false
                                         appState.tabPanelHeight = 0
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
 
                         // 下方：Tab 面板
                         if appState.tabPanelExpanded {
@@ -118,7 +113,6 @@ struct CenterContentView: View {
     private var expandedTabPanel: some View {
         VStack(spacing: 0) {
             TabStripView(collapsed: false)
-            Divider()
             ZStack {
                 if let projectName = appState.selectedProjectForConfig {
                     ProjectConfigView(projectName: projectName)

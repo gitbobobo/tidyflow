@@ -253,13 +253,29 @@
 "tab.pin" = "固定标签";
 "tab.unpin" = "取消固定标签";
 "tab.closeOthers" = "关闭其他";
-"tab.closeRight" = "关闭右侧标签页";
+"tab.closeBelow" = "关闭下方标签页";
 "tab.closeSaved" = "关闭已保存 [⌘K U]";
 "tab.closeAll" = "全部关闭 [⌘K W]";
 "tab.newTerminal" = "新建终端";
-"tab.newTerminal.tooltip" = "新建终端 (⌘T)";
+"tab.newTerminal.tooltip" = "新建终端";
 "tab.panel.expand.tooltip" = "展开底部面板";
 "tab.panel.collapse.tooltip" = "折叠底部面板";
+
+/* 底部面板类别 */
+"bottomPanel.category.terminal" = "终端";
+"bottomPanel.category.edit" = "编辑";
+"bottomPanel.category.diff" = "差异";
+"bottomPanel.category.settings" = "设置";
+
+/* 底部面板空状态 */
+"bottomPanel.empty.terminal.title" = "暂无终端";
+"bottomPanel.empty.terminal.message" = "使用右上角的加号创建一个终端实例。";
+"bottomPanel.empty.edit.title" = "暂无编辑内容";
+"bottomPanel.empty.edit.message" = "打开文件后，这里会显示当前工作区的编辑实例。";
+"bottomPanel.empty.diff.title" = "暂无差异内容";
+"bottomPanel.empty.diff.message" = "打开差异视图后，这里会显示当前工作区的差异实例。";
+"bottomPanel.empty.settings.title" = "暂无设置内容";
+"bottomPanel.empty.settings.message" = "当前还没有在底部面板中打开设置实例。";
 
 /* Tab 内容 */
 "tabContent.selectOrAdd" = "选择或添加项目开始";
