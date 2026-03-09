@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{atomic::{AtomicU64, Ordering}, OnceLock};
 
 use tracing::info;
 
@@ -34,11 +34,25 @@ static WS_OUTBOUND_HANDLE_MAX_MS: AtomicU64 = AtomicU64::new(0);
 
 const PERF_LOG_INTERVAL: u64 = 200;
 
+fn perf_logging_enabled() -> bool {
+    static PERF_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
+    *PERF_LOG_ENABLED.get_or_init(|| {
+        matches!(
+            std::env::var("TIDYFLOW_PERF_LOG")
+                .ok()
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("1") | Some("true") | Some("yes") | Some("on")
+        )
+    })
+}
+
 pub fn record_task_broadcast_lag(lagged: u64) {
     let total = WS_TASK_BROADCAST_LAG_TOTAL.fetch_add(lagged, Ordering::Relaxed) + lagged;
     WS_TASK_BROADCAST_QUEUE_DEPTH.store(lagged, Ordering::Relaxed);
 
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!(
             "perf ws_task_broadcast_lag_total={} ws_task_broadcast_queue_depth={}",
             total, lagged
@@ -50,14 +64,14 @@ pub fn record_task_broadcast_queue_depth(depth: u64) {
     WS_TASK_BROADCAST_QUEUE_DEPTH.store(depth, Ordering::Relaxed);
     let sample_count =
         WS_TASK_BROADCAST_QUEUE_DEPTH_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    if sample_count % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && sample_count % PERF_LOG_INTERVAL == 0 {
         info!("perf ws_task_broadcast_queue_depth={}", depth);
     }
 }
 
 pub fn record_task_broadcast_skipped_single_receiver() {
     let total = WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!(
             "perf ws_task_broadcast_skipped_single_receiver_total={}",
             total
@@ -67,7 +81,7 @@ pub fn record_task_broadcast_skipped_single_receiver() {
 
 pub fn record_task_broadcast_skipped_empty_target() {
     let total = WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!(
             "perf ws_task_broadcast_skipped_empty_target_total={}",
             total
@@ -77,7 +91,7 @@ pub fn record_task_broadcast_skipped_empty_target() {
 
 pub fn record_task_broadcast_filtered_target() {
     let total = WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!("perf ws_task_broadcast_filtered_target_total={}", total);
     }
 }
@@ -85,7 +99,7 @@ pub fn record_task_broadcast_filtered_target() {
 pub fn record_terminal_unacked_timeout(term_id: &str, unacked_before_decay: u64) {
     let total = TERMINAL_UNACKED_TIMEOUT_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
 
-    if total % 20 == 0 {
+    if perf_logging_enabled() && total % 20 == 0 {
         info!(
             "perf terminal_unacked_timeout_total={} term_id={} unacked_before_decay={}",
             total, term_id, unacked_before_decay
@@ -99,14 +113,14 @@ pub fn record_project_command_output_throttled(dropped: u64) {
     }
     let total =
         PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL.fetch_add(dropped, Ordering::Relaxed) + dropped;
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!("perf project_command_output_throttled_total={}", total);
     }
 }
 
 pub fn record_project_command_output_emitted() {
     let total = PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
-    if total % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!("perf project_command_output_emitted_total={}", total);
     }
 }
@@ -139,7 +153,7 @@ pub fn record_ws_outbound_loop_tick(ms: u64) {
     let count = WS_OUTBOUND_LOOP_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     update_max(&WS_OUTBOUND_LOOP_TICK_MAX_MS, ms);
 
-    if count % PERF_LOG_INTERVAL == 0 {
+    if perf_logging_enabled() && count % PERF_LOG_INTERVAL == 0 {
         let max_ms = WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed);
         let select_wait_ms = WS_OUTBOUND_SELECT_WAIT_MS.load(Ordering::Relaxed);
         let select_wait_max_ms = WS_OUTBOUND_SELECT_WAIT_MAX_MS.load(Ordering::Relaxed);
