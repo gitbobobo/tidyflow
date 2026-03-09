@@ -104,6 +104,7 @@ final class AIChatSidebarState: ObservableObject {
 /// 通过派生状态对象隔离高频 `AppState` 更新，避免无关发布导致整个侧栏重算。
 struct AIChatSidebarView: View {
     @ObservedObject var state: AIChatSidebarState
+    var width: CGFloat = 260
 
     var onSelect: (AISessionInfo) -> Void
     var onDelete: (AISessionInfo) -> Void
@@ -265,7 +266,7 @@ struct AIChatSidebarView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .frame(width: 260)
+        .frame(width: width)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
         .onAppear {
             onFilterChange(.all)

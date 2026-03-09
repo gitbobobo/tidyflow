@@ -31,9 +31,13 @@ struct AITabView: View {
     @State private var aiChatHintMessage: String?
     @State private var sessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     @StateObject private var sidebarState = AIChatSidebarState()
+    @State private var isCompactSidebarDrawerPresented = false
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
     private let sessionStatusMinInterval: TimeInterval = 1.2
+    private let persistentSidebarWidth: CGFloat = 260
+    private let compactSidebarCollapseWidth: CGFloat = 920
+    private let compactSidebarMaxWidth: CGFloat = 320
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -66,6 +70,7 @@ struct AITabView: View {
         .onDisappear {
             // 用 previousSnapshotKey（onAppear 时记录的工作空间）而非 currentSnapshotKey，
             // 因为工作空间切换和视图移除可能在同一更新周期，此时 currentSnapshotKey 已指向新空间
+            isCompactSidebarDrawerPresented = false
             if let key = previousSnapshotKey {
                 saveSnapshot(forKey: key)
             }
@@ -73,10 +78,12 @@ struct AITabView: View {
             deferredSessionListLoadWorkItem = nil
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
+            isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
+            isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
         }
@@ -238,38 +245,120 @@ struct AITabView: View {
     }
 
     private var mainPane: some View {
-        HStack(spacing: 0) {
-            // 左侧：会话列表侧边栏
-            AIChatSidebarView(
-                state: sidebarState,
-                onSelect: { session in loadSession(session) },
-                onDelete: { session in deleteSession(session) },
-                onRename: { session in
-                    appState.sessionPanelAction = .renameSession(session, session.title)
-                },
-                onFilterChange: { filter in
-                    appState.sessionPanelFilter = filter
-                },
-                onRequestSessionList: { filter in
-                    _ = appState.requestAISessionList(for: filter, limit: aiSessionListLimit)
-                },
-                onLoadNextPage: { filter in
-                    _ = appState.loadNextAISessionListPage(for: filter, limit: aiSessionListLimit)
-                }
+        GeometryReader { proxy in
+            let isCompactLayout = proxy.size.width < compactSidebarCollapseWidth
+            let drawerWidth = min(
+                max(proxy.size.width * 0.42, persistentSidebarWidth),
+                compactSidebarMaxWidth
             )
 
-            Divider()
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    if !isCompactLayout {
+                        sidebarView(
+                            width: persistentSidebarWidth,
+                            closesDrawerAfterSelection: false
+                        )
+                        Divider()
+                    }
 
-            // 右侧：聊天内容
-            chatContent
+                    chatContent(isCompactLayout: isCompactLayout)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                compactSidebarDrawer(
+                    width: drawerWidth,
+                    isCompactLayout: isCompactLayout
+                )
+            }
+            .clipped()
+            .animation(.easeInOut(duration: 0.2), value: isCompactSidebarDrawerPresented)
+            .onAppear {
+                syncCompactSidebarPresentation(for: isCompactLayout)
+            }
+            .onChange(of: isCompactLayout) { _, newValue in
+                syncCompactSidebarPresentation(for: newValue)
+            }
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("tf.mac.ai.chat-area")
     }
 
-    private var chatContent: some View {
+    private func sidebarView(width: CGFloat, closesDrawerAfterSelection: Bool) -> some View {
+        AIChatSidebarView(
+            state: sidebarState,
+            width: width,
+            onSelect: { session in
+                loadSession(session)
+                if closesDrawerAfterSelection {
+                    dismissCompactSidebarDrawer()
+                }
+            },
+            onDelete: { session in deleteSession(session) },
+            onRename: { session in
+                appState.sessionPanelAction = .renameSession(session, session.title)
+            },
+            onFilterChange: { filter in
+                appState.sessionPanelFilter = filter
+            },
+            onRequestSessionList: { filter in
+                _ = appState.requestAISessionList(for: filter, limit: aiSessionListLimit)
+            },
+            onLoadNextPage: { filter in
+                _ = appState.loadNextAISessionListPage(for: filter, limit: aiSessionListLimit)
+            }
+        )
+    }
+
+    private func compactSidebarDrawer(width: CGFloat, isCompactLayout: Bool) -> some View {
+        let isVisible = isCompactLayout && isCompactSidebarDrawerPresented
+
+        return ZStack(alignment: .leading) {
+            Color.black
+                .opacity(isVisible ? 0.18 : 0)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard isVisible else { return }
+                    dismissCompactSidebarDrawer()
+                }
+
+            sidebarView(width: width, closesDrawerAfterSelection: true)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(Color(NSColor.windowBackgroundColor))
+                .overlay(
+                    Rectangle()
+                        .frame(width: 1)
+                        .foregroundColor(separatorColor),
+                    alignment: .trailing
+                )
+                .shadow(color: Color.black.opacity(isVisible ? 0.18 : 0), radius: 18, x: 8, y: 0)
+                .offset(x: isVisible ? 0 : -width - 24)
+        }
+        .opacity(isCompactLayout ? 1 : 0)
+        .allowsHitTesting(isVisible)
+    }
+
+    private func syncCompactSidebarPresentation(for isCompactLayout: Bool) {
+        if !isCompactLayout {
+            isCompactSidebarDrawerPresented = false
+        }
+    }
+
+    private func dismissCompactSidebarDrawer() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isCompactSidebarDrawerPresented = false
+        }
+    }
+
+    private func toggleCompactSidebarDrawer() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isCompactSidebarDrawerPresented.toggle()
+        }
+    }
+
+    private func chatContent(isCompactLayout: Bool) -> some View {
         VStack(spacing: 0) {
-            toolbar
+            toolbar(isCompactLayout: isCompactLayout)
             if let aiChatHintMessage, !aiChatHintMessage.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.on.clipboard")
@@ -344,8 +433,17 @@ struct AITabView: View {
         }
     }
 
-    private var toolbar: some View {
+    private func toolbar(isCompactLayout: Bool) -> some View {
         HStack {
+            if isCompactLayout {
+                Button(action: toggleCompactSidebarDrawer) {
+                    Image(systemName: "sidebar.left")
+                }
+                .buttonStyle(.plain)
+                .help(isCompactSidebarDrawerPresented ? "隐藏会话列表" : "显示会话列表")
+                .accessibilityIdentifier("tf.mac.ai.session-drawer-toggle")
+            }
+
             Text("AI Assistant")
                 .font(.headline)
                 .foregroundColor(.secondary)
