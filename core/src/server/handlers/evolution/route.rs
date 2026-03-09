@@ -10,7 +10,12 @@ use crate::server::ws::send_message;
 use super::profile::{direction_model_label, normalize_profiles_lenient};
 use super::{maybe_manager, StartWorkspaceReq, DEFAULT_LOOP_ROUND_LIMIT};
 
-async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Result<(), String> {
+async fn send_read_via_http_required(
+    socket: &mut WebSocket,
+    action: &str,
+    project: Option<String>,
+    workspace: Option<String>,
+) -> Result<(), String> {
     send_message(
         socket,
         &ServerMessage::Error {
@@ -19,8 +24,8 @@ async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Re
                 "{} must be fetched via HTTP API (/api/v1/evolution/...)",
                 action
             ),
-            project: None,
-            workspace: None,
+            project,
+            workspace,
             session_id: None,
             cycle_id: None,
         },
@@ -77,8 +82,8 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
-        ClientMessage::EvoGetSnapshot { .. } => {
-            send_read_via_http_required(socket, "evo_get_snapshot").await?;
+        ClientMessage::EvoGetSnapshot { project, workspace } => {
+            send_read_via_http_required(socket, "evo_get_snapshot", project.clone(), workspace.clone()).await?;
             Ok(true)
         }
         ClientMessage::EvoUpdateAgentProfile {
@@ -116,7 +121,7 @@ pub(super) async fn handle_message(
                 "Inbound EvoGetAgentProfile: conn_id={}, remote={}, project={}, workspace={}",
                 ctx.conn_meta.conn_id, ctx.conn_meta.is_remote, project, workspace
             );
-            send_read_via_http_required(socket, "evo_get_agent_profile").await?;
+            send_read_via_http_required(socket, "evo_get_agent_profile", Some(project.clone()), Some(workspace.clone())).await?;
             Ok(true)
         }
         ClientMessage::EvoResolveBlockers {
@@ -130,8 +135,8 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
-        ClientMessage::EvoListCycleHistory { .. } => {
-            send_read_via_http_required(socket, "evo_list_cycle_history").await?;
+        ClientMessage::EvoListCycleHistory { project, workspace } => {
+            send_read_via_http_required(socket, "evo_list_cycle_history", Some(project.clone()), Some(workspace.clone())).await?;
             Ok(true)
         }
         ClientMessage::EvoAdjustLoopRound {

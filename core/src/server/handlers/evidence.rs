@@ -74,7 +74,12 @@ struct EvidenceChunkPayload {
     content: Vec<u8>,
 }
 
-async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Result<(), String> {
+async fn send_read_via_http_required(
+    socket: &mut WebSocket,
+    action: &str,
+    project: Option<String>,
+    workspace: Option<String>,
+) -> Result<(), String> {
     send_message(
         socket,
         &ServerMessage::Error {
@@ -83,8 +88,8 @@ async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Re
                 "{} must be fetched via HTTP API (/api/v1/evidence/...)",
                 action
             ),
-            project: None,
-            workspace: None,
+            project,
+            workspace,
             session_id: None,
             cycle_id: None,
         },
@@ -143,16 +148,16 @@ pub async fn handle_evidence_message(
     _ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
-        ClientMessage::EvidenceGetSnapshot { .. } => {
-            send_read_via_http_required(socket, "evidence_get_snapshot").await?;
+        ClientMessage::EvidenceGetSnapshot { project, workspace } => {
+            send_read_via_http_required(socket, "evidence_get_snapshot", Some(project.clone()), Some(workspace.clone())).await?;
             Ok(true)
         }
-        ClientMessage::EvidenceGetRebuildPrompt { .. } => {
-            send_read_via_http_required(socket, "evidence_get_rebuild_prompt").await?;
+        ClientMessage::EvidenceGetRebuildPrompt { project, workspace } => {
+            send_read_via_http_required(socket, "evidence_get_rebuild_prompt", Some(project.clone()), Some(workspace.clone())).await?;
             Ok(true)
         }
-        ClientMessage::EvidenceReadItem { .. } => {
-            send_read_via_http_required(socket, "evidence_read_item").await?;
+        ClientMessage::EvidenceReadItem { project, workspace, .. } => {
+            send_read_via_http_required(socket, "evidence_read_item", Some(project.clone()), Some(workspace.clone())).await?;
             Ok(true)
         }
         _ => Ok(false),

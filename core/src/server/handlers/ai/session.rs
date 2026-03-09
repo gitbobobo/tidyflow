@@ -254,15 +254,23 @@ pub(super) async fn handle_ai_read_via_http_required(
     msg: &ClientMessage,
     socket: &mut WebSocket,
 ) -> Result<bool, String> {
-    let action = match msg {
-        ClientMessage::AISessionList { .. } => Some("ai_session_list"),
-        ClientMessage::AISessionMessages { .. } => Some("ai_session_messages"),
-        ClientMessage::AISessionStatus { .. } => Some("ai_session_status"),
-        ClientMessage::AIProviderList { .. } => Some("ai_provider_list"),
-        ClientMessage::AIAgentList { .. } => Some("ai_agent_list"),
-        ClientMessage::AISlashCommands { .. } => Some("ai_slash_commands"),
-        ClientMessage::AISessionConfigOptions { .. } => Some("ai_session_config_options"),
-        _ => None,
+    // 提取 action 名称与 project/workspace（用于多工作区归属提示）
+    let (action, project, workspace) = match msg {
+        ClientMessage::AISessionList { project_name, workspace_name, .. } =>
+            (Some("ai_session_list"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AISessionMessages { project_name, workspace_name, .. } =>
+            (Some("ai_session_messages"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AISessionStatus { project_name, workspace_name, .. } =>
+            (Some("ai_session_status"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AIProviderList { project_name, workspace_name, .. } =>
+            (Some("ai_provider_list"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AIAgentList { project_name, workspace_name, .. } =>
+            (Some("ai_agent_list"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AISlashCommands { project_name, workspace_name, .. } =>
+            (Some("ai_slash_commands"), Some(project_name.clone()), Some(workspace_name.clone())),
+        ClientMessage::AISessionConfigOptions { project_name, workspace_name, .. } =>
+            (Some("ai_session_config_options"), Some(project_name.clone()), Some(workspace_name.clone())),
+        _ => (None, None, None),
     };
     let Some(action) = action else {
         return Ok(false);
@@ -276,8 +284,8 @@ pub(super) async fn handle_ai_read_via_http_required(
                 "{} must be fetched via HTTP API (/api/v1/projects/:project/workspaces/:workspace/ai/...)",
                 action
             ),
-            project: None,
-            workspace: None,
+            project,
+            workspace,
             session_id: None,
             cycle_id: None,
         },
@@ -976,6 +984,8 @@ pub(super) async fn handle_ai_session_subscribe(
     send_message(
         socket,
         &ServerMessage::AISessionSubscribeAck {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
             session_id: session_id.clone(),
             session_key: key,
         },
