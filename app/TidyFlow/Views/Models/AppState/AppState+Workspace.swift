@@ -55,6 +55,13 @@ extension AppState {
         selectedProjectName = projectName
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
+
+        // 同步更新共享状态机，保证双端状态机语义一致。
+        workspaceViewStateMachine.apply(.select(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            projectId: projectId
+        ))
         // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
         clearAISelectorBootstrapContexts()
         // 切换工作空间时清理会话列表分页状态，避免旧请求残留导致界面串页。

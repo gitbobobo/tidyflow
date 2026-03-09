@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import TidyFlowShared
 
 // MARK: - 终端会话共享语义层
 //
@@ -275,5 +276,47 @@ enum TerminalListDisplayPhase {
             pinnedIds: pinnedIds
         )
         return terminals.isEmpty ? .empty : .content(terminals: terminals)
+    }
+}
+
+// MARK: - TerminalAIStatus → 共享投影转换
+
+extension TerminalAIStatus {
+    /// 将平台层 TerminalAIStatus（含 SwiftUI Color）转换为共享投影模型，
+    /// 供 WorkspaceTerminalProjection 在 TidyFlowShared 侧存储。
+    func toSharedProjection() -> WorkspaceTerminalAIStatusProjection {
+        WorkspaceTerminalAIStatusProjection(
+            isVisible: isVisible,
+            iconName: iconName,
+            hint: hint,
+            colorToken: colorToken
+        )
+    }
+
+    /// 颜色语义标记（供共享投影层使用）
+    var colorToken: String {
+        switch self {
+        case .idle: return "secondary"
+        case .running: return "blue"
+        case .awaitingInput: return "orange"
+        case .success: return "green"
+        case .failure: return "red"
+        case .cancelled: return "secondary"
+        }
+    }
+}
+
+// MARK: - WorkspaceTerminalAIStatusProjection → SwiftUI Color（平台扩展）
+
+extension WorkspaceTerminalAIStatusProjection {
+    /// 将 colorToken 映射为 SwiftUI Color，供视图层使用。
+    var color: Color {
+        switch colorToken {
+        case "blue": return .blue
+        case "orange": return .orange
+        case "green": return .green
+        case "red": return .red
+        default: return .secondary
+        }
     }
 }

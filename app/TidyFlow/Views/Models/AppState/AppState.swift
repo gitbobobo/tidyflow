@@ -304,6 +304,11 @@ class AppState: ObservableObject {
     @Published var projects: [ProjectModel] = []
     @Published var selectedProjectId: UUID?
     @Published var addProjectSheetPresented: Bool = false
+
+    /// 跨平台工作区视图状态机（与 iOS MobileAppState 共享同一套状态迁移语义）。
+    /// 平台层的 selectedProjectId / selectedProjectName / selectedWorkspaceKey 保持向后兼容；
+    /// 新业务逻辑通过此状态机读取选中状态，不再各自拼装 project + workspace 组合。
+    let workspaceViewStateMachine = WorkspaceViewStateMachine()
     // UX-2: Project Import State
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?

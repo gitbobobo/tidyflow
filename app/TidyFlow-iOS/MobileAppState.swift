@@ -433,6 +433,11 @@ final class MobileAppState: ObservableObject {
     /// 当前选中工作区的名称（由导航传入，用于构建 WorkspaceIdentity）
     private var selectedWorkspaceName: String = ""
 
+    /// 跨平台工作区视图状态机（与 macOS AppState 共享同一套状态迁移语义）。
+    /// iOS 端在进入 WorkspaceDetailView 时通过 `selectWorkspaceContext(project:workspace:)` 驱动状态机，
+    /// 外部读取器通过 `workspaceViewStateMachine.selected` 获取当前选中状态。
+    let workspaceViewStateMachine = WorkspaceViewStateMachine()
+
     /// 当前选中的工作区身份标识（共享语义层），与 macOS 的 `selectedWorkspaceIdentity` 对齐。
     /// iOS 端在进入 WorkspaceDetailView 时通过 `selectWorkspaceContext(project:workspace:)` 设置。
     var selectedWorkspaceIdentity: WorkspaceIdentity? {
@@ -447,10 +452,15 @@ final class MobileAppState: ObservableObject {
     }
 
     /// 设置当前工作区上下文（从 WorkspaceDetailView / 终端页进入时调用）。
-    /// 集中管理选中态更新，避免在视图层各自反推。
+    /// 集中管理选中态更新，同步驱动共享状态机，避免在视图层各自反推。
     func selectWorkspaceContext(project: String, workspace: String) {
         selectedProjectName = project
         selectedWorkspaceName = workspace
+        workspaceViewStateMachine.apply(.select(
+            projectName: project,
+            workspaceName: workspace,
+            projectId: nil  // iOS 不携带 UUID
+        ))
     }
     /// 资源管理器预览请求（用于过滤过期回调）
     var pendingExplorerPreviewRequest: (project: String, workspace: String, path: String)?

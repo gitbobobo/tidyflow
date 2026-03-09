@@ -3,66 +3,12 @@ import Combine
 import Observation
 import TidyFlowShared
 
-struct WorkspaceTerminalProjection: Identifiable, Equatable {
-    let id: String
-    let termId: String
-    let title: String
-    let shortId: String
-    let iconName: String
-    let isPinned: Bool
-    let aiStatus: TerminalAIStatus
-    let hasTerminalsToRight: Bool
-}
-
-struct WorkspaceRunningTaskProjection: Identifiable, Equatable {
-    let id: String
-    let iconName: String
-    let title: String
-    let message: String
-    let canCancel: Bool
-}
-
-struct WorkspaceOverviewProjection: Equatable {
-    let gitSnapshot: GitPanelSemanticSnapshot
-    let hasActiveConflicts: Bool
-    let terminals: [WorkspaceTerminalProjection]
-    let runningTasks: [WorkspaceRunningTaskProjection]
-    let completedTaskCount: Int
-    let pendingTodoCount: Int
-    let projectCommands: [ProjectCommand]
-
-    static let empty = WorkspaceOverviewProjection(
-        gitSnapshot: GitPanelSemanticSnapshot.empty(),
-        hasActiveConflicts: false,
-        terminals: [],
-        runningTasks: [],
-        completedTaskCount: 0,
-        pendingTodoCount: 0,
-        projectCommands: []
-    )
-}
-
-enum WorkspaceOverviewProjectionSemantics {
-    static func make(
-        gitSnapshot: GitPanelSemanticSnapshot,
-        hasActiveConflicts: Bool,
-        terminals: [WorkspaceTerminalProjection],
-        runningTasks: [WorkspaceRunningTaskProjection],
-        completedTaskCount: Int,
-        pendingTodoCount: Int,
-        projectCommands: [ProjectCommand]
-    ) -> WorkspaceOverviewProjection {
-        WorkspaceOverviewProjection(
-            gitSnapshot: gitSnapshot,
-            hasActiveConflicts: hasActiveConflicts,
-            terminals: terminals,
-            runningTasks: runningTasks,
-            completedTaskCount: completedTaskCount,
-            pendingTodoCount: pendingTodoCount,
-            projectCommands: projectCommands
-        )
-    }
-}
+// MARK: - 工作区概览投影存储
+//
+// WorkspaceTerminalProjection、WorkspaceRunningTaskProjection、
+// WorkspaceOverviewProjection 以及 WorkspaceOverviewProjectionSemantics
+// 已迁移至 TidyFlowShared/Presentation/WorkspaceOverviewProjection.swift。
+// 此文件仅保留平台特定的绑定与刷新逻辑。
 
 @MainActor
 @Observable
@@ -111,7 +57,7 @@ final class WorkspaceOverviewProjectionStore {
                 shortId: String(term.termId.prefix(8)),
                 iconName: presentation?.icon ?? "terminal",
                 isPinned: presentation?.isPinned == true,
-                aiStatus: aiStatus,
+                aiStatus: aiStatus.toSharedProjection(),
                 hasTerminalsToRight: index < terminals.count - 1
             )
         }
@@ -143,6 +89,67 @@ final class WorkspaceOverviewProjectionStore {
     }
     #endif
 
+    #if os(macOS)
+    @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
+    @ObservationIgnored private weak var boundAppState: AppState?
+    @ObservationIgnored private var boundProject: String?
+    @ObservationIgnored private var boundWorkspace: String?
+
+    func bind(appState: AppState, project: String, workspace: String) {
+        guard boundAppState !== appState || boundProject != project || boundWorkspace != workspace else {
+            return
+        }
+        boundAppState = appState
+        boundProject = project
+        boundWorkspace = workspace
+        cancellables.removeAll()
+
+        let refresh = { [weak self, weak appState] in
+            guard let self, let appState else { return }
+            self.refresh(appState: appState, project: project, workspace: workspace)
+        }
+
+        appState.$workspaceTabs.sink { _ in refresh() }.store(in: &cancellables)
+        appState.$selectedProjectId.sink { _ in refresh() }.store(in: &cancellables)
+        appState.$selectedWorkspaceKey.sink { _ in refresh() }.store(in: &cancellables)
+        appState.gitCache.$gitStatusCache.sink { _ in refresh() }.store(in: &cancellables)
+        appState.gitCache.$conflictWizardCache.sink { _ in refresh() }.store(in: &cancellables)
+
+        refresh()
+    }
+
+    func refresh(appState: AppState, project: String, workspace: String) {
+        let globalKey = "\(project):\(workspace)"
+        let integrationKey = "\(project):integration"
+        let tabs = appState.workspaceTabs[globalKey] ?? []
+        let terminalTabs = tabs.filter { $0.kind == .terminal }
+        let terminalProjections = terminalTabs.enumerated().map { index, tab in
+            WorkspaceTerminalProjection(
+                id: tab.id.uuidString,
+                termId: tab.id.uuidString,
+                title: tab.title,
+                shortId: String(tab.id.uuidString.prefix(8)),
+                iconName: tab.commandIcon ?? "terminal",
+                isPinned: tab.isPinned,
+                aiStatus: .idle,
+                hasTerminalsToRight: index < terminalTabs.count - 1
+            )
+        }
+        let next = WorkspaceOverviewProjectionSemantics.make(
+            gitSnapshot: appState.gitCache.getGitSemanticSnapshot(workspaceKey: workspace),
+            hasActiveConflicts: (appState.gitCache.conflictWizardCache[globalKey]?.hasActiveConflicts == true) ||
+                (appState.gitCache.conflictWizardCache[integrationKey]?.hasActiveConflicts == true),
+            terminals: terminalProjections,
+            runningTasks: [],
+            completedTaskCount: 0,
+            pendingTodoCount: 0,
+            projectCommands: appState.projects
+                .first(where: { $0.name == project })?.commands ?? []
+        )
+        _ = updateProjection(next)
+    }
+    #endif
+
     @discardableResult
     func updateProjection(_ next: WorkspaceOverviewProjection) -> Bool {
         guard projection != next else { return false }
@@ -150,3 +157,4 @@ final class WorkspaceOverviewProjectionStore {
         return true
     }
 }
+

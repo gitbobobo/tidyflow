@@ -17,6 +17,12 @@
 		SHR02008 /* CoreTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01008 /* CoreTransport.swift */; };
 		SHR02009 /* CoreWSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01009 /* CoreWSClient.swift */; };
 		SHR0200A /* SystemHealthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100C /* SystemHealthModels.swift */; };
+		SHR0200B /* WorkspaceViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100D /* WorkspaceViewState.swift */; };
+		SHR0200C /* WorkspaceViewStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100E /* WorkspaceViewStateMachine.swift */; };
+		SHR0200D /* SidebarProjectionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100F /* SidebarProjectionModels.swift */; };
+		SHR0200E /* WorkspaceOverviewProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01010 /* WorkspaceOverviewProjection.swift */; };
+		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
+		WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WPBT0011 /* WorkspaceProjectionBridgeTests.swift */; };
 		SHR03001 /* TidyFlowShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; };
 		SHR03002 /* SharedProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100A /* SharedProtocolModelsTests.swift */; };
 		SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100B /* SharedNetworkAbstractionTests.swift */; };
@@ -296,6 +302,12 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR0100A /* SharedProtocolModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedProtocolModelsTests.swift; sourceTree = "<group>"; };
 		SHR0100B /* SharedNetworkAbstractionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedNetworkAbstractionTests.swift; sourceTree = "<group>"; };
 		SHR0100C /* SystemHealthModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemHealthModels.swift; sourceTree = "<group>"; };
+		SHR0100D /* WorkspaceViewState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceViewState.swift; sourceTree = "<group>"; };
+		SHR0100E /* WorkspaceViewStateMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceViewStateMachine.swift; sourceTree = "<group>"; };
+		SHR0100F /* SidebarProjectionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SidebarProjectionModels.swift; sourceTree = "<group>"; };
+		SHR01010 /* WorkspaceOverviewProjection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjection.swift; sourceTree = "<group>"; };
+		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
+		WPBT0011 /* WorkspaceProjectionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceProjectionBridgeTests.swift; sourceTree = "<group>"; };
 
 		0C7853A8D54BE247818D1333 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalProtocolModels.swift; sourceTree = "<group>"; };
@@ -545,10 +557,22 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SHR00008 /* TidyFlowShared */ = {
 			isa = PBXGroup;
 			children = (
+				SHR0000B /* Presentation */,
 				SHR00009 /* Protocol */,
 				SHR0000A /* Networking */,
 			);
 			path = TidyFlowShared;
+			sourceTree = "<group>";
+		};
+		SHR0000B /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				SHR0100D /* WorkspaceViewState.swift */,
+				SHR0100E /* WorkspaceViewStateMachine.swift */,
+				SHR0100F /* SidebarProjectionModels.swift */,
+				SHR01010 /* WorkspaceOverviewProjection.swift */,
+			);
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		SHR00009 /* Protocol */ = {
@@ -772,6 +796,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				SHR0100A /* SharedProtocolModelsTests.swift */,
 				SHR0100B /* SharedNetworkAbstractionTests.swift */,
+				WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */,
+				WPBT0011 /* WorkspaceProjectionBridgeTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -1304,6 +1330,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				SHR03002 /* SharedProtocolModelsTests.swift in Sources */,
 				SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */,
+				WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */,
+				WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1330,6 +1358,10 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02008 /* CoreTransport.swift in Sources */,
 				SHR02009 /* CoreWSClient.swift in Sources */,
 				SHR0200A /* SystemHealthModels.swift in Sources */,
+				SHR0200B /* WorkspaceViewState.swift in Sources */,
+				SHR0200C /* WorkspaceViewStateMachine.swift in Sources */,
+				SHR0200D /* SidebarProjectionModels.swift in Sources */,
+				SHR0200E /* WorkspaceOverviewProjection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

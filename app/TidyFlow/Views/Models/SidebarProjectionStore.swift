@@ -1,73 +1,15 @@
 import Foundation
 import Combine
+import TidyFlowShared
 
-struct SidebarActivityIndicatorProjection: Identifiable, Equatable {
-    let id: String
-    let iconName: String
-}
+// MARK: - 侧边栏投影存储
+//
+// SidebarActivityIndicatorProjection、SidebarWorkspaceProjection、
+// SidebarProjectProjection 以及 SidebarProjectionSemantics 的共享语义方法
+// 已迁移至 TidyFlowShared/Presentation/SidebarProjectionModels.swift。
+// 此文件仅保留平台特定的构建方法与投影存储类。
 
-struct SidebarWorkspaceProjection: Identifiable, Equatable {
-    let id: String
-    let projectName: String
-    let projectPath: String?
-    let workspaceName: String
-    let workspacePath: String?
-    let branch: String?
-    let statusText: String?
-    let isDefault: Bool
-    let isSelected: Bool
-    let globalWorkspaceKey: String
-    let shortcutDisplayText: String?
-    let terminalCount: Int
-    let hasOpenTabs: Bool
-    let isDeleting: Bool
-    let hasUnseenCompletion: Bool
-    let activityIndicators: [SidebarActivityIndicatorProjection]
-}
-
-struct SidebarProjectProjection: Identifiable, Equatable {
-    let id: String
-    let projectID: UUID?
-    let projectName: String
-    let projectPath: String?
-    let primaryWorkspaceName: String?
-    let defaultWorkspaceName: String?
-    let defaultWorkspacePath: String?
-    let defaultGlobalWorkspaceKey: String?
-    let isSelectedDefaultWorkspace: Bool
-    let shortcutDisplayText: String?
-    let terminalCount: Int
-    let hasOpenTabs: Bool
-    let isDeleting: Bool
-    let hasUnseenCompletion: Bool
-    let activityIndicators: [SidebarActivityIndicatorProjection]
-    let visibleWorkspaces: [SidebarWorkspaceProjection]
-    let isLoadingWorkspaces: Bool
-}
-
-enum SidebarProjectionSemantics {
-    static func activityIndicators(
-        chatIconName: String?,
-        hasActiveEvolutionLoop: Bool,
-        taskIconName: String?
-    ) -> [SidebarActivityIndicatorProjection] {
-        var items: [SidebarActivityIndicatorProjection] = []
-        if let chatIconName {
-            items.append(SidebarActivityIndicatorProjection(id: "chat", iconName: chatIconName))
-        }
-        if hasActiveEvolutionLoop {
-            items.append(SidebarActivityIndicatorProjection(id: "evolution", iconName: "brain.head.profile"))
-        }
-        if let taskIconName {
-            items.append(SidebarActivityIndicatorProjection(id: "task", iconName: taskIconName))
-        }
-        return items
-    }
-
-    static func shortcutDisplayText(_ shortcutKey: String?) -> String? {
-        guard let shortcutKey else { return nil }
-        return "⌘\(shortcutKey)"
-    }
+extension SidebarProjectionSemantics {
 
 #if os(macOS)
     static func buildMacProjects(
