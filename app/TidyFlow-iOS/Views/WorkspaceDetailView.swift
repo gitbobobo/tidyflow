@@ -1337,6 +1337,7 @@ struct MobileEvolutionView: View {
     let workspace: String
 
     @State private var projectionStore = EvolutionPipelineProjectionStore()
+    @State private var optionsStore = EvolutionProfileOptionsProjectionStore()
     @State private var loopRoundLimitText: String = "1"
     @State private var profiles: [EvolutionProfileDraft] = []
     @State private var isApplyingRemoteProfiles: Bool = false
@@ -1778,6 +1779,7 @@ struct MobileEvolutionView: View {
         }
         .onAppear {
             projectionStore.bind(appState: appState, project: project, workspace: workspace)
+            optionsStore.bindEvolution(appState: appState, project: project, workspace: workspace)
             appState.openEvolution(project: project, workspace: workspace)
             loadProfiles()
             syncStartOptionsFromItem()
@@ -1910,16 +1912,7 @@ struct MobileEvolutionView: View {
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
-        // 与 macOS 端保持一致：mode 选项来自 agent.name。
-        var seen: Set<String> = []
-        var values: [String] = []
-        for agent in appState.evolutionAgents(project: project, workspace: workspace, aiTool: tool) {
-            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            guard seen.insert(name).inserted else { continue }
-            values.append(name)
-        }
-        return values
+        optionsStore.options(for: tool).modeOptions
     }
 
     private func runtimeAgent(for stage: String) -> EvolutionAgentInfoV2? {
@@ -2037,62 +2030,38 @@ struct MobileEvolutionView: View {
     private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
         guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
         var profile = profiles[index]
-        let target = agentName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return }
+        guard let selection = optionsStore.defaultModelSelection(agentName: agentName, for: profile.aiTool) else {
+            return
+        }
 
-        let agent = appState.evolutionAgents(project: project, workspace: workspace, aiTool: profile.aiTool)
-            .first { info in
-                info.name == target || info.name.caseInsensitiveCompare(target) == .orderedSame
-            }
-        guard let agent,
-              let providerID = agent.defaultProviderID,
-              let modelID = agent.defaultModelID,
-              !providerID.isEmpty,
-              !modelID.isEmpty else { return }
-
-        profile.providerID = providerID
-        profile.modelID = modelID
+        profile.providerID = selection.providerID
+        profile.modelID = selection.modelID
         profiles[index] = profile
     }
 
-    private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
-        appState.evolutionProviders(project: project, workspace: workspace, aiTool: tool)
-            .filter { !$0.models.isEmpty }
+    private func modelProviders(for tool: AIChatTool) -> [EvolutionProviderOptionProjection] {
+        optionsStore.options(for: tool).providers
     }
 
     private func selectedModelDisplayName(for profile: EvolutionProfileDraft) -> String {
-        guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else {
-            return "settings.evolution.defaultModel".localized
-        }
-        for provider in modelProviders(for: profile.aiTool) {
-            if provider.id == profile.providerID,
-               let model = provider.models.first(where: { $0.id == profile.modelID }) {
-                return model.name
-            }
-        }
-        return profile.modelID
+        optionsStore.selectedModelDisplayName(
+            providerID: profile.providerID,
+            modelID: profile.modelID,
+            for: profile.aiTool,
+            defaultLabel: "settings.evolution.defaultModel".localized
+        )
     }
 
     private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        appState.thoughtLevelOptionID(for: tool)
+        optionsStore.options(for: tool).thoughtLevelOptionID
     }
 
     private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
-        appState.thoughtLevelOptions(for: tool)
+        optionsStore.options(for: tool).thoughtLevelOptions
     }
 
     private func selectedThoughtLevel(for profile: EvolutionProfileDraft) -> String? {
-        guard let optionID = thoughtLevelOptionID(for: profile.aiTool) else { return nil }
-        let raw = profile.configOptions[optionID]
-        if let text = raw as? String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        if let number = raw as? NSNumber {
-            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        return nil
+        optionsStore.selectedThoughtLevel(configOptions: profile.configOptions, for: profile.aiTool)
     }
 
     private func sanitizeProfileSelection(profileID: String) {

@@ -185,6 +185,7 @@ private struct MobileEvolutionDefaultDraft: Identifiable {
 struct MobileSettingsView: View {
     @EnvironmentObject var appState: MobileAppState
     @State private var drafts: [MobileEvolutionDefaultDraft] = []
+    @State private var optionsStore = EvolutionProfileOptionsProjectionStore()
 
     var body: some View {
         Form {
@@ -280,7 +281,7 @@ struct MobileSettingsView: View {
                                     persistDrafts()
                                 }
                             }
-                            let options = appState.thoughtLevelOptions(for: draft.aiTool)
+                            let options = optionsStore.options(for: draft.aiTool).thoughtLevelOptions
                             if options.isEmpty {
                                 Text("暂无选项")
                             } else {
@@ -306,6 +307,7 @@ struct MobileSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             drafts = buildDrafts()
+            optionsStore.bindSettings(appState: appState)
             _ = appState.requestAISelectorResourcesForSettings()
         }
         .onReceive(appState.$evolutionDefaultProfiles) { _ in
@@ -321,63 +323,32 @@ struct MobileSettingsView: View {
     }
 
     private func stageDisplayName(_ stage: String) -> String {
-        switch stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "direction": return "Direction"
-        case "plan": return "Plan"
-        case "implement_general": return "Implement General"
-        case "implement_visual": return "Implement Visual"
-        case "implement_advanced": return "Implement Advanced"
-        case "verify": return "Verify"
-        case "judge": return "Judge"
-        case "auto_commit": return "Auto Commit"
-        case "implement": return "Implement General"
-        default: return stage
-        }
+        EvolutionProfileOptionsProjectionSemantics.stageDisplayName(stage)
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
-        var seen: Set<String> = []
-        var values: [String] = []
-        for agent in appState.settingsAgents(aiTool: tool) {
-            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            guard seen.insert(name).inserted else { continue }
-            values.append(name)
-        }
-        return values
+        optionsStore.options(for: tool).modeOptions
     }
 
-    private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
-        appState.settingsProviders(aiTool: tool).filter { !$0.models.isEmpty }
+    private func modelProviders(for tool: AIChatTool) -> [EvolutionProviderOptionProjection] {
+        optionsStore.options(for: tool).providers
     }
 
     private func selectedModelDisplayName(for draft: MobileEvolutionDefaultDraft) -> String {
-        guard !draft.providerID.isEmpty, !draft.modelID.isEmpty else { return "默认" }
-        for provider in modelProviders(for: draft.aiTool) {
-            if provider.id == draft.providerID,
-               let model = provider.models.first(where: { $0.id == draft.modelID }) {
-                return model.name
-            }
-        }
-        return draft.modelID
+        optionsStore.selectedModelDisplayName(
+            providerID: draft.providerID,
+            modelID: draft.modelID,
+            for: draft.aiTool,
+            defaultLabel: "默认"
+        )
     }
 
     private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        appState.thoughtLevelOptionID(for: tool)
+        optionsStore.options(for: tool).thoughtLevelOptionID
     }
 
     private func selectedThoughtLevel(for draft: MobileEvolutionDefaultDraft) -> String? {
-        guard let optionID = thoughtLevelOptionID(for: draft.aiTool) else { return nil }
-        let raw = draft.configOptions[optionID]
-        if let text = raw as? String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        if let number = raw as? NSNumber {
-            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        return nil
+        optionsStore.selectedThoughtLevel(configOptions: draft.configOptions, for: draft.aiTool)
     }
 
     private func buildDrafts() -> [MobileEvolutionDefaultDraft] {

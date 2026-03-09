@@ -6,6 +6,7 @@ import SwiftUI
 struct EvolutionDefaultConfigSection: View {
     @EnvironmentObject var appState: AppState
     @State private var editableProfiles: [EvolutionEditableProfile] = []
+    @State private var optionsStore = EvolutionProfileOptionsProjectionStore()
 
     var body: some View {
         Form {
@@ -23,6 +24,7 @@ struct EvolutionDefaultConfigSection: View {
         .settingsPageTopInset()
         .onAppear {
             editableProfiles = appState.evolutionDefaultProfiles
+            optionsStore.bindSettings(appState: appState)
         }
         .onChange(of: appState.evolutionDefaultProfiles) {
             editableProfiles = appState.evolutionDefaultProfiles
@@ -163,67 +165,36 @@ struct EvolutionDefaultConfigSection: View {
     // MARK: - 辅助方法
 
     private func stageDisplayName(_ stage: String) -> String {
-        switch stage.lowercased() {
-        case "direction": return "Direction"
-        case "plan":      return "Plan"
-        case "implement_general": return "Implement General"
-        case "implement_visual": return "Implement Visual"
-        case "implement_advanced": return "Implement Advanced"
-        case "verify":    return "Verify"
-        case "auto_commit": return "Auto Commit"
-        default:          return stage
-        }
+        EvolutionProfileOptionsProjectionSemantics.stageDisplayName(stage)
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
-        var seen: Set<String> = []
-        var values: [String] = []
-        for agent in appState.aiAgents(for: tool) {
-            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            guard seen.insert(name).inserted else { continue }
-            values.append(name)
-        }
-        return values
+        optionsStore.options(for: tool).modeOptions
     }
 
-    private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
-        appState.aiProviders(for: tool).filter { !$0.models.isEmpty }
+    private func modelProviders(for tool: AIChatTool) -> [EvolutionProviderOptionProjection] {
+        optionsStore.options(for: tool).providers
     }
 
     private func selectedModelDisplayName(for profile: EvolutionEditableProfile) -> String {
-        guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else {
-            return "settings.evolution.defaultModel".localized
-        }
-        for provider in modelProviders(for: profile.aiTool) {
-            if provider.id == profile.providerID,
-               let model = provider.models.first(where: { $0.id == profile.modelID }) {
-                return model.name
-            }
-        }
-        return profile.modelID
+        optionsStore.selectedModelDisplayName(
+            providerID: profile.providerID,
+            modelID: profile.modelID,
+            for: profile.aiTool,
+            defaultLabel: "settings.evolution.defaultModel".localized
+        )
     }
 
     private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        appState.thoughtLevelOptionID(for: tool)
+        optionsStore.options(for: tool).thoughtLevelOptionID
     }
 
     private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
-        appState.thoughtLevelOptions(for: tool)
+        optionsStore.options(for: tool).thoughtLevelOptions
     }
 
     private func selectedThoughtLevel(for profile: EvolutionEditableProfile) -> String? {
-        guard let optionID = thoughtLevelOptionID(for: profile.aiTool) else { return nil }
-        let raw = profile.configOptions[optionID]
-        if let text = raw as? String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        if let number = raw as? NSNumber {
-            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        return nil
+        optionsStore.selectedThoughtLevel(configOptions: profile.configOptions, for: profile.aiTool)
     }
 
     private func persist() {

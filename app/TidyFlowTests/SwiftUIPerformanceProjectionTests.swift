@@ -140,6 +140,171 @@ final class EvolutionPipelineProjectionStoreTests: XCTestCase {
     }
 }
 
+final class EvolutionProfileOptionsProjectionStoreTests: XCTestCase {
+    func testEvolutionProfileOptionsProjectionDeduplicatesModesAndEmptyProviders() {
+        let projection = EvolutionProfileOptionsProjectionSemantics.make(
+            contextKey: "settings",
+            agentsByTool: { tool in
+                guard tool == .codex else { return [] }
+                return [
+                    AIAgentInfo(
+                        name: " planner ",
+                        description: nil,
+                        mode: nil,
+                        color: nil,
+                        defaultProviderID: "p-1",
+                        defaultModelID: "m-1"
+                    ),
+                    AIAgentInfo(
+                        name: "planner",
+                        description: nil,
+                        mode: nil,
+                        color: nil,
+                        defaultProviderID: "p-2",
+                        defaultModelID: "m-2"
+                    ),
+                    AIAgentInfo(
+                        name: " ",
+                        description: nil,
+                        mode: nil,
+                        color: nil,
+                        defaultProviderID: nil,
+                        defaultModelID: nil
+                    )
+                ]
+            },
+            providersByTool: { tool in
+                guard tool == .codex else { return [] }
+                return [
+                    AIProviderInfo(
+                        id: "p-1",
+                        name: "OpenAI",
+                        models: [
+                            AIModelInfo(
+                                id: "m-1",
+                                name: "GPT-5",
+                                providerID: "p-1",
+                                supportsImageInput: true
+                            )
+                        ]
+                    ),
+                    AIProviderInfo(id: "empty", name: "Empty", models: [])
+                ]
+            },
+            thoughtLevelOptionIDByTool: { $0 == .codex ? "thought_level" : nil },
+            thoughtLevelOptionsByTool: { $0 == .codex ? ["low", "medium", "high"] : [] }
+        )
+
+        let codex = projection.options(for: .codex)
+        XCTAssertEqual(codex.modeOptions, ["planner"])
+        XCTAssertEqual(codex.providers.map(\.id), ["p-1"])
+        XCTAssertEqual(codex.providers.first?.models.map(\.modelID), ["m-1"])
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.defaultModelSelection(
+                agentName: "Planner",
+                options: codex
+            ),
+            EvolutionModelChoiceProjection(providerID: "p-1", modelID: "m-1")
+        )
+    }
+
+    func testEvolutionProfileOptionsSelectionLabelsUseProjectionSemantics() {
+        let options = EvolutionToolOptionsProjection(
+            tool: .codex,
+            agents: [],
+            modeOptions: ["planner"],
+            providers: [
+                EvolutionProviderOptionProjection(
+                    id: "p-1",
+                    name: "OpenAI",
+                    models: [
+                        EvolutionModelOptionProjection(
+                            AIModelInfo(
+                                id: "m-1",
+                                name: "GPT-5",
+                                providerID: "p-1",
+                                supportsImageInput: true
+                            )
+                        )
+                    ]
+                )
+            ],
+            thoughtLevelOptionID: "thought_level",
+            thoughtLevelOptions: ["low", "medium", "high"]
+        )
+
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.selectedModelDisplayName(
+                providerID: "p-1",
+                modelID: "m-1",
+                options: options,
+                defaultLabel: "默认"
+            ),
+            "GPT-5"
+        )
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.selectedThoughtLevel(
+                configOptions: ["thought_level": NSNumber(value: 2)],
+                options: options
+            ),
+            "2"
+        )
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.stageDisplayName("implement"),
+            "Implement General"
+        )
+    }
+}
+
+@MainActor
+final class GitWorkspaceProjectionStoreTests: XCTestCase {
+    func testGitWorkspaceProjectionBuildsSharedListState() {
+        let snapshot = GitPanelSemanticSnapshot(
+            stagedItems: [
+                GitStatusItem(id: "a.swift", path: "a.swift", status: "M", staged: true, renameFrom: nil, additions: 3, deletions: 1)
+            ],
+            trackedUnstagedItems: [
+                GitStatusItem(id: "b.swift", path: "b.swift", status: "M", staged: false, renameFrom: nil, additions: 1, deletions: 0)
+            ],
+            untrackedItems: [
+                GitStatusItem(id: "c.swift", path: "c.swift", status: "??", staged: false, renameFrom: nil, additions: nil, deletions: nil)
+            ],
+            isGitRepo: true,
+            isLoading: false,
+            currentBranch: "feature/refactor",
+            defaultBranch: "main",
+            aheadBy: 2,
+            behindBy: 1
+        )
+
+        let projection = GitWorkspaceProjectionSemantics.make(
+            workspaceKey: "proj:ws",
+            snapshot: snapshot,
+            isStageAllInFlight: true
+        )
+
+        XCTAssertEqual(projection.currentBranchDisplay, "feature/refactor")
+        XCTAssertEqual(projection.stagedPaths, ["a.swift"])
+        XCTAssertEqual(projection.unstagedCount, 2)
+        XCTAssertTrue(projection.canDiscardAll)
+        XCTAssertFalse(projection.canStageAll)
+        XCTAssertEqual(projection.branchDivergenceText, "main vs default | +2 | -1")
+    }
+
+    func testGitWorkspaceProjectionStoreSkipsDuplicatePublication() {
+        let store = GitWorkspaceProjectionStore()
+        let sample = GitWorkspaceProjectionSemantics.make(
+            workspaceKey: "proj:ws",
+            snapshot: GitPanelSemanticSnapshot.empty(),
+            isStageAllInFlight: false
+        )
+
+        XCTAssertTrue(store.updateProjection(sample))
+        XCTAssertFalse(store.updateProjection(sample))
+        XCTAssertEqual(store.projection.workspaceKey, "proj:ws")
+    }
+}
+
 final class SwiftUIRenderDiagnosticsTests: XCTestCase {
     override func tearDown() {
         SwiftUIRenderDiagnostics.reset()

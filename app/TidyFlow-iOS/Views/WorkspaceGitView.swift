@@ -6,6 +6,7 @@ struct WorkspaceGitView: View {
     let project: String
     let workspace: String
 
+    @State private var projectionStore = GitWorkspaceProjectionStore()
     @State private var commitMessage: String = ""
     @State private var showBranchList: Bool = false
     @State private var showDiscardAllConfirm: Bool = false
@@ -19,6 +20,18 @@ struct WorkspaceGitView: View {
 
     private var snapshot: GitPanelSemanticSnapshot {
         gitState.semanticSnapshot
+    }
+
+    private var projection: GitWorkspaceProjection {
+        let current = projectionStore.projection
+        if current.workspaceReady {
+            return current
+        }
+        return GitWorkspaceProjectionSemantics.make(
+            workspaceKey: appState.globalWorkspaceKey(project: project, workspace: workspace),
+            snapshot: snapshot,
+            isStageAllInFlight: false
+        )
     }
 
     /// 检测当前工作区或集成工作树是否有未解决冲突
@@ -51,21 +64,21 @@ struct WorkspaceGitView: View {
                 }
             } else {
                 // MARK: - 暂存区
-                if snapshot.hasStagedChanges {
+                if projection.hasStagedChanges {
                     stagedSection
                 }
 
                 // MARK: - 工作区更改（已跟踪）
-                if snapshot.hasTrackedChanges {
+                if projection.hasTrackedChanges {
                     trackedUnstagedSection
                 }
 
                 // MARK: - 未跟踪文件
-                if snapshot.hasUntrackedChanges {
+                if projection.hasUntrackedChanges {
                     untrackedSection
                 }
 
-                if snapshot.isEmpty && activeConflictContext == nil {
+                if projection.isEmpty && activeConflictContext == nil {
                     Section {
                         Label("工作区干净，无需提交", systemImage: "checkmark.circle")
                             .foregroundColor(.secondary)
@@ -73,7 +86,7 @@ struct WorkspaceGitView: View {
                 }
 
                 // MARK: - 提交输入
-                if snapshot.hasStagedChanges {
+                if projection.hasStagedChanges {
                     commitSection
                 }
             }
@@ -126,6 +139,7 @@ struct WorkspaceGitView: View {
             }
         }
         .onAppear {
+            projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
         }
         .refreshable {
@@ -184,9 +198,9 @@ struct WorkspaceGitView: View {
                     Image(systemName: "arrow.triangle.branch")
                         .foregroundColor(.accentColor)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(snapshot.currentBranch ?? "未知分支")
+                        Text(projection.currentBranchDisplay)
                             .foregroundColor(.primary)
-                        Text(snapshot.branchDivergenceText)
+                        Text(projection.branchDivergenceText)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -204,7 +218,7 @@ struct WorkspaceGitView: View {
 
     private var stagedSection: some View {
         Section {
-            ForEach(snapshot.stagedItems) { item in
+            ForEach(projection.stagedItems) { item in
                 GitFileRow(item: item, isStaged: true)
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
@@ -217,7 +231,7 @@ struct WorkspaceGitView: View {
             }
         } header: {
             HStack {
-                Text("已暂存更改 (\(snapshot.stagedItems.count))")
+                Text("已暂存更改 (\(projection.stagedCount))")
                 Spacer()
                 Button {
                     appState.gitUnstage(project: project, workspace: workspace, path: nil, scope: "all")
@@ -235,7 +249,7 @@ struct WorkspaceGitView: View {
 
     private var trackedUnstagedSection: some View {
         Section {
-            ForEach(snapshot.trackedUnstagedItems) { item in
+            ForEach(projection.trackedUnstagedItems) { item in
                 GitFileRow(item: item, isStaged: false)
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
@@ -256,7 +270,7 @@ struct WorkspaceGitView: View {
             }
         } header: {
             HStack {
-                Text("未暂存更改 (\(snapshot.trackedUnstagedItems.count))")
+                Text("未暂存更改 (\(projection.trackedUnstagedCount))")
                 Spacer()
                 Button {
                     appState.gitStage(project: project, workspace: workspace, path: nil, scope: "all")
@@ -283,7 +297,7 @@ struct WorkspaceGitView: View {
 
     private var untrackedSection: some View {
         Section {
-            ForEach(snapshot.untrackedItems) { item in
+            ForEach(projection.untrackedItems) { item in
                 GitFileRow(item: item, isStaged: false)
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button {
@@ -303,7 +317,7 @@ struct WorkspaceGitView: View {
                     }
             }
         } header: {
-            Text("未跟踪文件 (\(snapshot.untrackedItems.count))")
+            Text("未跟踪文件 (\(projection.untrackedCount))")
         }
     }
 
@@ -326,7 +340,7 @@ struct WorkspaceGitView: View {
                     } else {
                         Image(systemName: "checkmark.circle")
                     }
-                    Text("提交到 \(snapshot.currentBranch ?? "当前分支")")
+                    Text("提交到 \(projection.snapshot.currentBranch ?? "当前分支")")
                 }
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || gitState.isCommitting)

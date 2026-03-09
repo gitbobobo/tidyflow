@@ -14,6 +14,7 @@ import AppKit
 struct NativeGitPanelView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    @State private var projectionStore = GitWorkspaceProjectionStore()
     @State private var showDiscardAllConfirm: Bool = false
     @State private var isStagedExpanded: Bool = true
     @State private var isChangesExpanded: Bool = true
@@ -36,11 +37,13 @@ struct NativeGitPanelView: View {
         }
     }
 
+    private var projection: GitWorkspaceProjection { projectionStore.projection }
+
     private var normalPanelView: some View {
         VStack(spacing: 0) {
             // ── 顶部固定区域 ──
             // 1. 顶部工具栏（源代码管理）
-            GitPanelHeader()
+            GitPanelHeader(projection: projection)
                 .environmentObject(appState)
 
             // 2. 提交消息输入框 + 提交按钮
@@ -91,6 +94,7 @@ struct NativeGitPanelView: View {
             if hasStagedChangesInWorkspace {
                 Divider()
                 GitStagedChangesSection(
+                    projection: projection,
                     isExpanded: $isStagedExpanded,
                     onRequestAIReview: requestAIReview
                 )
@@ -100,7 +104,11 @@ struct NativeGitPanelView: View {
 
             // 4. 更改（未暂存）
             Divider()
-            GitChangesSection(isExpanded: $isChangesExpanded, showDiscardAllConfirm: $showDiscardAllConfirm)
+            GitChangesSection(
+                projection: projection,
+                isExpanded: $isChangesExpanded,
+                showDiscardAllConfirm: $showDiscardAllConfirm
+            )
                 .environmentObject(appState)
                 .modifier(EqualExpandModifier(isExpanded: isChangesExpanded))
 
@@ -114,9 +122,13 @@ struct NativeGitPanelView: View {
             Spacer(minLength: 0)
         }
         .onAppear {
+            projectionStore.bind(appState: appState, gitCache: gitCache)
             loadDataIfNeeded()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
+            loadDataIfNeeded()
+        }
+        .onChange(of: appState.selectedProjectName) { _, _ in
             loadDataIfNeeded()
         }
         .onChange(of: appState.latestAICodeReviewResult) { _, result in
@@ -172,7 +184,7 @@ struct NativeGitPanelView: View {
 
     private func requestAIReview() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        let stagedPaths = gitCache.getGitStatusCache(workspaceKey: ws)?.stagedItems.map { $0.path } ?? []
+        let stagedPaths = projection.stagedPaths
         guard !stagedPaths.isEmpty else { return }
         isRequestingAIReview = true
         aiReviewSessionId = nil
@@ -195,20 +207,17 @@ struct NativeGitPanelView: View {
 
     /// 当前工作区是否存在已跟踪文件的更改
     private var hasTrackedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasTrackedChanges
+        projection.hasTrackedChanges
     }
 
     /// 当前工作区是否存在未跟踪文件
     private var hasUntrackedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasUntrackedChanges
+        projection.hasUntrackedChanges
     }
 
     /// 当前工作区是否存在暂存的更改（统一从共享语义快照读取）
     private var hasStagedChangesInWorkspace: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasStagedChanges
+        projection.hasStagedChanges
     }
 
     /// 检测当前项目/工作区是否处于冲突状态；返回 (workspaceKey, context) 或 nil
@@ -254,6 +263,7 @@ private struct EqualExpandModifier: ViewModifier {
 struct GitPanelHeader: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    let projection: GitWorkspaceProjection
 
     var body: some View {
         VStack(spacing: 0) {
@@ -280,8 +290,7 @@ struct GitPanelHeader: View {
     }
 
     private var isLoading: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitStatusCache(workspaceKey: ws)?.isLoading == true
+        projection.isLoading
     }
 
     private func refreshAll() {
@@ -290,10 +299,7 @@ struct GitPanelHeader: View {
     }
 
     private var branchDivergenceText: String {
-        guard let ws = appState.selectedWorkspaceKey else {
-            return "git.branchDivergence.unavailable".localized
-        }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).branchDivergenceText
+        projection.branchDivergenceText
     }
 }
 

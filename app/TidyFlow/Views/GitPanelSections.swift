@@ -5,18 +5,12 @@ import SwiftUI
 struct GitStagedChangesSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    let projection: GitWorkspaceProjection
     @Binding var isExpanded: Bool
     var onRequestAIReview: (() -> Void)? = nil
 
-    /// 直接使用缓存中预计算的 stagedItems，避免每次 body 重绘都 filter
-    private var cachedStagedItems: [GitStatusItem] {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return [] }
-        return cache.stagedItems
-    }
-
     var body: some View {
-        let staged = cachedStagedItems
+        let staged = projection.stagedItems
         VStack(spacing: 0) {
             // 小标题（始终显示）
             SectionHeader(
@@ -72,6 +66,7 @@ struct GitStagedChangesSection: View {
 struct GitChangesSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    let projection: GitWorkspaceProjection
     @Binding var isExpanded: Bool
     @Binding var showDiscardAllConfirm: Bool
 
@@ -80,7 +75,7 @@ struct GitChangesSection: View {
             // 小标题（始终显示）
             SectionHeader(
                 title: "git.changes".localized,
-                count: unstagedCount,
+                count: projection.unstagedCount,
                 isExpanded: $isExpanded
             ) {
                 HStack(spacing: 4) {
@@ -91,7 +86,7 @@ struct GitChangesSection: View {
                     }
                     .buttonStyle(.plain)
                     .help("git.stageAll".localized)
-                    .disabled(!hasUnstagedChanges || isStageAllInFlight)
+                    .disabled(!projection.canStageAll)
 
                     Button(action: { showDiscardAllConfirm = true }) {
                         Image(systemName: "arrow.uturn.backward")
@@ -100,7 +95,7 @@ struct GitChangesSection: View {
                     }
                     .buttonStyle(.plain)
                     .help("git.discardAll".localized)
-                    .disabled(!hasTrackedChanges && !hasUntrackedChanges)
+                    .disabled(!projection.canDiscardAll)
                 }
             }
 
@@ -108,58 +103,22 @@ struct GitChangesSection: View {
             if isExpanded {
                 ScrollView {
                     VStack(spacing: 0) {
-                        if let ws = appState.selectedWorkspaceKey {
-                            if let cache = gitCache.getGitStatusCache(workspaceKey: ws) {
-                                if cache.isLoading && cache.items.isEmpty {
-                                    LoadingRow()
-                                } else if !cache.isGitRepo {
-                                    EmptyRow(text: "git.notGitRepo".localized)
-                                } else {
-                                    let unstaged = cache.unstagedItems
-                                    if unstaged.isEmpty {
-                                        EmptyRow(text: "git.noChanges".localized)
-                                    } else {
-                                        ForEach(unstaged) { item in
-                                            GitStatusRow(item: item, isStaged: false)
-                                                .environmentObject(appState)
-                                        }
-                                    }
-                                }
-                            } else {
-                                LoadingRow()
+                        if projection.isLoading && projection.unstagedItems.isEmpty {
+                            LoadingRow()
+                        } else if !projection.isGitRepo {
+                            EmptyRow(text: "git.notGitRepo".localized)
+                        } else if projection.unstagedItems.isEmpty {
+                            EmptyRow(text: "git.noChanges".localized)
+                        } else {
+                            ForEach(projection.unstagedItems) { item in
+                                GitStatusRow(item: item, isStaged: false)
+                                    .environmentObject(appState)
                             }
                         }
                     }
                 }
             }
         }
-    }
-
-    private var unstagedCount: Int {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return 0 }
-        return cache.unstagedItems.count
-    }
-
-    private var hasUnstagedChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return !cache.unstagedItems.isEmpty
-    }
-
-    private var hasTrackedChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasTrackedChanges
-    }
-
-    private var hasUntrackedChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.getGitSemanticSnapshot(workspaceKey: ws).hasUntrackedChanges
-    }
-
-    private var isStageAllInFlight: Bool {
-        guard let ws = appState.selectedWorkspaceKey else { return false }
-        return gitCache.isGitOpInFlight(workspaceKey: ws, path: nil, op: "stage")
     }
 
     private func stageAll() {

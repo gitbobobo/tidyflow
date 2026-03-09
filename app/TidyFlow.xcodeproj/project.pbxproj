@@ -181,10 +181,12 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		SBP0001 /* SidebarProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SBP0011 /* SidebarProjectionStore.swift */; };
 		AIPJ0001 /* AIChatPresentationProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPJ0011 /* AIChatPresentationProjection.swift */; };
 		EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVP0011 /* EvolutionPipelineProjectionStore.swift */; };
+		EVPO0001 /* EvolutionProfileOptionsProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */; };
 		EVPR0001 /* EvidenceProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPR0011 /* EvidenceProjectionStore.swift */; };
 		HOTS0001 /* SwiftUIHotspotBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = HOTS0011 /* SwiftUIHotspotBaseline.swift */; };
 		AICS0001 /* AIChatShellProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICS0011 /* AIChatShellProjectionStore.swift */; };
 		BTP0001 /* BottomPanelProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BTP0011 /* BottomPanelProjectionStore.swift */; };
+		GWPS0001 /* GitWorkspaceProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = GWPS0011 /* GitWorkspaceProjectionStore.swift */; };
 		WOP0001 /* WorkspaceOverviewProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WOP0011 /* WorkspaceOverviewProjectionStore.swift */; };
 		WTTP0001 /* WorkspaceTaskTodoProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTTP0011 /* WorkspaceTaskTodoProjectionStore.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
@@ -463,10 +465,12 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SBP0011 /* SidebarProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarProjectionStore.swift; sourceTree = "<group>"; };
 		AIPJ0011 /* AIChatPresentationProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPresentationProjection.swift; sourceTree = "<group>"; };
 		EVP0011 /* EvolutionPipelineProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStore.swift; sourceTree = "<group>"; };
+		EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionProfileOptionsProjectionStore.swift; sourceTree = "<group>"; };
 		EVPR0011 /* EvidenceProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceProjectionStore.swift; sourceTree = "<group>"; };
 		HOTS0011 /* SwiftUIHotspotBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIHotspotBaseline.swift; sourceTree = "<group>"; };
 		AICS0011 /* AIChatShellProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatShellProjectionStore.swift; sourceTree = "<group>"; };
 		BTP0011 /* BottomPanelProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomPanelProjectionStore.swift; sourceTree = "<group>"; };
+		GWPS0011 /* GitWorkspaceProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorkspaceProjectionStore.swift; sourceTree = "<group>"; };
 		WOP0011 /* WorkspaceOverviewProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjectionStore.swift; sourceTree = "<group>"; };
 		WTTP0011 /* WorkspaceTaskTodoProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskTodoProjectionStore.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
@@ -872,9 +876,11 @@ TSST011 /* TerminalSessionStore.swift */,
 				SBP0011 /* SidebarProjectionStore.swift */,
 				AIPJ0011 /* AIChatPresentationProjection.swift */,
 				EVP0011 /* EvolutionPipelineProjectionStore.swift */,
+				EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */,
 				EVPR0011 /* EvidenceProjectionStore.swift */,
 				AICS0011 /* AIChatShellProjectionStore.swift */,
 				BTP0011 /* BottomPanelProjectionStore.swift */,
+				GWPS0011 /* GitWorkspaceProjectionStore.swift */,
 				SPDG0011 /* SwiftUIPerformanceDebug.swift */,
 				SRD0011 /* SwiftUIRenderDiagnostics.swift */,
 				HOTS0011 /* SwiftUIHotspotBaseline.swift */,
@@ -1162,9 +1168,11 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				SBP0001 /* SidebarProjectionStore.swift in Sources */,
 				AIPJ0001 /* AIChatPresentationProjection.swift in Sources */,
 				EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */,
+				EVPO0001 /* EvolutionProfileOptionsProjectionStore.swift in Sources */,
 				EVPR0001 /* EvidenceProjectionStore.swift in Sources */,
 				AICS0001 /* AIChatShellProjectionStore.swift in Sources */,
 				BTP0001 /* BottomPanelProjectionStore.swift in Sources */,
+				GWPS0001 /* GitWorkspaceProjectionStore.swift in Sources */,
 				HOTS0001 /* SwiftUIHotspotBaseline.swift in Sources */,
 				WOP0001 /* WorkspaceOverviewProjectionStore.swift in Sources */,
 				WTTP0001 /* WorkspaceTaskTodoProjectionStore.swift in Sources */,
