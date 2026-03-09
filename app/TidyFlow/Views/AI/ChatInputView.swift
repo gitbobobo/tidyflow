@@ -109,9 +109,7 @@ struct ChatInputView: View {
             #if os(iOS)
             iOSInputSection
             #else
-            inputEditor
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: editorMinHeight, alignment: .topLeading)
+            inputEditorPanel
 
             toolbar
             #endif
@@ -131,9 +129,7 @@ struct ChatInputView: View {
     #if os(iOS)
     private var iOSInputSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            inputEditor
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: editorMinHeight, alignment: .topLeading)
+            inputEditorPanel
 
             iOSFloatingToolbar
 
@@ -656,6 +652,17 @@ struct ChatInputView: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
+    }
+
+    private var inputEditorPanel: some View {
+        inputEditor
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: editorMinHeight, alignment: .topLeading)
+            .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: editorSurfaceCornerRadius, style: .continuous)
+                    .stroke(editorSurfaceBorderColor, lineWidth: 0.8)
+            }
     }
 
     // MARK: - 模型选择按钮
@@ -1241,9 +1248,9 @@ struct ChatInputView: View {
 
     private var floatingCardBackgroundColor: Color {
         #if os(iOS)
-        return Color(UIColor.systemBackground)
+        return Color(UIColor.secondarySystemBackground)
         #else
-        return Color(NSColor.windowBackgroundColor)
+        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.82 : 0.92)
         #endif
     }
 
@@ -1261,6 +1268,30 @@ struct ChatInputView: View {
 
     private var floatingCardSecondaryShadowColor: Color {
         colorScheme == .dark ? Color.black.opacity(0.12) : Color.black.opacity(0.03)
+    }
+
+    private var editorSurfaceCornerRadius: CGFloat {
+        #if os(iOS)
+        return 14
+        #else
+        return 13
+        #endif
+    }
+
+    private var editorSurfaceBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.tertiarySystemBackground)
+        #else
+        return Color(NSColor.textBackgroundColor).opacity(colorScheme == .dark ? 0.94 : 0.98)
+        #endif
+    }
+
+    private var editorSurfaceBorderColor: Color {
+        #if os(iOS)
+        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        #else
+        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.58 : 0.34)
+        #endif
     }
 
     private var toolbarChipBackgroundColor: Color {
