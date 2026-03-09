@@ -4,6 +4,7 @@ use tracing::{debug, info};
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
+use crate::server::terminal_registry::ATTACH_REPLAY_LIMIT_BYTES;
 use crate::server::ws::{send_message, subscribe_terminal, unsubscribe_terminal};
 
 pub async fn handle_lifecycle_message(
@@ -238,7 +239,10 @@ pub async fn handle_lifecycle_message(
 
             let reg = ctx.terminal_registry.lock().await;
             if let Some((project, workspace, cwd, shell, name, icon)) = reg.get_info(term_id) {
-                let scrollback = reg.get_scrollback(term_id).unwrap_or_default();
+                // 仅回放受限的最近输出，避免大体积 scrollback 整块复制
+                let scrollback = reg
+                    .get_scrollback_limited(term_id, ATTACH_REPLAY_LIMIT_BYTES)
+                    .unwrap_or_default();
                 drop(reg);
 
                 subscribe_terminal(

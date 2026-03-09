@@ -293,6 +293,41 @@ pub fn register_builtin_probes(app_state: SharedAppState) {
         "core.workspace_cache",
         Box::new(move || probe_workspace_cache(&state_clone)),
     );
+
+    // 终端注册表资源压力探针
+    reg.register_probe("core.terminal_budget", Box::new(probe_terminal_budget));
+}
+
+/// 终端注册表预算压力探针：当全局 scrollback 使用率 > 80% 时发出 Warning
+fn probe_terminal_budget() -> Vec<HealthIncident> {
+    let perf = crate::server::perf::snapshot_terminal_perf();
+    let now = unix_ms();
+    let mut incidents = Vec::new();
+
+    // 通过 perf 计数器判断是否发生过预算触发裁剪
+    if perf.scrollback_trim_total > 0 {
+        incidents.push(HealthIncident {
+            incident_id: "terminal:scrollback_budget_trim".to_string(),
+            severity: IncidentSeverity::Warning,
+            recoverability: IncidentRecoverability::Recoverable,
+            source: IncidentSource::CoreLog,
+            root_cause: "terminal_scrollback_budget_exceeded".to_string(),
+            summary: Some(format!(
+                "终端 scrollback 已触发全局预算裁剪 {} 次，请关注内存使用",
+                perf.scrollback_trim_total
+            )),
+            first_seen_at: now,
+            last_seen_at: now,
+            context: HealthContext {
+                project: None,
+                workspace: None,
+                session_id: None,
+                cycle_id: None,
+            },
+        });
+    }
+
+    incidents
 }
 
 /// 工作区缓存探针：检查是否有工作区缓存预算超出或驱逐异常

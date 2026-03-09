@@ -40,6 +40,10 @@ static EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `evolution_snapshot_fallback_total`
 static EVOLUTION_SNAPSHOT_FALLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `terminal_reclaimed_total`：空闲/退出终端被自动回收的次数
+static TERMINAL_RECLAIMED_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `terminal_scrollback_trim_total`：因全局预算压力触发 scrollback 裁剪的次数（以终端数计）
+static TERMINAL_SCROLLBACK_TRIM_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 const PERF_LOG_INTERVAL: u64 = 200;
 
@@ -203,5 +207,42 @@ pub fn record_evolution_snapshot_fallback() {
     let total = EVOLUTION_SNAPSHOT_FALLBACK_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
     if perf_logging_enabled() && total % PERF_LOG_INTERVAL == 0 {
         info!("perf evolution_snapshot_fallback_total={}", total);
+    }
+}
+
+/// 记录空闲/退出终端被自动回收（`count` 为本次回收的终端数量）
+pub fn record_terminal_reclaimed(count: u64) {
+    let total = TERMINAL_RECLAIMED_TOTAL.fetch_add(count, Ordering::Relaxed) + count;
+    if perf_logging_enabled() {
+        info!(
+            "perf terminal_reclaimed_total={} this_batch={}",
+            total, count
+        );
+    }
+}
+
+/// 记录因全局预算压力触发 scrollback 裁剪（`count` 为被裁剪的终端数量）
+pub fn record_terminal_scrollback_trim(count: u64) {
+    let total = TERMINAL_SCROLLBACK_TRIM_TOTAL.fetch_add(count, Ordering::Relaxed) + count;
+    if perf_logging_enabled() {
+        info!(
+            "perf terminal_scrollback_trim_total={} this_batch={}",
+            total, count
+        );
+    }
+}
+
+/// 终端性能指标快照
+#[derive(Debug, Clone)]
+pub struct TerminalPerfSnapshot {
+    pub reclaimed_total: u64,
+    pub scrollback_trim_total: u64,
+}
+
+/// 读取终端相关的性能计数器快照
+pub fn snapshot_terminal_perf() -> TerminalPerfSnapshot {
+    TerminalPerfSnapshot {
+        reclaimed_total: TERMINAL_RECLAIMED_TOTAL.load(Ordering::Relaxed),
+        scrollback_trim_total: TERMINAL_SCROLLBACK_TRIM_TOTAL.load(Ordering::Relaxed),
     }
 }

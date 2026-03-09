@@ -1,16 +1,54 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::pty::PtySession;
 use crate::server::protocol::TerminalInfo;
 
-/// 默认 scrollback 缓冲区大小：256KB
+/// 默认 scrollback 缓冲区大小：256KB（终端初始容量）
 const DEFAULT_SCROLLBACK_CAPACITY: usize = 256 * 1024;
+
+/// 每个终端的最大 scrollback 上限：512KB
+const PER_TERMINAL_SCROLLBACK_LIMIT_BYTES: usize = 512 * 1024;
+
+/// 全局 scrollback 总预算：64MB；超出时优先裁剪最久不活跃的终端
+pub const GLOBAL_SCROLLBACK_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// TermAttach 回放限制：最多回放最近 64KB 输出，避免大量历史数据整块复制
+pub const ATTACH_REPLAY_LIMIT_BYTES: usize = 64 * 1024;
+
+/// 空闲终端回收超时：3600 秒（1 小时无订阅且无活动则自动回收）
+const IDLE_REAP_TIMEOUT_SECS: u64 = 3600;
+
+/// 后台空闲检测间隔：30 秒
+const REAPER_INTERVAL_SECS: u64 = 30;
+
+// ============================================================================
+// 终端资源可观测性类型
+// ============================================================================
+
+/// 单工作区的终端资源摘要
+#[derive(Debug, Clone)]
+pub struct WorkspaceTerminalInfo {
+    pub project: String,
+    pub workspace: String,
+    pub terminal_count: usize,
+    pub scrollback_bytes: usize,
+}
+
+/// 终端注册表资源快照（用于 system_snapshot 与健康探针）
+#[derive(Debug, Clone)]
+pub struct TerminalResourceInfo {
+    pub total_terminal_count: usize,
+    pub total_scrollback_bytes: usize,
+    pub global_budget_bytes: usize,
+    pub budget_used_percent: u8,
+    pub per_workspace: Vec<WorkspaceTerminalInfo>,
+}
 
 /// PTY 读取线程背压门控
 ///
@@ -45,6 +83,11 @@ impl PtyFlowGate {
                 s.subscriber_count > 0 && s.paused_count >= s.subscriber_count
             });
         }
+    }
+
+    /// 查询当前活跃订阅者数量
+    pub fn subscriber_count(&self) -> u32 {
+        self.state.lock().unwrap().subscriber_count
     }
 
     /// 转发任务进入高水位时调用
@@ -128,6 +171,40 @@ impl ScrollbackBuffer {
         }
         result
     }
+
+    /// 返回最近 `max_bytes` 字节的快照，用于受限回放
+    ///
+    /// - 从尾部截取，保证 UTF-8 多字节边界完整性（跳过截断的前导字节）
+    /// - 不保证截断点之前的 ANSI 序列完整，但能保证客户端不会因 UTF-8 截断而乱码
+    pub fn snapshot_limited(&self, max_bytes: usize) -> Vec<u8> {
+        if self.total_bytes <= max_bytes {
+            return self.snapshot();
+        }
+        // 需要跳过最前面 (total_bytes - max_bytes) 字节
+        let skip = self.total_bytes - max_bytes;
+        let mut result = Vec::with_capacity(max_bytes);
+        let mut skipped = 0usize;
+        for chunk in &self.chunks {
+            if skipped + chunk.len() <= skip {
+                skipped += chunk.len();
+                continue;
+            }
+            let chunk_skip = skip.saturating_sub(skipped);
+            skipped += chunk.len();
+            result.extend_from_slice(&chunk[chunk_skip..]);
+        }
+        // 确保从有效 UTF-8 起始字节开始，避免乱码
+        align_to_utf8_start(result)
+    }
+
+    /// 裁剪缓冲区到目标字节数（移除最旧的数据）
+    pub fn trim_to(&mut self, target_bytes: usize) {
+        while self.total_bytes > target_bytes && !self.chunks.is_empty() {
+            if let Some(old) = self.chunks.pop_front() {
+                self.total_bytes -= old.len();
+            }
+        }
+    }
 }
 
 /// 单个终端条目
@@ -148,6 +225,8 @@ pub struct TerminalEntry {
     pub scrollback: ScrollbackBuffer,
     /// PTY 读取线程背压门控
     pub flow_gate: Arc<PtyFlowGate>,
+    /// 最近活跃时间（写入 input 或收到 PTY 输出时更新）
+    pub last_active_at: Instant,
 }
 
 /// 全局终端注册表，生命周期 = Core 进程生命周期
@@ -279,6 +358,7 @@ impl TerminalRegistry {
             output_tx,
             scrollback: ScrollbackBuffer::new(DEFAULT_SCROLLBACK_CAPACITY),
             flow_gate,
+            last_active_at: Instant::now(),
         };
 
         if self.default_term_id.is_none() {
@@ -300,14 +380,178 @@ impl TerminalRegistry {
             .map(|e| (e.output_tx.subscribe(), e.flow_gate.clone()))
     }
 
-    /// 获取终端的 scrollback 快照
+    /// 获取终端的 scrollback 快照（全量）
     pub fn get_scrollback(&self, term_id: &str) -> Option<Vec<u8>> {
         self.terminals.get(term_id).map(|e| e.scrollback.snapshot())
+    }
+
+    /// 获取终端的受限 scrollback 快照（用于 TermAttach 回放，避免整块复制大缓冲）
+    pub fn get_scrollback_limited(&self, term_id: &str, max_bytes: usize) -> Option<Vec<u8>> {
+        self.terminals
+            .get(term_id)
+            .map(|e| e.scrollback.snapshot_limited(max_bytes))
+    }
+
+    /// 统计所有终端的 scrollback 总字节数
+    pub fn total_scrollback_bytes(&self) -> usize {
+        self.terminals
+            .values()
+            .map(|e| e.scrollback.total_bytes)
+            .sum()
+    }
+
+    /// 按全局预算裁剪 scrollback：优先裁剪最久不活跃的终端
+    ///
+    /// 同时强制各终端不超过 PER_TERMINAL_SCROLLBACK_LIMIT_BYTES。
+    /// 返回被裁剪的终端数量。
+    pub fn trim_scrollback_to_budget(&mut self) -> usize {
+        // 先强制每个终端不超过单终端上限
+        for entry in self.terminals.values_mut() {
+            if entry.scrollback.total_bytes > PER_TERMINAL_SCROLLBACK_LIMIT_BYTES {
+                entry
+                    .scrollback
+                    .trim_to(PER_TERMINAL_SCROLLBACK_LIMIT_BYTES);
+                entry.scrollback.capacity = PER_TERMINAL_SCROLLBACK_LIMIT_BYTES;
+            }
+        }
+
+        let total = self.total_scrollback_bytes();
+        if total <= GLOBAL_SCROLLBACK_BUDGET_BYTES {
+            return 0;
+        }
+
+        // 按 last_active_at 升序（最旧的排前面）
+        let mut ids: Vec<String> = self.terminals.keys().cloned().collect();
+        ids.sort_by_key(|id| {
+            self.terminals
+                .get(id)
+                .map(|e| e.last_active_at)
+                .unwrap_or(Instant::now())
+        });
+
+        let mut excess = total.saturating_sub(GLOBAL_SCROLLBACK_BUDGET_BYTES);
+        let mut trimmed_count = 0usize;
+
+        for id in ids {
+            if excess == 0 {
+                break;
+            }
+            if let Some(entry) = self.terminals.get_mut(&id) {
+                let before = entry.scrollback.total_bytes;
+                if before == 0 {
+                    continue;
+                }
+                let new_target = before.saturating_sub(excess);
+                entry.scrollback.trim_to(new_target);
+                entry.scrollback.capacity = new_target;
+                let freed = before - entry.scrollback.total_bytes;
+                excess = excess.saturating_sub(freed);
+                if freed > 0 {
+                    trimmed_count += 1;
+                }
+            }
+        }
+
+        trimmed_count
+    }
+
+    /// 回收空闲/退出终端：
+    /// - 已退出（Exited）且订阅者为 0 的终端立即回收
+    /// - 运行中但订阅者为 0 且空闲超时的终端回收
+    ///
+    /// 返回被回收的 term_id 列表。
+    pub fn reclaim_idle(&mut self, idle_timeout: Duration) -> Vec<String> {
+        let now = Instant::now();
+        let to_reclaim: Vec<String> = self
+            .terminals
+            .iter()
+            .filter_map(|(id, entry)| {
+                let subs = entry.flow_gate.subscriber_count();
+                match &entry.status {
+                    TerminalStatus::Exited(_) if subs == 0 => Some(id.clone()),
+                    TerminalStatus::Running if subs == 0 => {
+                        if now.duration_since(entry.last_active_at) >= idle_timeout {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        for id in &to_reclaim {
+            if let Some(mut entry) = self.terminals.remove(id) {
+                entry.session.kill();
+                if self.default_term_id.as_deref() == Some(id.as_str()) {
+                    self.default_term_id = self.terminals.keys().next().cloned();
+                }
+                debug!(term_id = %id, "Idle reaper reclaimed terminal");
+            }
+        }
+
+        if !to_reclaim.is_empty() {
+            info!(count = to_reclaim.len(), "Idle reaper reclaimed terminals");
+        }
+
+        to_reclaim
+    }
+
+    /// 更新指定终端的最近活跃时间（由外部异步路径调用）
+    pub fn update_last_active(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.last_active_at = Instant::now();
+        }
+    }
+
+    /// 返回终端注册表资源快照（多工作区隔离）
+    pub fn resource_info(&self) -> TerminalResourceInfo {
+        let total_scrollback_bytes = self.total_scrollback_bytes();
+        let budget_used_percent = if GLOBAL_SCROLLBACK_BUDGET_BYTES > 0 {
+            ((total_scrollback_bytes as f64 / GLOBAL_SCROLLBACK_BUDGET_BYTES as f64) * 100.0)
+                .min(100.0) as u8
+        } else {
+            0
+        };
+
+        // 按 (project, workspace) 聚合
+        let mut ws_map: HashMap<(String, String), (usize, usize)> = HashMap::new();
+        for entry in self.terminals.values() {
+            let key = (entry.project.clone(), entry.workspace.clone());
+            let slot = ws_map.entry(key).or_insert((0, 0));
+            slot.0 += 1;
+            slot.1 += entry.scrollback.total_bytes;
+        }
+
+        let mut per_workspace: Vec<WorkspaceTerminalInfo> = ws_map
+            .into_iter()
+            .map(
+                |((project, workspace), (terminal_count, scrollback_bytes))| {
+                    WorkspaceTerminalInfo {
+                        project,
+                        workspace,
+                        terminal_count,
+                        scrollback_bytes,
+                    }
+                },
+            )
+            .collect();
+        per_workspace.sort_by(|a, b| (&a.project, &a.workspace).cmp(&(&b.project, &b.workspace)));
+
+        TerminalResourceInfo {
+            total_terminal_count: self.terminals.len(),
+            total_scrollback_bytes,
+            global_budget_bytes: GLOBAL_SCROLLBACK_BUDGET_BYTES,
+            budget_used_percent,
+            per_workspace,
+        }
     }
 
     /// 写入终端输入
     pub fn write_input(&mut self, term_id: &str, data: &[u8]) -> Result<(), String> {
         if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.last_active_at = Instant::now();
             entry
                 .session
                 .write_input(data)
@@ -425,12 +669,63 @@ pub fn spawn_scrollback_writer(
             let mut reg = registry.lock().await;
             if let Some(entry) = reg.terminals.get_mut(&term_id) {
                 entry.scrollback.push(data);
+                // PTY 输出到达时更新活跃时间（后台进程也算活跃）
+                entry.last_active_at = Instant::now();
             }
         }
         info!("Scrollback writer task exited");
     });
 
     tx
+}
+
+/// 启动空闲终端回收后台任务
+///
+/// 每 REAPER_INTERVAL_SECS 秒运行一次，回收无订阅者的空闲/退出终端，
+/// 同时触发全局 scrollback 预算裁剪。
+pub fn spawn_idle_reaper(registry: SharedTerminalRegistry) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(REAPER_INTERVAL_SECS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let idle_timeout = Duration::from_secs(IDLE_REAP_TIMEOUT_SECS);
+
+        loop {
+            interval.tick().await;
+
+            let (reclaimed, trimmed) = {
+                let mut reg = registry.lock().await;
+                let reclaimed = reg.reclaim_idle(idle_timeout);
+                let trimmed = reg.trim_scrollback_to_budget();
+                (reclaimed.len(), trimmed)
+            };
+
+            if reclaimed > 0 {
+                crate::server::perf::record_terminal_reclaimed(reclaimed as u64);
+            }
+            if trimmed > 0 {
+                crate::server::perf::record_terminal_scrollback_trim(trimmed as u64);
+                warn!(
+                    trimmed_count = trimmed,
+                    "Terminal scrollback trimmed due to global budget pressure"
+                );
+            }
+        }
+    });
+}
+
+/// 从截取点对齐到有效 UTF-8 起始字节，避免截断多字节字符导致乱码
+///
+/// 连续字节 0x80~0xBF 是 UTF-8 续字节，跳过至多 3 个续字节找到起始字节。
+fn align_to_utf8_start(mut data: Vec<u8>) -> Vec<u8> {
+    let skip = data
+        .iter()
+        .take(4)
+        .position(|&b| b < 0x80 || b >= 0xC0)
+        .unwrap_or(0);
+    if skip > 0 {
+        data.drain(..skip);
+    }
+    data
 }
 
 /// 查找数据末尾不完整的 ANSI 转义序列的起始位置
@@ -550,6 +845,117 @@ mod tests {
         let snap = buf.snapshot();
         // 应该只包含最新的数据
         assert!(snap.len() <= 110);
+    }
+
+    // CHK-002: scrollback 回放与裁剪
+    #[test]
+    fn test_scrollback_limited_returns_full_when_under_limit() {
+        let mut buf = ScrollbackBuffer::new(1024);
+        buf.push(b"hello world".to_vec());
+        let snap = buf.snapshot_limited(1024);
+        assert_eq!(snap, b"hello world");
+    }
+
+    #[test]
+    fn test_scrollback_limited_truncates_to_max_bytes() {
+        let mut buf = ScrollbackBuffer::new(1024);
+        buf.push(vec![b'A'; 100]);
+        buf.push(vec![b'B'; 100]);
+        // 要求最多 80 字节
+        let snap = buf.snapshot_limited(80);
+        assert!(snap.len() <= 80);
+        // 末尾应是 'B'
+        assert!(snap.iter().all(|&b| b == b'B'));
+    }
+
+    #[test]
+    fn test_scrollback_limited_utf8_boundary_alignment() {
+        // "你好世界" = 12 字节（每汉字 3 字节）
+        let text = "你好世界";
+        let bytes = text.as_bytes();
+        assert_eq!(bytes.len(), 12);
+        let mut buf = ScrollbackBuffer::new(1024);
+        buf.push(bytes.to_vec());
+        // 截取 11 字节会截在最后一个汉字的续字节处
+        let snap = buf.snapshot_limited(11);
+        // 必须是合法的 UTF-8（如果有内容的话）
+        assert!(std::str::from_utf8(&snap).is_ok(), "Should be valid UTF-8");
+    }
+
+    #[test]
+    fn test_scrollback_trim_to() {
+        let mut buf = ScrollbackBuffer::new(1024);
+        buf.push(vec![1; 200]);
+        buf.push(vec![2; 200]);
+        assert_eq!(buf.total_bytes, 400);
+        buf.trim_to(150);
+        assert!(buf.total_bytes <= 150);
+    }
+
+    // CHK-001: 预算裁剪
+    #[test]
+    fn test_trim_scrollback_to_budget_under_limit_does_nothing() {
+        let mut reg = TerminalRegistry::new();
+        // 手动插入一个轻量条目
+        // 直接构造 scrollback，不启动 PTY
+        let total_before = reg.total_scrollback_bytes();
+        assert_eq!(total_before, 0);
+        let trimmed = reg.trim_scrollback_to_budget();
+        assert_eq!(trimmed, 0);
+    }
+
+    #[test]
+    fn test_resource_info_empty_registry() {
+        let reg = TerminalRegistry::new();
+        let info = reg.resource_info();
+        assert_eq!(info.total_terminal_count, 0);
+        assert_eq!(info.total_scrollback_bytes, 0);
+        assert_eq!(info.budget_used_percent, 0);
+        assert_eq!(info.global_budget_bytes, GLOBAL_SCROLLBACK_BUDGET_BYTES);
+        assert!(info.per_workspace.is_empty());
+    }
+
+    // CHK-003: 空闲终端回收
+    #[test]
+    fn test_reclaim_idle_returns_empty_for_empty_registry() {
+        let mut reg = TerminalRegistry::new();
+        let reclaimed = reg.reclaim_idle(Duration::from_secs(0));
+        assert!(reclaimed.is_empty());
+    }
+
+    #[test]
+    fn test_scrollback_limited_single_chunk_exact_boundary() {
+        let mut buf = ScrollbackBuffer::new(1024);
+        buf.push(b"abcdefghij".to_vec());
+        let snap = buf.snapshot_limited(5);
+        assert_eq!(&snap, b"fghij");
+    }
+
+    #[test]
+    fn test_align_to_utf8_start_with_ascii() {
+        let data = b"hello".to_vec();
+        let result = align_to_utf8_start(data.clone());
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn test_align_to_utf8_start_skips_continuation_bytes() {
+        // 0x80-0xBF 是续字节，应该被跳过
+        let data = vec![0x80, 0x80, b'h', b'i'];
+        let result = align_to_utf8_start(data);
+        assert_eq!(result, b"hi");
+    }
+
+    #[test]
+    fn test_pty_flow_gate_subscriber_count() {
+        let gate = PtyFlowGate::new();
+        assert_eq!(gate.subscriber_count(), 0);
+        gate.add_subscriber();
+        assert_eq!(gate.subscriber_count(), 1);
+        gate.add_subscriber();
+        assert_eq!(gate.subscriber_count(), 2);
+        gate.remove_subscriber();
+        assert_eq!(gate.subscriber_count(), 1);
     }
 
     #[test]

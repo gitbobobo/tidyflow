@@ -10,7 +10,7 @@ use crate::server::context::{
 use crate::server::handlers::ai::{preload_agents_on_startup, AIState, SharedAIState};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
-    spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
+    spawn_idle_reaper, spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::workspace::state::AppState;
 use crate::workspace::state_saver::spawn_state_saver;
@@ -79,6 +79,8 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let save_tx = spawn_state_saver(shared_state.clone(), state_store.clone());
     let terminal_registry: SharedTerminalRegistry = Arc::new(Mutex::new(TerminalRegistry::new()));
     let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
+    // 启动空闲终端回收后台任务（每 30 秒检查，自动回收无订阅的退出/长期空闲终端）
+    spawn_idle_reaper(terminal_registry.clone());
 
     let expected_ws_token = resolve_expected_ws_token();
     let bind_addr = resolve_bind_addr();

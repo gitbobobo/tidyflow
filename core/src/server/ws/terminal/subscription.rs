@@ -126,3 +126,54 @@ pub async fn unsubscribe_terminal(
         flow_gate.remove_subscriber();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use crate::server::terminal_registry::PtyFlowGate;
+    use crate::server::ws::terminal::subscription::unsubscribe_terminal;
+
+    // CHK-003: 取消订阅后 flow_gate 订阅者减少，孤儿订阅不残留
+    #[tokio::test]
+    async fn cleanup_terminal_subscription_decrements_flow_gate() {
+        let gate = Arc::new(PtyFlowGate::new());
+        gate.add_subscriber();
+        assert_eq!(gate.subscriber_count(), 1);
+
+        // 模拟已注册的订阅 entry
+        let subscribed_terms: Arc<tokio::sync::Mutex<HashMap<String, _>>> =
+            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
+        // 构造一个 no-op task 作为 handle
+        let handle = tokio::spawn(async {});
+        let fc = Arc::new(crate::server::context::FlowControl {
+            unacked: std::sync::atomic::AtomicU64::new(0),
+            notify: tokio::sync::Notify::new(),
+        });
+        {
+            let mut subs = subscribed_terms.lock().await;
+            subs.insert("term-1".to_string(), (handle, fc, gate.clone()));
+        }
+
+        unsubscribe_terminal("term-1", &subscribed_terms).await;
+
+        // 订阅者计数应减回 0
+        assert_eq!(gate.subscriber_count(), 0);
+        // subscribed_terms 中应无残留
+        let subs = subscribed_terms.lock().await;
+        assert!(!subs.contains_key("term-1"));
+    }
+
+    // CHK-003: 对不存在的 term_id 调用 unsubscribe_terminal 不会 panic
+    #[tokio::test]
+    async fn cleanup_nonexistent_terminal_is_noop() {
+        let subscribed_terms: Arc<tokio::sync::Mutex<HashMap<String, _>>> =
+            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        // 不应 panic
+        unsubscribe_terminal("nonexistent", &subscribed_terms).await;
+        let subs = subscribed_terms.lock().await;
+        assert!(subs.is_empty());
+    }
+}

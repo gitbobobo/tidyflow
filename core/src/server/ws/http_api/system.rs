@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
+use crate::server::perf::TerminalPerfSnapshot;
 use crate::server::protocol::health::{
     HealthIncident, RepairActionRequest, RepairAuditEntry, SystemHealthSnapshot,
 };
@@ -12,6 +13,7 @@ use crate::server::protocol::{
     FileCacheMetricsInfo, GitCacheMetricsInfo, ServerMessage, WorkspaceCacheMetricsInfo,
     WorkspaceInfo, PROTOCOL_VERSION,
 };
+use crate::server::terminal_registry::TerminalResourceInfo;
 use crate::workspace::cache_metrics::WorkspaceCacheSnapshot;
 use crate::workspace::state::DEFAULT_WORKSPACE_NAME;
 
@@ -28,6 +30,29 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     health_incidents: Vec<HealthIncident>,
     /// 最近修复审计摘要（v1.41）
     recent_repairs: Vec<RepairAuditEntry>,
+    /// 终端注册表资源压力快照
+    terminal_resource: TerminalResourceSnapshot,
+}
+
+/// 终端资源压力快照（用于 system_snapshot）
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::server::ws) struct TerminalResourceSnapshot {
+    pub total_terminal_count: usize,
+    pub total_scrollback_bytes: usize,
+    pub global_budget_bytes: usize,
+    pub budget_used_percent: u8,
+    pub reclaimed_total: u64,
+    pub scrollback_trim_total: u64,
+    pub per_workspace: Vec<WorkspaceTerminalSnapshot>,
+}
+
+/// 单工作区终端摘要
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::server::ws) struct WorkspaceTerminalSnapshot {
+    pub project: String,
+    pub workspace: String,
+    pub terminal_count: usize,
+    pub scrollback_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +98,14 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         reg.snapshot()
     };
 
+    // 终端资源快照
+    let terminal_resource = {
+        let reg = ctx.terminal_registry.lock().await;
+        let info = reg.resource_info();
+        let perf = crate::server::perf::snapshot_terminal_perf();
+        build_terminal_resource_snapshot(info, perf)
+    };
+
     Ok(Json(SystemSnapshotResponse {
         msg_type: "system_snapshot",
         core_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -81,6 +114,7 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         cache_metrics,
         health_incidents: health_snapshot.incidents,
         recent_repairs: health_snapshot.recent_repairs,
+        terminal_resource,
     }))
 }
 
@@ -291,6 +325,31 @@ fn non_empty_opt(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string())
+}
+
+fn build_terminal_resource_snapshot(
+    info: TerminalResourceInfo,
+    perf: TerminalPerfSnapshot,
+) -> TerminalResourceSnapshot {
+    let per_workspace = info
+        .per_workspace
+        .into_iter()
+        .map(|w| WorkspaceTerminalSnapshot {
+            project: w.project,
+            workspace: w.workspace,
+            terminal_count: w.terminal_count,
+            scrollback_bytes: w.scrollback_bytes,
+        })
+        .collect();
+    TerminalResourceSnapshot {
+        total_terminal_count: info.total_terminal_count,
+        total_scrollback_bytes: info.total_scrollback_bytes,
+        global_budget_bytes: info.global_budget_bytes,
+        budget_used_percent: info.budget_used_percent,
+        reclaimed_total: perf.reclaimed_total,
+        scrollback_trim_total: perf.scrollback_trim_total,
+        per_workspace,
+    }
 }
 
 #[cfg(test)]
@@ -506,5 +565,52 @@ mod tests {
             .0;
 
         assert_eq!(response.msg_type, "system_snapshot");
+    }
+
+    // CHK-004: system_snapshot 包含终端资源快照
+    #[tokio::test]
+    async fn system_snapshot_should_include_terminal_resource() {
+        let ctx = make_test_context(make_test_state()).await;
+        let response = system_snapshot_handler(State(ctx))
+            .await
+            .expect("handler should return response")
+            .0;
+
+        // 空注册表时应为 0
+        assert_eq!(response.terminal_resource.total_terminal_count, 0);
+        assert_eq!(response.terminal_resource.total_scrollback_bytes, 0);
+        assert_eq!(response.terminal_resource.budget_used_percent, 0);
+        assert!(response.terminal_resource.global_budget_bytes > 0);
+        assert!(response.terminal_resource.per_workspace.is_empty());
+    }
+
+    // CHK-004: build_terminal_resource_snapshot 正确映射字段
+    #[test]
+    fn terminal_resource_snapshot_maps_correctly() {
+        use crate::server::perf::TerminalPerfSnapshot;
+        use crate::server::terminal_registry::{TerminalResourceInfo, WorkspaceTerminalInfo};
+
+        let info = TerminalResourceInfo {
+            total_terminal_count: 3,
+            total_scrollback_bytes: 1024,
+            global_budget_bytes: 64 * 1024 * 1024,
+            budget_used_percent: 0,
+            per_workspace: vec![WorkspaceTerminalInfo {
+                project: "proj".to_string(),
+                workspace: "ws".to_string(),
+                terminal_count: 3,
+                scrollback_bytes: 1024,
+            }],
+        };
+        let perf = TerminalPerfSnapshot {
+            reclaimed_total: 5,
+            scrollback_trim_total: 2,
+        };
+        let snap = build_terminal_resource_snapshot(info, perf);
+        assert_eq!(snap.total_terminal_count, 3);
+        assert_eq!(snap.reclaimed_total, 5);
+        assert_eq!(snap.scrollback_trim_total, 2);
+        assert_eq!(snap.per_workspace.len(), 1);
+        assert_eq!(snap.per_workspace[0].project, "proj");
     }
 }
