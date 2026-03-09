@@ -8,35 +8,43 @@ extension AppState {
         // 设置日志转发引用
         TFLog.wsClient = wsClient
         // 切换到当前 Core 会话 token，确保仅本次进程可连接
-        wsClient.updateAuthToken(coreProcessManager.wsAuthToken)
+        let authToken = coreProcessManager.wsAuthToken
+        wsClient.updateAuthToken(authToken)
+        let targetIdentity = "\(authToken ?? "")@\(port)"
         wsClient.onServerEnvelopeMeta = { [weak self] meta in
             self?.wsLastEnvelopeSeq = meta.seq
             self?.wsLastEnvelopeSummary = "\(meta.domain)/\(meta.action) [\(meta.kind)]"
         }
 
         wsClient.onConnectionStateChanged = { [weak self] connected in
+            guard let self else { return }
             if connected {
-                self?.connectionPhase = .connected
-                self?.markStartupReadyIfNeeded()
-                self?.reconnectAttempt = 0  // 重置自动重连计数
-                self?.wsClient.requestListProjects()
-                self?.wsClient.requestGetClientSettings()
-                self?.reloadAISessionDataAfterReconnect()
-                self?.wsClient.requestEvoSnapshot()
-                self?.wsClient.requestSystemSnapshot()
+                self.connectionPhase = .connected
+                self.markStartupReadyIfNeeded()
+                self.reconnectAttempt = 0  // 重置自动重连计数
+                let connectionIdentity = self.wsClient.connectionIdentity ?? targetIdentity
+                guard self.initializedWSConnectionIdentity != connectionIdentity else {
+                    return
+                }
+                self.initializedWSConnectionIdentity = connectionIdentity
+                self.wsClient.requestListProjects()
+                self.wsClient.requestGetClientSettings()
+                self.reloadAISessionDataAfterReconnect()
+                self.wsClient.requestEvoSnapshot()
+                self.wsClient.requestSystemSnapshot()
                 // 重连后尝试附着已有终端会话
-                self?.requestTerminalReattach()
+                self.requestTerminalReattach()
             } else if let phase = ConnectionPhase.evaluateDisconnect(
-                isIntentional: self?.wsClient.isIntentionalDisconnect ?? true,
-                isCoreAvailable: self?.coreProcessManager.isRunning ?? false
+                isIntentional: self.wsClient.isIntentionalDisconnect,
+                isCoreAvailable: self.coreProcessManager.isRunning
             ) {
                 // 主动断开或 Core 不可用：直接设置确定阶段
-                self?.connectionPhase = phase
+                self.connectionPhase = phase
             } else {
                 // 意外断连且 Core 仍在运行：通过共享语义层触发自动重连
                 TFLog.core.warning("WebSocket 意外断连，触发自动重连")
-                self?.markAllTerminalSessionsStale()
-                self?.startAutoReconnect()
+                self.markAllTerminalSessionsStale()
+                self.startAutoReconnect()
             }
         }
 
@@ -71,42 +79,44 @@ extension AppState {
 
         // 工作区缓存可观测性快照：更新 FileCacheState 和 GitCacheState 的 Core 权威指标
         wsClient.onSystemSnapshot = { [weak self] metrics in
-            DispatchQueue.main.async {
-                self?.fileCache.updateCacheMetrics(metrics)
-                self?.gitCache.updateCacheMetrics(metrics)
-            }
+            guard let self else { return }
+            self.fileCache.updateCacheMetrics(metrics)
+            self.gitCache.updateCacheMetrics(metrics)
         }
 
         // v1.41: 系统健康快照（Core 权威真源）- 更新共享健康状态，双端统一消费
         wsClient.onHealthSnapshot = { [weak self] snapshot in
-            DispatchQueue.main.async {
-                self?.systemHealthSnapshot = snapshot
-            }
+            self?.systemHealthSnapshot = snapshot
         }
 
         // v1.41: 修复执行结果 - 更新 incident 修复状态
         wsClient.onHealthRepairResult = { [weak self] audit in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let incidentId = audit.incidentId {
-                    let project = audit.context.project
-                    let workspace = audit.context.workspace
-                    let key = "\(project ?? ""):\(workspace ?? ""):\(incidentId)"
-                    switch audit.outcome {
-                    case .success, .alreadyHealthy:
-                        self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
-                    case .failed:
-                        self.incidentRepairStates[key] = .repairFailed(
-                            requestId: audit.requestId,
-                            summary: audit.resultSummary
-                        )
-                    case .partialSuccess:
-                        self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
-                    }
+            guard let self else { return }
+            if let incidentId = audit.incidentId {
+                let project = audit.context.project
+                let workspace = audit.context.workspace
+                let key = "\(project ?? ""):\(workspace ?? ""):\(incidentId)"
+                switch audit.outcome {
+                case .success, .alreadyHealthy:
+                    self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
+                case .failed:
+                    self.incidentRepairStates[key] = .repairFailed(
+                        requestId: audit.requestId,
+                        summary: audit.resultSummary
+                    )
+                case .partialSuccess:
+                    self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
                 }
             }
         }
 
+        if configuredWSConnectionTarget == targetIdentity,
+           wsClient.currentURL == AppConfig.makeWsURL(port: port, token: authToken),
+           (wsClient.isConnected || wsClient.isConnecting) {
+            return
+        }
+        configuredWSConnectionTarget = targetIdentity
+        initializedWSConnectionIdentity = nil
         // Connect to the dynamic port
         wsClient.connect(port: port)
     }

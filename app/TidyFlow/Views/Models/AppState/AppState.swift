@@ -340,7 +340,6 @@ class AppState: ObservableObject {
 
     /// 共享性能追踪器，macOS/iOS 双端通过此对象暴露统一的性能观测结果。
     let performanceTracer = TFPerformanceTracer()
-    private var coreProcessManagerCancellable: AnyCancellable?
     private var evolutionReplayStoreCancellable: AnyCancellable?
     private var subAgentViewerStoreCancellable: AnyCancellable?
     // WS 领域 handler 强引用（WSClient 侧为 weak）
@@ -746,6 +745,10 @@ class AppState: ObservableObject {
     var wakeObserver: NSObjectProtocol?
     /// 自动重连内部计数（机制层）；连接语义状态通过 `connectionPhase` 对外暴露。
     var reconnectAttempt = 0
+    /// 当前已配置到 WSClient 的 Core 连接目标，用于屏蔽重复 setup。
+    var configuredWSConnectionTarget: String?
+    /// 当前已完成初始化请求批次的连接身份；同一 socket 只执行一次首连同步。
+    var initializedWSConnectionIdentity: String?
     // 重连后延迟拉取非当前 AI 工具会话列表的任务（用于削峰）
     var deferredAISessionReloadWorkItem: DispatchWorkItem?
 
@@ -792,11 +795,6 @@ class AppState: ObservableObject {
 
         // Setup Core process callbacks
         setupCoreCallbacks()
-
-        // 转发 coreProcessManager 变更到 AppState，驱动依赖计算属性（如移动端端口文案）实时刷新
-        coreProcessManagerCancellable = coreProcessManager.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
 
         // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()
@@ -1215,8 +1213,6 @@ class AppState: ObservableObject {
         aiProvidersByTool[tool] = providers
         if aiChatTool == tool {
             aiProviders = providers
-        } else {
-            objectWillChange.send()
         }
         // 验证当前选中的模型在新 provider 列表中是否仍然有效；
         // 若已失效则清除选择，避免发送时携带不存在的模型导致请求出错。
@@ -1236,8 +1232,6 @@ class AppState: ObservableObject {
         aiAgentsByTool[tool] = agents
         if aiChatTool == tool {
             aiAgents = agents
-        } else {
-            objectWillChange.send()
         }
     }
 
@@ -1364,8 +1358,6 @@ class AppState: ObservableObject {
         refreshThoughtLevelFromConfig(for: tool)
         if aiChatTool == tool {
             aiSessionConfigOptions = options
-        } else {
-            objectWillChange.send()
         }
     }
 
@@ -1383,8 +1375,6 @@ class AppState: ObservableObject {
         aiSelectedThoughtLevelByTool[tool] = finalValue
         if aiChatTool == tool {
             aiSelectedThoughtLevel = finalValue
-        } else {
-            objectWillChange.send()
         }
         guard syncConfigOption,
               let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: tool)) else {

@@ -544,6 +544,22 @@ struct AIChatMessage: Identifiable {
     }
 }
 
+struct AIAssistantTailPartMeta: Equatable {
+    let messageId: String?
+    let localMessageId: String
+    let partId: String
+    let kind: AIChatPartKind
+    let source: [String: Any]?
+
+    static func == (lhs: AIAssistantTailPartMeta, rhs: AIAssistantTailPartMeta) -> Bool {
+        lhs.messageId == rhs.messageId &&
+        lhs.localMessageId == rhs.localMessageId &&
+        lhs.partId == rhs.partId &&
+        lhs.kind == rhs.kind &&
+        NSDictionary(dictionary: lhs.source ?? [:]).isEqual(to: rhs.source ?? [:])
+    }
+}
+
 // MARK: - AISessionMessagesV2 平台侧扩展：转换为视图模型消息列表
 
 extension AISessionMessagesV2 {
@@ -688,6 +704,10 @@ final class AIChatStore: ObservableObject {
     @Published var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
     /// 已发送请求、等待服务端首个内容到达期间为 true；首个内容到达或会话结束/出错时清除。
     @Published var hasPendingFirstContent: Bool = false
+    /// 仅表示消息尾部可见内容发生变化，用于替代对整份 messages 的监听。
+    @Published private(set) var tailRevision: UInt64 = 0
+    /// 最新 assistant 尾部 part 摘要，供上层做轻量判定，不必每次遍历整份消息。
+    @Published private(set) var latestAssistantPartMeta: AIAssistantTailPartMeta?
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
@@ -753,6 +773,7 @@ final class AIChatStore: ObservableObject {
         clearAssistantStreaming()
         isStreaming = false
         rebuildIndexes()
+        publishTailSignals()
     }
 
     func makeSnapshot(sessions: [AISessionInfo]) -> AIChatSnapshot {
@@ -803,6 +824,7 @@ final class AIChatStore: ObservableObject {
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
         userPlaceholderMessageIdsPendingServerPart = []
+        publishTailSignals()
     }
 
     func clearMessages() {
@@ -828,6 +850,7 @@ final class AIChatStore: ObservableObject {
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
         userPlaceholderMessageIdsPendingServerPart = []
+        publishTailSignals()
     }
 
     func replaceMessages(_ newMessages: [AIChatMessage]) {
@@ -848,6 +871,7 @@ final class AIChatStore: ObservableObject {
         questionRequestToCallId = [:]
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func replaceMessagesFromSessionCache(
@@ -877,6 +901,7 @@ final class AIChatStore: ObservableObject {
             markOnlyStreamingAssistant(at: assistantIndex)
         }
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func prependMessages(_ olderMessages: [AIChatMessage]) {
@@ -896,6 +921,7 @@ final class AIChatStore: ObservableObject {
         messages.insert(contentsOf: filtered, at: 0)
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func setHistoryLoading(_ isLoading: Bool) {
@@ -1054,6 +1080,7 @@ final class AIChatStore: ObservableObject {
         messages.append(message)
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func appendAssistantPlaceholder() {
@@ -1246,6 +1273,7 @@ final class AIChatStore: ObservableObject {
             touchRenderRevisionForAllMessages()
             rebuildIndexes()
             recomputeIsStreaming()
+            publishTailSignals()
         }
     }
 
@@ -1318,6 +1346,7 @@ final class AIChatStore: ObservableObject {
         }
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     // MARK: - Streaming Batch Apply
@@ -1465,6 +1494,7 @@ final class AIChatStore: ObservableObject {
             markOnlyStreamingAssistant(at: idx)
         }
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func handleChatDone(sessionId: String) {
@@ -1490,6 +1520,7 @@ final class AIChatStore: ObservableObject {
         finalizeUnboundUserPlaceholders()
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     func handleChatError(sessionId: String, error: String) {
@@ -1519,6 +1550,7 @@ final class AIChatStore: ObservableObject {
         )
         rebuildIndexes()
         recomputeIsStreaming()
+        publishTailSignals()
     }
 
     // MARK: - Internal Helpers
@@ -1577,6 +1609,23 @@ final class AIChatStore: ObservableObject {
         for idx in messages.indices {
             messages[idx].renderRevision &+= 1
         }
+    }
+
+    private func publishTailSignals() {
+        tailRevision &+= 1
+        latestAssistantPartMeta = messages.reversed().lazy
+            .filter { $0.role == .assistant }
+            .compactMap { message in
+                guard let lastPart = message.parts.last else { return nil }
+                return AIAssistantTailPartMeta(
+                    messageId: message.messageId,
+                    localMessageId: message.id,
+                    partId: lastPart.id,
+                    kind: lastPart.kind,
+                    source: lastPart.source
+                )
+            }
+            .first
     }
 
     private func isRunningToolPart(_ part: AIChatPart) -> Bool {

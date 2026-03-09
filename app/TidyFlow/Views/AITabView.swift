@@ -137,8 +137,8 @@ struct AITabView: View {
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
             // user echo 到达时不再需要清空输入——已在发送时立即清空。
         }
-        .onReceive(aiChatStore.$messages) { messages in
-            observeCodexPlanProposal(messages)
+        .onChange(of: aiChatStore.latestAssistantPartMeta) { _, meta in
+            observeCodexPlanProposal(meta)
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             requestCurrentSessionStatus()
@@ -1306,19 +1306,21 @@ struct AITabView: View {
         }
     }
 
-    private func observeCodexPlanProposal(_ messages: [AIChatMessage]) {
+    private func observeCodexPlanProposal(_ meta: AIAssistantTailPartMeta?) {
         guard aiChatStore.isStreaming else { return }
         guard appState.aiChatTool == .codex else { return }
         guard !sawCodexPlanProposalInCurrentTurn else { return }
+        guard let meta, meta.kind == .text else { return }
 
-        for message in messages.reversed() where message.role == .assistant {
-            for part in message.parts where part.kind == .text {
-                if isCodexPlanProposalPart(part) {
-                    sawCodexPlanProposalInCurrentTurn = true
-                    codexPlanProposalPartIDInCurrentTurn = part.id
-                    return
-                }
-            }
+        let syntheticPart = AIChatPart(
+            id: meta.partId,
+            kind: meta.kind,
+            text: nil,
+            source: meta.source
+        )
+        if isCodexPlanProposalPart(syntheticPart) {
+            sawCodexPlanProposalInCurrentTurn = true
+            codexPlanProposalPartIDInCurrentTurn = meta.partId
         }
     }
 

@@ -66,7 +66,7 @@ struct DebugPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         // Core Status Section
-                        coreStatusSection
+                        DebugCoreStatusSection(coreProcessManager: appState.coreProcessManager)
 
                         Divider()
 
@@ -89,88 +89,6 @@ struct DebugPanelView: View {
         .onAppear {
             loadLogTail()
         }
-    }
-
-    // MARK: - Core Status Section
-
-    private var coreStatusSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Core Process")
-                .font(.headline)
-
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                GridRow {
-                    Text("Status:").foregroundColor(.secondary)
-                    statusBadge
-                }
-                GridRow {
-                    Text("Port:").foregroundColor(.secondary)
-                    Text(portText).font(.system(.body, design: .monospaced))
-                }
-                GridRow {
-                    Text("PID:").foregroundColor(.secondary)
-                    Text(pidText).font(.system(.body, design: .monospaced))
-                }
-                GridRow {
-                    Text("Auto-Restart:").foregroundColor(.secondary)
-                    Text("\(appState.coreProcessManager.restartAttempts)/\(AppConfig.autoRestartLimit)")
-                        .font(.system(.body, design: .monospaced))
-                }
-                if let reason = lastExitReason {
-                    GridRow {
-                        Text("Last Exit:").foregroundColor(.secondary)
-                        Text(reason)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.orange)
-                    }
-                }
-            }
-        }
-    }
-
-    private var statusBadge: some View {
-        let (text, color) = statusInfo
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-        }
-    }
-
-    private var statusInfo: (String, Color) {
-        switch appState.coreProcessManager.status {
-        case .stopped:
-            return ("Stopped", .gray)
-        case .starting(let attempt, let port):
-            let portText = port.map(String.init) ?? "?"
-            return ("Starting (try \(attempt), port \(portText))", .yellow)
-        case .running(let port, let pid):
-            return ("Running (:\(port), pid \(pid))", .green)
-        case .restarting(let attempt, let max, _):
-            return ("Restarting (\(attempt)/\(max))", .orange)
-        case .failed(let msg):
-            return ("Failed: \(msg)", .red)
-        }
-    }
-
-    private var portText: String {
-        if let port = appState.coreProcessManager.currentPort {
-            return String(port)
-        }
-        return "-"
-    }
-
-    private var pidText: String {
-        if case .running(_, let pid) = appState.coreProcessManager.status {
-            return String(pid)
-        }
-        return "-"
-    }
-
-    private var lastExitReason: String? {
-        appState.coreProcessManager.lastExitInfo
     }
 
     // MARK: - WebSocket Status Section
@@ -303,6 +221,84 @@ struct DebugPanelView: View {
         let f = DateFormatter()
         f.timeStyle = .medium
         return f
+    }
+}
+
+private struct DebugCoreStatusSection: View {
+    @ObservedObject var coreProcessManager: CoreProcessManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Core Process")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                GridRow {
+                    Text("Status:").foregroundColor(.secondary)
+                    statusBadge
+                }
+                GridRow {
+                    Text("Port:").foregroundColor(.secondary)
+                    Text(portText).font(.system(.body, design: .monospaced))
+                }
+                GridRow {
+                    Text("PID:").foregroundColor(.secondary)
+                    Text(pidText).font(.system(.body, design: .monospaced))
+                }
+                GridRow {
+                    Text("Auto-Restart:").foregroundColor(.secondary)
+                    Text("\(coreProcessManager.restartAttempts)/\(AppConfig.autoRestartLimit)")
+                        .font(.system(.body, design: .monospaced))
+                }
+                if let reason = coreProcessManager.lastExitInfo {
+                    GridRow {
+                        Text("Last Exit:").foregroundColor(.secondary)
+                        Text(reason)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusBadge: some View {
+        let (text, color) = statusInfo
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(text)
+                .font(.system(.body, design: .monospaced))
+        }
+    }
+
+    private var statusInfo: (String, Color) {
+        switch coreProcessManager.status {
+        case .stopped:
+            return ("Stopped", .gray)
+        case .starting(let attempt, let port):
+            let portText = port.map(String.init) ?? "?"
+            return ("Starting (try \(attempt), port \(portText))", .yellow)
+        case .running(let port, let pid):
+            return ("Running (:\(port), pid \(pid))", .green)
+        case .restarting(let attempt, let max, _):
+            return ("Restarting (\(attempt)/\(max))", .orange)
+        case .failed(let msg):
+            return ("Failed: \(msg)", .red)
+        }
+    }
+
+    private var portText: String {
+        guard let port = coreProcessManager.currentPort else { return "-" }
+        return String(port)
+    }
+
+    private var pidText: String {
+        if case .running(_, let pid) = coreProcessManager.status {
+            return String(pid)
+        }
+        return "-"
     }
 }
 #endif

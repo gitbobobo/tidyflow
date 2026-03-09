@@ -97,6 +97,9 @@ class CoreProcessManager: ObservableObject {
     /// Auto-restart tracking
     private var autoRestartCount = 0
     private var isStopping = false
+    /// 当前启动链路的进程世代；用于丢弃旧进程的延迟回调。
+    private var activeProcessGeneration: UInt64 = 0
+    private var nextProcessGeneration: UInt64 = 0
     private var lastTerminationReason: String?
     private var lastTerminationCode: Int32?
     /// 当前正在运行（或最近一次启动）的 Core 绑定地址
@@ -404,13 +407,15 @@ class CoreProcessManager: ObservableObject {
         self.stderrPipe = stderr
         self.pendingBootstrap = nil
         self.stdoutBuffer = ""
+        let generation = allocateProcessGeneration()
+        activeProcessGeneration = generation
 
         // Handle stdout - 写日志 + 解析 bootstrap 行
         stdout.fileHandleForReading.readabilityHandler = { [weak self, weak proc] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             guard let self, let proc else { return }
-            self.handleStdoutChunk(data, process: proc)
+            self.handleStdoutChunk(data, process: proc, generation: generation)
         }
 
         // Handle stderr - write to memory buffer for UI
@@ -426,7 +431,7 @@ class CoreProcessManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 忽略旧进程（已被新进程替代）的终止回调，避免覆盖当前状态。
-                if self.process !== proc {
+                if self.process !== proc || self.activeProcessGeneration != generation {
                     return
                 }
 
@@ -482,7 +487,7 @@ class CoreProcessManager: ObservableObject {
             self.launchedBindAddress = nil
             let pid = proc.processIdentifier
             TFLog.core.info("Process started with PID: \(pid, privacy: .public), waiting for bootstrap")
-            waitForBootstrap(proc: proc, pid: pid, launchedAt: Date())
+            waitForBootstrap(proc: proc, pid: pid, launchedAt: Date(), generation: generation)
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
             TFLog.core.error("\(msg, privacy: .public)")
@@ -584,10 +589,11 @@ class CoreProcessManager: ObservableObject {
         pendingBootstrap = nil
         process = nil
         launchedBindAddress = nil
+        activeProcessGeneration = 0
     }
 
-    private func handleStdoutChunk(_ data: Data, process: Process) {
-        guard self.process === process else { return }
+    private func handleStdoutChunk(_ data: Data, process: Process, generation: UInt64) {
+        guard self.process === process, self.activeProcessGeneration == generation else { return }
         guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
 
         appendLog("[stdout] \(chunk)")
@@ -598,11 +604,12 @@ class CoreProcessManager: ObservableObject {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             stdoutBuffer.removeSubrange(...lineBreak)
             guard !line.isEmpty else { continue }
-            handleStdoutLine(line)
+            handleStdoutLine(line, generation: generation)
         }
     }
 
-    private func handleStdoutLine(_ line: String) {
+    private func handleStdoutLine(_ line: String, generation: UInt64) {
+        guard activeProcessGeneration == generation else { return }
         let prefix = "TIDYFLOW_BOOTSTRAP "
         if line.hasPrefix(prefix) {
             let payload = String(line.dropFirst(prefix.count))
@@ -641,10 +648,16 @@ class CoreProcessManager: ObservableObject {
         }
     }
 
-    private func waitForBootstrap(proc: Process, pid: Int32, launchedAt: Date) {
-        guard process === proc, proc.isRunning else { return }
+    private func waitForBootstrap(proc: Process, pid: Int32, launchedAt: Date, generation: UInt64) {
+        guard process === proc, proc.isRunning, activeProcessGeneration == generation else { return }
         if let bootstrap = pendingBootstrap {
-            waitForCoreReady(proc: proc, port: bootstrap.port, pid: pid, launchedAt: launchedAt)
+            waitForCoreReady(
+                proc: proc,
+                port: bootstrap.port,
+                pid: pid,
+                launchedAt: launchedAt,
+                generation: generation
+            )
             return
         }
 
@@ -657,7 +670,7 @@ class CoreProcessManager: ObservableObject {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.waitForBootstrap(proc: proc, pid: pid, launchedAt: launchedAt)
+            self?.waitForBootstrap(proc: proc, pid: pid, launchedAt: launchedAt, generation: generation)
         }
     }
 
@@ -694,14 +707,22 @@ class CoreProcessManager: ObservableObject {
     }
 
     /// 等待 Core 端口可连接后再回调 ready，避免“进程已启动但 WS 尚未监听”导致首连失败。
-    private func waitForCoreReady(proc: Process, port: Int, pid: Int32, launchedAt: Date) {
-        guard process === proc, proc.isRunning else { return }
+    private func waitForCoreReady(
+        proc: Process,
+        port: Int,
+        pid: Int32,
+        launchedAt: Date,
+        generation: UInt64
+    ) {
+        guard process === proc, proc.isRunning, activeProcessGeneration == generation else { return }
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let reachable = PortAllocator.isPortReachable(port, timeout: 0.25)
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard self.process === proc, proc.isRunning else { return }
+                guard self.process === proc,
+                      proc.isRunning,
+                      self.activeProcessGeneration == generation else { return }
 
                 if reachable {
                     self.status = .running(port: port, pid: pid)
@@ -721,10 +742,21 @@ class CoreProcessManager: ObservableObject {
                 }
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                    self?.waitForCoreReady(proc: proc, port: port, pid: pid, launchedAt: launchedAt)
+                    self?.waitForCoreReady(
+                        proc: proc,
+                        port: port,
+                        pid: pid,
+                        launchedAt: launchedAt,
+                        generation: generation
+                    )
                 }
             }
         }
+    }
+
+    private func allocateProcessGeneration() -> UInt64 {
+        nextProcessGeneration &+= 1
+        return nextProcessGeneration
     }
 
     /// 轮询等待 stop 完成，再触发 start。

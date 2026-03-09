@@ -105,56 +105,8 @@ struct CustomCommandsSection: View {
                         appState.clientSettings.remoteAccessEnabled = enabled
                         appState.saveClientSettings()
                     }
-
-                if appState.remoteAccessReady {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("settings.mobile.lanAddress".localized)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(appState.mobileLanAddressDisplayText)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("settings.mobile.port".localized)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(appState.mobileAccessPortDisplayText)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                }
-
-                HStack(spacing: 12) {
-                    Button(action: { appState.requestMobilePairCode() }) {
-                        if appState.mobilePairCodeLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("settings.mobile.generateCode".localized, systemImage: "iphone.and.arrow.forward")
-                        }
-                    }
-                    .disabled(!appState.remoteAccessReady || appState.mobilePairCodeLoading)
-
-                    if let code = appState.mobilePairCode {
-                        Text(code)
-                            .font(.system(.body, design: .monospaced))
-                            .fontWeight(.semibold)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let expiresAt = appState.mobilePairCodeExpiresAt, !expiresAt.isEmpty {
-                    Text(String(format: "settings.mobile.codeExpires".localized, expiresAt))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                if let error = appState.mobilePairCodeError, !error.isEmpty {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
+                RemoteAccessStatusSection(coreProcessManager: appState.coreProcessManager)
+                    .environmentObject(appState)
             } header: {
                 Text("settings.mobile.section".localized)
             } footer: {
@@ -298,6 +250,63 @@ struct CustomCommandRow: View {
             Button("common.delete".localized, role: .destructive) { onDelete() }
         } message: {
             Text(String(format: "settings.deleteCommand.message".localized, command.name))
+        }
+    }
+}
+
+private struct RemoteAccessStatusSection: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var coreProcessManager: CoreProcessManager
+
+    var body: some View {
+        if appState.remoteAccessReady {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("settings.mobile.lanAddress".localized)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(appState.mobileLanAddressDisplayText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("settings.mobile.port".localized)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(appState.mobileAccessPortDisplayText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+
+        HStack(spacing: 12) {
+            Button(action: { appState.requestMobilePairCode() }) {
+                if appState.mobilePairCodeLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("settings.mobile.generateCode".localized, systemImage: "iphone.and.arrow.forward")
+                }
+            }
+            .disabled(!appState.remoteAccessReady || appState.mobilePairCodeLoading)
+
+            if let code = appState.mobilePairCode {
+                Text(code)
+                    .font(.system(.body, design: .monospaced))
+                    .fontWeight(.semibold)
+                    .textSelection(.enabled)
+            }
+        }
+
+        if let expiresAt = appState.mobilePairCodeExpiresAt, !expiresAt.isEmpty {
+            Text(String(format: "settings.mobile.codeExpires".localized, expiresAt))
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        if let error = appState.mobilePairCodeError, !error.isEmpty {
+            Text(error)
+                .font(.caption)
+                .foregroundColor(.red)
         }
     }
 }

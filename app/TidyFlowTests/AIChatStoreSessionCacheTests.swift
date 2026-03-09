@@ -58,7 +58,8 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
             ],
             isStreaming: true
         )
-        store.applySessionCacheOps([], isStreaming: false)
+        store.flushPendingStreamEvents()
+        store.handleChatDone(sessionId: "s1")
 
         XCTAssertEqual(store.messages.count, 1)
         XCTAssertEqual(store.messages[0].role, .assistant)
@@ -87,7 +88,8 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
             ],
             isStreaming: true
         )
-        store.applySessionCacheOps([], isStreaming: false)
+        store.flushPendingStreamEvents()
+        store.handleChatDone(sessionId: "s1")
 
         XCTAssertEqual(store.messages.count, 1)
         let revisionAfterPartUpdate = store.messages[0].renderRevision
@@ -105,7 +107,8 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
             ],
             isStreaming: true
         )
-        store.applySessionCacheOps([], isStreaming: false)
+        store.flushPendingStreamEvents()
+        store.handleChatDone(sessionId: "s1")
 
         XCTAssertEqual(store.messages[0].parts.first?.text, "hello")
         XCTAssertGreaterThan(store.messages[0].renderRevision, revisionAfterPartUpdate)

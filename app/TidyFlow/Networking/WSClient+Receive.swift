@@ -35,21 +35,23 @@ extension WSClient {
 
     // MARK: - Receive Messages
 
-    func receiveMessage(for task: URLSessionWebSocketTask) {
+    func receiveMessage(for task: URLSessionWebSocketTask, identity: String) {
         task.receive { [weak self] result in
             guard let self else { return }
             // 旧连接回调可能在重连后延迟到达；只处理当前 task 的回调。
-            guard self.webSocketTask === task else { return }
+            guard self.webSocketTask === task, self.webSocketTaskIdentity == identity else { return }
             switch result {
             case .success(let message):
-                self.handleMessage(message)
-                self.receiveMessage(for: task) // Continue listening
+                self.handleMessage(message, identity: identity)
+                self.receiveMessage(for: task, identity: identity) // Continue listening
             case .failure(let error):
                 // Connection closed or error — 切回主线程更新状态
                 DispatchQueue.main.async {
-                    guard self.webSocketTask === task else { return }
+                    guard self.webSocketTask === task, self.webSocketTaskIdentity == identity else { return }
                     self.isConnecting = false
                     self.webSocketTask = nil
+                    self.webSocketTaskIdentity = nil
+                    self.connectionIdentity = nil
                     if self.isConnected {
                         self.emitClientError("Receive error: \(error.localizedDescription)")
                         self.updateConnectionState(false)
@@ -59,10 +61,10 @@ extension WSClient {
         }
     }
 
-    private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
+    private func handleMessage(_ message: URLSessionWebSocketTask.Message, identity: String) {
         switch message {
         case .data(let data):
-            parseAndDispatchBinary(data)
+            parseAndDispatchBinary(data, identity: identity)
         case .string:
             TFLog.ws.error("Received unexpected text message, protocol v6 requires binary")
         @unknown default:
@@ -72,11 +74,12 @@ extension WSClient {
 
     /// 解析并分发二进制 MessagePack 消息
     /// 解码在后台队列执行，分发回调切回主线程
-    private func parseAndDispatchBinary(_ data: Data) {
+    private func parseAndDispatchBinary(_ data: Data, identity: String) {
         do {
             let envelope = try decodeServerEnvelope(data)
             DispatchQueue.main.async { [weak self] in
-                self?.dispatchMessage(envelope)
+                guard let self, self.webSocketTaskIdentity == identity else { return }
+                self.dispatchMessage(envelope)
             }
         } catch {
             TFLog.ws.error("MessagePack decode failed: \(error.localizedDescription, privacy: .public)")
@@ -189,6 +192,7 @@ extension WSClient: URLSessionWebSocketDelegate {
         guard self.webSocketTask === webSocketTask else { return }
         isConnecting = false
         isIntentionalDisconnect = false
+        connectionIdentity = webSocketTaskIdentity
         TFLog.ws.info("WebSocket connected to: \(self.currentURL?.absoluteString ?? "unknown", privacy: .public)")
         updateConnectionState(true)
     }
@@ -197,6 +201,8 @@ extension WSClient: URLSessionWebSocketDelegate {
         guard self.webSocketTask === webSocketTask else { return }
         isConnecting = false
         self.webSocketTask = nil
+        self.webSocketTaskIdentity = nil
+        self.connectionIdentity = nil
         TFLog.ws.info("WebSocket disconnected. Code: \(closeCode.rawValue, privacy: .public)")
         updateConnectionState(false)
     }
@@ -206,6 +212,8 @@ extension WSClient: URLSessionWebSocketDelegate {
         isConnecting = false
         if let error = error {
             webSocketTask = nil
+            webSocketTaskIdentity = nil
+            connectionIdentity = nil
             TFLog.ws.error("URLSession error: \(error.localizedDescription, privacy: .public)")
             updateConnectionState(false)
         }

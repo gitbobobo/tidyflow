@@ -37,6 +37,11 @@ class WSClient: NSObject, ObservableObject {
     private var pendingReconnectWorkItem: DispatchWorkItem?
     /// 最近一次已处理的服务端 seq（v7 包络），用于丢弃乱序/重复消息
     var lastServerSeq: UInt64 = 0
+    /// 当前连接身份；每次建立新 socket 都会刷新，用于屏蔽旧连接的延迟回调。
+    var connectionIdentity: String?
+    /// 当前 socket task 对应的连接身份；跨文件扩展也需要访问它来拦截旧回调。
+    var webSocketTaskIdentity: String?
+    private var nextConnectionSerial: UInt64 = 0
 
     // 领域 handler（新路径）：优先于闭包回调分发，逐步替代 onXxx 回调。
     weak var gitMessageHandler: GitMessageHandler?
@@ -258,20 +263,27 @@ class WSClient: NSObject, ObservableObject {
         isStale = false
         isConnecting = true
         lastServerSeq = 0
+        let identity = makeConnectionIdentity(for: url)
+        webSocketTaskIdentity = identity
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         guard let task = urlSession?.webSocketTask(with: url) else {
             isConnecting = false
+            webSocketTaskIdentity = nil
             emitClientError("Failed to create WebSocket task")
             return
         }
         webSocketTask = task
         task.resume()
-        receiveMessage(for: task)
+        receiveMessage(for: task, identity: identity)
     }
 
     /// Connect to a specific port (convenience method)
     func connect(port: Int) {
-        currentURL = AppConfig.makeWsURL(port: port, token: wsAuthToken)
+        let targetURL = AppConfig.makeWsURL(port: port, token: wsAuthToken)
+        if currentURL == targetURL, (isConnected || isConnecting || webSocketTask != nil) {
+            return
+        }
+        currentURL = targetURL
         connect()
     }
 
@@ -289,6 +301,8 @@ class WSClient: NSObject, ObservableObject {
         }
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        webSocketTaskIdentity = nil
+        connectionIdentity = nil
         lastServerSeq = 0
         updateConnectionState(false)
     }
@@ -359,6 +373,11 @@ class WSClient: NSObject, ObservableObject {
         "file_changed",
         "git_status_changed"
     ]
+
+    private func makeConnectionIdentity(for url: URL) -> String {
+        nextConnectionSerial &+= 1
+        return "\(url.absoluteString)#\(nextConnectionSerial)"
+    }
 
     /// 判断消息是否需要合并处理
     func isCoalescible(_ type: String) -> Bool {
