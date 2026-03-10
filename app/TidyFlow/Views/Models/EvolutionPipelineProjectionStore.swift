@@ -278,6 +278,23 @@ struct EvolutionPipelineProjection: Equatable {
     let isCurrentCycleRetryable: Bool
     /// v1.44：当前工作区的预测投影（调度建议与预测异常摘要）
     let predictionProjection: WorkspacePredictionProjection
+    /// v1.45：当前活跃工作区的分析摘要（从 Core 权威输出消费，不重新推导）
+    let analysisSummaries: [EvolutionAnalysisSummary]
+
+    /// 当前工作区的瓶颈数量（UI 展示用）
+    var activeBottleneckCount: Int {
+        analysisSummaries.reduce(0) { $0 + $1.bottlenecks.count }
+    }
+
+    /// 系统级优化建议数量
+    var systemSuggestionCount: Int {
+        analysisSummaries.flatMap(\.suggestions).filter { $0.scope == .system }.count
+    }
+
+    /// 最高风险评分（所有活跃工作区中）
+    var maxRiskScore: Double {
+        analysisSummaries.map(\.overallRiskScore).max() ?? 0.0
+    }
 
     static let empty = EvolutionPipelineProjection(
         project: "",
@@ -295,7 +312,8 @@ struct EvolutionPipelineProjection: Equatable {
         isCurrentCycleFailed: false,
         currentCycleFailureSummary: nil,
         isCurrentCycleRetryable: false,
-        predictionProjection: .empty
+        predictionProjection: .empty,
+        analysisSummaries: []
     )
 }
 
@@ -345,7 +363,8 @@ enum EvolutionPipelineProjectionSemantics {
             isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace ?? ""
-            )
+            ),
+            analysisSummaries: []
         )
     }
 #endif
@@ -395,7 +414,8 @@ enum EvolutionPipelineProjectionSemantics {
             isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace
-            )
+            ),
+            analysisSummaries: []
         )
     }
 #endif

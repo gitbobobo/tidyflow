@@ -1951,6 +1951,8 @@ struct MobileEvolutionView: View {
                     }
                 }
             }
+            // v1.45: 分析摘要（从 Core 权威输出消费）
+            analysisStatusSection
             // 历史循环
             mobileCycleHistorySection
         }
@@ -2615,6 +2617,40 @@ struct MobileEvolutionView: View {
         case "judge": return .yellow
         case "auto_commit": return .gray
         default: return .secondary
+        }
+    }
+
+    // MARK: - 分析状态（v1.45）
+
+    @ViewBuilder
+    private var analysisStatusSection: some View {
+        if projection.activeBottleneckCount > 0 {
+            Section("分析摘要") {
+                HStack {
+                    Label("瓶颈", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text("\(projection.activeBottleneckCount)")
+                        .foregroundStyle(.secondary)
+                }
+                if projection.maxRiskScore > 0.5 {
+                    HStack {
+                        Label("风险评分", systemImage: "gauge.with.dots.needle.67percent")
+                        Spacer()
+                        Text(String(format: "%.0f%%", projection.maxRiskScore * 100))
+                            .foregroundStyle(projection.maxRiskScore > 0.7 ? .red : .orange)
+                    }
+                }
+                if projection.systemSuggestionCount > 0 {
+                    HStack {
+                        Label("优化建议", systemImage: "lightbulb.fill")
+                            .foregroundStyle(.yellow)
+                        Spacer()
+                        Text("\(projection.systemSuggestionCount)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
     }
 

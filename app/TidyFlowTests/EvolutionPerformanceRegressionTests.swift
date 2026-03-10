@@ -317,6 +317,62 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
         )
     }
 
+    func testAnalysisProjectionDoesNotTriggerSnapshotFallback() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+
+        var scheduledRequests: [(String, String, [URLQueryItem])] = []
+        appState.wsClient.onHTTPRequestScheduled = { domain, path, queryItems in
+            scheduledRequests.append((domain, path, queryItems))
+        }
+
+        let existing = makeItem(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            status: "running",
+            currentStage: "verify.1",
+            globalLoopRound: 2
+        )
+        appState.replaceEvolutionWorkspaceItems([existing])
+
+        // 模拟收到带分析数据的 cycle update
+        appState.handleEvolutionCycleUpdated(
+            EvoCycleUpdatedV2(
+                project: "proj",
+                workspace: "ws",
+                cycleID: "cycle-1",
+                title: "Cycle",
+                status: "running",
+                currentStage: "verify.1",
+                globalLoopRound: 2,
+                loopRoundLimit: 3,
+                verifyIteration: 1,
+                verifyIterationLimit: 5,
+                agents: [],
+                executions: [],
+                terminalReasonCode: nil,
+                terminalErrorMessage: nil,
+                rateLimitErrorMessage: nil
+            )
+        )
+
+        let exp = expectation(description: "等待无回退请求")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 1.0)
+
+        XCTAssertTrue(scheduledRequests.isEmpty, "分析投影更新不应触发 snapshot fallback")
+    }
+
     private func waitForEvolutionAsyncWork() {
         let exp = expectation(description: "等待 Evolution 异步更新完成")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {

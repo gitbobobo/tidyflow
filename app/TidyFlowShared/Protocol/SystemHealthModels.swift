@@ -1072,6 +1072,125 @@ public struct UnifiedRetryDescriptor: Equatable {
     }
 }
 
+// MARK: - 质量门禁裁决（WI-002: Evolution 自动门禁）
+
+/// 门禁裁决结果
+public enum GateVerdict: String, Codable, CaseIterable {
+    case pass
+    case fail
+    case skip
+}
+
+/// 门禁失败原因码
+public enum GateFailureReason: Codable, Equatable {
+    case systemUnhealthy
+    case criticalIncident
+    case evidenceIncomplete
+    case protocolInconsistent
+    case coreRegressionFailed
+    case appleVerificationFailed
+    case custom(String)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let raw = try? container.decode(String.self) {
+            switch raw {
+            case "system_unhealthy": self = .systemUnhealthy
+            case "critical_incident": self = .criticalIncident
+            case "evidence_incomplete": self = .evidenceIncomplete
+            case "protocol_inconsistent": self = .protocolInconsistent
+            case "core_regression_failed": self = .coreRegressionFailed
+            case "apple_verification_failed": self = .appleVerificationFailed
+            default: self = .custom(raw)
+            }
+        } else {
+            let obj = try decoder.container(keyedBy: CodingKeys.self)
+            let value = try obj.decode(String.self, forKey: .custom)
+            self = .custom(value)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .systemUnhealthy: try container.encode("system_unhealthy")
+        case .criticalIncident: try container.encode("critical_incident")
+        case .evidenceIncomplete: try container.encode("evidence_incomplete")
+        case .protocolInconsistent: try container.encode("protocol_inconsistent")
+        case .coreRegressionFailed: try container.encode("core_regression_failed")
+        case .appleVerificationFailed: try container.encode("apple_verification_failed")
+        case .custom(let value): try container.encode(value)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case custom
+    }
+}
+
+/// 质量门禁裁决记录
+///
+/// 按 `(project, workspace, cycle_id)` 隔离存储和传播，
+/// 不会因同名工作区或重连而串用其他项目状态。
+public struct GateDecision: Codable, Equatable {
+    public var verdict: GateVerdict
+    public var failureReasons: [GateFailureReason]
+    public var project: String
+    public var workspace: String
+    public var cycleId: String
+    public var healthStatus: SystemHealthStatus
+    public var retryCount: UInt32
+    public var bypassed: Bool
+    public var bypassReason: String?
+    public var decidedAt: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case verdict
+        case failureReasons = "failure_reasons"
+        case project, workspace
+        case cycleId = "cycle_id"
+        case healthStatus = "health_status"
+        case retryCount = "retry_count"
+        case bypassed
+        case bypassReason = "bypass_reason"
+        case decidedAt = "decided_at"
+    }
+
+    public static func from(json: [String: Any]) -> GateDecision? {
+        guard let verdictRaw = json["verdict"] as? String,
+              let verdict = GateVerdict(rawValue: verdictRaw),
+              let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleId = json["cycle_id"] as? String,
+              let healthStatusRaw = json["health_status"] as? String,
+              let healthStatus = SystemHealthStatus(rawValue: healthStatusRaw),
+              let decidedAt = json["decided_at"] as? UInt64 else { return nil }
+        let failureReasons: [GateFailureReason] = (json["failure_reasons"] as? [String])?.compactMap { raw in
+            switch raw {
+            case "system_unhealthy": return .systemUnhealthy
+            case "critical_incident": return .criticalIncident
+            case "evidence_incomplete": return .evidenceIncomplete
+            case "protocol_inconsistent": return .protocolInconsistent
+            case "core_regression_failed": return .coreRegressionFailed
+            case "apple_verification_failed": return .appleVerificationFailed
+            default: return .custom(raw)
+            }
+        } ?? []
+        return GateDecision(
+            verdict: verdict,
+            failureReasons: failureReasons,
+            project: project,
+            workspace: workspace,
+            cycleId: cycleId,
+            healthStatus: healthStatus,
+            retryCount: (json["retry_count"] as? UInt32) ?? 0,
+            bypassed: (json["bypassed"] as? Bool) ?? false,
+            bypassReason: json["bypass_reason"] as? String,
+            decidedAt: decidedAt
+        )
+    }
+}
+
 // MARK: - 智能演化分析摘要（v1.45: 统一分析契约）
 
 /// 瓶颈类型分类（Core 权威判定，客户端不得重新推导）

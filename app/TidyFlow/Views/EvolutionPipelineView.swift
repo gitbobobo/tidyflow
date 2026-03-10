@@ -169,6 +169,26 @@ struct EvolutionPipelineView: View {
         }
     }
 
+    // MARK: - 分析摘要指示器（v1.45）
+
+    @ViewBuilder
+    private var analysisStatusIndicator: some View {
+        let bottleneckCount = projection.activeBottleneckCount
+        let riskScore = projection.maxRiskScore
+
+        if bottleneckCount > 0 || riskScore > 0.5 {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(riskScore > 0.7 ? .red : .orange)
+                    .font(.caption)
+                Text("\(bottleneckCount) 瓶颈")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .help("Core 识别到 \(bottleneckCount) 个性能瓶颈，综合风险 \(String(format: "%.0f%%", riskScore * 100))")
+        }
+    }
+
     // MARK: - 标题栏
 
     private var pipelineHeader: some View {
@@ -176,6 +196,7 @@ struct EvolutionPipelineView: View {
             Text("evolution.page.title".localized)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
+            analysisStatusIndicator
             Spacer()
             if let item = currentItem {
                 // 当前轮次指示
