@@ -558,7 +558,34 @@ private struct MessageBubble: View, Equatable {
 
     private var isUser: Bool { message.role == .user }
     private var bubbleCornerRadius: CGFloat { 12 }
-    private var contentMaxWidth: CGFloat { isUser ? 520 : 760 }
+    private var usesWideAssistantLayout: Bool {
+        guard !isUser else { return false }
+        let nodes = displayNodes
+        guard !nodes.isEmpty else { return false }
+        return nodes.allSatisfy { node in
+            switch node {
+            case .textGroup:
+                return false
+            case .part(let part):
+                switch part.kind {
+                case .tool, .plan, .compaction:
+                    return true
+                case .text, .reasoning, .file:
+                    return false
+                }
+            }
+        }
+    }
+    private var contentMaxWidth: CGFloat {
+        if isUser {
+            return 520
+        }
+        return usesWideAssistantLayout ? .infinity : 760
+    }
+    private var trailingBubblePadding: CGFloat {
+        if isUser { return 0 }
+        return usesWideAssistantLayout ? 8 : 12
+    }
     private var primaryTextColor: Color { .primary }
     private var secondaryTextColor: Color { .secondary }
 
@@ -609,7 +636,7 @@ private struct MessageBubble: View, Equatable {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.horizontal, 8)
-        .padding(.trailing, isUser ? 0 : 12)
+        .padding(.trailing, trailingBubblePadding)
         .sheet(item: Binding(
             get: { fullscreenImageData.map { FullscreenImageItem(data: $0) } },
             set: { if $0 == nil { fullscreenImageData = nil } }
@@ -750,16 +777,13 @@ private struct MessageBubble: View, Equatable {
     }
 
     private var streamingStatusView: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(Color.accentColor)
-                .frame(width: 6, height: 6)
+        HStack(spacing: 0) {
             Text("思考中")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .shimmering(active: true, animation: .linear(duration: 1.4).repeatForever(autoreverses: false))
         }
-        .padding(.top, displayNodes.isEmpty ? 0 : 8)
+        .padding(.top, displayNodes.isEmpty ? 0 : 4)
     }
 
     private var lightweightBubble: some View {

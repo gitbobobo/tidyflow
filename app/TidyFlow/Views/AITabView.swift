@@ -44,8 +44,8 @@ struct AITabView: View {
     private let compactSidebarMaxWidth: CGFloat = 320
     private let floatingComposerHorizontalPadding: CGFloat = 12
     private let floatingComposerBottomPadding: CGFloat = 12
-    private let floatingComposerSpacing: CGFloat = 10
-    private let floatingComposerMinimumReserveHeight: CGFloat = 164
+    private let floatingComposerSpacing: CGFloat = 4
+    private let floatingComposerMinimumReserveHeight: CGFloat = 148
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
