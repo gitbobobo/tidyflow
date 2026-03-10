@@ -443,9 +443,10 @@ pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
 // ============================================================================
 
 use crate::server::protocol::health::{
-    ObservationAggregate, PredictiveAnomaly, PredictiveAnomalyKind, PredictionConfidence,
-    PredictionTimeWindow, ResourcePressureLevel, SchedulingRecommendation,
-    SchedulingRecommendationKind,
+    AnalysisScopeLevel, BottleneckEntry, BottleneckKind, EvolutionAnalysisSummary,
+    GateDecision, GateFailureReason, GateVerdict, ObservationAggregate, OptimizationSuggestion,
+    PredictiveAnomaly, PredictiveAnomalyKind, PredictionConfidence, PredictionTimeWindow,
+    ResourcePressureLevel, SchedulingRecommendation, SchedulingRecommendationKind,
 };
 use crate::server::protocol::health::HealthContext;
 use std::collections::HashMap;
@@ -829,6 +830,233 @@ pub fn build_scheduling_recommendations(
     recommendations
 }
 
+/// 瓶颈类型转字符串标识（用于瓶颈 ID 生成）
+fn bottleneck_kind_to_str(kind: &BottleneckKind) -> &'static str {
+    match kind {
+        BottleneckKind::Resource => "resource",
+        BottleneckKind::RateLimit => "rate_limit",
+        BottleneckKind::RecurringFailure => "recurring_failure",
+        BottleneckKind::PerformanceDegradation => "perf_degradation",
+        BottleneckKind::Configuration => "configuration",
+        BottleneckKind::ProtocolInconsistency => "protocol_inconsistency",
+    }
+}
+
+/// 构建工作区级智能演化分析摘要
+///
+/// 聚合质量门禁裁决、观测聚合、预测异常和调度建议，
+/// 输出按 `(project, workspace, cycle_id)` 隔离的统一分析结果。
+pub fn build_analysis_summary(
+    project: &str,
+    workspace: &str,
+    cycle_id: &str,
+    gate_decision: Option<&GateDecision>,
+    aggregates: &[ObservationAggregate],
+    anomalies: &[PredictiveAnomaly],
+    recommendations: &[SchedulingRecommendation],
+) -> EvolutionAnalysisSummary {
+    let now = unix_ms_now();
+    let one_hour_ms = 3_600_000u64;
+
+    // 查找当前工作区的观测聚合
+    let workspace_agg = aggregates
+        .iter()
+        .find(|a| a.project == project && a.workspace == workspace);
+    let health_score = workspace_agg.map(|a| a.health_score).unwrap_or(1.0);
+    let pressure_level = workspace_agg
+        .map(|a| a.pressure_level)
+        .unwrap_or(ResourcePressureLevel::Low);
+
+    // 收集瓶颈
+    let mut bottlenecks = Vec::new();
+
+    // 从预测异常生成瓶颈
+    for anomaly in anomalies.iter().filter(|a| {
+        a.context.project.as_deref() == Some(project)
+            && a.context.workspace.as_deref() == Some(workspace)
+    }) {
+        let (kind, reason_code) = match anomaly.kind {
+            PredictiveAnomalyKind::RecurringFailure => {
+                (BottleneckKind::RecurringFailure, "recurring_failure_detected")
+            }
+            PredictiveAnomalyKind::RateLimitRisk => {
+                (BottleneckKind::RateLimit, "rate_limit_risk")
+            }
+            PredictiveAnomalyKind::PerformanceDegradation => (
+                BottleneckKind::PerformanceDegradation,
+                "performance_degradation_trend",
+            ),
+            PredictiveAnomalyKind::ResourceExhaustion => {
+                (BottleneckKind::Resource, "resource_exhaustion_predicted")
+            }
+            PredictiveAnomalyKind::CacheEfficiencyDrop => {
+                (BottleneckKind::Resource, "cache_efficiency_drop")
+            }
+        };
+        bottlenecks.push(BottleneckEntry {
+            bottleneck_id: format!(
+                "bn:{}:{}:{}",
+                bottleneck_kind_to_str(&kind),
+                project,
+                workspace
+            ),
+            kind,
+            reason_code: reason_code.to_string(),
+            risk_score: anomaly.score,
+            evidence_summary: anomaly
+                .summary
+                .clone()
+                .unwrap_or_else(|| anomaly.root_cause.clone()),
+            context: anomaly.context.clone(),
+            related_ids: std::iter::once(anomaly.anomaly_id.clone())
+                .chain(anomaly.related_incident_ids.iter().cloned())
+                .collect(),
+            detected_at: anomaly.predicted_at,
+        });
+    }
+
+    // 从门禁裁决生成瓶颈（如果失败）
+    if let Some(gate) = gate_decision {
+        if gate.verdict == GateVerdict::Fail {
+            for reason in &gate.failure_reasons {
+                let (kind, reason_code, summary): (BottleneckKind, &str, &str) = match reason {
+                    GateFailureReason::SystemUnhealthy => (
+                        BottleneckKind::Resource,
+                        "system_unhealthy",
+                        "系统健康状态为 Unhealthy，存在关键故障",
+                    ),
+                    GateFailureReason::CriticalIncident => (
+                        BottleneckKind::Resource,
+                        "critical_incident_blocking",
+                        "存在阻断性 critical incident",
+                    ),
+                    GateFailureReason::EvidenceIncomplete => (
+                        BottleneckKind::Configuration,
+                        "evidence_incomplete",
+                        "证据完整性校验失败",
+                    ),
+                    GateFailureReason::ProtocolInconsistent => (
+                        BottleneckKind::ProtocolInconsistency,
+                        "protocol_inconsistent",
+                        "协议一致性检查失败",
+                    ),
+                    GateFailureReason::CoreRegressionFailed => (
+                        BottleneckKind::RecurringFailure,
+                        "core_regression_failed",
+                        "Core 回归测试失败",
+                    ),
+                    GateFailureReason::AppleVerificationFailed => (
+                        BottleneckKind::RecurringFailure,
+                        "apple_verification_failed",
+                        "Apple 构建或回归失败",
+                    ),
+                    GateFailureReason::Custom(msg) => (
+                        BottleneckKind::Configuration,
+                        "custom_gate_failure",
+                        msg.as_str(),
+                    ),
+                };
+                bottlenecks.push(BottleneckEntry {
+                    bottleneck_id: format!(
+                        "bn:gate:{}:{}:{}",
+                        reason_code, project, workspace
+                    ),
+                    kind,
+                    reason_code: reason_code.to_string(),
+                    risk_score: 0.9,
+                    evidence_summary: summary.to_string(),
+                    context: HealthContext {
+                        project: Some(project.to_string()),
+                        workspace: Some(workspace.to_string()),
+                        session_id: None,
+                        cycle_id: Some(cycle_id.to_string()),
+                    },
+                    related_ids: Vec::new(),
+                    detected_at: gate.decided_at,
+                });
+            }
+        }
+    }
+
+    // 从观测聚合生成瓶颈（高压力或低健康评分）
+    if let Some(agg) = workspace_agg {
+        if agg.pressure_level >= ResourcePressureLevel::High {
+            bottlenecks.push(BottleneckEntry {
+                bottleneck_id: format!("bn:pressure:{}:{}", project, workspace),
+                kind: BottleneckKind::Resource,
+                reason_code: "high_resource_pressure".to_string(),
+                risk_score: if agg.pressure_level == ResourcePressureLevel::Critical {
+                    0.95
+                } else {
+                    0.7
+                },
+                evidence_summary: format!(
+                    "资源压力级别 {:?}，健康评分 {:.2}，连续失败 {} 次",
+                    agg.pressure_level, agg.health_score, agg.consecutive_failures
+                ),
+                context: HealthContext {
+                    project: Some(project.to_string()),
+                    workspace: Some(workspace.to_string()),
+                    session_id: None,
+                    cycle_id: Some(cycle_id.to_string()),
+                },
+                related_ids: Vec::new(),
+                detected_at: now,
+            });
+        }
+    }
+
+    // 综合风险评分：取所有瓶颈中最高风险
+    let overall_risk_score = bottlenecks
+        .iter()
+        .map(|b| b.risk_score)
+        .fold(0.0f64, f64::max);
+
+    // 从调度建议构建优化建议
+    let mut suggestions: Vec<OptimizationSuggestion> = Vec::new();
+    for (i, rec) in recommendations.iter().enumerate() {
+        let scope = if rec.context.project.is_some() {
+            AnalysisScopeLevel::Workspace
+        } else {
+            AnalysisScopeLevel::System
+        };
+        suggestions.push(OptimizationSuggestion {
+            suggestion_id: format!("sug:{}:{}", rec.recommendation_id, i),
+            scope,
+            action: format!("{:?}", rec.kind).to_ascii_lowercase(),
+            summary: rec.summary.clone().unwrap_or_else(|| rec.reason.clone()),
+            priority: (i as u32) + 1,
+            expected_impact: rec.suggested_value.map(|v| format!("建议目标值: {}", v)),
+            context: rec.context.clone(),
+        });
+    }
+
+    // 关联预测异常 ID
+    let predictive_anomaly_ids: Vec<String> = anomalies
+        .iter()
+        .filter(|a| {
+            a.context.project.as_deref() == Some(project)
+                && a.context.workspace.as_deref() == Some(workspace)
+        })
+        .map(|a| a.anomaly_id.clone())
+        .collect();
+
+    EvolutionAnalysisSummary {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        cycle_id: cycle_id.to_string(),
+        gate_decision: gate_decision.cloned(),
+        bottlenecks,
+        overall_risk_score,
+        health_score,
+        pressure_level,
+        predictive_anomaly_ids,
+        suggestions,
+        analyzed_at: now,
+        expires_at: now + one_hour_ms,
+    }
+}
+
 /// 计算工作区资源压力级别
 fn compute_pressure_level(
     acc: &WorkspaceObservationAccumulator,
@@ -968,6 +1196,123 @@ mod tests {
         assert!(
             anomalies.iter().any(|a| a.kind == PredictiveAnomalyKind::RecurringFailure),
             "should detect recurring failure"
+        );
+    }
+}
+
+#[cfg(test)]
+mod analysis_tests {
+    use super::*;
+    use crate::server::protocol::health::*;
+
+    #[test]
+    fn analysis_summary_empty_inputs() {
+        let summary = build_analysis_summary("proj", "ws", "cycle-1", None, &[], &[], &[]);
+        assert_eq!(summary.project, "proj");
+        assert_eq!(summary.workspace, "ws");
+        assert_eq!(summary.cycle_id, "cycle-1");
+        assert!(summary.bottlenecks.is_empty());
+        assert!(summary.suggestions.is_empty());
+        assert_eq!(summary.overall_risk_score, 0.0);
+        assert_eq!(summary.health_score, 1.0);
+        assert_eq!(summary.pressure_level, ResourcePressureLevel::Low);
+    }
+
+    #[test]
+    fn analysis_summary_from_gate_failure() {
+        let gate = GateDecision {
+            verdict: GateVerdict::Fail,
+            failure_reasons: vec![GateFailureReason::CriticalIncident],
+            project: "proj".to_string(),
+            workspace: "ws".to_string(),
+            cycle_id: "cycle-1".to_string(),
+            health_status: SystemHealthStatus::Unhealthy,
+            retry_count: 0,
+            bypassed: false,
+            bypass_reason: None,
+            decided_at: 1000,
+        };
+        let summary =
+            build_analysis_summary("proj", "ws", "cycle-1", Some(&gate), &[], &[], &[]);
+        assert!(!summary.bottlenecks.is_empty());
+        assert!(summary.overall_risk_score > 0.0);
+        assert!(summary.gate_decision.is_some());
+    }
+
+    #[test]
+    fn analysis_summary_from_predictive_anomalies() {
+        let anomalies = vec![PredictiveAnomaly {
+            anomaly_id: "pred:recurring:proj:ws".to_string(),
+            kind: PredictiveAnomalyKind::RecurringFailure,
+            confidence: PredictionConfidence::High,
+            root_cause: "consecutive_failures".to_string(),
+            summary: Some("连续 3 次失败".to_string()),
+            time_window: PredictionTimeWindow {
+                start_at: 1000,
+                end_at: 2000,
+            },
+            related_incident_ids: vec!["inc-1".to_string()],
+            context: HealthContext {
+                project: Some("proj".to_string()),
+                workspace: Some("ws".to_string()),
+                session_id: None,
+                cycle_id: None,
+            },
+            score: 0.75,
+            predicted_at: 1000,
+        }];
+        let summary =
+            build_analysis_summary("proj", "ws", "cycle-1", None, &[], &anomalies, &[]);
+        assert_eq!(summary.bottlenecks.len(), 1);
+        assert_eq!(
+            summary.bottlenecks[0].kind,
+            BottleneckKind::RecurringFailure
+        );
+        assert_eq!(summary.predictive_anomaly_ids.len(), 1);
+    }
+
+    #[test]
+    fn analysis_summary_isolates_by_project_workspace() {
+        let anomalies = vec![
+            PredictiveAnomaly {
+                anomaly_id: "pred:a:projA:wsA".to_string(),
+                kind: PredictiveAnomalyKind::RateLimitRisk,
+                confidence: PredictionConfidence::Medium,
+                root_cause: "rate_limit".to_string(),
+                summary: None,
+                time_window: PredictionTimeWindow {
+                    start_at: 1000,
+                    end_at: 2000,
+                },
+                related_incident_ids: Vec::new(),
+                context: HealthContext::for_workspace("projA", "wsA"),
+                score: 0.5,
+                predicted_at: 1000,
+            },
+            PredictiveAnomaly {
+                anomaly_id: "pred:b:projB:wsB".to_string(),
+                kind: PredictiveAnomalyKind::RecurringFailure,
+                confidence: PredictionConfidence::High,
+                root_cause: "failures".to_string(),
+                summary: None,
+                time_window: PredictionTimeWindow {
+                    start_at: 1000,
+                    end_at: 2000,
+                },
+                related_incident_ids: Vec::new(),
+                context: HealthContext::for_workspace("projB", "wsB"),
+                score: 0.8,
+                predicted_at: 1000,
+            },
+        ];
+        // projA/wsA 的分析不应包含 projB/wsB 的异常
+        let summary_a =
+            build_analysis_summary("projA", "wsA", "cycle-1", None, &[], &anomalies, &[]);
+        assert_eq!(summary_a.bottlenecks.len(), 1);
+        assert_eq!(summary_a.bottlenecks[0].kind, BottleneckKind::RateLimit);
+        assert_eq!(
+            summary_a.predictive_anomaly_ids,
+            vec!["pred:a:projA:wsA"]
         );
     }
 }

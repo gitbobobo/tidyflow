@@ -60,3 +60,31 @@ pub fn query_gate_decision(
 ) -> crate::server::protocol::health::GateDecision {
     crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, retry_count)
 }
+
+/// 查询指定工作区的智能演化分析摘要
+///
+/// 聚合门禁裁决、观测聚合、预测异常和调度建议，
+/// 输出按 `(project, workspace, cycle_id)` 隔离的统一分析结果。
+pub fn query_analysis_summary(
+    project: &str,
+    workspace: &str,
+    cycle_id: &str,
+    retry_count: u32,
+) -> crate::server::protocol::health::EvolutionAnalysisSummary {
+    let gate =
+        crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, retry_count);
+    let aggregates =
+        crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
+    let anomalies = crate::server::perf::build_predictive_anomalies(&aggregates);
+    let recommendations =
+        crate::server::perf::build_scheduling_recommendations(&aggregates, 4, 0);
+    crate::server::perf::build_analysis_summary(
+        project,
+        workspace,
+        cycle_id,
+        Some(&gate),
+        &aggregates,
+        &anomalies,
+        &recommendations,
+    )
+}

@@ -11,6 +11,12 @@
 #
 # 所有结果显式携带 cycle_id / run_id / project / workspace 维度。
 # 输出可机读 JSON 摘要到 stdout（--json 模式）或人类可读文本。
+#
+# v1.45: 质量门禁结果作为瓶颈分析引擎的输入之一
+# Core 通过 build_analysis_summary() 将门禁裁决、健康 incident、观测聚合
+# 和预测异常统一成工作区级瓶颈分析摘要（EvolutionAnalysisSummary）。
+# 本脚本仍然独立运行门禁检查，但结果会被 Core 消费并标注
+# project/workspace/cycle_id 归属维度，避免同名工作区串台。
 
 set -euo pipefail
 
@@ -144,7 +150,8 @@ emit_gate_summary() {
       "apple_build": "${gate_result_apple_build}"
     },
     "failure_reasons": "${gate_failure_reasons}",
-    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "analysis_engine_version": "v1.45"
   }
 }
 ENDJSON
