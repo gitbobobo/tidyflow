@@ -694,6 +694,22 @@ impl EvolutionManager {
                 None
             };
 
+            // 记录终态循环到观测历史（按 (project, workspace) 隔离）
+            if is_terminal {
+                let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+                crate::server::perf::record_workspace_cycle(
+                    crate::server::perf::WorkspaceCycleRecord {
+                        project: w.project.clone(),
+                        workspace: w.workspace.clone(),
+                        cycle_id: w.cycle_id.clone(),
+                        success: w.status == "completed",
+                        duration_ms,
+                        rate_limit_hit: w.rate_limit_error_message.is_some(),
+                        timestamp: now_ms,
+                    },
+                );
+            }
+
             workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),
                 workspace: w.workspace.clone(),
@@ -721,12 +737,34 @@ impl EvolutionManager {
             (a.project.clone(), a.workspace.clone()).cmp(&(b.project.clone(), b.workspace.clone()))
         });
 
+        // 获取观测聚合以填充调度器压力信息
+        let aggregates = crate::server::perf::build_observation_aggregates(
+            &std::collections::HashMap::new(),
+        );
+        let recommendations = crate::server::perf::build_scheduling_recommendations(
+            &aggregates,
+            state.max_parallel_workspaces,
+            running_count,
+        );
+        let global_pressure = if recommendations
+            .iter()
+            .any(|r| r.kind == crate::server::protocol::health::SchedulingRecommendationKind::ReduceConcurrency)
+        {
+            Some("high".to_string())
+        } else if recommendations.is_empty() {
+            Some("low".to_string())
+        } else {
+            Some("moderate".to_string())
+        };
+
         SnapshotResult {
             scheduler: crate::server::protocol::EvolutionSchedulerInfo {
                 activation_state: state.activation_state.clone(),
                 max_parallel_workspaces: state.max_parallel_workspaces,
                 running_count,
                 queued_count,
+                pressure_level: global_pressure,
+                recommendation_count: recommendations.len() as u32,
             },
             workspace_items,
         }

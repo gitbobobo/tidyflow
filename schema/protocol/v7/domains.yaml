@@ -139,6 +139,40 @@ domains:
   # health_snapshot   - Core 推送系统健康快照（incidents、摘要）
   # health_repair     - 客户端请求执行修复动作
   # health_repair_result - Core 推送修复执行结果
+  # v1.44: 调度优化与预测性故障检测（向后兼容，旧客户端忽略新字段）
+  # SystemHealthSnapshot 新增可选字段：
+  #   scheduling_recommendations: 调度优化建议列表（Core 权威输出）
+  #     - recommendation_id: 唯一 ID
+  #     - kind: reduce_concurrency | increase_concurrency | adjust_priority | enable_degradation | defer_queuing
+  #     - pressure_level: low | moderate | high | critical
+  #     - reason: 机器可读原因标识
+  #     - summary: 人类可读摘要（可选）
+  #     - suggested_value: 建议目标值（可选）
+  #     - context: HealthContext（系统级建议 project/workspace 为 null）
+  #     - generated_at: 生成时间（Unix ms）
+  #     - expires_at: 有效期截止（Unix ms）
+  #   predictive_anomalies: 预测异常摘要列表（Core 权威输出）
+  #     - anomaly_id: 唯一 ID
+  #     - kind: performance_degradation | resource_exhaustion | recurring_failure | rate_limit_risk | cache_efficiency_drop
+  #     - confidence: low | medium | high
+  #     - root_cause: 机器可读根因标识
+  #     - summary: 人类可读摘要（可选）
+  #     - time_window: { start_at, end_at }（Unix ms）
+  #     - related_incident_ids: 关联历史 incident_id 列表
+  #     - context: HealthContext（按 (project, workspace) 隔离）
+  #     - score: 预测评分（0.0-1.0）
+  #     - predicted_at: 生成时间（Unix ms）
+  #   observation_aggregates: 按 (project, workspace) 隔离的观测历史聚合
+  #     - project, workspace: 归属标识
+  #     - window_start, window_end: 聚合窗口（Unix ms）
+  #     - cycle_success_count, cycle_failure_count: 历史循环统计
+  #     - avg_cycle_duration_ms, last_cycle_duration_ms: 耗时统计（可选）
+  #     - consecutive_failures: 当前连续失败数
+  #     - cache_hit_ratio: 缓存命中率（0.0-1.0，可选）
+  #     - rate_limit_hit_count: 速率限制事件数
+  #     - pressure_level: 资源压力级别（Core 综合判定）
+  #     - health_score: 综合健康评分（0.0-1.0）
+  #     - aggregated_at: 聚合时间（Unix ms）
   - id: health
     action_rule: prefix("health_")
   # v1.40: 冲突向导（Git conflict wizard）

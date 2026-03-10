@@ -299,6 +299,9 @@ struct WorkspaceDetailView: View {
                         .foregroundColor(logCtx.perfLoggingEnabled ? .green : .secondary)
                 }
             }
+
+            // v1.44: 预测与调度优化摘要（通过共享投影消费，不在 View 层推导规则）
+            predictionSection
         }
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)
@@ -326,6 +329,77 @@ struct WorkspaceDetailView: View {
             projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.selectWorkspaceContext(project: project, workspace: workspace)
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
+        }
+    }
+
+    // MARK: - v1.44 预测与调度优化
+
+    /// 预测与调度优化摘要 Section。
+    /// 通过 WorkspacePredictionProjectionSemantics 统一构建，不在 View 层推导业务规则。
+    @ViewBuilder
+    private var predictionSection: some View {
+        let prediction = appState.predictionProjection(project: project, workspace: workspace)
+        if prediction.hasSignals || prediction.healthScore != nil {
+            Section("预测与调度") {
+                if let score = prediction.healthScore {
+                    HStack {
+                        Text("健康评分")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(String(format: "%.0f%%", score * 100))
+                            .font(.caption)
+                            .foregroundColor(predictionColor(prediction.pressureColorToken))
+                    }
+                }
+                HStack {
+                    Text("资源压力")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(prediction.pressureLabel)
+                        .font(.caption)
+                        .foregroundColor(predictionColor(prediction.pressureColorToken))
+                }
+                if prediction.schedulingRecommendationCount > 0 {
+                    HStack {
+                        Text("调度建议")
+                            .font(.subheadline)
+                        Spacer()
+                        Text("\(prediction.schedulingRecommendationCount) 项")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                    if let summary = prediction.topRecommendationSummary {
+                        Text(summary)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                if prediction.predictiveAnomalyCount > 0 {
+                    HStack {
+                        Text("预测异常")
+                            .font(.subheadline)
+                        Spacer()
+                        Text("\(prediction.predictiveAnomalyCount) 项")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    if let summary = prediction.topAnomalySummary {
+                        Text(summary)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func predictionColor(_ token: String) -> Color {
+        switch token {
+        case "green": return .green
+        case "yellow": return .yellow
+        case "orange": return .orange
+        case "red": return .red
+        default: return .secondary
         }
     }
 

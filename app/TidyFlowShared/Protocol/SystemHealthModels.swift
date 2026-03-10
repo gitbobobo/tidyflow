@@ -175,13 +175,25 @@ public struct SystemHealthSnapshot: Codable {
     public let overallStatus: SystemHealthStatus
     public let incidents: [HealthIncident]
     public let recentRepairs: [RepairAuditEntry]
+    /// 调度优化建议列表（v1.44，Core 权威输出）
+    public let schedulingRecommendations: [SchedulingRecommendation]
+    /// 预测异常摘要列表（v1.44，Core 权威输出）
+    public let predictiveAnomalies: [PredictiveAnomaly]
+    /// 按 (project, workspace) 隔离的观测历史聚合（v1.44）
+    public let observationAggregates: [ObservationAggregate]
 
     public init(snapshotAt: UInt64, overallStatus: SystemHealthStatus,
-                incidents: [HealthIncident], recentRepairs: [RepairAuditEntry] = []) {
+                incidents: [HealthIncident], recentRepairs: [RepairAuditEntry] = [],
+                schedulingRecommendations: [SchedulingRecommendation] = [],
+                predictiveAnomalies: [PredictiveAnomaly] = [],
+                observationAggregates: [ObservationAggregate] = []) {
         self.snapshotAt = snapshotAt
         self.overallStatus = overallStatus
         self.incidents = incidents
         self.recentRepairs = recentRepairs
+        self.schedulingRecommendations = schedulingRecommendations
+        self.predictiveAnomalies = predictiveAnomalies
+        self.observationAggregates = observationAggregates
     }
 
     enum CodingKeys: String, CodingKey {
@@ -189,6 +201,9 @@ public struct SystemHealthSnapshot: Codable {
         case overallStatus = "overall_status"
         case incidents
         case recentRepairs = "recent_repairs"
+        case schedulingRecommendations = "scheduling_recommendations"
+        case predictiveAnomalies = "predictive_anomalies"
+        case observationAggregates = "observation_aggregates"
     }
 
     /// 过滤指定 project+workspace 的 incidents（nil 表示系统级）
@@ -196,6 +211,27 @@ public struct SystemHealthSnapshot: Codable {
         incidents.filter { incident in
             incident.context.project == project && incident.context.workspace == workspace
         }
+    }
+
+    /// 过滤指定 project+workspace 的预测异常
+    public func predictiveAnomalies(for project: String?, workspace: String?) -> [PredictiveAnomaly] {
+        predictiveAnomalies.filter { anomaly in
+            anomaly.context.project == project && anomaly.context.workspace == workspace
+        }
+    }
+
+    /// 过滤指定 project+workspace 的调度优化建议（系统级建议始终包含）
+    public func schedulingRecommendations(for project: String?, workspace: String?) -> [SchedulingRecommendation] {
+        schedulingRecommendations.filter { rec in
+            let isSystemLevel = rec.context.project == nil && rec.context.workspace == nil
+            let isWorkspaceLevel = rec.context.project == project && rec.context.workspace == workspace
+            return isSystemLevel || isWorkspaceLevel
+        }
+    }
+
+    /// 获取指定 project+workspace 的观测聚合
+    public func observationAggregate(for project: String, workspace: String) -> ObservationAggregate? {
+        observationAggregates.first { $0.project == project && $0.workspace == workspace }
     }
 
     /// 取所有可自动修复的 incidents
@@ -214,11 +250,332 @@ public struct SystemHealthSnapshot: Codable {
         let recentRepairs = (json["recent_repairs"] as? [[String: Any]] ?? []).compactMap {
             RepairAuditEntry.from(json: $0)
         }
+        let schedulingRecommendations = (json["scheduling_recommendations"] as? [[String: Any]] ?? []).compactMap {
+            SchedulingRecommendation.from(json: $0)
+        }
+        let predictiveAnomalies = (json["predictive_anomalies"] as? [[String: Any]] ?? []).compactMap {
+            PredictiveAnomaly.from(json: $0)
+        }
+        let observationAggregates = (json["observation_aggregates"] as? [[String: Any]] ?? []).compactMap {
+            ObservationAggregate.from(json: $0)
+        }
         return SystemHealthSnapshot(
             snapshotAt: snapshotAt,
             overallStatus: overallStatus,
             incidents: incidents,
-            recentRepairs: recentRepairs
+            recentRepairs: recentRepairs,
+            schedulingRecommendations: schedulingRecommendations,
+            predictiveAnomalies: predictiveAnomalies,
+            observationAggregates: observationAggregates
+        )
+    }
+}
+
+// MARK: - 调度优化建议（v1.44: 智能调度与预测性故障检测）
+
+/// 调度优化建议类型
+public enum SchedulingRecommendationKind: String, Codable, CaseIterable {
+    case reduceConcurrency = "reduce_concurrency"
+    case increaseConcurrency = "increase_concurrency"
+    case adjustPriority = "adjust_priority"
+    case enableDegradation = "enable_degradation"
+    case deferQueuing = "defer_queuing"
+}
+
+/// 资源压力级别（Core 权威判定，客户端不重新推导）
+public enum ResourcePressureLevel: String, Codable, Comparable, CaseIterable {
+    case low
+    case moderate
+    case high
+    case critical
+
+    private var sortOrder: Int {
+        switch self {
+        case .low: return 0
+        case .moderate: return 1
+        case .high: return 2
+        case .critical: return 3
+        }
+    }
+
+    public static func < (lhs: ResourcePressureLevel, rhs: ResourcePressureLevel) -> Bool {
+        lhs.sortOrder < rhs.sortOrder
+    }
+}
+
+/// 调度优化建议条目（Core 权威输出，客户端只消费）
+public struct SchedulingRecommendation: Codable, Identifiable, Equatable {
+    public let recommendationId: String
+    public let kind: SchedulingRecommendationKind
+    public let pressureLevel: ResourcePressureLevel
+    public let reason: String
+    public let summary: String?
+    public let suggestedValue: Int64?
+    public let context: HealthContext
+    public let generatedAt: UInt64
+    public let expiresAt: UInt64
+
+    public var id: String { recommendationId }
+
+    public init(recommendationId: String, kind: SchedulingRecommendationKind,
+                pressureLevel: ResourcePressureLevel, reason: String,
+                summary: String? = nil, suggestedValue: Int64? = nil,
+                context: HealthContext, generatedAt: UInt64, expiresAt: UInt64) {
+        self.recommendationId = recommendationId
+        self.kind = kind
+        self.pressureLevel = pressureLevel
+        self.reason = reason
+        self.summary = summary
+        self.suggestedValue = suggestedValue
+        self.context = context
+        self.generatedAt = generatedAt
+        self.expiresAt = expiresAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case recommendationId = "recommendation_id"
+        case kind
+        case pressureLevel = "pressure_level"
+        case reason, summary
+        case suggestedValue = "suggested_value"
+        case context
+        case generatedAt = "generated_at"
+        case expiresAt = "expires_at"
+    }
+
+    /// 建议是否仍在有效期内
+    public func isValid(at nowMs: UInt64) -> Bool {
+        nowMs < expiresAt
+    }
+
+    public static func from(json: [String: Any]) -> SchedulingRecommendation? {
+        guard let recommendationId = json["recommendation_id"] as? String,
+              let kindRaw = json["kind"] as? String,
+              let kind = SchedulingRecommendationKind(rawValue: kindRaw),
+              let pressureLevelRaw = json["pressure_level"] as? String,
+              let pressureLevel = ResourcePressureLevel(rawValue: pressureLevelRaw),
+              let reason = json["reason"] as? String,
+              let generatedAt = json["generated_at"] as? UInt64,
+              let expiresAt = json["expires_at"] as? UInt64
+        else { return nil }
+        return SchedulingRecommendation(
+            recommendationId: recommendationId,
+            kind: kind,
+            pressureLevel: pressureLevel,
+            reason: reason,
+            summary: json["summary"] as? String,
+            suggestedValue: json["suggested_value"] as? Int64,
+            context: HealthContext.from(json: json["context"] as? [String: Any]),
+            generatedAt: generatedAt,
+            expiresAt: expiresAt
+        )
+    }
+}
+
+// MARK: - 预测异常摘要（v1.44: 智能调度与预测性故障检测）
+
+/// 预测异常类型
+public enum PredictiveAnomalyKind: String, Codable, CaseIterable {
+    case performanceDegradation = "performance_degradation"
+    case resourceExhaustion = "resource_exhaustion"
+    case recurringFailure = "recurring_failure"
+    case rateLimitRisk = "rate_limit_risk"
+    case cacheEfficiencyDrop = "cache_efficiency_drop"
+}
+
+/// 预测置信度
+public enum PredictionConfidence: String, Codable, Comparable, CaseIterable {
+    case low
+    case medium
+    case high
+
+    private var sortOrder: Int {
+        switch self {
+        case .low: return 0
+        case .medium: return 1
+        case .high: return 2
+        }
+    }
+
+    public static func < (lhs: PredictionConfidence, rhs: PredictionConfidence) -> Bool {
+        lhs.sortOrder < rhs.sortOrder
+    }
+}
+
+/// 预测时间窗口
+public struct PredictionTimeWindow: Codable, Equatable {
+    public let startAt: UInt64
+    public let endAt: UInt64
+
+    public init(startAt: UInt64, endAt: UInt64) {
+        self.startAt = startAt
+        self.endAt = endAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case startAt = "start_at"
+        case endAt = "end_at"
+    }
+}
+
+/// 预测异常摘要条目（Core 权威输出，客户端不根据零散 metrics 推理）
+public struct PredictiveAnomaly: Codable, Identifiable, Equatable {
+    public let anomalyId: String
+    public let kind: PredictiveAnomalyKind
+    public let confidence: PredictionConfidence
+    public let rootCause: String
+    public let summary: String?
+    public let timeWindow: PredictionTimeWindow
+    public let relatedIncidentIds: [String]
+    public let context: HealthContext
+    public let score: Double
+    public let predictedAt: UInt64
+
+    public var id: String { anomalyId }
+
+    public init(anomalyId: String, kind: PredictiveAnomalyKind,
+                confidence: PredictionConfidence, rootCause: String,
+                summary: String? = nil, timeWindow: PredictionTimeWindow,
+                relatedIncidentIds: [String] = [], context: HealthContext,
+                score: Double, predictedAt: UInt64) {
+        self.anomalyId = anomalyId
+        self.kind = kind
+        self.confidence = confidence
+        self.rootCause = rootCause
+        self.summary = summary
+        self.timeWindow = timeWindow
+        self.relatedIncidentIds = relatedIncidentIds
+        self.context = context
+        self.score = score
+        self.predictedAt = predictedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case anomalyId = "anomaly_id"
+        case kind, confidence
+        case rootCause = "root_cause"
+        case summary
+        case timeWindow = "time_window"
+        case relatedIncidentIds = "related_incident_ids"
+        case context, score
+        case predictedAt = "predicted_at"
+    }
+
+    public static func from(json: [String: Any]) -> PredictiveAnomaly? {
+        guard let anomalyId = json["anomaly_id"] as? String,
+              let kindRaw = json["kind"] as? String,
+              let kind = PredictiveAnomalyKind(rawValue: kindRaw),
+              let confidenceRaw = json["confidence"] as? String,
+              let confidence = PredictionConfidence(rawValue: confidenceRaw),
+              let rootCause = json["root_cause"] as? String,
+              let twJson = json["time_window"] as? [String: Any],
+              let twStart = twJson["start_at"] as? UInt64,
+              let twEnd = twJson["end_at"] as? UInt64,
+              let score = json["score"] as? Double,
+              let predictedAt = json["predicted_at"] as? UInt64
+        else { return nil }
+        return PredictiveAnomaly(
+            anomalyId: anomalyId,
+            kind: kind,
+            confidence: confidence,
+            rootCause: rootCause,
+            summary: json["summary"] as? String,
+            timeWindow: PredictionTimeWindow(startAt: twStart, endAt: twEnd),
+            relatedIncidentIds: json["related_incident_ids"] as? [String] ?? [],
+            context: HealthContext.from(json: json["context"] as? [String: Any]),
+            score: score,
+            predictedAt: predictedAt
+        )
+    }
+}
+
+// MARK: - 观测历史聚合（v1.44: 按 (project, workspace) 隔离）
+
+/// 工作区观测历史聚合摘要（Core 权威输出，按 (project, workspace) 独立存储和恢复）
+public struct ObservationAggregate: Codable, Equatable {
+    public let project: String
+    public let workspace: String
+    public let windowStart: UInt64
+    public let windowEnd: UInt64
+    public let cycleSuccessCount: UInt32
+    public let cycleFailureCount: UInt32
+    public let avgCycleDurationMs: UInt64?
+    public let lastCycleDurationMs: UInt64?
+    public let consecutiveFailures: UInt32
+    public let cacheHitRatio: Double?
+    public let rateLimitHitCount: UInt32
+    public let pressureLevel: ResourcePressureLevel
+    public let healthScore: Double
+    public let aggregatedAt: UInt64
+
+    public init(project: String, workspace: String,
+                windowStart: UInt64, windowEnd: UInt64,
+                cycleSuccessCount: UInt32, cycleFailureCount: UInt32,
+                avgCycleDurationMs: UInt64? = nil, lastCycleDurationMs: UInt64? = nil,
+                consecutiveFailures: UInt32, cacheHitRatio: Double? = nil,
+                rateLimitHitCount: UInt32, pressureLevel: ResourcePressureLevel,
+                healthScore: Double, aggregatedAt: UInt64) {
+        self.project = project
+        self.workspace = workspace
+        self.windowStart = windowStart
+        self.windowEnd = windowEnd
+        self.cycleSuccessCount = cycleSuccessCount
+        self.cycleFailureCount = cycleFailureCount
+        self.avgCycleDurationMs = avgCycleDurationMs
+        self.lastCycleDurationMs = lastCycleDurationMs
+        self.consecutiveFailures = consecutiveFailures
+        self.cacheHitRatio = cacheHitRatio
+        self.rateLimitHitCount = rateLimitHitCount
+        self.pressureLevel = pressureLevel
+        self.healthScore = healthScore
+        self.aggregatedAt = aggregatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case project, workspace
+        case windowStart = "window_start"
+        case windowEnd = "window_end"
+        case cycleSuccessCount = "cycle_success_count"
+        case cycleFailureCount = "cycle_failure_count"
+        case avgCycleDurationMs = "avg_cycle_duration_ms"
+        case lastCycleDurationMs = "last_cycle_duration_ms"
+        case consecutiveFailures = "consecutive_failures"
+        case cacheHitRatio = "cache_hit_ratio"
+        case rateLimitHitCount = "rate_limit_hit_count"
+        case pressureLevel = "pressure_level"
+        case healthScore = "health_score"
+        case aggregatedAt = "aggregated_at"
+    }
+
+    public static func from(json: [String: Any]) -> ObservationAggregate? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let windowStart = json["window_start"] as? UInt64,
+              let windowEnd = json["window_end"] as? UInt64,
+              let cycleSuccessCount = json["cycle_success_count"] as? UInt32,
+              let cycleFailureCount = json["cycle_failure_count"] as? UInt32,
+              let consecutiveFailures = json["consecutive_failures"] as? UInt32,
+              let rateLimitHitCount = json["rate_limit_hit_count"] as? UInt32,
+              let pressureLevelRaw = json["pressure_level"] as? String,
+              let pressureLevel = ResourcePressureLevel(rawValue: pressureLevelRaw),
+              let healthScore = json["health_score"] as? Double,
+              let aggregatedAt = json["aggregated_at"] as? UInt64
+        else { return nil }
+        return ObservationAggregate(
+            project: project,
+            workspace: workspace,
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            cycleSuccessCount: cycleSuccessCount,
+            cycleFailureCount: cycleFailureCount,
+            avgCycleDurationMs: json["avg_cycle_duration_ms"] as? UInt64,
+            lastCycleDurationMs: json["last_cycle_duration_ms"] as? UInt64,
+            consecutiveFailures: consecutiveFailures,
+            cacheHitRatio: json["cache_hit_ratio"] as? Double,
+            rateLimitHitCount: rateLimitHitCount,
+            pressureLevel: pressureLevel,
+            healthScore: healthScore,
+            aggregatedAt: aggregatedAt
         )
     }
 }

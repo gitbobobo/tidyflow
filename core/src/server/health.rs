@@ -158,6 +158,20 @@ impl HealthRegistry {
 
     /// 从所有探针收集 incident，合并去抖后更新 active_incidents，返回健康快照
     pub fn snapshot(&mut self) -> SystemHealthSnapshot {
+        self.snapshot_with_predictions(&std::collections::HashMap::new(), 4, 0)
+    }
+
+    /// 生成含调度优化建议和预测异常的完整健康快照
+    ///
+    /// `cache_hit_ratios`: 各工作区缓存命中率（由调用方从缓存指标中提取）
+    /// `current_max_parallel`: 当前最大并发工作区数
+    /// `running_count`: 当前运行中工作区数
+    pub fn snapshot_with_predictions(
+        &mut self,
+        cache_hit_ratios: &HashMap<(String, String), f64>,
+        current_max_parallel: u32,
+        running_count: u32,
+    ) -> SystemHealthSnapshot {
         let now = unix_ms();
 
         // 收集所有探针 incidents，进行 upsert（保留 first_seen_at，更新 last_seen_at）
@@ -211,11 +225,26 @@ impl HealthRegistry {
             .cloned()
             .collect();
 
+        // 生成观测聚合、预测异常和调度优化建议（v1.44）
+        let observation_aggregates =
+            crate::server::perf::build_observation_aggregates(cache_hit_ratios);
+        let predictive_anomalies =
+            crate::server::perf::build_predictive_anomalies(&observation_aggregates);
+        let scheduling_recommendations =
+            crate::server::perf::build_scheduling_recommendations(
+                &observation_aggregates,
+                current_max_parallel,
+                running_count,
+            );
+
         SystemHealthSnapshot {
             snapshot_at: now,
             overall_status,
             incidents,
             recent_repairs,
+            scheduling_recommendations,
+            predictive_anomalies,
+            observation_aggregates,
         }
     }
 

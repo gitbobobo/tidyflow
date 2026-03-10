@@ -376,6 +376,18 @@ class AppState: ObservableObject {
     // v1.42: 统一可观测性快照（聚合 perf_metrics + log_context + cache_metrics，Core 权威真源）
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
 
+    // MARK: - 调度优化与预测故障消费（v1.44）
+
+    /// 获取指定工作区的预测投影。
+    /// 双端通过 WorkspacePredictionProjectionSemantics 统一构建，不在 View 层推导。
+    func predictionProjection(project: String, workspace: String) -> WorkspacePredictionProjection {
+        WorkspacePredictionProjectionSemantics.make(
+            from: systemHealthSnapshot,
+            project: project,
+            workspace: workspace
+        )
+    }
+
     // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
     var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]
     var pendingProjectCommandExecutionIdsByKey: [String: [UUID]] = [:]

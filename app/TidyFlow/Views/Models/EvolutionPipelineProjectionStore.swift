@@ -276,6 +276,8 @@ struct EvolutionPipelineProjection: Equatable {
     let currentCycleFailureSummary: String?
     /// 预计算：当前循环是否可重试
     let isCurrentCycleRetryable: Bool
+    /// v1.44：当前工作区的预测投影（调度建议与预测异常摘要）
+    let predictionProjection: WorkspacePredictionProjection
 
     static let empty = EvolutionPipelineProjection(
         project: "",
@@ -292,7 +294,8 @@ struct EvolutionPipelineProjection: Equatable {
         totalDurationText: nil,
         isCurrentCycleFailed: false,
         currentCycleFailureSummary: nil,
-        isCurrentCycleRetryable: false
+        isCurrentCycleRetryable: false,
+        predictionProjection: .empty
     )
 }
 
@@ -339,7 +342,10 @@ enum EvolutionPipelineProjectionSemantics {
             totalDurationText: hotData.totalDurationText,
             isCurrentCycleFailed: hotData.isCurrentCycleFailed,
             currentCycleFailureSummary: hotData.currentCycleFailureSummary,
-            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable
+            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
+            predictionProjection: appState.predictionProjection(
+                project: project, workspace: workspace ?? ""
+            )
         )
     }
 #endif
@@ -386,7 +392,10 @@ enum EvolutionPipelineProjectionSemantics {
             totalDurationText: hotData.totalDurationText,
             isCurrentCycleFailed: hotData.isCurrentCycleFailed,
             currentCycleFailureSummary: hotData.currentCycleFailureSummary,
-            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable
+            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
+            predictionProjection: appState.predictionProjection(
+                project: project, workspace: workspace
+            )
         )
     }
 #endif
@@ -692,7 +701,9 @@ final class EvolutionPipelineProjectionStore {
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
+            // v1.44: 健康快照变更触发刷新，使预测投影保持最新
+            appState.$systemHealthSnapshot.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }
@@ -755,7 +766,9 @@ final class EvolutionPipelineProjectionStore {
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
+            // v1.44: 健康快照变更触发刷新，使预测投影保持最新
+            appState.$systemHealthSnapshot.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }

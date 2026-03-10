@@ -321,6 +321,18 @@ final class MobileAppState: ObservableObject {
     // v1.42: 统一可观测性快照（与 macOS 共享同一模型，Core 权威真源）
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
 
+    // MARK: - 调度优化与预测故障消费（v1.44）
+
+    /// 获取指定工作区的预测投影。
+    /// 双端通过 WorkspacePredictionProjectionSemantics 统一构建，不在 View 层推导。
+    func predictionProjection(project: String, workspace: String) -> WorkspacePredictionProjection {
+        WorkspacePredictionProjectionSemantics.make(
+            from: systemHealthSnapshot,
+            project: project,
+            workspace: workspace
+        )
+    }
+
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
     let aiSessionListStore = AISessionListStore()

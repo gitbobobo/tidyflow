@@ -140,6 +140,15 @@ pub struct SystemHealthSnapshot {
     pub incidents: Vec<HealthIncident>,
     /// 最近修复审计摘要（最多 20 条）
     pub recent_repairs: Vec<RepairAuditEntry>,
+    /// 调度优化建议列表（v1.44，Core 权威输出）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scheduling_recommendations: Vec<SchedulingRecommendation>,
+    /// 预测异常摘要列表（v1.44，Core 权威输出）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predictive_anomalies: Vec<PredictiveAnomaly>,
+    /// 按 (project, workspace) 隔离的观测历史聚合（v1.44）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observation_aggregates: Vec<ObservationAggregate>,
 }
 
 // ============================================================================
@@ -229,4 +238,179 @@ pub struct ClientHealthReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientRepairRequest {
     pub request: RepairActionRequest,
+}
+
+// ============================================================================
+// 调度优化建议（v1.44: 智能调度与预测性故障检测）
+// ============================================================================
+
+/// 调度优化建议类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SchedulingRecommendationKind {
+    /// 降低并发上限（资源压力过高）
+    ReduceConcurrency,
+    /// 提高并发上限（资源充裕）
+    IncreaseConcurrency,
+    /// 调整工作区优先级
+    AdjustPriority,
+    /// 启用降级策略（暂停低优先级工作区）
+    EnableDegradation,
+    /// 延迟排队（避免速率限制堆积）
+    DeferQueuing,
+}
+
+/// 资源压力级别（Core 权威判定，客户端不重新推导）
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePressureLevel {
+    /// 资源充裕
+    Low,
+    /// 资源轻度紧张
+    Moderate,
+    /// 资源高度紧张
+    High,
+    /// 资源临界（可能触发降级）
+    Critical,
+}
+
+/// 调度优化建议条目
+///
+/// 由 Core 根据历史聚合与实时观测生成，客户端只消费展示。
+/// `context` 指明建议归属：系统级（全局并发）或工作区级（优先级调整）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulingRecommendation {
+    /// 建议唯一 ID（用于去重和客户端幂等消费）
+    pub recommendation_id: String,
+    pub kind: SchedulingRecommendationKind,
+    /// 当前资源压力级别
+    pub pressure_level: ResourcePressureLevel,
+    /// 机器可读原因标识（例如 `ws_dispatch_latency_high`）
+    pub reason: String,
+    /// 人类可读建议摘要
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// 建议的目标值（如建议并发数、优先级值等，语义由 kind 决定）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_value: Option<i64>,
+    /// 归属上下文（系统级建议 project/workspace 为 None）
+    pub context: HealthContext,
+    /// 建议生成时间（Unix ms）
+    pub generated_at: u64,
+    /// 建议有效期截止时间（Unix ms），超过后客户端应忽略
+    pub expires_at: u64,
+}
+
+// ============================================================================
+// 预测性异常摘要（v1.44: 智能调度与预测性故障检测）
+// ============================================================================
+
+/// 预测异常类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictiveAnomalyKind {
+    /// 性能退化趋势（延迟持续上升）
+    PerformanceDegradation,
+    /// 资源耗尽预警（终端内存、缓存预算等接近上限）
+    ResourceExhaustion,
+    /// 重复失败模式（同一工作区连续失败）
+    RecurringFailure,
+    /// 速率限制风险（API 调用频率接近限额）
+    RateLimitRisk,
+    /// 缓存命中率异常下降
+    CacheEfficiencyDrop,
+}
+
+/// 预测置信度
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionConfidence {
+    /// 低置信度（基于有限样本）
+    Low,
+    /// 中等置信度
+    Medium,
+    /// 高置信度（基于充分历史数据）
+    High,
+}
+
+/// 预测时间窗口
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictionTimeWindow {
+    /// 窗口开始时间（Unix ms）
+    pub start_at: u64,
+    /// 窗口结束时间（Unix ms）
+    pub end_at: u64,
+}
+
+/// 预测异常摘要条目
+///
+/// 由 Core 根据历史观测聚合和趋势分析生成。
+/// 每个异常携带 `(project, workspace)` 归属上下文，
+/// 系统级预测（如全局性能退化）context 中 project/workspace 为 None。
+/// 客户端不应根据零散 metrics 再次推理，直接消费 Core 权威输出。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictiveAnomaly {
+    /// 预测异常唯一 ID
+    pub anomaly_id: String,
+    pub kind: PredictiveAnomalyKind,
+    pub confidence: PredictionConfidence,
+    /// 机器可读根因标识
+    pub root_cause: String,
+    /// 人类可读异常摘要
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// 预测有效时间窗口
+    pub time_window: PredictionTimeWindow,
+    /// 关联的历史 incident_id 列表（用于追溯）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_incident_ids: Vec<String>,
+    /// 归属上下文
+    pub context: HealthContext,
+    /// 预测评分（0.0-1.0，越高表示越可能发生）
+    pub score: f64,
+    /// 预测生成时间（Unix ms）
+    pub predicted_at: u64,
+}
+
+// ============================================================================
+// 历史观测聚合摘要（v1.44: 按 (project, workspace) 隔离）
+// ============================================================================
+
+/// 工作区观测历史聚合摘要
+///
+/// Core 权威生成，按 `(project, workspace)` 独立存储和恢复。
+/// 聚合性能、缓存、终端资源和运行失败历史，供调度器和健康检测共享消费。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservationAggregate {
+    /// 所属项目
+    pub project: String,
+    /// 所属工作区
+    pub workspace: String,
+    /// 聚合窗口开始时间（Unix ms）
+    pub window_start: u64,
+    /// 聚合窗口结束时间（Unix ms）
+    pub window_end: u64,
+    /// 历史循环成功次数
+    pub cycle_success_count: u32,
+    /// 历史循环失败次数
+    pub cycle_failure_count: u32,
+    /// 历史循环平均耗时（毫秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_cycle_duration_ms: Option<u64>,
+    /// 最近一次循环耗时（毫秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_cycle_duration_ms: Option<u64>,
+    /// 连续失败次数（当前连续失败计数，成功后归零）
+    pub consecutive_failures: u32,
+    /// 缓存命中率（0.0-1.0）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_hit_ratio: Option<f64>,
+    /// 最近速率限制事件计数
+    pub rate_limit_hit_count: u32,
+    /// 资源压力级别（Core 综合判定）
+    pub pressure_level: ResourcePressureLevel,
+    /// 综合健康评分（0.0-1.0，越高越健康）
+    pub health_score: f64,
+    /// 聚合时间（Unix ms）
+    pub aggregated_at: u64,
 }

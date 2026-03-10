@@ -1045,6 +1045,7 @@ Core 是健康状态的权威真源，客户端消费快照，不在本地推导
 2. repair action 必须按 `context` 中声明的 project/workspace 边界执行，Core 不允许把一个工作区的修复动作误施加到另一个工作区。
 3. 客户端上报的 incident 必须携带上下文，禁止以系统级方式上报工作区级故障。
 4. 修复动作的 `project`/`workspace` 字段为必填项（`restore_subscriptions` 和 `refresh_health_snapshot` 除外）。
+5. 调度优化建议和预测异常必须通过 `context` 明确全局观测字段与 `(project, workspace)` 隔离字段的边界，客户端不允许仅凭 workspace 名称消费数据。
 
 ### 读取 API 扩展
 
@@ -1052,9 +1053,115 @@ Core 是健康状态的权威真源，客户端消费快照，不在本地推导
 
 ```
 GET /api/v1/system/snapshot
+GET /api/v1/system/health
 ```
 
-响应新增字段 `health_incidents` 和 `recent_repairs`，兼容原有字段。
+`system_snapshot` 响应新增字段 `health_incidents`、`recent_repairs`、`scheduling_recommendations`、`predictive_anomalies`，兼容原有字段。
+
+`system/health` 专用端点返回完整 `SystemHealthSnapshot`，含所有调度优化建议、预测异常和观测聚合数据。
+
+**读取路径职责划分**：
+- HTTP `GET /system/snapshot`：一次性全量快照，包含工作区列表 + 缓存指标 + 健康 incidents + 性能指标 + 调度优化建议 + 预测异常。客户端初始化和刷新时使用。
+- HTTP `GET /system/health`：专用健康快照，含完整诊断信息、调度建议、预测异常和观测聚合。健康面板和调试工具使用。
+- WS `health_snapshot` 推送：Core 主动推送健康状态变更（增量），客户端被动接收。
+
+**客户端消费职责**：
+- 双端（macOS / iOS）通过共享模型 `SystemHealthModels.swift` 消费所有调度优化和预测异常数据。
+- 客户端只消费 Core 权威输出，不在本地根据零散 metrics 重新推导预测评分或调度建议。
+- 客户端按 `(project, workspace)` 路由消费，切换工作区时不覆盖其他项目的预测状态。
+
+---
+
+## v1.44：调度优化与预测性故障检测
+
+### 调度优化建议（`scheduling_recommendations`）
+
+`SystemHealthSnapshot` 新增 `scheduling_recommendations` 数组，由 Core 根据历史聚合与实时观测生成。
+
+```jsonc
+{
+  "scheduling_recommendations": [
+    {
+      "recommendation_id": "sched-001",
+      "kind": "reduce_concurrency",         // 见下方 kind 枚举
+      "pressure_level": "high",             // "low" | "moderate" | "high" | "critical"
+      "reason": "ws_dispatch_latency_high",
+      "summary": "WS 分发延迟过高，建议降低并发工作区数量",
+      "suggested_value": 2,                 // 建议并发数（语义由 kind 决定）
+      "context": { "project": null, "workspace": null },   // 系统级建议
+      "generated_at": 1709900000000,
+      "expires_at": 1709903600000
+    }
+  ]
+}
+```
+
+**kind 枚举**：
+- `reduce_concurrency`：降低并发上限
+- `increase_concurrency`：提高并发上限
+- `adjust_priority`：调整工作区优先级
+- `enable_degradation`：启用降级策略
+- `defer_queuing`：延迟排队
+
+### 预测异常摘要（`predictive_anomalies`）
+
+`SystemHealthSnapshot` 新增 `predictive_anomalies` 数组，由 Core 根据历史趋势分析生成。
+
+```jsonc
+{
+  "predictive_anomalies": [
+    {
+      "anomaly_id": "pred-001",
+      "kind": "recurring_failure",           // 见下方 kind 枚举
+      "confidence": "high",                  // "low" | "medium" | "high"
+      "root_cause": "evolution_consecutive_failures",
+      "summary": "工作区 myproject/feature-x 连续 3 次循环失败，预计下次仍会失败",
+      "time_window": {
+        "start_at": 1709900000000,
+        "end_at": 1709903600000
+      },
+      "related_incident_ids": ["inc-001", "inc-002"],
+      "context": { "project": "myproject", "workspace": "feature-x" },
+      "score": 0.85,
+      "predicted_at": 1709900000000
+    }
+  ]
+}
+```
+
+**kind 枚举**：
+- `performance_degradation`：性能退化趋势
+- `resource_exhaustion`：资源耗尽预警
+- `recurring_failure`：重复失败模式
+- `rate_limit_risk`：速率限制风险
+- `cache_efficiency_drop`：缓存命中率异常下降
+
+### 观测历史聚合（`observation_aggregates`）
+
+`SystemHealthSnapshot` 新增 `observation_aggregates` 数组，按 `(project, workspace)` 隔离，Core 权威输出。
+
+```jsonc
+{
+  "observation_aggregates": [
+    {
+      "project": "myproject",
+      "workspace": "feature-x",
+      "window_start": 1709800000000,
+      "window_end": 1709900000000,
+      "cycle_success_count": 5,
+      "cycle_failure_count": 2,
+      "avg_cycle_duration_ms": 45000,
+      "last_cycle_duration_ms": 38000,
+      "consecutive_failures": 0,
+      "cache_hit_ratio": 0.82,
+      "rate_limit_hit_count": 1,
+      "pressure_level": "moderate",
+      "health_score": 0.75,
+      "aggregated_at": 1709900000000
+    }
+  ]
+}
+```
 
 ---
 

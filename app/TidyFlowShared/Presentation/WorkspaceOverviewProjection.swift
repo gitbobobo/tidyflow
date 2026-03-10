@@ -167,6 +167,105 @@ public struct WorkspaceOverviewProjection: Equatable, Sendable {
     )
 }
 
+// MARK: - 调度优化与预测故障投影
+
+/// 工作区级别的调度优化和预测故障摘要投影。
+/// macOS 与 iOS 双端消费同一投影结构，不允许在平台 View 层各自推导业务规则。
+/// 数据源头是 Core 权威的 SystemHealthSnapshot，此投影只做语义归纳。
+public struct WorkspacePredictionProjection: Equatable, Sendable {
+    /// 当前工作区的资源压力等级颜色标记（"green" / "yellow" / "orange" / "red" / "secondary"）
+    public let pressureColorToken: String
+    /// 资源压力等级可读文本
+    public let pressureLabel: String
+    /// 活跃的调度建议数量
+    public let schedulingRecommendationCount: Int
+    /// 最高优先级的调度建议摘要（nil 表示无建议）
+    public let topRecommendationSummary: String?
+    /// 活跃的预测异常数量
+    public let predictiveAnomalyCount: Int
+    /// 最高置信度的预测异常摘要（nil 表示无异常）
+    public let topAnomalySummary: String?
+    /// 综合健康评分（0.0-1.0，nil 表示无观测数据）
+    public let healthScore: Double?
+
+    public init(pressureColorToken: String, pressureLabel: String,
+                schedulingRecommendationCount: Int, topRecommendationSummary: String?,
+                predictiveAnomalyCount: Int, topAnomalySummary: String?,
+                healthScore: Double?) {
+        self.pressureColorToken = pressureColorToken
+        self.pressureLabel = pressureLabel
+        self.schedulingRecommendationCount = schedulingRecommendationCount
+        self.topRecommendationSummary = topRecommendationSummary
+        self.predictiveAnomalyCount = predictiveAnomalyCount
+        self.topAnomalySummary = topAnomalySummary
+        self.healthScore = healthScore
+    }
+
+    /// 无预测数据时的占位投影
+    public static let empty = WorkspacePredictionProjection(
+        pressureColorToken: "secondary",
+        pressureLabel: "未知",
+        schedulingRecommendationCount: 0,
+        topRecommendationSummary: nil,
+        predictiveAnomalyCount: 0,
+        topAnomalySummary: nil,
+        healthScore: nil
+    )
+
+    /// 是否存在需要用户关注的预测信号
+    public var hasSignals: Bool {
+        schedulingRecommendationCount > 0 || predictiveAnomalyCount > 0
+    }
+}
+
+// MARK: - 预测投影语义层
+
+/// 从 SystemHealthSnapshot 构建工作区级别的预测投影。
+/// 双端统一调用此方法，禁止在 View 层各自过滤和推导。
+public enum WorkspacePredictionProjectionSemantics {
+    /// 从 SystemHealthSnapshot 中为指定 (project, workspace) 构建预测投影。
+    public static func make(
+        from snapshot: SystemHealthSnapshot?,
+        project: String,
+        workspace: String
+    ) -> WorkspacePredictionProjection {
+        guard let snapshot = snapshot else { return .empty }
+
+        let recommendations = snapshot.schedulingRecommendations(for: project, workspace: workspace)
+        let anomalies = snapshot.predictiveAnomalies(for: project, workspace: workspace)
+        let aggregate = snapshot.observationAggregate(for: project, workspace: workspace)
+
+        let (colorToken, label): (String, String)
+        if let level = aggregate?.pressureLevel {
+            (colorToken, label) = pressurePresentation(level)
+        } else {
+            (colorToken, label) = ("secondary", "未知")
+        }
+
+        let topRec = recommendations.first.map { "\($0.kind.rawValue): \($0.reason)" }
+        let topAnomaly = anomalies.first.map { "\($0.kind.rawValue): \($0.rootCause)" }
+
+        return WorkspacePredictionProjection(
+            pressureColorToken: colorToken,
+            pressureLabel: label,
+            schedulingRecommendationCount: recommendations.count,
+            topRecommendationSummary: topRec,
+            predictiveAnomalyCount: anomalies.count,
+            topAnomalySummary: topAnomaly,
+            healthScore: aggregate?.healthScore
+        )
+    }
+
+    private static func pressurePresentation(_ level: ResourcePressureLevel) -> (String, String) {
+        switch level {
+        case .low: return ("green", "低压")
+        case .moderate: return ("yellow", "中等")
+        case .high: return ("orange", "高压")
+        case .critical: return ("red", "严重")
+        }
+    }
+}
+
 // MARK: - 工作区概览投影语义层
 
 /// 工作区概览投影的纯转换层。

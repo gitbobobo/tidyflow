@@ -2262,6 +2262,12 @@ pub struct EvolutionSchedulerInfo {
     pub max_parallel_workspaces: u32,
     pub running_count: u32,
     pub queued_count: u32,
+    /// 当前全局资源压力级别（v1.44，Core 权威判定）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pressure_level: Option<String>,
+    /// 调度优化建议数量（v1.44，详见 health_snapshot）
+    #[serde(default)]
+    pub recommendation_count: u32,
 }
 
 /// Evolution 工作空间快照项
