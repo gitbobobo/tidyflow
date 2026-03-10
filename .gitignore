@@ -144,6 +144,8 @@ commit_result.json
 # Temporary workspace files
 w-*
 WI-005*
+WI005*
+README_WI005*
 tidyflow_wi005_*
 
 app/TidyFlow/Web/main/
