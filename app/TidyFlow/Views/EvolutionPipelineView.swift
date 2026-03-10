@@ -123,11 +123,14 @@ struct EvolutionPipelineView: View {
                         // 下方循环列表：点击行弹出详情
                         cycleListArea
                     }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             projectionStore.bind(appState: appState)
             syncStartOptions()
@@ -520,6 +523,7 @@ struct EvolutionPipelineView: View {
             runningAgentSection
             standbySection
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - 循环状态指示条
@@ -690,6 +694,7 @@ struct EvolutionPipelineView: View {
                     .padding(.vertical, 4)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var hasCurrentCycleRow: Bool {
