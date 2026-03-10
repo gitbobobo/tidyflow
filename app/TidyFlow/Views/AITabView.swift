@@ -223,7 +223,7 @@ struct AITabView: View {
         }) { _ in
             NavigationStack {
                 ZStack {
-                    if appState.subAgentViewerMessages.isEmpty {
+                    if appState.subAgentViewerStore.messages.isEmpty {
                         if appState.subAgentViewerLoading {
                             ProgressView("加载子会话中…")
                         } else if let error = appState.subAgentViewerError, !error.isEmpty {
@@ -244,7 +244,7 @@ struct AITabView: View {
                                 openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                             }
                         )
-                        .environmentObject(appState.subAgentViewerStore)
+                        .environment(appState.subAgentViewerStore)
                     }
                 }
                 .navigationTitle(appState.subAgentViewerTitle.isEmpty ? "子会话" : appState.subAgentViewerTitle)
@@ -727,7 +727,7 @@ struct AITabView: View {
                 refreshAutocomplete(text: inputText)
             }
         }
-        .onReceive(aiChatStore.$currentSessionId) { _ in
+        .onChange(of: aiChatStore.currentSessionId) { _, _ in
             appState.refreshCurrentAISlashCommands(for: appState.aiChatTool)
             if !inputIsComposing {
                 refreshAutocomplete(text: inputText)

@@ -66,11 +66,23 @@ final class AIChatSidebarState: ObservableObject {
     private func bindCurrentStore(_ store: AIChatStore) {
         guard observedStore !== store else { return }
         observedStore = store
-        currentStoreCancellable = store.$currentSessionId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] currentSessionId in
-                self?.currentSessionId = currentSessionId
+        currentStoreCancellable = nil
+        observeStoreCurrentSession()
+    }
+
+    /// 使用 Observation 框架追踪 AIChatStore.currentSessionId 的变化，
+    /// 替代原有的 Combine $currentSessionId 订阅。
+    private func observeStoreCurrentSession() {
+        guard let store = observedStore else { return }
+        withObservationTracking {
+            _ = store.currentSessionId
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, let store = self.observedStore else { return }
+                self.currentSessionId = store.currentSessionId
+                self.observeStoreCurrentSession()
             }
+        }
     }
 
     private func refresh() {

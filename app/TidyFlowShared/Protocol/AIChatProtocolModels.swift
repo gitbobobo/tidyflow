@@ -668,7 +668,7 @@ public enum AIToolStatus: String, Equatable {
 public struct AIToolViewSection: Identifiable, Equatable {
     public let id: String
     public let title: String
-    public let content: String
+    public var content: String
     public let style: AIToolViewSectionStyle
     public let language: String?
     public let copyable: Bool

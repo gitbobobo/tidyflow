@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import AppIntents
 
 enum AIChatRole: String {
@@ -685,26 +686,28 @@ private enum AIChatStreamEvent {
 }
 
 /// AI 聊天状态域：隔离高频流式更新，避免全局 AppState 频繁刷新。
-final class AIChatStore: ObservableObject {
-    @Published var currentSessionId: String?
-    @Published var subscribedSessionIds: Set<String> = []
-    @Published var messages: [AIChatMessage] = []
-    @Published var historyHasMore: Bool = false
-    @Published var historyNextBeforeMessageId: String?
+/// 使用 @Observable 实现按属性粒度的变更追踪，流式场景下仅读取变化属性的视图才重渲染。
+@Observable
+final class AIChatStore {
+    var currentSessionId: String?
+    var subscribedSessionIds: Set<String> = []
+    var messages: [AIChatMessage] = []
+    var historyHasMore: Bool = false
+    var historyNextBeforeMessageId: String?
     /// 首屏最近页历史消息加载态；仅用于详情页首次打开/重载时的空白页加载反馈。
-    @Published var recentHistoryIsLoading: Bool = false
-    @Published var historyIsLoading: Bool = false
-    @Published var isStreaming: Bool = false
-    @Published var abortPendingSessionId: String?
-    @Published var awaitingUserEcho: Bool = false
-    @Published var lastUserEchoMessageId: String?
-    @Published var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
+    var recentHistoryIsLoading: Bool = false
+    var historyIsLoading: Bool = false
+    var isStreaming: Bool = false
+    var abortPendingSessionId: String?
+    var awaitingUserEcho: Bool = false
+    var lastUserEchoMessageId: String?
+    var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
     /// 已发送请求、等待服务端首个内容到达期间为 true；首个内容到达或会话结束/出错时清除。
-    @Published var hasPendingFirstContent: Bool = false
+    var hasPendingFirstContent: Bool = false
     /// 仅表示消息尾部可见内容发生变化，用于替代对整份 messages 的监听。
-    @Published private(set) var tailRevision: UInt64 = 0
+    private(set) var tailRevision: UInt64 = 0
     /// 最新 assistant 尾部 part 摘要，供上层做轻量判定，不必每次遍历整份消息。
-    @Published private(set) var latestAssistantPartMeta: AIAssistantTailPartMeta?
+    private(set) var latestAssistantPartMeta: AIAssistantTailPartMeta?
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
@@ -1757,16 +1760,12 @@ final class AIChatStore: ObservableObject {
                 var part = messages[msgIdx].parts[existing.partIdx]
                 var sections = part.toolView?.sections ?? []
                 if let index = sections.firstIndex(where: { $0.id == "generic-progress" }) {
-                    let current = sections[index].content
-                    sections[index] = AIToolViewSection(
-                        id: "generic-progress",
-                        title: "progress",
-                        content: current.isEmpty ? delta : current + "\n" + delta,
-                        style: .text,
-                        language: nil,
-                        copyable: true,
-                        collapsedByDefault: false
-                    )
+                    if sections[index].content.isEmpty {
+                        sections[index].content = delta
+                    } else {
+                        sections[index].content.append("\n")
+                        sections[index].content.append(contentsOf: delta)
+                    }
                 } else {
                     sections.append(
                         AIToolViewSection(
@@ -1848,16 +1847,7 @@ final class AIChatStore: ObservableObject {
                 var part = messages[msgIdx].parts[existing.partIdx]
                 var sections = part.toolView?.sections ?? []
                 if let index = sections.firstIndex(where: { $0.id == "generic-output" }) {
-                    let current = sections[index].content
-                    sections[index] = AIToolViewSection(
-                        id: "generic-output",
-                        title: "output",
-                        content: current + delta,
-                        style: .code,
-                        language: "text",
-                        copyable: true,
-                        collapsedByDefault: false
-                    )
+                    sections[index].content.append(contentsOf: delta)
                 } else {
                     sections.append(
                         AIToolViewSection(
@@ -1937,8 +1927,11 @@ final class AIChatStore: ObservableObject {
 
         if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-            let current = messages[msgIdx].parts[existing.partIdx].text ?? ""
-            messages[msgIdx].parts[existing.partIdx].text = current + delta
+            if messages[msgIdx].parts[existing.partIdx].text != nil {
+                messages[msgIdx].parts[existing.partIdx].text!.append(contentsOf: delta)
+            } else {
+                messages[msgIdx].parts[existing.partIdx].text = delta
+            }
             updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
             touchRenderRevision(at: msgIdx)
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {

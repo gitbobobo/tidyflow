@@ -2927,7 +2927,7 @@ struct EvolutionSessionDrawerView: View {
                     onQuestionReplyAsMessage: { _ in },
                     onOpenLinkedSession: nil
                 )
-                .environmentObject(appState.evolutionReplayStore)
+                .environment(appState.evolutionReplayStore)
             }
         }
         #if os(macOS)

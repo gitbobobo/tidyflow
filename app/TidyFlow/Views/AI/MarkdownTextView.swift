@@ -7,17 +7,30 @@ enum AIChatMarkdownRole {
 }
 
 /// 聊天消息 Markdown 渲染器：每个连续文本文档块对应一个 StructuredText。
+/// 流式输出期间自动降频（200ms / 5fps），减少全量 Markdown 解析开销。
 struct MarkdownTextView: View {
     let text: String
     var role: AIChatMarkdownRole = .assistant
     var baseFontSize: CGFloat = 13
+    var isStreaming: Bool = false
+
+    /// 流式期间 Markdown 全量解析最小间隔
+    private static let streamingRenderInterval: CFAbsoluteTime = 0.2
+
+    /// 已提交给 StructuredText 的文本快照
+    @State private var renderedText: String = ""
+    /// 收到但尚未渲染的最新文本（延迟任务会读取此值）
+    @State private var latestPendingText: String = ""
+    @State private var lastRenderTime: CFAbsoluteTime = 0
+    @State private var deferredRenderTask: Task<Void, Never>?
 
     private var accentColor: Color {
         role == .user ? .primary : .accentColor
     }
 
     var body: some View {
-        StructuredText(markdown: text)
+        let displayText = renderedText.isEmpty ? text : renderedText
+        StructuredText(markdown: displayText)
             .font(.system(size: baseFontSize))
             .frame(maxWidth: .infinity, alignment: .leading)
             .textual.structuredTextStyle(.gitHub)
@@ -30,6 +43,60 @@ struct MarkdownTextView: View {
                     .link(.foregroundColor(accentColor))
             )
             .textual.codeBlockStyle(AIChatCodeBlockStyle())
+            .onAppear {
+                renderedText = text
+                lastRenderTime = CFAbsoluteTimeGetCurrent()
+            }
+            .onChange(of: text) { _, newText in
+                throttledRender(newText)
+            }
+            .onChange(of: isStreaming) { _, streaming in
+                if !streaming {
+                    // 流式结束，立即渲染最终文本确保一致
+                    deferredRenderTask?.cancel()
+                    deferredRenderTask = nil
+                    if renderedText != text {
+                        renderedText = text
+                    }
+                }
+            }
+            .onDisappear {
+                deferredRenderTask?.cancel()
+                deferredRenderTask = nil
+            }
+    }
+
+    /// 流式期间节流 Markdown 渲染：每 200ms 最多一次全量解析。
+    /// 非流式场景下直接更新，无额外开销。
+    private func throttledRender(_ newText: String) {
+        guard isStreaming else {
+            renderedText = newText
+            return
+        }
+
+        latestPendingText = newText
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - lastRenderTime
+
+        if elapsed >= Self.streamingRenderInterval {
+            lastRenderTime = now
+            renderedText = newText
+            deferredRenderTask?.cancel()
+            deferredRenderTask = nil
+            return
+        }
+
+        // 已有延迟任务挂起，它完成时会读取 latestPendingText
+        guard deferredRenderTask == nil else { return }
+        let remaining = Self.streamingRenderInterval - elapsed
+        deferredRenderTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            lastRenderTime = CFAbsoluteTimeGetCurrent()
+            renderedText = latestPendingText
+            deferredRenderTask = nil
+        }
     }
 }
 

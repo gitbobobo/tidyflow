@@ -352,8 +352,6 @@ class AppState: ObservableObject {
     /// 共享性能追踪器，macOS/iOS 双端通过此对象暴露统一的性能观测结果。
     let performanceTracer = TFPerformanceTracer()
     let aiSessionListStore = AISessionListStore()
-    private var evolutionReplayStoreCancellable: AnyCancellable?
-    private var subAgentViewerStoreCancellable: AnyCancellable?
     // WS 领域 handler 强引用（WSClient 侧为 weak）
     var wsGitMessageHandler: GitMessageHandler?
     var wsProjectMessageHandler: ProjectMessageHandler?
@@ -548,7 +546,6 @@ class AppState: ObservableObject {
     /// Evolution 全局默认阶段配置（替代 per-workspace 配置，由设置页面管理）
     @Published var evolutionDefaultProfiles: [EvolutionEditableProfile] = []
     @Published var evolutionReplayTitle: String = ""
-    @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
     let evolutionReplayStore: AIChatStore = AIChatStore()
@@ -566,7 +563,6 @@ class AppState: ObservableObject {
     /// 内部 one-shot 输入预填，无视图直接观察
     var aiChatOneShotPrefillByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
-    @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
     let subAgentViewerStore: AIChatStore = AIChatStore()
@@ -804,18 +800,6 @@ class AppState: ObservableObject {
 
         // 先用内置默认值初始化，连接 Core 后再同步真实的 Evolution 全局默认配置
         loadEvolutionDefaultProfiles()
-
-        // 转发阶段聊天回放 store 的消息，兼容旧的数组状态读取路径。
-        evolutionReplayStoreCancellable = evolutionReplayStore.$messages
-            .receive(on: RunLoop.main)
-            .sink { [weak self] messages in
-                self?.evolutionReplayMessages = messages
-            }
-        subAgentViewerStoreCancellable = subAgentViewerStore.$messages
-            .receive(on: RunLoop.main)
-            .sink { [weak self] messages in
-                self?.subAgentViewerMessages = messages
-            }
 
         // 接线 GitCacheState 依赖
         setupGitCache()

@@ -189,7 +189,7 @@ struct MobileAIChatView: View {
                                 presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
                             }
                         )
-                        .environmentObject(appState.subAgentViewerStore)
+                        .environment(appState.subAgentViewerStore)
                     }
                 }
                 .navigationTitle(appState.subAgentViewerTitle.isEmpty ? "子会话" : appState.subAgentViewerTitle)
@@ -299,7 +299,7 @@ struct MobileAIChatView: View {
                         presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
                     }
                 )
-                .environmentObject(aiChatStore)
+                .environment(aiChatStore)
                 .id(chatPresentation.messageListIdentity)
             }
         }

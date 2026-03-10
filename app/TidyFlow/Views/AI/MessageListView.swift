@@ -89,7 +89,7 @@ private actor ChatImageLoader {
 }
 
 struct MessageListView: View {
-    @EnvironmentObject var aiChatStore: AIChatStore
+    @Environment(AIChatStore.self) var aiChatStore
     let messages: [AIChatMessage]
     let sessionToken: String?
     let canLoadOlderMessages: Bool
@@ -112,6 +112,11 @@ struct MessageListView: View {
     /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
     /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
+    /// 缓存的显示消息列表，仅在消息数量或会话变化时完整重算。
+    /// 流式增量更新只修改最后一条消息内容，无需重跑 O(n) filter。
+    @State private var cachedDisplayMessages: [AIChatMessage] = []
+    /// 上次完整重算时的消息数量，用于检测结构性变化。
+    @State private var cachedDisplayMessageSourceCount: Int = -1
 
     private let bottomAnchorId = "ai_message_bottom_anchor"
     /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
@@ -142,8 +147,29 @@ struct MessageListView: View {
         self.onOpenLinkedSession = onOpenLinkedSession
     }
 
-    /// 过滤掉"无可见内容且非流式"的消息，避免空消息把相邻回复撑开。
+    /// 返回当前显示消息列表：优先使用缓存，仅在流式消息内容变化时补丁最后一条。
+    /// 完整的 filter 重算通过 recomputeDisplayMessages() 在 onChange 中触发。
     private var displayMessages: [AIChatMessage] {
+        guard !cachedDisplayMessages.isEmpty else {
+            return recomputeDisplayMessagesSnapshot()
+        }
+        // 流式期间，消息数量不变但最后一条消息内容持续更新。
+        // 直接在缓存基础上补丁最后一条，避免 O(n) filter + displayNodes 计算。
+        if let lastMessage = messages.last, lastMessage.isStreaming {
+            var result = cachedDisplayMessages
+            if let lastIdx = result.indices.last, result[lastIdx].id == lastMessage.id {
+                result[lastIdx] = lastMessage
+            } else {
+                // 新的流式消息还未进入缓存，追加
+                result.append(lastMessage)
+            }
+            return result
+        }
+        return cachedDisplayMessages
+    }
+
+    /// 完整重算显示消息（O(n) filter + displayNodes），仅在消息数量或结构变化时调用。
+    private func recomputeDisplayMessagesSnapshot() -> [AIChatMessage] {
         messages.filter { message in
             if message.isStreaming { return true }
             return AIChatMessageLayoutSemantics.hasRenderableContent(
@@ -151,6 +177,12 @@ struct MessageListView: View {
                 pendingQuestions: pendingQuestions
             )
         }
+    }
+
+    private func refreshDisplayMessagesCache() {
+        let snapshot = recomputeDisplayMessagesSnapshot()
+        cachedDisplayMessages = snapshot
+        cachedDisplayMessageSourceCount = messages.count
     }
 
     /// 预计算虚拟化渲染范围，供 messageStack() 在 ForEach 外一次性调用。
@@ -183,12 +215,17 @@ struct MessageListView: View {
             .scrollDismissesKeyboard(.interactively)
             #endif
             .onAppear {
+                refreshDisplayMessagesCache()
                 initializeScrollPolicyStateIfNeeded()
                 // defaultScrollAnchor(.bottom) 处理初始定位，
                 // 但仍需手动滚动以确保在已有消息时精确定位底部。
                 scrollToBottom(proxy: proxy, animation: .none)
             }
+            .onChange(of: messages.count) { _, _ in
+                refreshDisplayMessagesCache()
+            }
             .onChange(of: sessionToken) { _, _ in
+                refreshDisplayMessagesCache()
                 handleSessionTokenChangeIfNeeded()
             }
             .onChange(of: aiChatStore.tailRevision) { _, _ in
@@ -243,7 +280,13 @@ struct MessageListView: View {
                 .padding(.top, 4)
             }
 
-            ForEach(Array(msgs.enumerated()), id: \.element.id) { index, message in
+            // 预构建 ID→索引映射，避免 Array(msgs.enumerated()) 的临时数组分配，
+            // 同时保持 O(1) 索引查找。
+            let msgIndexMap = Dictionary(
+                uniqueKeysWithValues: msgs.enumerated().map { ($1.id, $0) }
+            )
+            ForEach(msgs) { message in
+                let index = msgIndexMap[message.id] ?? 0
                 MessageBubble(
                     message: message,
                     prefersFullRender: virtualizationWindow.shouldFullyRender(
@@ -673,11 +716,11 @@ private struct MessageBubble: View, Equatable {
                     }
                 }
                 if showsStreamingStatus {
-                    streamingStatusView
+                    streamingStatusIndicator(nodesEmpty: nodes.isEmpty)
                         .transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: nodes.count)
+            .animation(message.isStreaming ? nil : .easeOut(duration: 0.18), value: nodes.count)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(bubbleBackgroundColor)
@@ -708,7 +751,8 @@ private struct MessageBubble: View, Equatable {
             MarkdownTextView(
                 text: markdownText,
                 role: isUser ? .user : .assistant,
-                baseFontSize: 13
+                baseFontSize: 13,
+                isStreaming: message.isStreaming
             )
         }
     }
@@ -787,14 +831,15 @@ private struct MessageBubble: View, Equatable {
         )
     }
 
-    private var streamingStatusView: some View {
+    /// 流式状态指示器，接收预计算的 nodesEmpty 避免重复调用 displayNodes。
+    private func streamingStatusIndicator(nodesEmpty: Bool) -> some View {
         HStack(spacing: 0) {
             Text("思考中")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .shimmering(active: true, animation: .linear(duration: 1.4).repeatForever(autoreverses: false))
         }
-        .padding(.top, displayNodes.isEmpty ? 0 : 4)
+        .padding(.top, nodesEmpty ? 0 : 4)
     }
 
     private var lightweightBubble: some View {
