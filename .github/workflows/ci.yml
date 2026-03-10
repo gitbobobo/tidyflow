@@ -97,13 +97,7 @@ jobs:
         run: sudo apt-get install -y ripgrep
 
       - name: Run architecture guard checks
-        run: |
-          ./scripts/tools/check_protocol_consistency.sh
-          ./scripts/tools/check_protocol_schema_sync.sh
-          ./scripts/tools/gen_protocol_action_table.sh --check
-          ./scripts/tools/gen_protocol_action_swift_rules.sh --check
-          ./scripts/tools/check_protocol_action_sync.sh
-          ./scripts/tools/check_version_consistency.sh
+        run: ./scripts/tidyflow check
 
   # ============================================================================
   # Layer 4: 脚本语法检查
@@ -159,23 +153,14 @@ jobs:
         run: |
           CYCLE_ID="ci-dry-run-${GITHUB_RUN_ID}"
           mkdir -p ".tidyflow/evolution/${CYCLE_ID}"
-          ./scripts/tidyflow quality-gate --cycle "${CYCLE_ID}" --step all --dry-run
-          RUN_ID="$(ls -1 ".tidyflow/evolution/${CYCLE_ID}/runs" | sort | tail -n 1)"
-          METRICS=".tidyflow/evolution/${CYCLE_ID}/runs/${RUN_ID}/evidence/v-6-metrics-${RUN_ID}.json"
-          python3 - "$METRICS" <<'PY'
-import json
-import sys
-from pathlib import Path
-metrics = Path(sys.argv[1])
-data = json.loads(metrics.read_text(encoding="utf-8"))
-missing = data.get("metrics", {}).get("missing_types", [])
-if missing:
-    raise SystemExit(f"missing evidence types: {missing}")
-checks = {c.get("check_id"): c.get("result") for c in data.get("checks", [])}
-for check_id in ["v-1", "v-2", "v-3", "v-4", "v-5", "v-6"]:
-    if checks.get(check_id) != "pass":
-        raise SystemExit(f"check failed or missing: {check_id}")
-PY
+          ./scripts/tidyflow quality-gate \
+            --cycle "${CYCLE_ID}" \
+            --step all \
+            --dry-run \
+            --project tidyflow \
+            --workspace default \
+            --skip-apple \
+            --json
 
   # ============================================================================
   # Layer 6: Apple 多工作区定向回归门禁（macOS 构建验证）
@@ -194,40 +179,13 @@ PY
         run: sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer || true
 
       - name: macOS Debug Build (verify Apple client compiles)
-        run: |
-          xcodebuild \
-            -project app/TidyFlow.xcodeproj \
-            -scheme TidyFlow \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            -derivedDataPath build \
-            SKIP_CORE_BUILD=1 \
-            build
+        run: ./scripts/tidyflow apple-build macos --skip-core
 
       - name: Apple Multi-Workspace Regression Tests (macOS)
-        run: |
-          xcodebuild \
-            -project app/TidyFlow.xcodeproj \
-            -scheme TidyFlow \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            -derivedDataPath build \
-            SKIP_CORE_BUILD=1 \
-            test \
-            -only-testing:TidyFlowTests/TerminalWorkspaceIsolationTests \
-            -only-testing:TidyFlowTests/WorkspaceSharedStateSemanticsTests \
-            -only-testing:TidyFlowTests/EvolutionReplaySessionIsolationTests
+        run: ./scripts/tidyflow apple-regression --macos-only
 
       - name: iOS Simulator Debug Build (verify iOS client compiles)
-        run: |
-          xcodebuild \
-            -project app/TidyFlow.xcodeproj \
-            -scheme TidyFlow \
-            -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
-            -derivedDataPath build \
-            SKIP_CORE_BUILD=1 \
-            build
+        run: ./scripts/tidyflow apple-build ios --skip-core
 
   # ============================================================================
   # 总结：所有测试层通过后才算 CI 通过
