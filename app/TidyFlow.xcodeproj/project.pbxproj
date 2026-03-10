@@ -95,6 +95,7 @@
 			AIC0001A /* AIChatEmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00019 /* AIChatEmptyStateView.swift */; };
 			AIC00021 /* AIPlanCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00022 /* AIPlanCardView.swift */; };
 			AIML0001 /* AIChatMessageLayoutSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIML0011 /* AIChatMessageLayoutSemantics.swift */; };
+			AICL0001 /* AIChatComposerLayoutSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICL0011 /* AIChatComposerLayoutSemantics.swift */; };
 			AICP0001 /* AIChatComposerHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICP0011 /* AIChatComposerHostView.swift */; };
 
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
@@ -414,6 +415,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		AIC00017 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MarkdownTextView.swift"; sourceTree = "<group>"; };
 		AIC00019 /* AIChatEmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatEmptyStateView.swift"; sourceTree = "<group>"; };
 		AIML0011 /* AIChatMessageLayoutSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageLayoutSemantics.swift; sourceTree = "<group>"; };
+		AICL0011 /* AIChatComposerLayoutSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatComposerLayoutSemantics.swift; sourceTree = "<group>"; };
 		AICP0011 /* AIChatComposerHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatComposerHostView.swift"; sourceTree = "<group>"; };
 		TST10042 /* AIChatTextRunGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatTextRunGroupingTests.swift; sourceTree = "<group>"; };
 		TST10043 /* AIChatPendingInteractionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPendingInteractionProjectionTests.swift; sourceTree = "<group>"; };
@@ -896,6 +898,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 			children = (
 				MDL000105 /* AIModels.swift */,
 				AIC00003 /* AIChatModels.swift */,
+				AICL0011 /* AIChatComposerLayoutSemantics.swift */,
 				AIML0011 /* AIChatMessageLayoutSemantics.swift */,
 				ASLS0011 /* AISessionListStore.swift */,
 				AISS0011 /* AISessionSemantics.swift */,
@@ -1240,6 +1243,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				AIC00018 /* MarkdownTextView.swift in Sources */,
 				AICP0001 /* AIChatComposerHostView.swift in Sources */,
 				AIC00004 /* AIChatModels.swift in Sources */,
+				AICL0001 /* AIChatComposerLayoutSemantics.swift in Sources */,
 				AIML0001 /* AIChatMessageLayoutSemantics.swift in Sources */,
 				ASLS0001 /* AISessionListStore.swift in Sources */,
 				AISS0001 /* AISessionSemantics.swift in Sources */,
