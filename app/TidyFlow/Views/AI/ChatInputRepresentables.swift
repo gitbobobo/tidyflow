@@ -26,6 +26,7 @@ struct ChatTextView: NSViewRepresentable {
     @Binding var contentHeight: CGFloat
     /// 光标相对于 ScrollView 的位置（用于定位弹出层）
     @Binding var cursorRect: CGRect
+    var focusRequestToken: Int = 0
     var font: NSFont = .systemFont(ofSize: 13)
     var onEnter: () -> Void
     var isEnterEnabled: () -> Bool
@@ -115,14 +116,23 @@ struct ChatTextView: NSViewRepresentable {
             context.coordinator.reportInputContext()
         }
         textView.font = font
+        if context.coordinator.lastFocusRequestToken != focusRequestToken {
+            context.coordinator.lastFocusRequestToken = focusRequestToken
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ChatTextView
         weak var textView: NSTextView?
+        var lastFocusRequestToken: Int
 
         init(_ parent: ChatTextView) {
             self.parent = parent
+            self.lastFocusRequestToken = parent.focusRequestToken
         }
 
         func textDidChange(_ notification: Notification) {

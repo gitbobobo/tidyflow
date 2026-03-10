@@ -58,6 +58,7 @@ struct ChatInputView: View {
     @State private var textContentHeight: CGFloat = 28
     /// 光标在输入框内的位置（由 NSTextView 上报）
     @State private var cursorRect: CGRect = .zero
+    @State private var inputFocusRequestToken: Int = 0
     #if os(iOS)
     private enum IOSInputPanelSheet: String, Identifiable {
         case commands
@@ -120,10 +121,10 @@ struct ChatInputView: View {
         .background(floatingCardBackgroundColor, in: .rect(cornerRadius: floatingCardCornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: floatingCardCornerRadius, style: .continuous)
-                .stroke(floatingCardBorderColor, lineWidth: 0.8)
+                .stroke(floatingCardBorderColor, lineWidth: 1.1)
         }
-        .shadow(color: floatingCardPrimaryShadowColor, radius: 14, x: 0, y: 6)
-        .shadow(color: floatingCardSecondaryShadowColor, radius: 3, x: 0, y: 1)
+        .shadow(color: floatingCardPrimaryShadowColor, radius: 20, x: 0, y: 10)
+        .shadow(color: floatingCardSecondaryShadowColor, radius: 6, x: 0, y: 2)
     }
 
     #if os(iOS)
@@ -500,6 +501,16 @@ struct ChatInputView: View {
     }
     #endif
 
+    private func focusInputEditor() {
+        #if os(iOS)
+        if !isIOSInputFocused {
+            isIOSInputFocused = true
+        }
+        #else
+        inputFocusRequestToken &+= 1
+        #endif
+    }
+
     // MARK: - 图片预览行
 
     private var imagePreviewRow: some View {
@@ -540,6 +551,7 @@ struct ChatInputView: View {
                 text: $text,
                 contentHeight: $textContentHeight,
                 cursorRect: $cursorRect,
+                focusRequestToken: inputFocusRequestToken,
                 font: .systemFont(ofSize: editorFontSize),
                 onEnter: {
                     imeDebugLog("ChatInputView.onEnter start text=\(text.debugDescription) canSend=\(canSend) isStreaming=\(isStreaming) autocompleteVisible=\(autocomplete?.isVisible == true)")
@@ -658,10 +670,9 @@ struct ChatInputView: View {
         inputEditor
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: editorMinHeight, alignment: .topLeading)
-            .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: editorSurfaceCornerRadius, style: .continuous)
-                    .stroke(editorSurfaceBorderColor, lineWidth: 0.8)
+            .contentShape(.rect)
+            .onTapGesture {
+                focusInputEditor()
             }
     }
 
@@ -1204,9 +1215,9 @@ struct ChatInputView: View {
 
     private var outerBottomPadding: CGFloat {
         #if os(iOS)
-        return 8
+        return 5
         #else
-        return 10
+        return 6
         #endif
     }
 
@@ -1228,9 +1239,9 @@ struct ChatInputView: View {
 
     private var cardBottomPadding: CGFloat {
         #if os(iOS)
-        return 10
+        return 7
         #else
-        return 12
+        return 8
         #endif
     }
 
@@ -1256,42 +1267,18 @@ struct ChatInputView: View {
 
     private var floatingCardBorderColor: Color {
         #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        return colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.12)
         #else
-        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.5 : 0.35)
+        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.72 : 0.46)
         #endif
     }
 
     private var floatingCardPrimaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.08)
+        colorScheme == .dark ? Color.black.opacity(0.3) : Color.black.opacity(0.14)
     }
 
     private var floatingCardSecondaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.12) : Color.black.opacity(0.03)
-    }
-
-    private var editorSurfaceCornerRadius: CGFloat {
-        #if os(iOS)
-        return 14
-        #else
-        return 13
-        #endif
-    }
-
-    private var editorSurfaceBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.tertiarySystemBackground)
-        #else
-        return Color(NSColor.textBackgroundColor).opacity(colorScheme == .dark ? 0.94 : 0.98)
-        #endif
-    }
-
-    private var editorSurfaceBorderColor: Color {
-        #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
-        #else
-        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.58 : 0.34)
-        #endif
+        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.06)
     }
 
     private var toolbarChipBackgroundColor: Color {
