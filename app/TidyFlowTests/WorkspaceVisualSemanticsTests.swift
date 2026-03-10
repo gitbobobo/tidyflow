@@ -464,6 +464,10 @@ final class BottomPanelCategorySemanticsTests: XCTestCase {
 
     func testNewWorkspaceDefaultsToProjectConfigCategory() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         let workspaceKey = "proj::ws"
 
         appState.ensureDefaultTab(for: workspaceKey)
@@ -477,6 +481,10 @@ final class BottomPanelCategorySemanticsTests: XCTestCase {
 
     func testActivateTerminalCategory_createsTerminalWhenEmpty() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         let workspaceKey = "proj::ws"
         appState.workspaceTabs[workspaceKey] = []
 

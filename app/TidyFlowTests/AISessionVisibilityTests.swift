@@ -42,6 +42,10 @@ final class AISessionVisibilityTests: XCTestCase {
 
     func testSetAISessionsKeepsHiddenCacheButHidesFromDefaultList() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         let visible = makeSession(id: "visible", origin: .user)
         let hidden = makeSession(id: "hidden", origin: .evolutionSystem)
 
@@ -61,6 +65,10 @@ final class AISessionVisibilityTests: XCTestCase {
 
     func testUpsertHiddenSessionDoesNotLeakIntoPageState() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         appState.selectedProjectName = "demo"
         appState.selectedWorkspaceKey = "default"
 
@@ -305,6 +313,10 @@ final class AISessionSemanticsTests: XCTestCase {
 
     func testMultiWorkspaceSessionKeysAreIndependent() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         let ws1Session = AISessionInfo(projectName: "proj", workspaceName: "ws1", aiTool: .codex, id: "s-shared", title: "A", updatedAt: 10, origin: .user)
         let ws2Session = AISessionInfo(projectName: "proj", workspaceName: "ws2", aiTool: .codex, id: "s-shared", title: "B", updatedAt: 20, origin: .user)
         appState.upsertAISession(ws1Session, for: .codex)
@@ -374,6 +386,10 @@ final class AISessionListSemanticsTests: XCTestCase {
 
     func testRequestAISessionList_preventsDoubleInitialLoad() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         appState.selectedProjectName = "proj"
         appState.selectedWorkspaceKey = "ws"
         // 手动模拟已在加载
@@ -419,6 +435,10 @@ final class AISessionListSemanticsTests: XCTestCase {
 
     func testClearPageStates_resetsAllKeys() {
         let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
         appState.selectedProjectName = "proj"
         appState.selectedWorkspaceKey = "ws"
         appState.updateSessionListPageState(
