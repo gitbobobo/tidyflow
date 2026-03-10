@@ -1357,6 +1357,16 @@ fn apply_current_mode_to_metadata_should_canonicalize_known_mode_token() {
 }
 
 #[test]
+fn apply_current_model_to_metadata_should_add_unknown_model() {
+    let mut metadata = crate::ai::acp_client::AcpSessionMetadata::default();
+    AcpAgent::apply_current_model_to_metadata(&mut metadata, "gpt-5");
+    assert_eq!(metadata.current_model_id.as_deref(), Some("gpt-5"));
+    assert_eq!(metadata.models.len(), 1);
+    assert_eq!(metadata.models[0].id, "gpt-5");
+    assert_eq!(metadata.models[0].name, "gpt-5");
+}
+
+#[test]
 fn resolve_mode_id_should_match_mode_semantic_token_and_return_canonical_mode_id() {
     let metadata = crate::ai::acp_client::AcpSessionMetadata {
         modes: vec![crate::ai::acp_client::AcpModeInfo {
@@ -1443,6 +1453,36 @@ async fn apply_current_mode_to_caches_should_update_directory_and_session() {
         .cloned()
         .expect("session metadata should exist");
     assert_eq!(session_meta.current_mode_id.as_deref(), Some("code"));
+}
+
+#[tokio::test]
+async fn apply_current_model_to_caches_should_update_directory_and_session() {
+    let metadata_by_directory = Arc::new(Mutex::new(HashMap::new()));
+    let metadata_by_session = Arc::new(Mutex::new(HashMap::new()));
+    AcpAgent::apply_current_model_to_caches(
+        &metadata_by_directory,
+        &metadata_by_session,
+        "/tmp/workspace",
+        "session-1",
+        "gpt-5",
+    )
+    .await;
+
+    let dir_meta = metadata_by_directory
+        .lock()
+        .await
+        .get("/tmp/workspace")
+        .cloned()
+        .expect("directory metadata should exist");
+    assert_eq!(dir_meta.current_model_id.as_deref(), Some("gpt-5"));
+
+    let session_meta = metadata_by_session
+        .lock()
+        .await
+        .get("/tmp/workspace::session-1")
+        .cloned()
+        .expect("session metadata should exist");
+    assert_eq!(session_meta.current_model_id.as_deref(), Some("gpt-5"));
 }
 
 // Kimi 适配器专项测试：tool_id 与 message_id_prefix 标识符

@@ -46,7 +46,12 @@ impl AiAgent for AcpAgent {
         self.ensure_runtime_yolo_for_session(directory, session_id)
             .await?;
 
-        let mut metadata = self.metadata_for_directory(directory).await;
+        let mut metadata = if let Some(cached) = self.metadata_for_session(directory, session_id).await
+        {
+            cached
+        } else {
+            self.metadata_for_directory(directory).await
+        };
         let mode_id = Self::resolve_mode_id(&metadata, agent.as_deref());
         let model_id = model.map(|m| m.model_id);
         let supports_load_session = self.client.supports_load_session().await;
@@ -88,6 +93,19 @@ impl AiAgent for AcpAgent {
                 }
             }
         }
+        if let Some(target_mode_id) = mode_id.as_deref() {
+            // `session_prompt` 直接携带的 mode 也应立即反映到本地缓存，
+            // 否则后续 selection_hint / config_options 读取会短暂回退到旧默认值。
+            Self::apply_current_mode_to_metadata(&mut metadata, target_mode_id);
+        }
+        if let Some(target_model_id) = model_id.as_deref() {
+            // ACP 可能不会立刻回推 current_model_id；先以本次请求选择更新缓存，
+            // 保持发送后的会话选择与输入栏展示一致。
+            Self::apply_current_model_to_metadata(&mut metadata, target_model_id);
+        }
+        self.cache_metadata(directory, metadata.clone()).await;
+        self.cache_session_metadata(directory, session_id, metadata.clone())
+            .await;
         if !self.client.supports_content_type("text").await {
             return Err("ACP 服务端 promptCapabilities 不支持 text，无法发送消息".to_string());
         }

@@ -835,6 +835,28 @@ impl AcpAgent {
         }
     }
 
+    #[cfg(test)]
+    pub(super) async fn apply_current_model_to_caches(
+        metadata_by_directory: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
+        metadata_by_session: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
+        directory: &str,
+        session_id: &str,
+        model_id: &str,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        {
+            let mut by_directory = metadata_by_directory.lock().await;
+            let entry = by_directory.entry(directory_key.clone()).or_default();
+            Self::apply_current_model_to_metadata(entry, model_id);
+        }
+        {
+            let mut by_session = metadata_by_session.lock().await;
+            let key = Self::session_cache_key(directory, session_id);
+            let entry = by_session.entry(key).or_default();
+            Self::apply_current_model_to_metadata(entry, model_id);
+        }
+    }
+
     pub(super) fn apply_current_model_to_metadata(
         metadata: &mut AcpSessionMetadata,
         model_id: &str,
