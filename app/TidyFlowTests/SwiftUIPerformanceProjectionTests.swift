@@ -133,7 +133,10 @@ final class EvolutionPipelineProjectionStoreTests: XCTestCase {
             cycleHistories: [],
             runningAgents: [],
             standbyAgents: [],
-            totalDurationText: nil
+            totalDurationText: nil,
+            isCurrentCycleFailed: false,
+            currentCycleFailureSummary: nil,
+            isCurrentCycleRetryable: false
         )
 
         XCTAssertTrue(store.updateProjection(sample))

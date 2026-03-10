@@ -116,6 +116,43 @@ final class EvolutionExecutionTimingTests: XCTestCase {
         XCTAssertEqual(totalMs, 1_900_000, "总耗时 = 最新 impl(1500s) + plan(400s)")
     }
 
+    // MARK: - 边界场景：agent 为空或 nil 的去重
+
+    /// agent 为空字符串时，同一 stage 的两条记录仍应去重（key = "stage|"）
+    func testDeduplicateWithEmptyAgentString() {
+        let entries: [EvolutionSessionExecutionEntryV2] = [
+            makeEntry(stage: "direction", agent: "", startedAt: "2026-03-07T06:00:00Z", durationMs: 100_000),
+            makeEntry(stage: "direction", agent: "", startedAt: "2026-03-07T07:00:00Z", durationMs: 50_000),
+        ]
+        let deduped = deduplicateByStageAgent(entries)
+        XCTAssertEqual(deduped.count, 1, "同一 stage + 空 agent 应去重为一条")
+        XCTAssertEqual(deduped[0].durationMs, 50_000, "应保留 startedAt 更晚的条目")
+    }
+
+    /// 同一 stage 不同 agent 不应被合并
+    func testDeduplicateSameStageDistinctAgents() {
+        let entries: [EvolutionSessionExecutionEntryV2] = [
+            makeEntry(stage: "implement_general", agent: "AgentA", startedAt: "2026-03-07T06:00:00Z", durationMs: 200_000),
+            makeEntry(stage: "implement_general", agent: "AgentB", startedAt: "2026-03-07T06:00:00Z", durationMs: 300_000),
+        ]
+        let deduped = deduplicateByStageAgent(entries)
+        XCTAssertEqual(deduped.count, 2, "不同 agent 的同 stage 条目应独立保留")
+    }
+
+    /// durationMs 为 nil 时不应导致崩溃，总耗时正确跳过
+    func testDeduplicateSkipsNilDuration() {
+        let entry = EvolutionSessionExecutionEntryV2.from(json: [
+            "stage": "plan",
+            "session_id": "sess-no-dur",
+            "status": "running",
+            "started_at": "2026-03-07T06:00:00Z",
+        ])!
+        let deduped = deduplicateByStageAgent([entry])
+        XCTAssertEqual(deduped.count, 1)
+        let totalMs = deduped.compactMap(\.durationMs).reduce(0, +)
+        XCTAssertEqual(totalMs, 0, "无 durationMs 的条目不应贡献总耗时")
+    }
+
     // MARK: - 私有辅助：复现 EvolutionPipelineView 去重算法（便于验证语义）
 
     /// 与 EvolutionPipelineView.totalDurationText 使用相同的去重语义：
