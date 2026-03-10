@@ -1,17 +1,40 @@
 import SwiftUI
 
-/// 独立 Diff 渲染组件，视觉对齐 VS Code / GitHub 风格
+/// 独立 Diff 渲染组件，视觉对齐 VS Code / GitHub 风格。
+/// 超过 visibleRowLimit 行时自动截断，避免大 diff 一次性布局全部行导致卡顿。
 struct UnifiedDiffView: View {
     let diff: ParsedDiff
 
-    var body: some View {
-        HStack(spacing: 0) {
-            lineNumberColumn
-                .frame(width: 64)
-                .background(Color.secondary.opacity(0.04))
+    /// 默认最大渲染行数，超出后显示"展开"按钮
+    private static let visibleRowLimit = 200
 
-            codeContentColumn
-                .frame(maxWidth: .infinity, alignment: .leading)
+    @State private var isFullyExpanded: Bool = false
+
+    private var visibleRows: [DiffRow] {
+        if isFullyExpanded || diff.rows.count <= Self.visibleRowLimit {
+            return diff.rows
+        }
+        return Array(diff.rows.prefix(Self.visibleRowLimit))
+    }
+
+    private var isTruncated: Bool {
+        !isFullyExpanded && diff.rows.count > Self.visibleRowLimit
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                lineNumberColumn
+                    .frame(width: 64)
+                    .background(Color.secondary.opacity(0.04))
+
+                codeContentColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if isTruncated {
+                truncationFooter
+            }
         }
         .background(Color.secondary.opacity(0.04))
         .cornerRadius(8)
@@ -20,7 +43,7 @@ struct UnifiedDiffView: View {
 
     private var lineNumberColumn: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            ForEach(diff.rows) { row in
+            ForEach(visibleRows) { row in
                 lineNumberRow(row)
             }
         }
@@ -42,12 +65,31 @@ struct UnifiedDiffView: View {
     private var codeContentColumn: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(diff.rows) { row in
+                ForEach(visibleRows) { row in
                     contentRow(row)
                 }
             }
-            .fixedSize(horizontal: true, vertical: true)
+            .fixedSize(horizontal: true, vertical: false)
         }
+    }
+
+    private var truncationFooter: some View {
+        HStack {
+            Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isFullyExpanded = true
+                }
+            } label: {
+                Text("展开全部 \(diff.rows.count) 行")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            Spacer()
+        }
+        .background(Color.secondary.opacity(0.04))
     }
 
     private func contentRow(_ row: DiffRow) -> some View {
@@ -82,26 +124,14 @@ struct UnifiedDiffView: View {
             Text(row.text)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.primary)
-        } else {
-            Text(buildAttributedString(row))
+        } else if let cached = row.cachedAttributedString {
+            Text(cached)
                 .font(.system(size: 11, design: .monospaced))
+        } else {
+            Text(row.text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.primary)
         }
-    }
-
-    private func buildAttributedString(_ row: DiffRow) -> AttributedString {
-        var result = AttributedString(row.text)
-        result.foregroundColor = .primary
-        let highlightColor: Color = row.kind == .added
-            ? .green.opacity(0.28) : .red.opacity(0.28)
-        let utf16 = row.text.utf16
-        for range in row.inlineRanges {
-            let start = utf16.index(utf16.startIndex, offsetBy: range.location, limitedBy: utf16.endIndex) ?? utf16.endIndex
-            let end = utf16.index(start, offsetBy: range.length, limitedBy: utf16.endIndex) ?? utf16.endIndex
-            if let attrRange = Range(start..<end, in: result) {
-                result[attrRange].backgroundColor = highlightColor
-            }
-        }
-        return result
     }
 
     private var rowHeight: CGFloat {

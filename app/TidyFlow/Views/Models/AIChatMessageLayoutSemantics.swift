@@ -116,7 +116,12 @@ enum AIChatMessageDisplayNode: Equatable, Identifiable {
             ignored: part.ignored,
             toolName: part.toolName,
             toolCallId: part.toolCallId,
-            toolKind: part.toolKind
+            toolKind: part.toolKind,
+            toolStatus: part.toolView?.status,
+            toolSectionsCount: part.toolView?.sections.count ?? 0,
+            toolLastSectionContentLength: part.toolView?.sections.last?.content.count ?? 0,
+            toolDurationMs: part.toolView?.durationMs,
+            toolQuestionInteractive: part.toolView?.question?.interactive
         )
     }
 
@@ -132,6 +137,12 @@ enum AIChatMessageDisplayNode: Equatable, Identifiable {
         let toolName: String?
         let toolCallId: String?
         let toolKind: String?
+        // toolView 关键信号，避免完整 toolView Equatable 的开销，同时捕获主要变化
+        let toolStatus: AIToolStatus?
+        let toolSectionsCount: Int
+        let toolLastSectionContentLength: Int
+        let toolDurationMs: Double?
+        let toolQuestionInteractive: Bool?
     }
 }
 
@@ -231,11 +242,24 @@ enum AIChatMessageLayoutSemantics {
         return nodes
     }
 
+    /// 判断消息是否包含可渲染内容（提前退出版本，避免构建完整 displayNodes 数组）。
     static func hasRenderableContent(
         in message: AIChatMessage,
         pendingQuestions: [String: AIQuestionRequestInfo]
     ) -> Bool {
-        !displayNodes(for: message, pendingQuestions: pendingQuestions).isEmpty
+        var hasBufferedText = false
+        for part in message.parts {
+            if textSegment(from: part) != nil {
+                hasBufferedText = true
+                continue
+            }
+            // 遇到非文本 part 时：先检查缓冲的文本段是否非空
+            if hasBufferedText { return true }
+            if shouldRender(part: part, in: message, pendingQuestions: pendingQuestions) {
+                return true
+            }
+        }
+        return hasBufferedText
     }
 
     static func pendingInteractionQueue(

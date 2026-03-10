@@ -1,9 +1,10 @@
 import Foundation
+import SwiftUI
 
 /// 字符级 inline diff 高亮：对相邻 removed/added 行对计算变更区间
 enum DiffInlineHighlighter {
 
-    /// 就地标注 ParsedDiff 中每行的 inlineRanges
+    /// 就地标注 ParsedDiff 中每行的 inlineRanges，并预计算带高亮的 AttributedString。
     static func annotate(_ diff: inout ParsedDiff) {
         let rows = diff.rows
         var i = 0
@@ -36,6 +37,29 @@ enum DiffInlineHighlighter {
                 diff.rows[ai].inlineRanges = aRanges
             }
         }
+
+        // 预计算所有带 inlineRanges 行的 AttributedString，避免渲染时每帧重算。
+        for idx in diff.rows.indices {
+            guard !diff.rows[idx].inlineRanges.isEmpty else { continue }
+            diff.rows[idx].cachedAttributedString = buildAttributedString(diff.rows[idx])
+        }
+    }
+
+    /// 构建带 inline 高亮的 AttributedString（仅在解析阶段调用一次）。
+    private static func buildAttributedString(_ row: DiffRow) -> AttributedString {
+        var result = AttributedString(row.text)
+        result.foregroundColor = .primary
+        let highlightColor: Color = row.kind == .added
+            ? .green.opacity(0.28) : .red.opacity(0.28)
+        let utf16 = row.text.utf16
+        for range in row.inlineRanges {
+            let start = utf16.index(utf16.startIndex, offsetBy: range.location, limitedBy: utf16.endIndex) ?? utf16.endIndex
+            let end = utf16.index(start, offsetBy: range.length, limitedBy: utf16.endIndex) ?? utf16.endIndex
+            if let attrRange = Range(start..<end, in: result) {
+                result[attrRange].backgroundColor = highlightColor
+            }
+        }
+        return result
     }
 
     // MARK: - 前后缀匹配算法

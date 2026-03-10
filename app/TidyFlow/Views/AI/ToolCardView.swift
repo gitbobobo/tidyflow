@@ -269,12 +269,18 @@ struct ToolCardView: View {
     }
 
     private func genericSectionView(_ section: AIToolViewSection) -> some View {
-        let lines = section.content.components(separatedBy: "\n")
-        let needsCollapse = lines.count > 12 || section.collapsedByDefault
+        // 高效计数换行符（O(n) 但无数组分配），仅在需要截断时才拆分字符串。
+        let lineCount = section.content.utf8.reduce(into: 1) { count, byte in
+            if byte == UInt8(ascii: "\n") { count += 1 }
+        }
+        let needsCollapse = lineCount > 12 || section.collapsedByDefault
         let expanded = expandedSections.contains(section.id) || !section.collapsedByDefault
-        let displayText = (!needsCollapse || expanded)
-            ? section.content
-            : lines.prefix(12).joined(separator: "\n")
+        let displayText: String
+        if !needsCollapse || expanded {
+            displayText = section.content
+        } else {
+            displayText = Self.prefixLines(section.content, count: 12)
+        }
 
         return VStack(alignment: .leading, spacing: 6) {
             sectionHeader(section, expanded: expanded, needsCollapse: needsCollapse)
@@ -384,9 +390,35 @@ struct ToolCardView: View {
     }
 
     private var diffStats: (added: Int, removed: Int)? {
-        guard let diffSection = toolView?.sections.first(where: { $0.style == .diff }),
-              let parsed = AIDiffParser.parse(diffSection.content) else { return nil }
-        return (parsed.addedCount, parsed.removedCount)
+        guard let diffSection = toolView?.sections.first(where: { $0.style == .diff }) else { return nil }
+        // 轻量级统计：逐行扫描行首字符，不做完整 diff 解析和 DiffRow 构建。
+        let content = diffSection.content
+        var added = 0
+        var removed = 0
+        var i = content.startIndex
+        while i < content.endIndex {
+            let ch = content[i]
+            if ch == "+" {
+                let next = content.index(after: i)
+                if next >= content.endIndex || content[next] != "+" {
+                    added += 1
+                }
+            } else if ch == "-" {
+                let next = content.index(after: i)
+                if next >= content.endIndex || content[next] != "-" {
+                    removed += 1
+                }
+            }
+            // 跳到下一行首
+            while i < content.endIndex && content[i] != "\n" {
+                i = content.index(after: i)
+            }
+            if i < content.endIndex {
+                i = content.index(after: i)
+            }
+        }
+        guard added > 0 || removed > 0 else { return nil }
+        return (added, removed)
     }
 
     @ViewBuilder
@@ -441,6 +473,22 @@ struct ToolCardView: View {
             return String(format: "%.0fms", durationMs)
         }
         return String(format: "%.2fs", durationMs / 1000)
+    }
+
+    /// 从字符串中截取前 count 行，不拆分整个字符串为数组。
+    private static func prefixLines(_ content: String, count: Int) -> String {
+        var remaining = count
+        var i = content.startIndex
+        while i < content.endIndex {
+            if content[i] == "\n" {
+                remaining -= 1
+                if remaining == 0 {
+                    return String(content[content.startIndex..<i])
+                }
+            }
+            i = content.index(after: i)
+        }
+        return content
     }
 
     private func toolIconName(_ toolID: String) -> String {

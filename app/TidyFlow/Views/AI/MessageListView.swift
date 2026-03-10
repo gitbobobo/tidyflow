@@ -612,10 +612,25 @@ private struct MessageBubble: View, Equatable {
 
     private var isUser: Bool { message.role == .user }
     private var bubbleCornerRadius: CGFloat { 12 }
-    private var usesWideAssistantLayout: Bool {
-        guard !isUser else { return false }
-        let nodes = displayNodes
-        guard !nodes.isEmpty else { return false }
+    private var primaryTextColor: Color { .primary }
+    private var secondaryTextColor: Color { .secondary }
+
+    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
+        lhs.message.id == rhs.message.id &&
+            lhs.message.renderRevision == rhs.message.renderRevision &&
+            lhs.message.isStreaming == rhs.message.isStreaming &&
+            lhs.prefersFullRender == rhs.prefersFullRender &&
+            lhs.pendingQuestionToken == rhs.pendingQuestionToken &&
+            lhs.sessionId == rhs.sessionId
+    }
+
+    private var showsStreamingStatus: Bool {
+        !isUser && message.isStreaming
+    }
+
+    /// 判断所有有内容的 display node 是否都是宽布局类型（tool/plan/compaction）
+    private static func computeUsesWideLayout(isUser: Bool, nodes: [AIChatMessageDisplayNode]) -> Bool {
+        guard !isUser, !nodes.isEmpty else { return false }
         return nodes.allSatisfy { node in
             switch node {
             case .textGroup:
@@ -629,38 +644,6 @@ private struct MessageBubble: View, Equatable {
                 }
             }
         }
-    }
-    private var contentMaxWidth: CGFloat {
-        if isUser {
-            return 520
-        }
-        return usesWideAssistantLayout ? .infinity : 760
-    }
-    private var trailingBubblePadding: CGFloat {
-        if isUser { return 0 }
-        return usesWideAssistantLayout ? 8 : 12
-    }
-    private var primaryTextColor: Color { .primary }
-    private var secondaryTextColor: Color { .secondary }
-
-    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
-        lhs.message.id == rhs.message.id &&
-            lhs.message.renderRevision == rhs.message.renderRevision &&
-            lhs.message.isStreaming == rhs.message.isStreaming &&
-            lhs.prefersFullRender == rhs.prefersFullRender &&
-            lhs.pendingQuestionToken == rhs.pendingQuestionToken &&
-            lhs.sessionId == rhs.sessionId
-    }
-
-    private var displayNodes: [AIChatMessageDisplayNode] {
-        AIChatMessageLayoutSemantics.displayNodes(
-            for: message,
-            pendingQuestions: pendingQuestions
-        )
-    }
-
-    private var showsStreamingStatus: Bool {
-        !isUser && message.isStreaming
     }
 
     /// 相邻节点之间的动态间距规则：
@@ -684,8 +667,17 @@ private struct MessageBubble: View, Equatable {
     }
 
     var body: some View {
+        // 一次性计算 displayNodes，避免在 usesWideAssistantLayout、bubble、compactSummaryText 中重复调用。
+        let nodes = AIChatMessageLayoutSemantics.displayNodes(
+            for: message,
+            pendingQuestions: pendingQuestions
+        )
+        let wideLayout = Self.computeUsesWideLayout(isUser: isUser, nodes: nodes)
+        let contentMaxWidth: CGFloat = isUser ? 520 : (wideLayout ? .infinity : 760)
+        let trailingBubblePadding: CGFloat = isUser ? 0 : (wideLayout ? 8 : 12)
+
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            bubble
+            bubbleContent(nodes: nodes)
                 .frame(maxWidth: contentMaxWidth, alignment: isUser ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -700,11 +692,10 @@ private struct MessageBubble: View, Equatable {
     }
 
     @ViewBuilder
-    private var bubble: some View {
+    private func bubbleContent(nodes: [AIChatMessageDisplayNode]) -> some View {
         if !prefersFullRender {
-            lightweightBubble
+            lightweightBubble(nodes: nodes)
         } else {
-            let nodes = displayNodes
             VStack(alignment: .leading, spacing: 0) {
                 if nodes.isEmpty {
                     EmptyView()
@@ -842,8 +833,8 @@ private struct MessageBubble: View, Equatable {
         .padding(.top, nodesEmpty ? 0 : 4)
     }
 
-    private var lightweightBubble: some View {
-        let summary = compactSummaryText()
+    private func lightweightBubble(nodes: [AIChatMessageDisplayNode]) -> some View {
+        let summary = compactSummaryText(nodes: nodes)
         return VStack(alignment: .leading, spacing: 6) {
             if summary.isEmpty {
                 Text("...")
@@ -868,9 +859,9 @@ private struct MessageBubble: View, Equatable {
         .clipShape(.rect(cornerRadius: bubbleCornerRadius))
     }
 
-    private func compactSummaryText() -> String {
+    private func compactSummaryText(nodes: [AIChatMessageDisplayNode]) -> String {
         var lines: [String] = []
-        for node in displayNodes {
+        for node in nodes {
             switch node {
             case .textGroup(let group):
                 let text = group.combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
