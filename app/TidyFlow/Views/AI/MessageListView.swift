@@ -143,21 +143,7 @@ struct MessageListView: View {
         self.onOpenLinkedSession = onOpenLinkedSession
     }
 
-    /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
-    private var tailChangeToken: String {
-        guard let last = displayMessages.last else { return "0" }
-        let lastPart = last.parts.last
-        return [
-            "\(displayMessages.count)",
-            last.id,
-            last.isStreaming ? "1" : "0",
-            "\(last.parts.count)",
-            lastPart?.id ?? "",
-            "\(lastPart?.text?.count ?? 0)"
-        ].joined(separator: "|")
-    }
-
-    /// 过滤掉“无可见内容且非流式”的消息，避免空消息把相邻回复撑开。
+    /// 过滤掉"无可见内容且非流式"的消息，避免空消息把相邻回复撑开。
     private var displayMessages: [AIChatMessage] {
         messages.filter { message in
             if message.isStreaming { return true }
@@ -168,22 +154,13 @@ struct MessageListView: View {
         }
     }
 
-    private var fullRenderRange: ClosedRange<Int>? {
-        let visibleIndices = displayMessages.enumerated().compactMap { index, message in
-            visibleMessageIDs.contains(message.id) ? index : nil
-        }
+    /// 预计算虚拟化渲染范围，供 messageStack() 在 ForEach 外一次性调用。
+    /// 避免在 ForEach 内部对每条消息重复触发 O(n) 扫描，将 O(n²) 降为 O(n)。
+    private func precomputeFullRenderRange(for msgs: [AIChatMessage]) -> ClosedRange<Int>? {
+        let visibleIndices = msgs.indices.filter { visibleMessageIDs.contains(msgs[$0].id) }
         return virtualizationWindow.computeFullRenderRange(
             visibleIndices: visibleIndices,
-            totalCount: displayMessages.count
-        )
-    }
-
-    private func shouldFullyRender(message: AIChatMessage, index: Int) -> Bool {
-        return virtualizationWindow.shouldFullyRender(
-            index: index,
-            isStreaming: message.isStreaming,
-            fullRenderRange: fullRenderRange,
-            totalCount: displayMessages.count
+            totalCount: msgs.count
         )
     }
 
@@ -215,7 +192,7 @@ struct MessageListView: View {
             .onChange(of: sessionToken) { _, _ in
                 handleSessionTokenChangeIfNeeded()
             }
-            .onChange(of: tailChangeToken) {
+            .onChange(of: aiChatStore.tailRevision) { _, _ in
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
@@ -224,7 +201,7 @@ struct MessageListView: View {
         }
         .tfRenderProbe("AIMessageList", metadata: [
             "session": sessionToken ?? "none",
-            "message_count": String(displayMessages.count)
+            "message_count": String(messages.count)
         ])
         .overlay(alignment: .bottom) {
             if showJumpToBottomButton {
@@ -245,6 +222,10 @@ struct MessageListView: View {
 
     @ViewBuilder
     private func messageStack() -> some View {
+        // 提前计算避免 ForEach 内部重复调用 O(n) 的 displayMessages，将整体复杂度从 O(n²) 降为 O(n)。
+        let msgs = displayMessages
+        let renderRange = precomputeFullRenderRange(for: msgs)
+
         LazyVStack(spacing: 0) {
             if canLoadOlderMessages || isLoadingOlderMessages {
                 HStack {
@@ -263,10 +244,15 @@ struct MessageListView: View {
                 .padding(.top, 4)
             }
 
-            ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
+            ForEach(Array(msgs.enumerated()), id: \.element.id) { index, message in
                 MessageBubble(
                     message: message,
-                    prefersFullRender: shouldFullyRender(message: message, index: index),
+                    prefersFullRender: virtualizationWindow.shouldFullyRender(
+                        index: index,
+                        isStreaming: message.isStreaming,
+                        fullRenderRange: renderRange,
+                        totalCount: msgs.count
+                    ),
                     pendingQuestionToken: pendingQuestionToken(for: message),
                     pendingQuestions: pendingQuestions,
                     sessionId: aiChatStore.currentSessionId ?? "",
@@ -285,7 +271,7 @@ struct MessageListView: View {
                 )
                 .equatable()
                 .id(message.id)
-                .padding(.top, messageSpacing(at: index, in: displayMessages))
+                .padding(.top, messageSpacing(at: index, in: msgs))
                 .onAppear {
                     visibleMessageIDs.insert(message.id)
                 }
