@@ -1,6 +1,7 @@
 //! 健康域消息处理器（WI-002 / WI-003）
 //!
 //! 处理客户端健康上报（`health_report`）和修复动作请求（`health_repair`）。
+//! WI-002: 新增门禁裁决查询支持。
 
 use crate::server::ws::OutboundTx as WebSocket;
 
@@ -46,4 +47,16 @@ pub async fn handle_health_message(
 
         _ => Ok(false),
     }
+}
+
+/// 查询指定 project/workspace/cycle_id 的门禁裁决
+///
+/// 供 HTTP API 和 Evolution 内部调用，裁决结果按维度隔离。
+pub fn query_gate_decision(
+    project: &str,
+    workspace: &str,
+    cycle_id: &str,
+    retry_count: u32,
+) -> crate::server::protocol::health::GateDecision {
+    crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, retry_count)
 }

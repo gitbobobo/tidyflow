@@ -149,3 +149,11 @@ README_WI005*
 tidyflow_wi005_*
 
 app/TidyFlow/Web/main/
+
+# Auto-generated analysis files
+ANALYSIS.md
+CODE_INDEX.md
+
+# Python cache
+**/__pycache__/
+*.pyc

@@ -414,3 +414,70 @@ pub struct ObservationAggregate {
     /// 聚合时间（Unix ms）
     pub aggregated_at: u64,
 }
+
+// ============================================================================
+// 质量门禁裁决（WI-002: Evolution 自动门禁）
+// ============================================================================
+
+/// 门禁裁决结果
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateVerdict {
+    /// 通过，允许推进到下一阶段
+    Pass,
+    /// 失败，需要重试或修复
+    Fail,
+    /// 跳过（健康数据不可用，门禁不阻断）
+    Skip,
+}
+
+/// 门禁失败原因码（机器可读，客户端和脚本不需要从日志文本推断）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateFailureReason {
+    /// 系统健康状态为 Unhealthy
+    SystemUnhealthy,
+    /// 存在阻断性 critical incident
+    CriticalIncident,
+    /// 证据完整性校验失败
+    EvidenceIncomplete,
+    /// 协议一致性检查失败
+    ProtocolInconsistent,
+    /// Core 回归测试失败
+    CoreRegressionFailed,
+    /// Apple 构建或回归失败
+    AppleVerificationFailed,
+    /// 自定义原因
+    Custom(String),
+}
+
+/// 质量门禁裁决记录
+///
+/// 按 `(project, workspace, cycle_id)` 隔离存储和传播，
+/// 不会因同名工作区或重连而串用其他项目状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateDecision {
+    /// 裁决结果
+    pub verdict: GateVerdict,
+    /// 失败原因列表（verdict == Pass 时为空）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failure_reasons: Vec<GateFailureReason>,
+    /// 所属项目
+    pub project: String,
+    /// 所属工作区
+    pub workspace: String,
+    /// Evolution 循环 ID
+    pub cycle_id: String,
+    /// 裁决时健康快照的整体状态
+    pub health_status: SystemHealthStatus,
+    /// 裁决时的 verify 重试次数
+    pub retry_count: u32,
+    /// 是否为 bypass（绕过审计标记）
+    #[serde(default)]
+    pub bypassed: bool,
+    /// bypass 原因（bypassed == true 时必须填入）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bypass_reason: Option<String>,
+    /// 裁决时间（Unix ms）
+    pub decided_at: u64,
+}

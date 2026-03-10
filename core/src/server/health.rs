@@ -611,6 +611,94 @@ async fn restore_subscriptions(
     )
 }
 
+// ============================================================================
+// WI-002: 质量门禁裁决
+// ============================================================================
+
+/// 基于系统健康快照生成门禁裁决
+///
+/// Evolution 自动循环在 verify/auto_commit 衔接处调用此函数。
+/// 裁决结果按 `(project, workspace, cycle_id)` 隔离。
+pub fn evaluate_gate_decision(
+    project: &str,
+    workspace: &str,
+    cycle_id: &str,
+    retry_count: u32,
+) -> crate::server::protocol::health::GateDecision {
+    use crate::server::protocol::health::{
+        GateDecision, GateFailureReason, GateVerdict, SystemHealthStatus,
+    };
+
+    let registry = global();
+    let health_status;
+    let mut failure_reasons = Vec::new();
+
+    match registry.try_read() {
+        Ok(reg) => {
+            // 检查是否有属于该 project/workspace 的 critical incident
+            let workspace_critical = reg.active_incidents.values().any(|i| {
+                i.severity == crate::server::protocol::health::IncidentSeverity::Critical
+                    && i.context.project.as_deref() == Some(project)
+                    && i.context.workspace.as_deref() == Some(workspace)
+            });
+            let system_critical = reg.active_incidents.values().any(|i| {
+                i.severity == crate::server::protocol::health::IncidentSeverity::Critical
+                    && i.context.project.is_none()
+            });
+
+            if workspace_critical || system_critical {
+                health_status = SystemHealthStatus::Unhealthy;
+                failure_reasons.push(GateFailureReason::CriticalIncident);
+            } else {
+                let has_warnings = reg.active_incidents.values().any(|i| {
+                    i.severity == crate::server::protocol::health::IncidentSeverity::Warning
+                        && (i.context.project.as_deref() == Some(project)
+                            || i.context.project.is_none())
+                });
+                health_status = if has_warnings {
+                    SystemHealthStatus::Degraded
+                } else {
+                    SystemHealthStatus::Healthy
+                };
+            }
+        }
+        Err(_) => {
+            // 无法获取锁时跳过门禁检查（不阻断）
+            return GateDecision {
+                verdict: GateVerdict::Skip,
+                failure_reasons: Vec::new(),
+                project: project.to_string(),
+                workspace: workspace.to_string(),
+                cycle_id: cycle_id.to_string(),
+                health_status: SystemHealthStatus::Healthy,
+                retry_count,
+                bypassed: false,
+                bypass_reason: None,
+                decided_at: unix_ms(),
+            };
+        }
+    }
+
+    let verdict = if health_status == SystemHealthStatus::Unhealthy {
+        GateVerdict::Fail
+    } else {
+        GateVerdict::Pass
+    };
+
+    GateDecision {
+        verdict,
+        failure_reasons,
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        cycle_id: cycle_id.to_string(),
+        health_status,
+        retry_count,
+        bypassed: false,
+        bypass_reason: None,
+        decided_at: unix_ms(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,5 +811,81 @@ mod tests {
         }
         let recent = reg.recent_repairs(MAX_RECENT_REPAIRS);
         assert_eq!(recent.len(), MAX_RECENT_REPAIRS);
+    }
+
+    #[test]
+    fn gate_decision_pass_when_healthy() {
+        // 创建一个独立的注册表来测试门禁裁决逻辑
+        let decision = evaluate_gate_decision("proj", "ws", "cycle-1", 0);
+        use crate::server::protocol::health::{GateVerdict, SystemHealthStatus};
+        // 没有注入 critical incident 时应通过或跳过
+        assert!(
+            decision.verdict == GateVerdict::Pass || decision.verdict == GateVerdict::Skip,
+            "expected pass/skip, got {:?}",
+            decision.verdict
+        );
+        assert_eq!(decision.project, "proj");
+        assert_eq!(decision.workspace, "ws");
+        assert_eq!(decision.cycle_id, "cycle-1");
+        assert_eq!(decision.retry_count, 0);
+        assert!(!decision.bypassed);
+    }
+
+    #[test]
+    fn gate_decision_fail_when_critical_incident() {
+        let registry = global();
+        let mut reg = registry.try_write().unwrap();
+        // 注入 critical incident
+        reg.active_incidents.insert(
+            "gate_test_critical".to_string(),
+            make_incident(
+                "gate_test_critical",
+                IncidentSeverity::Critical,
+                Some("gproj"),
+                Some("gws"),
+            ),
+        );
+        drop(reg);
+
+        let decision = evaluate_gate_decision("gproj", "gws", "cycle-2", 1);
+        use crate::server::protocol::health::GateVerdict;
+        assert_eq!(decision.verdict, GateVerdict::Fail);
+        assert!(!decision.failure_reasons.is_empty());
+        assert_eq!(decision.retry_count, 1);
+
+        // 清理
+        let mut reg = registry.try_write().unwrap();
+        reg.active_incidents.remove("gate_test_critical");
+    }
+
+    #[test]
+    fn gate_decision_isolated_by_project_workspace() {
+        let registry = global();
+        let mut reg = registry.try_write().unwrap();
+        reg.active_incidents.insert(
+            "gate_isolation_critical".to_string(),
+            make_incident(
+                "gate_isolation_critical",
+                IncidentSeverity::Critical,
+                Some("projA"),
+                Some("wsA"),
+            ),
+        );
+        drop(reg);
+
+        // projB/wsB 不应受 projA/wsA 的 critical incident 影响
+        let decision_b = evaluate_gate_decision("projB", "wsB", "cycle-3", 0);
+        use crate::server::protocol::health::GateVerdict;
+        assert!(
+            decision_b.verdict == GateVerdict::Pass || decision_b.verdict == GateVerdict::Skip
+        );
+
+        // projA/wsA 应受影响
+        let decision_a = evaluate_gate_decision("projA", "wsA", "cycle-3", 0);
+        assert_eq!(decision_a.verdict, GateVerdict::Fail);
+
+        // 清理
+        let mut reg = registry.try_write().unwrap();
+        reg.active_incidents.remove("gate_isolation_critical");
     }
 }
