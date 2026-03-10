@@ -113,6 +113,9 @@ struct MessageListView: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
+    /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
+    /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
+    @State private var programmaticScrollProtectedUntil: Date = .distantPast
 
     private let bottomAnchorId = "ai_message_bottom_anchor"
     /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
@@ -337,11 +340,13 @@ struct MessageListView: View {
         isNearBottom = nearBottom
 
         if nearBottom {
-            // 区间 1：在底部附近，确认并可能恢复 autoFollow
+            // 区间 1：在底部附近，确认并可能恢复 autoFollow，同时清除保护期
+            programmaticScrollProtectedUntil = .distantPast
             _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
             isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         } else if !withinAutoFollowZone {
-            // 区间 3：远离底部，中断 autoFollow
+            // 区间 3：远离底部，但若在程序化滚动保护期内，忽略此误报，避免竞态中断 autoFollow
+            guard Date() >= programmaticScrollProtectedUntil else { return }
             _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: false))
             isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         }
@@ -414,6 +419,9 @@ struct MessageListView: View {
         scrollDistanceToBottom = 0
         isNearBottom = true
         isAutoFollowActive = true
+        // 设置保护窗口：proxy.scrollTo() 是异步的，滚动完成前 onScrollGeometryChange 可能
+        // 仍报告旧的（偏离底部的）距离，错误中断 autoFollow。保护期内忽略这些误报。
+        programmaticScrollProtectedUntil = Date().addingTimeInterval(0.5)
         let action = {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
@@ -609,9 +617,6 @@ private struct MessageBubble: View, Equatable {
         } else {
             let nodes = displayNodes
             VStack(alignment: .leading, spacing: 0) {
-                if showsStreamingStatus {
-                    streamingStatusView
-                }
                 if nodes.isEmpty {
                     EmptyView()
                 } else {
@@ -619,6 +624,9 @@ private struct MessageBubble: View, Equatable {
                         displayNodeView(node)
                             .padding(.top, spacingBeforeNode(at: index, in: nodes))
                     }
+                }
+                if showsStreamingStatus {
+                    streamingStatusView
                 }
             }
             .padding(.horizontal, 12)
@@ -644,14 +652,7 @@ private struct MessageBubble: View, Equatable {
 
     @ViewBuilder
     private func textGroupView(_ group: AIChatTextRunGroup) -> some View {
-        if message.isStreaming,
-           let streamingText = styledStreamingText(for: group) {
-            streamingText
-                .textSelection(.enabled)
-                .font(.system(size: 13))
-                .lineSpacing(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if let markdownText = normalizedMarkdownDisplayText(
+        if let markdownText = normalizedMarkdownDisplayText(
             group.markdownText(renderReasoningAsBlockQuote: !isUser),
             keepOriginalForUser: isUser
         ) {
@@ -738,30 +739,16 @@ private struct MessageBubble: View, Equatable {
     }
 
     private var streamingStatusView: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Circle()
                 .fill(Color.accentColor)
-                .frame(width: 8, height: 8)
+                .frame(width: 6, height: 6)
             Text("思考中")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.accentColor.opacity(0),
-                            Color.accentColor.opacity(0.45),
-                            Color.accentColor.opacity(0)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(height: 10)
-                .clipShape(Capsule())
-                .shimmering(active: true, animation: .linear(duration: 1.1).repeatForever(autoreverses: false))
+                .shimmering(active: true, animation: .linear(duration: 1.4).repeatForever(autoreverses: false))
         }
-        .padding(.bottom, displayNodes.isEmpty ? 0 : 6)
+        .padding(.top, displayNodes.isEmpty ? 0 : 8)
     }
 
     private var lightweightBubble: some View {
