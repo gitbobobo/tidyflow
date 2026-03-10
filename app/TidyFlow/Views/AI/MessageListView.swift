@@ -677,7 +677,6 @@ private struct MessageBubble: View, Equatable {
         )
         let wideLayout = Self.computeUsesWideLayout(isUser: isUser, nodes: nodes)
         let contentMaxWidth: CGFloat = isUser ? 520 : (wideLayout ? .infinity : 760)
-        let trailingBubblePadding: CGFloat = isUser ? 0 : (wideLayout ? 8 : 12)
 
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             bubbleContent(nodes: nodes)
@@ -685,7 +684,6 @@ private struct MessageBubble: View, Equatable {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.horizontal, 8)
-        .padding(.trailing, trailingBubblePadding)
         .sheet(item: Binding(
             get: { fullscreenImageData.map { FullscreenImageItem(data: $0) } },
             set: { if $0 == nil { fullscreenImageData = nil } }
