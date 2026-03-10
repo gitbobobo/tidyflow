@@ -190,7 +190,7 @@ struct MessageListView: View {
                 initializeScrollPolicyStateIfNeeded()
                 // defaultScrollAnchor(.bottom) 处理初始定位，
                 // 但仍需手动滚动以确保在已有消息时精确定位底部。
-                scrollToBottom(proxy: proxy, animated: false)
+                scrollToBottom(proxy: proxy, animation: .none)
             }
             .onChange(of: sessionToken) { _, _ in
                 handleSessionTokenChangeIfNeeded()
@@ -199,7 +199,7 @@ struct MessageListView: View {
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
-                scrollToBottom(proxy: proxy, animated: true)
+                scrollToBottom(proxy: proxy, animation: .jumpToBottom)
             }
         }
         .tfRenderProbe("AIMessageList", metadata: [
@@ -391,7 +391,9 @@ struct MessageListView: View {
     private func handleTailChanged(proxy: ScrollViewProxy) {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.shouldScrollToBottom else { return }
-        scrollToBottom(proxy: proxy, animated: false)
+        // 新消息出现（messageAppended）用 spring 动画，流式增量（throttledScrollToBottom）保持无动画避免频繁抖动。
+        let animation: ChatScrollAnimation = decision.action == .scrollToBottom ? .spring() : .none
+        scrollToBottom(proxy: proxy, animation: animation)
     }
 
     private var showJumpToBottomButton: Bool {
@@ -415,7 +417,7 @@ struct MessageListView: View {
         .padding(.bottom, bottomOverlayInset + 4)
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToBottom(proxy: ScrollViewProxy, animation: ChatScrollAnimation = .none) {
         scrollDistanceToBottom = 0
         isNearBottom = true
         isAutoFollowActive = true
@@ -425,21 +427,27 @@ struct MessageListView: View {
         let action = {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
-        if animated {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+        switch animation {
+        case .none:
+            action()
+        case .smooth(let duration):
+            withAnimation(.easeInOut(duration: duration)) {
+                action()
+            }
+        case .spring(let response, let dampingFraction):
+            withAnimation(.spring(response: response, dampingFraction: dampingFraction)) {
                 action()
             }
             // SwiftUI 的动画滚动在 macOS 上有时会停在距底部几个像素的位置，
             // 动画结束后再补一次无动画校正，确保最终精确贴到底部。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+                guard isAutoFollowActive else { return }
                 action()
                 scrollDistanceToBottom = 0
                 isNearBottom = true
                 isAutoFollowActive = true
                 _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
             }
-        } else {
-            action()
         }
         // 自动滚动后刷新近底部确认时间戳
         _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
@@ -623,12 +631,15 @@ private struct MessageBubble: View, Equatable {
                     ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
                         displayNodeView(node)
                             .padding(.top, spacingBeforeNode(at: index, in: nodes))
+                            .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
                     }
                 }
                 if showsStreamingStatus {
                     streamingStatusView
+                        .transition(.opacity)
                 }
             }
+            .animation(.easeOut(duration: 0.18), value: nodes.count)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(bubbleBackgroundColor)
