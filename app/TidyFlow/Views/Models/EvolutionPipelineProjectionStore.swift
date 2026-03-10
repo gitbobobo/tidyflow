@@ -57,10 +57,35 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     let stageEntries: [PipelineCycleStageEntry]
     let terminalReasonCode: String?
     let terminalErrorMessage: String?
+    /// 循环总耗时（毫秒），由 Core 权威输出
+    let durationMs: UInt64?
+    /// 失败诊断码（与 terminal_reason_code 对齐）
+    let errorCode: String?
+    /// 是否可安全重试（Core 判定）
+    let retryable: Bool
 
     var displayTitle: String {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? "Untitled" : trimmed
+    }
+
+    /// 格式化总耗时文本
+    var formattedTotalDuration: String? {
+        guard let ms = durationMs else { return nil }
+        let seconds = Int(ms / 1000)
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        let secs = seconds % 60
+        return "\(minutes)m\(String(format: "%02d", secs))s"
+    }
+
+    /// 失败摘要
+    var failureSummary: String? {
+        guard let status, status.hasPrefix("failed") else { return nil }
+        var parts: [String] = []
+        if let code = errorCode { parts.append("[\(code)]") }
+        if let msg = terminalErrorMessage { parts.append(msg) }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     init(
@@ -72,7 +97,10 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         startDate: Date,
         stageEntries: [PipelineCycleStageEntry],
         terminalReasonCode: String? = nil,
-        terminalErrorMessage: String? = nil
+        terminalErrorMessage: String? = nil,
+        durationMs: UInt64? = nil,
+        errorCode: String? = nil,
+        retryable: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -83,6 +111,9 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         self.stageEntries = stageEntries
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
+        self.durationMs = durationMs
+        self.errorCode = errorCode
+        self.retryable = retryable
     }
 }
 
@@ -239,6 +270,12 @@ struct EvolutionPipelineProjection: Equatable {
     let standbyAgents: [PipelineStandbyAgent]
     /// 预计算：当前循环总耗时文本
     let totalDurationText: String?
+    /// 预计算：当前循环是否处于失败状态
+    let isCurrentCycleFailed: Bool
+    /// 预计算：当前循环的失败摘要（error_code + terminal_error_message）
+    let currentCycleFailureSummary: String?
+    /// 预计算：当前循环是否可重试
+    let isCurrentCycleRetryable: Bool
 
     static let empty = EvolutionPipelineProjection(
         project: "",
@@ -252,7 +289,10 @@ struct EvolutionPipelineProjection: Equatable {
         cycleHistories: [],
         runningAgents: [],
         standbyAgents: [],
-        totalDurationText: nil
+        totalDurationText: nil,
+        isCurrentCycleFailed: false,
+        currentCycleFailureSummary: nil,
+        isCurrentCycleRetryable: false
     )
 }
 
@@ -296,7 +336,10 @@ enum EvolutionPipelineProjectionSemantics {
             } ?? [],
             runningAgents: hotData.runningAgents,
             standbyAgents: hotData.standbyAgents,
-            totalDurationText: hotData.totalDurationText
+            totalDurationText: hotData.totalDurationText,
+            isCurrentCycleFailed: hotData.isCurrentCycleFailed,
+            currentCycleFailureSummary: hotData.currentCycleFailureSummary,
+            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable
         )
     }
 #endif
@@ -340,7 +383,10 @@ enum EvolutionPipelineProjectionSemantics {
                 ?? (appState.evolutionCycleHistories[workspaceKey] ?? []).map(mapCycleHistory),
             runningAgents: hotData.runningAgents,
             standbyAgents: hotData.standbyAgents,
-            totalDurationText: hotData.totalDurationText
+            totalDurationText: hotData.totalDurationText,
+            isCurrentCycleFailed: hotData.isCurrentCycleFailed,
+            currentCycleFailureSummary: hotData.currentCycleFailureSummary,
+            isCurrentCycleRetryable: hotData.isCurrentCycleRetryable
         )
     }
 #endif
@@ -364,6 +410,9 @@ enum EvolutionPipelineProjectionSemantics {
         let runningAgents: [EvolutionAgentInfoV2]
         let standbyAgents: [PipelineStandbyAgent]
         let totalDurationText: String?
+        let isCurrentCycleFailed: Bool
+        let currentCycleFailureSummary: String?
+        let isCurrentCycleRetryable: Bool
     }
 
     private static func precomputeHotData(currentItem: EvolutionWorkspaceItemV2?) -> HotData {
@@ -393,10 +442,25 @@ enum EvolutionPipelineProjectionSemantics {
         // 总耗时文本
         let totalDurationText = computeTotalDurationText(currentItem: currentItem, agents: agents)
 
+        // 失败状态与重试资格
+        let status = currentItem?.status.lowercased() ?? ""
+        let isFailed = status.hasPrefix("failed")
+        let failureSummary: String? = {
+            guard isFailed else { return nil }
+            var parts: [String] = []
+            if let code = currentItem?.errorCode { parts.append("[\(code)]") }
+            if let msg = currentItem?.terminalErrorMessage { parts.append(msg) }
+            return parts.isEmpty ? nil : parts.joined(separator: " ")
+        }()
+        let isRetryable = currentItem?.retryable ?? false
+
         return HotData(
             runningAgents: runningAgents,
             standbyAgents: standbyAgents,
-            totalDurationText: totalDurationText
+            totalDurationText: totalDurationText,
+            isCurrentCycleFailed: isFailed,
+            currentCycleFailureSummary: failureSummary,
+            isCurrentCycleRetryable: isRetryable
         )
     }
 
@@ -495,7 +559,10 @@ enum EvolutionPipelineProjectionSemantics {
             startDate: startDate,
             stageEntries: entries,
             terminalReasonCode: cycle.terminalReasonCode,
-            terminalErrorMessage: cycle.terminalErrorMessage
+            terminalErrorMessage: cycle.terminalErrorMessage,
+            durationMs: cycle.durationMs,
+            errorCode: cycle.errorCode,
+            retryable: cycle.retryable
         )
     }
 

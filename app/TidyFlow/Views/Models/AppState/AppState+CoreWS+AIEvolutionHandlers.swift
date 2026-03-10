@@ -851,7 +851,11 @@ extension AppState {
                 executions: ev.executions,
                 terminalReasonCode: ev.terminalReasonCode,
                 terminalErrorMessage: ev.terminalErrorMessage,
-                rateLimitErrorMessage: ev.rateLimitErrorMessage
+                rateLimitErrorMessage: ev.rateLimitErrorMessage,
+                startedAt: ev.startedAt ?? existing.startedAt,
+                durationMs: ev.durationMs ?? existing.durationMs,
+                errorCode: ev.errorCode ?? existing.errorCode,
+                retryable: ev.retryable
             )
             guard existing.projectionSignature != updated.projectionSignature else { return }
             let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)

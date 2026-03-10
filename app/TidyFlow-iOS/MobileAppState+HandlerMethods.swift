@@ -463,7 +463,11 @@ extension MobileAppState {
             executions: ev.executions,
             terminalReasonCode: ev.terminalReasonCode,
             terminalErrorMessage: ev.terminalErrorMessage,
-            rateLimitErrorMessage: ev.rateLimitErrorMessage
+            rateLimitErrorMessage: ev.rateLimitErrorMessage,
+            startedAt: ev.startedAt ?? existing.startedAt,
+            durationMs: ev.durationMs ?? existing.durationMs,
+            errorCode: ev.errorCode ?? existing.errorCode,
+            retryable: ev.retryable
         )
         if evolutionWorkspaceItems[existingIndex] != updated {
             evolutionWorkspaceItems[existingIndex] = updated

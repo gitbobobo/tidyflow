@@ -1666,6 +1666,14 @@ public struct TaskSnapshotEntry {
     public let message: String?
     public let startedAt: Int64
     public let completedAt: Int64?
+    /// 运行耗时（毫秒），由 Core 权威输出
+    public let durationMs: UInt64?
+    /// 失败诊断码（仅 status=failed 时填充）
+    public let errorCode: String?
+    /// 失败诊断详情（仅 status=failed 时填充）
+    public let errorDetail: String?
+    /// 是否可安全重试（Core 判定）
+    public let retryable: Bool
 
     public static func from(json: [String: Any]) -> TaskSnapshotEntry? {
         guard let taskId = json["task_id"] as? String,
@@ -1687,11 +1695,15 @@ public struct TaskSnapshotEntry {
             status: status,
             message: json["message"] as? String,
             startedAt: startedAt,
-            completedAt: json["completed_at"] as? Int64
+            completedAt: json["completed_at"] as? Int64,
+            durationMs: json["duration_ms"] as? UInt64,
+            errorCode: json["error_code"] as? String,
+            errorDetail: json["error_detail"] as? String,
+            retryable: json["retryable"] as? Bool ?? false
         )
     }
 
-    public init(taskId: String, project: String, workspace: String, taskType: String, commandId: String?, title: String, status: String, message: String?, startedAt: Int64, completedAt: Int64?) {
+    public init(taskId: String, project: String, workspace: String, taskType: String, commandId: String?, title: String, status: String, message: String?, startedAt: Int64, completedAt: Int64?, durationMs: UInt64? = nil, errorCode: String? = nil, errorDetail: String? = nil, retryable: Bool = false) {
         self.taskId = taskId
         self.project = project
         self.workspace = workspace
@@ -1702,6 +1714,10 @@ public struct TaskSnapshotEntry {
         self.message = message
         self.startedAt = startedAt
         self.completedAt = completedAt
+        self.durationMs = durationMs
+        self.errorCode = errorCode
+        self.errorDetail = errorDetail
+        self.retryable = retryable
     }
 }
 

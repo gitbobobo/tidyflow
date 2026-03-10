@@ -135,7 +135,63 @@ struct WorkspaceDetailView: View {
             }
 
             Section("后台任务") {
-                if projection.runningTasks.isEmpty {
+                // 失败任务（高亮红色背景 + 诊断摘要 + 重试入口）
+                let wsKey = "\(project):\(workspace)"
+                let failedTasks = appState.taskStore.runStatusGroup(for: wsKey)?.failedTasks ?? []
+                if !failedTasks.isEmpty {
+                    ForEach(failedTasks) { task in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 10) {
+                                MobileCommandIconView(iconName: task.iconName, size: 16)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(task.title)
+                                        .font(.body)
+                                    HStack(spacing: 6) {
+                                        Text("失败")
+                                            .font(.caption2)
+                                            .foregroundColor(.red)
+                                        if !task.durationText.isEmpty {
+                                            Text(task.durationText)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                                .fontDesign(.monospaced)
+                                        }
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            if let summary = task.failureSummary {
+                                Text(summary)
+                                    .font(.caption2)
+                                    .foregroundColor(.red)
+                                    .lineLimit(2)
+                                    .padding(.leading, 26)
+                            }
+                            if let descriptor = task.retryDescriptor {
+                                HStack {
+                                    Spacer()
+                                    Button {
+                                        appState.retryTask(descriptor: descriptor)
+                                    } label: {
+                                        Label("重试", systemImage: "arrow.clockwise")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .tint(.orange)
+                                }
+                                .padding(.leading, 26)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                        .listRowBackground(Color.red.opacity(0.04))
+                    }
+                }
+
+                // 运行中任务
+                if projection.runningTasks.isEmpty && failedTasks.isEmpty {
                     Text("当前无进行中的后台任务")
                         .foregroundColor(.secondary)
                 } else {
@@ -173,6 +229,16 @@ struct WorkspaceDetailView: View {
                     HStack {
                         Text("查看全部任务")
                         Spacer()
+                        // 失败计数红色标记
+                        if !failedTasks.isEmpty {
+                            Text("\(failedTasks.count)")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.red)
+                                .clipShape(Capsule())
+                        }
                         if projection.completedTaskCount > 0 {
                             Text("\(projection.completedTaskCount)")
                                 .font(.caption)

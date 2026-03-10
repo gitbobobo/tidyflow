@@ -2145,6 +2145,14 @@ public struct EvolutionWorkspaceItemV2: Equatable {
     public let terminalReasonCode: String?
     public let terminalErrorMessage: String?
     public let rateLimitErrorMessage: String?
+    /// 循环开始时间（RFC3339），由 Core 输出
+    public let startedAt: String?
+    /// 循环运行耗时（毫秒），Core 在终态时计算
+    public let durationMs: UInt64?
+    /// 失败诊断码（仅终态失败时填充）
+    public let errorCode: String?
+    /// 是否可安全重试（Core 判定）
+    public let retryable: Bool
 
     /// 预计算的签名，避免在刷新链路中重复 hash 遍历
     public let statusStageRoundSignature: Int
@@ -2202,11 +2210,15 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             executions: executions,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
-            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
+            startedAt: json["started_at"] as? String,
+            durationMs: json["duration_ms"] as? UInt64,
+            errorCode: json["error_code"] as? String,
+            retryable: json["retryable"] as? Bool ?? false
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2222,6 +2234,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
         self.rateLimitErrorMessage = rateLimitErrorMessage
+        self.startedAt = startedAt
+        self.durationMs = durationMs
+        self.errorCode = errorCode
+        self.retryable = retryable
 
         // 预计算签名，避免多次重复遍历 agents/executions 做 hash
         var ssrHasher = Hasher()
@@ -2308,6 +2324,14 @@ public struct EvoCycleUpdatedV2 {
     public let terminalReasonCode: String?
     public let terminalErrorMessage: String?
     public let rateLimitErrorMessage: String?
+    /// 循环开始时间（RFC3339），用于面板计时（v1.43+）
+    public let startedAt: String?
+    /// 循环运行耗时（毫秒），Core 权威计算（v1.43+）
+    public let durationMs: UInt64?
+    /// 失败诊断码（v1.43+）
+    public let errorCode: String?
+    /// 是否可安全重试（v1.43+）
+    public let retryable: Bool
 
     public static func from(json: [String: Any]) -> EvoCycleUpdatedV2? {
         guard let project = json["project"] as? String,
@@ -2333,11 +2357,15 @@ public struct EvoCycleUpdatedV2 {
             executions: executions,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             terminalErrorMessage: json["terminal_error_message"] as? String,
-            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String,
+            startedAt: json["started_at"] as? String,
+            durationMs: (json["duration_ms"] as? NSNumber)?.uint64Value,
+            errorCode: json["error_code"] as? String,
+            retryable: json["retryable"] as? Bool ?? false
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2353,6 +2381,10 @@ public struct EvoCycleUpdatedV2 {
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
         self.rateLimitErrorMessage = rateLimitErrorMessage
+        self.startedAt = startedAt
+        self.durationMs = durationMs
+        self.errorCode = errorCode
+        self.retryable = retryable
     }
 }
 
@@ -2520,6 +2552,12 @@ public struct EvolutionCycleHistoryItemV2 {
     public let terminalErrorMessage: String?
     public let executions: [EvolutionSessionExecutionEntryV2]
     public let stages: [EvolutionCycleStageHistoryEntryV2]
+    /// 循环总耗时（毫秒），由 Core 权威输出
+    public let durationMs: UInt64?
+    /// 失败诊断码
+    public let errorCode: String?
+    /// 是否可安全重试
+    public let retryable: Bool
 
     public static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
         guard let cycleID = parseOptionalString(json["cycle_id"]) else { return nil }
@@ -2544,11 +2582,14 @@ public struct EvolutionCycleHistoryItemV2 {
             terminalReasonCode: terminalReasonCode,
             terminalErrorMessage: terminalErrorMessage,
             executions: executions,
-            stages: stages
+            stages: stages,
+            durationMs: json["duration_ms"] as? UInt64,
+            errorCode: json["error_code"] as? String,
+            retryable: json["retryable"] as? Bool ?? false
         )
     }
 
-    public init(cycleID: String, title: String?, status: String, globalLoopRound: Int, createdAt: String, updatedAt: String, terminalReasonCode: String?, terminalErrorMessage: String?, executions: [EvolutionSessionExecutionEntryV2], stages: [EvolutionCycleStageHistoryEntryV2]) {
+    public init(cycleID: String, title: String?, status: String, globalLoopRound: Int, createdAt: String, updatedAt: String, terminalReasonCode: String?, terminalErrorMessage: String?, executions: [EvolutionSessionExecutionEntryV2], stages: [EvolutionCycleStageHistoryEntryV2], durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
         self.cycleID = cycleID
         self.title = title
         self.status = status
@@ -2559,6 +2600,9 @@ public struct EvolutionCycleHistoryItemV2 {
         self.terminalErrorMessage = terminalErrorMessage
         self.executions = executions
         self.stages = stages
+        self.durationMs = durationMs
+        self.errorCode = errorCode
+        self.retryable = retryable
     }
 }
 

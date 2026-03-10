@@ -10,6 +10,14 @@ struct WorkspaceTaskRowProjection: Identifiable, Equatable {
     let statusSummary: String
     let lastOutputLine: String?
     let canCancel: Bool
+    /// 耗时文本（优先 Core 权威值，回退本地计算）
+    let durationText: String
+    /// 失败诊断摘要（仅失败时有值）
+    let failureSummary: String?
+    /// 是否可安全重试（Core 判定）
+    let retryable: Bool
+    /// 重试描述符（仅 retryable=true 时有值）
+    let retryDescriptor: RetryDescriptor?
 
     init(_ item: WorkspaceTaskItem, canCancel: Bool) {
         id = item.id
@@ -19,6 +27,10 @@ struct WorkspaceTaskRowProjection: Identifiable, Equatable {
         statusSummary = item.statusSummaryText()
         lastOutputLine = Self.trimmedNonEmptyText(item.lastOutputLine)
         self.canCancel = canCancel
+        durationText = item.durationText
+        failureSummary = item.failureSummary
+        retryable = item.retryable
+        retryDescriptor = item.retryDescriptor
     }
 
     private static func trimmedNonEmptyText(_ value: String?) -> String? {

@@ -48,39 +48,77 @@ struct WorkspaceTasksView: View {
 
     @ViewBuilder
     private func taskRow(_ task: WorkspaceTaskRowProjection) -> some View {
-        HStack(spacing: 10) {
-            MobileCommandIconView(iconName: task.iconName, size: 16)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.title)
-                    .font(.body)
-                Text(task.statusSummary)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                if let line = task.lastOutputLine, !line.isEmpty {
-                    Text(line)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                MobileCommandIconView(iconName: task.iconName, size: 16)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title)
+                        .font(.body)
+                    HStack(spacing: 6) {
+                        Text(task.statusSummary)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        // 耗时文本
+                        if !task.durationText.isEmpty {
+                            Text(task.durationText)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .fontDesign(.monospaced)
+                        }
+                    }
+                    if let line = task.lastOutputLine, !line.isEmpty {
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                if task.status.isActive {
+                    if task.canCancel {
+                        Button {
+                            appState.cancelTask(project: project, workspace: workspace, taskID: task.id)
+                        } label: {
+                            Image(systemName: "stop.circle")
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    ProgressView()
+                        .scaleEffect(0.9)
+                } else {
+                    taskStatusIcon(task)
                 }
             }
-            Spacer()
-            if task.status.isActive {
-                if task.canCancel {
+
+            // 失败诊断摘要（仅失败时显示）
+            if let summary = task.failureSummary {
+                Text(summary)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .lineLimit(3)
+                    .padding(.leading, 26)
+            }
+
+            // 重试按钮（仅 Core 标记可重试时显示）
+            if let descriptor = task.retryDescriptor {
+                HStack {
+                    Spacer()
                     Button {
-                        appState.cancelTask(project: project, workspace: workspace, taskID: task.id)
+                        appState.retryTask(descriptor: descriptor)
                     } label: {
-                        Image(systemName: "stop.circle")
-                            .foregroundColor(.red)
+                        Label("重试", systemImage: "arrow.clockwise")
+                            .font(.caption)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
                 }
-                ProgressView()
-                    .scaleEffect(0.9)
-            } else {
-                taskStatusIcon(task)
+                .padding(.leading, 26)
             }
         }
         .padding(.vertical, 2)
+        .listRowBackground(task.status == .failed ? Color.red.opacity(0.04) : nil)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if task.canCancel {
                 Button(role: .destructive) {
@@ -88,6 +126,14 @@ struct WorkspaceTasksView: View {
                 } label: {
                     Label("取消", systemImage: "stop.circle")
                 }
+            }
+            if let descriptor = task.retryDescriptor {
+                Button {
+                    appState.retryTask(descriptor: descriptor)
+                } label: {
+                    Label("重试", systemImage: "arrow.clockwise")
+                }
+                .tint(.orange)
             }
         }
     }

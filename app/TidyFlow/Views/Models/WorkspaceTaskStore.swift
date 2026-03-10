@@ -164,6 +164,60 @@ public class WorkspaceTaskStore: ObservableObject {
         tasksByKey[key] = list.isEmpty ? nil : list
     }
 
+    // MARK: - 运行状态分组（统一面板用）
+
+    /// 为指定工作区生成运行状态分组快照（活跃/失败/已完成）
+    public func runStatusGroup(for key: String) -> WorkspaceRunStatusGroup? {
+        guard let list = tasksByKey[key], !list.isEmpty else { return nil }
+        let parts = key.split(separator: ":", maxSplits: 1)
+        let project = parts.count > 0 ? String(parts[0]) : ""
+        let workspace = parts.count > 1 ? String(parts[1]) : ""
+
+        let active = list
+            .filter { $0.status.isActive }
+            .sorted { a, b in
+                if a.status.sortWeight != b.status.sortWeight { return a.status.sortWeight < b.status.sortWeight }
+                return a.createdAt < b.createdAt
+            }
+
+        let failed = list
+            .filter { $0.status == .failed }
+            .sorted { lhs, rhs in
+                (lhs.completedAt ?? lhs.createdAt) > (rhs.completedAt ?? rhs.createdAt)
+            }
+
+        let completed = list
+            .filter { $0.status.isTerminal && $0.status != .failed }
+            .sorted { lhs, rhs in
+                (lhs.completedAt ?? lhs.createdAt) > (rhs.completedAt ?? rhs.createdAt)
+            }
+
+        return WorkspaceRunStatusGroup(
+            workspaceGlobalKey: key,
+            project: project,
+            workspace: workspace,
+            activeTasks: active,
+            failedTasks: failed,
+            completedTasks: completed
+        )
+    }
+
+    /// 所有工作区中的失败任务汇总（按工作区键分组），供全局面板使用
+    public func allFailedTasksByWorkspace() -> [(key: String, tasks: [WorkspaceTaskItem])] {
+        tasksByKey.compactMap { key, list in
+            let failed = list.filter { $0.status == .failed }
+            return failed.isEmpty ? nil : (key: key, tasks: failed)
+        }
+        .sorted { $0.key < $1.key }
+    }
+
+    /// 所有工作区中可重试的失败任务总数
+    public var totalRetryableCount: Int {
+        tasksByKey.values.reduce(0) { sum, list in
+            sum + list.filter { $0.retryable }.count
+        }
+    }
+
     // MARK: - 未读完成管理
 
     /// 用户切换到某工作区后清除其未读标记

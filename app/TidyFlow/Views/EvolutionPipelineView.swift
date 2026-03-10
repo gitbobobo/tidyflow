@@ -496,13 +496,15 @@ struct EvolutionPipelineView: View {
 
             // 历史循环
             ForEach(cycleHistories) { cycle in
+                let isFailed = cycle.status?.lowercased().hasPrefix("failed") ?? false
                 cycleListRow(
                     round: cycle.round,
-                    color: .gray,
+                    color: isFailed ? .red : .gray,
                     title: cycle.displayTitle,
                     startTimeText: cycleStartTimeText(cycle.startDate),
                     stageEntries: cycleStageEntries(for: cycle),
                     isHistory: true,
+                    failureSummary: cycle.failureSummary,
                     onDocumentTap: { openPlanDocumentSheet(for: cycle.id) }
                 ) {
                     openHistoryCycleDetailSheet(cycle)
@@ -601,6 +603,7 @@ struct EvolutionPipelineView: View {
         startTimeText: String,
         stageEntries: [PipelineCycleStageEntry]? = nil,
         isHistory: Bool = false,
+        failureSummary: String? = nil,
         onDocumentTap: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
@@ -659,6 +662,19 @@ struct EvolutionPipelineView: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(color.opacity(0.8)))
+                }
+            }
+
+            // 失败诊断摘要（历史循环失败时显示）
+            if let failureSummary {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(.red)
+                    Text(failureSummary)
+                        .font(.system(size: 9))
+                        .foregroundColor(.red.opacity(0.9))
+                        .lineLimit(2)
                 }
             }
 
@@ -1101,6 +1117,7 @@ struct EvolutionPipelineView: View {
             let isTerminal = ["interrupted", "failed_exhausted", "failed_system", "completed", "done", "success"].contains(normalized)
             if isTerminal {
                 let statusInfo = cycleStatusInfo(item.status)
+                let isFailed = projection.isCurrentCycleFailed
                 VStack(alignment: .leading, spacing: 4) {
                     // 终止原因
                     if let reason = trimmedNonEmptyText(item.terminalReasonCode) {
@@ -1114,7 +1131,20 @@ struct EvolutionPipelineView: View {
                                 .lineLimit(2)
                         }
                     }
-                    if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
+
+                    // 失败诊断摘要
+                    if isFailed, let summary = projection.currentCycleFailureSummary {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.red)
+                            Text(summary)
+                                .font(.system(size: 9))
+                                .foregroundColor(.primary)
+                                .lineLimit(4)
+                                .textSelection(.enabled)
+                        }
+                    } else if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "text.bubble.fill")
                                 .font(.system(size: 9))
@@ -1136,6 +1166,34 @@ struct EvolutionPipelineView: View {
                                 .font(.system(size: 9))
                                 .foregroundColor(.primary)
                                 .lineLimit(3)
+                        }
+                    }
+
+                    // 耗时 + 重试操作
+                    HStack(spacing: 8) {
+                        if let durationText = projection.totalDurationText {
+                            HStack(spacing: 2) {
+                                Image(systemName: "timer")
+                                    .font(.system(size: 8))
+                                Text(durationText)
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            }
+                            .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        // 一键重试（仅 Core 标记可安全重试时显示）
+                        if isFailed, projection.isCurrentCycleRetryable, let ws = workspace {
+                            Button {
+                                appState.retryEvolutionCycle(project: project, workspace: ws)
+                            } label: {
+                                Label("重试", systemImage: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.orange)
                         }
                     }
                 }

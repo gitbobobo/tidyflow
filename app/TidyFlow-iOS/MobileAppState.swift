@@ -1335,6 +1335,28 @@ final class MobileAppState: ObservableObject {
         taskStore.clearCompleted(for: key)
     }
 
+    // MARK: - 统一重试
+
+    /// 重试失败的后台任务。使用 `RetryDescriptor` 中的归属键路由到正确的 project/workspace，
+    /// 不依赖当前选中工作区，与 macOS 共享同一套重试判定逻辑。
+    func retryTask(descriptor: RetryDescriptor) {
+        switch descriptor.taskType {
+        case .aiCommit:
+            runAICommit(project: descriptor.project, workspace: descriptor.workspace)
+        case .aiMerge:
+            runAIMerge(project: descriptor.project, workspace: descriptor.workspace)
+        case .projectCommand:
+            guard let commandId = descriptor.commandId else { return }
+            guard let command = projectCommands(for: descriptor.project).first(where: { $0.id == commandId }) else { return }
+            runProjectCommand(project: descriptor.project, workspace: descriptor.workspace, command: command)
+        }
+    }
+
+    /// 重试失败的演化循环。使用描述符中的归属键路由，不依赖当前选中工作区。
+    func retryEvolutionCycle(project: String, workspace: String) {
+        resumeEvolution(project: project, workspace: workspace)
+    }
+
     func runAICommit(project: String, workspace: String) {
         let task = createTask(
             project: project,

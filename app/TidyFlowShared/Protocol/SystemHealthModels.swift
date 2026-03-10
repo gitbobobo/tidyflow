@@ -681,3 +681,36 @@ public struct ObservabilitySnapshot {
         self.logContext = logContext
     }
 }
+
+// MARK: - 统一运行状态面板模型（v1.43 收敛）
+
+/// 统一运行状态条目（聚合任务与演化两类运行态的通用字段）
+///
+/// 由共享状态层集中派生，macOS 和 iOS 使用同一模型消费面板数据。
+/// 所有字段按 `(project, workspace)` 隔离，Core 权威输出。
+public enum RunStatusEntryKind: String, Equatable {
+    case task
+    case evolution
+}
+
+/// 运行状态条目的终态分类（面板分组依据）
+public enum RunStatusTerminalGroup: String, Equatable {
+    case active
+    case failed
+    case completed
+}
+
+/// 通用重试描述符（任务和演化共用），保留归属边界
+public struct UnifiedRetryDescriptor: Equatable {
+    public let project: String
+    public let workspace: String
+    public let kind: RunStatusEntryKind
+    /// 任务重试时的 commandId（仅 task 类型有效）
+    public let taskCommandId: String?
+    /// 演化重试时的 cycleId（仅 evolution 类型有效）
+    public let cycleId: String?
+
+    public var workspaceGlobalKey: String {
+        "\(project):\(workspace)"
+    }
+}

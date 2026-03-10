@@ -16,6 +16,11 @@ struct BackgroundTaskToolbarButton: View {
         return taskManager.taskStore.activeCount(for: key)
     }
 
+    private var hasFailures: Bool {
+        guard let key = currentWorkspaceKey else { return false }
+        return taskManager.taskStore.runStatusGroup(for: key)?.hasFailures ?? false
+    }
+
     var body: some View {
         Button {
             showPopover.toggle()
@@ -29,6 +34,10 @@ struct BackgroundTaskToolbarButton: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white)
                 }
+            } else if hasFailures {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.red)
             } else {
                 Circle()
                     .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
@@ -55,46 +64,242 @@ struct BackgroundTaskPopoverView: View {
     @ObservedObject var taskManager: BackgroundTaskManager
     let workspaceKey: String
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab = 0
+
+    private var statusGroup: WorkspaceRunStatusGroup? {
+        taskManager.taskStore.runStatusGroup(for: workspaceKey)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 标题 + Tab 切换
+            // 标题栏
             HStack {
                 Text("task.title".localized)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Picker("", selection: $selectedTab) {
-                    Text("task.tab.active".localized).tag(0)
-                    Text("task.tab.completed".localized).tag(1)
+                if let group = statusGroup, !group.failedTasks.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.red)
+                        Text("\(group.failedTasks.count)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.red)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .frame(width: 150)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
 
             Divider()
 
-            if selectedTab == 0 {
-                ActiveTaskListView(
+            if let group = statusGroup {
+                UnifiedTaskStatusListView(
+                    group: group,
                     taskManager: taskManager,
                     workspaceKey: workspaceKey
                 )
                 .environmentObject(appState)
             } else {
-                CompletedTaskListView(
-                    taskManager: taskManager,
-                    workspaceKey: workspaceKey
-                )
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("task.noActive".localized)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         .frame(width: 380, height: 420)
-        .onAppear {
-            let hasActive = taskManager.taskStore.activeCount(for: workspaceKey) > 0
-            selectedTab = hasActive ? 0 : 1
+    }
+}
+
+// MARK: - 统一任务状态列表（活跃 → 失败 → 已完成）
+
+struct UnifiedTaskStatusListView: View {
+    let group: WorkspaceRunStatusGroup
+    @ObservedObject var taskManager: BackgroundTaskManager
+    let workspaceKey: String
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        List {
+            // 活跃任务区
+            if !group.activeTasks.isEmpty {
+                Section("task.tab.active".localized) {
+                    ForEach(group.activeTasks) { task in
+                        UnifiedActiveTaskRow(task: task)
+                            .environmentObject(appState)
+                    }
+                }
+            }
+
+            // 失败任务区（高亮 + 重试按钮）
+            if !group.failedTasks.isEmpty {
+                Section {
+                    ForEach(group.failedTasks) { task in
+                        UnifiedFailedTaskRow(task: task)
+                            .environmentObject(appState)
+                    }
+                } header: {
+                    HStack(spacing: 4) {
+                        Text(WorkspaceTaskStatus.failed.sectionTitle)
+                        if group.retryableCount > 0 {
+                            Text("·")
+                            Text("\(group.retryableCount) 可重试")
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
+
+            // 已完成任务区
+            if !group.completedTasks.isEmpty {
+                Section(WorkspaceTaskStatus.completed.sectionTitle) {
+                    ForEach(group.completedTasks) { task in
+                        UnifiedCompletedTaskRow(task: task)
+                    }
+                }
+            }
         }
+        .listStyle(.plain)
+    }
+}
+
+// MARK: - 统一活跃任务行
+
+struct UnifiedActiveTaskRow: View {
+    let task: WorkspaceTaskItem
+    @EnvironmentObject var appState: AppState
+    @State private var tick = 0
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            CommandIconView(iconName: task.iconName, size: 12)
+                .foregroundColor(.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.system(size: 13))
+                if let line = task.lastOutputLine, !line.isEmpty {
+                    Text(line)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            Spacer()
+            Text(task.durationText)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .id(tick)
+            if task.isCancellable {
+                Button {
+                    DispatchQueue.main.async {
+                        appState.stopTask(byItemId: task.id)
+                    }
+                } label: {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("task.stop".localized)
+            }
+        }
+        .padding(.vertical, 2)
+        .onReceive(timer) { _ in tick += 1 }
+    }
+}
+
+// MARK: - 统一失败任务行（诊断摘要 + 重试按钮）
+
+struct UnifiedFailedTaskRow: View {
+    let task: WorkspaceTaskItem
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: task.status.completedIconName)
+                    .font(.system(size: 12))
+                    .foregroundColor(.red)
+                CommandIconView(iconName: task.iconName, size: 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.system(size: 13))
+                    // 耗时
+                    if !task.durationText.isEmpty {
+                        Text(task.durationText)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                // 重试按钮（仅 Core 标记可重试时显示）
+                if let descriptor = task.retryDescriptor {
+                    Button {
+                        DispatchQueue.main.async {
+                            appState.retryTask(descriptor: descriptor)
+                        }
+                    } label: {
+                        Label("重试", systemImage: "arrow.clockwise")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
+                }
+            }
+
+            // 失败诊断摘要
+            if let summary = task.failureSummary {
+                Text(summary)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red.opacity(0.9))
+                    .lineLimit(3)
+                    .padding(.leading, 20)
+            }
+
+            // 详细错误信息
+            if let detail = task.errorDetail, !detail.isEmpty, task.failureSummary == nil || task.errorCode != nil {
+                Text(detail)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, 20)
+            }
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(Color.red.opacity(0.04))
+    }
+}
+
+// MARK: - 统一已完成任务行
+
+struct UnifiedCompletedTaskRow: View {
+    let task: WorkspaceTaskItem
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: task.status.completedIconName)
+                .font(.system(size: 12))
+                .foregroundColor(task.status.completedIconColor)
+            CommandIconView(iconName: task.iconName, size: 12)
+            Text(task.title)
+                .font(.system(size: 13))
+            Spacer()
+            Text(task.durationText)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+        }
+        .padding(.vertical, 2)
     }
 }
 

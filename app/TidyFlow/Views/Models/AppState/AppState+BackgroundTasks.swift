@@ -52,4 +52,43 @@ extension AppState {
     func reorderPendingTasks(for key: String, fromOffsets: IndexSet, toOffset: Int) {
         taskManager.reorderPendingTasks(for: key, fromOffsets: fromOffsets, toOffset: toOffset)
     }
+
+    // MARK: - 统一重试
+
+    /// 重试失败的后台任务。使用 `RetryDescriptor` 中的归属键路由到正确的 project/workspace，
+    /// 不依赖当前选中工作区。
+    func retryTask(descriptor: RetryDescriptor) {
+        switch descriptor.taskType {
+        case .aiCommit:
+            wsClient.requestEvoAutoCommit(
+                project: descriptor.project,
+                workspace: descriptor.workspace
+            )
+        case .aiMerge:
+            wsClient.requestGitAIMerge(
+                project: descriptor.project,
+                workspace: descriptor.workspace
+            )
+        case .projectCommand:
+            guard let commandId = descriptor.commandId else { return }
+            wsClient.requestRunProjectCommand(
+                project: descriptor.project,
+                workspace: descriptor.workspace,
+                commandId: commandId
+            )
+        }
+    }
+
+    /// 重试失败的演化循环。使用描述符中的归属键路由，不依赖当前选中工作区。
+    func retryEvolutionCycle(project: String, workspace: String) {
+        resumeEvolution(project: project, workspace: workspace)
+    }
+
+    // MARK: - 统一取消（WorkspaceTaskItem → BackgroundTask 路由）
+
+    /// 通过 WorkspaceTaskItem.id 停止运行中任务
+    func stopTask(byItemId itemId: String) {
+        guard let uuid = UUID(uuidString: itemId) else { return }
+        taskManager.stopRunningTask(uuid, appState: self)
+    }
 }
