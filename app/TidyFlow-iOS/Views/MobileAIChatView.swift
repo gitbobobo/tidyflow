@@ -5,6 +5,14 @@ private struct MobileSubAgentSessionRoute: Identifiable {
     let sourceToolName: String
 }
 
+private struct MobileAIComposerHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct MobileAIChatView: View {
     let appState: MobileAppState
     let aiChatStore: AIChatStore
@@ -23,6 +31,10 @@ struct MobileAIChatView: View {
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
     @State private var projectionStore = AIChatShellProjectionStore()
+    @State private var floatingComposerHeight: CGFloat = 0
+
+    private let floatingComposerSpacing: CGFloat = 10
+    private let floatingComposerMinimumReserveHeight: CGFloat = 152
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -79,7 +91,7 @@ struct MobileAIChatView: View {
 
     var body: some View {
         let _ = Self.debugPrintChangesIfNeeded()
-        messageArea
+        floatingChatStage
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let aiChatHintMessage, !aiChatHintMessage.isEmpty {
@@ -102,9 +114,6 @@ struct MobileAIChatView: View {
                     .padding(.vertical, 8)
                     .background(systemBackgroundColor)
                 }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                inputArea
             }
         .navigationTitle("AI 聊天")
         #if os(iOS)
@@ -269,6 +278,7 @@ struct MobileAIChatView: View {
                     canLoadOlderMessages: chatPresentation.canLoadOlderMessages,
                     isLoadingOlderMessages: chatPresentation.isLoadingOlderMessages,
                     onLoadOlderMessages: loadOlderMessages,
+                    bottomOverlayInset: reservedMessageBottomInset,
                     onQuestionReply: { request, answers in
                         handleQuestionReply(request: request, answers: answers)
                     },
@@ -322,7 +332,8 @@ struct MobileAIChatView: View {
             localIsStreaming: aiChatStore.isStreaming,
             awaitingUserEcho: aiChatStore.awaitingUserEcho,
             abortPendingSessionId: aiChatStore.abortPendingSessionId,
-            hasPendingFirstContent: aiChatStore.hasPendingFirstContent
+            hasPendingFirstContent: aiChatStore.hasPendingFirstContent,
+            pendingQuestions: aiChatStore.pendingToolQuestions
         )
     }
 
@@ -347,41 +358,75 @@ struct MobileAIChatView: View {
         appState.loadOlderAIChatMessages()
     }
 
+    private var floatingChatStage: some View {
+        ZStack(alignment: .bottom) {
+            messageArea
+
+            inputArea
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: MobileAIComposerHeightPreferenceKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .onPreferenceChange(MobileAIComposerHeightPreferenceKey.self) { newHeight in
+            guard abs(newHeight - floatingComposerHeight) > 0.5 else { return }
+            floatingComposerHeight = newHeight
+        }
+    }
+
+    private var reservedMessageBottomInset: CGFloat {
+        max(floatingComposerHeight, floatingComposerMinimumReserveHeight) + floatingComposerSpacing
+    }
+
     private var inputArea: some View {
         let shellProjection = projectionStore.projection
 
-        return ChatInputView(
-            text: $inputText,
-            imageAttachments: $imageAttachments,
-            isStreaming: shellProjection.effectiveStreaming,
-            autoFocusOnAppear: true,
-            canStopStreaming: shellProjection.canStopStreaming,
-            isSendingPending: shellProjection.isSendingPending,
-            onSend: { sendMessage() },
-            onStop: { stopStreaming() },
-            providers: appState.aiProviders,
-            selectedModel: aiSelectedModelBinding,
-            contextRemainingPercent: shellProjection.contextRemainingPercent,
-            agents: appState.aiAgents,
-            selectedAgent: aiSelectedAgentBinding,
-            thoughtLevelOptions: appState.thoughtLevelOptions(),
-            selectedThoughtLevel: aiSelectedThoughtLevelBinding,
-            isLoadingModels: appState.isAILoadingModels,
-            isLoadingAgents: appState.isAILoadingAgents,
-            autocomplete: nil,
-            onSelectAutocomplete: nil,
-            slashCommands: appState.aiSlashCommands,
-            fileReferenceItems: appState.aiCurrentFileItems(),
-            onRequestFileReferences: {
-                appState.fetchAIFileIndexIfNeeded()
-            },
-            onSearchFileReferences: { query in
-                scheduleReferenceSearch(query: query)
-            },
-            projectNames: appState.allProjectNames,
-            onInputContextChange: nil,
-            cursorRectInInput: .constant(.zero)
-        )
+        return AIChatComposerHostView(
+            pendingInteraction: shellProjection.activePendingInteraction,
+            queuedPendingInteractionCount: shellProjection.queuedPendingInteractionCount,
+            onQuestionReply: handleQuestionReply,
+            onQuestionReject: handleQuestionReject
+        ) {
+            ChatInputView(
+                text: $inputText,
+                imageAttachments: $imageAttachments,
+                isStreaming: shellProjection.effectiveStreaming,
+                autoFocusOnAppear: true,
+                canStopStreaming: shellProjection.canStopStreaming,
+                isSendingPending: shellProjection.isSendingPending,
+                onSend: { sendMessage() },
+                onStop: { stopStreaming() },
+                providers: appState.aiProviders,
+                selectedModel: aiSelectedModelBinding,
+                contextRemainingPercent: shellProjection.contextRemainingPercent,
+                agents: appState.aiAgents,
+                selectedAgent: aiSelectedAgentBinding,
+                thoughtLevelOptions: appState.thoughtLevelOptions(),
+                selectedThoughtLevel: aiSelectedThoughtLevelBinding,
+                isLoadingModels: appState.isAILoadingModels,
+                isLoadingAgents: appState.isAILoadingAgents,
+                autocomplete: nil,
+                onSelectAutocomplete: nil,
+                slashCommands: appState.aiSlashCommands,
+                fileReferenceItems: appState.aiCurrentFileItems(),
+                onRequestFileReferences: {
+                    appState.fetchAIFileIndexIfNeeded()
+                },
+                onSearchFileReferences: { query in
+                    scheduleReferenceSearch(query: query)
+                },
+                projectNames: appState.allProjectNames,
+                onInputContextChange: nil,
+                cursorRectInInput: .constant(.zero)
+            )
+        }
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .bottom)
     }
 
     private func loadSession(_ session: AISessionInfo) {

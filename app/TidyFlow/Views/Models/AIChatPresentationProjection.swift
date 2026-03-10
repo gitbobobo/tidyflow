@@ -9,6 +9,7 @@ struct AIChatPresentationProjection: Equatable {
     let canLoadOlderMessages: Bool
     let isLoadingOlderMessages: Bool
     let messageListIdentity: String
+    let shouldReplaceComposer: Bool
 }
 
 enum AIChatPresentationSemantics {
@@ -34,7 +35,8 @@ enum AIChatPresentationSemantics {
             isLoadingMessages: isLoadingMessages,
             canLoadOlderMessages: currentSessionId != nil && historyHasMore,
             isLoadingOlderMessages: historyIsLoading,
-            messageListIdentity: "main-session-\(tool.rawValue)-\(effectiveSessionId)-\(scrollSessionToken)"
+            messageListIdentity: "main-session-\(tool.rawValue)-\(effectiveSessionId)-\(scrollSessionToken)",
+            shouldReplaceComposer: false
         )
     }
 }

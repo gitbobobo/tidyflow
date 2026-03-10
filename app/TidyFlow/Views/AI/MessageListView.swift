@@ -1,6 +1,7 @@
 import SwiftUI
 import ImageIO
 import CoreGraphics
+import Shimmer
 #if os(macOS)
 import AppKit
 #elseif os(iOS)
@@ -103,19 +104,20 @@ struct MessageListView: View {
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
     let onQuestionReplyAsMessage: (String) -> Void
     let onOpenLinkedSession: ((String) -> Void)?
-    @State private var viewportHeight: CGFloat = 0
+    let bottomOverlayInset: CGFloat
     @State private var isNearBottom: Bool = true
     @State private var isAutoFollowActive: Bool = true
+    @State private var scrollDistanceToBottom: CGFloat = 0
     @State private var scrollPolicy: ChatScrollPolicy = ChatScrollPolicy()
     @State private var lastTailMessageID: String?
     @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
 
-    private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
     /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
     private let virtualizationWindow = MessageVirtualizationWindow()
+    private var pendingQuestions: [String: AIQuestionRequestInfo] { aiChatStore.pendingToolQuestions }
 
     init(
         messages: [AIChatMessage],
@@ -123,6 +125,7 @@ struct MessageListView: View {
         canLoadOlderMessages: Bool = false,
         isLoadingOlderMessages: Bool = false,
         onLoadOlderMessages: (() -> Void)? = nil,
+        bottomOverlayInset: CGFloat = 0,
         onQuestionReply: @escaping (AIQuestionRequestInfo, [[String]]) -> Void,
         onQuestionReject: @escaping (AIQuestionRequestInfo) -> Void,
         onQuestionReplyAsMessage: @escaping (String) -> Void,
@@ -133,6 +136,7 @@ struct MessageListView: View {
         self.canLoadOlderMessages = canLoadOlderMessages
         self.isLoadingOlderMessages = isLoadingOlderMessages
         self.onLoadOlderMessages = onLoadOlderMessages
+        self.bottomOverlayInset = bottomOverlayInset
         self.onQuestionReply = onQuestionReply
         self.onQuestionReject = onQuestionReject
         self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
@@ -156,64 +160,11 @@ struct MessageListView: View {
     /// 过滤掉“无可见内容且非流式”的消息，避免空消息把相邻回复撑开。
     private var displayMessages: [AIChatMessage] {
         messages.filter { message in
-            // Codex 过程信息（仅 reasoning）：流式阶段展示；结束后若仍仅 reasoning 则隐藏。
-            if isProcessInfoMessage(message) {
-                return message.isStreaming && hasRenderablePartContent(message)
-            }
-            // Codex commentary 文本仅在流式阶段展示；完成后隐藏，减少对最终回答的干扰。
-            if isCodexCommentaryMessage(message) {
-                return message.isStreaming && hasRenderablePartContent(message)
-            }
             if message.isStreaming { return true }
-            return hasRenderablePartContent(message)
-        }
-    }
-
-    private func isProcessInfoMessage(_ message: AIChatMessage) -> Bool {
-        guard message.role == .assistant else { return false }
-        guard !message.parts.isEmpty else { return false }
-        return message.parts.allSatisfy { $0.kind == .reasoning }
-    }
-
-    private func isCodexCommentaryMessage(_ message: AIChatMessage) -> Bool {
-        guard message.role == .assistant else { return false }
-        guard !message.parts.isEmpty else { return false }
-        return message.parts.allSatisfy { part in
-            guard part.kind == .text else { return false }
-            guard let source = part.source else { return false }
-            let vendor = (source["vendor"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            let phaseRaw = ((source["message_phase"] as? String) ?? (source["phase"] as? String) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            let normalizedPhase: String
-            switch phaseRaw {
-            case "commentary":
-                normalizedPhase = "commentary"
-            case "finalanswer", "final_answer":
-                normalizedPhase = "finalanswer"
-            default:
-                normalizedPhase = phaseRaw
-            }
-            return vendor == "codex" && normalizedPhase == "commentary"
-        }
-    }
-
-    private func hasRenderablePartContent(_ message: AIChatMessage) -> Bool {
-        message.parts.contains { part in
-            switch part.kind {
-            case .tool:
-                return true
-            case .file:
-                return true
-            case .plan:
-                return true
-            case .compaction:
-                return true
-            case .text, .reasoning:
-                return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            }
+            return AIChatMessageLayoutSemantics.hasRenderableContent(
+                in: message,
+                pendingQuestions: pendingQuestions
+            )
         }
     }
 
@@ -243,6 +194,15 @@ struct MessageListView: View {
                 messageStack()
             }
             .defaultScrollAnchor(.bottom)
+            .onScrollGeometryChange(
+                for: MessageListScrollMetrics.self,
+                of: { geometry in
+                    MessageListScrollMetrics(geometry: geometry)
+                },
+                action: { _, metrics in
+                    handleScrollMetricsChanged(metrics)
+                }
+            )
             #if os(iOS)
             .scrollDismissesKeyboard(.interactively)
             #endif
@@ -261,34 +221,12 @@ struct MessageListView: View {
             .onChange(of: jumpToBottomRequestID) {
                 scrollToBottom(proxy: proxy, animated: true)
             }
-            .onChange(of: viewportHeight) { _, _ in
-                guard isAutoFollowActive else { return }
-                guard isNearBottom else { return }
-                scrollToBottom(proxy: proxy, animated: false)
-            }
         }
-        .coordinateSpace(name: scrollSpaceName)
         .tfRenderProbe("AIMessageList", metadata: [
             "session": sessionToken ?? "none",
             "message_count": String(displayMessages.count)
         ])
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
-            }
-        )
-        .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
-            guard abs(newHeight - viewportHeight) > 0.5 else { return }
-            viewportHeight = newHeight
-        }
-        .onPreferenceChange(MessageListBottomAnchorMaxYKey.self) { bottomMaxY in
-            guard viewportHeight > 0 else { return }
-            let config = scrollPolicy.configuration
-            let nearBottom = bottomMaxY <= (viewportHeight + config.nearBottomThreshold)
-            let withinAutoFollowZone = bottomMaxY <= (viewportHeight + config.autoFollowBreakThreshold)
-            updateNearBottomState(nearBottom: nearBottom, withinAutoFollowZone: withinAutoFollowZone)
-        }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .bottom) {
             if showJumpToBottomButton {
                 jumpToBottomButton
             }
@@ -330,6 +268,7 @@ struct MessageListView: View {
                     message: message,
                     prefersFullRender: shouldFullyRender(message: message, index: index),
                     pendingQuestionToken: pendingQuestionToken(for: message),
+                    pendingQuestions: pendingQuestions,
                     sessionId: aiChatStore.currentSessionId ?? "",
                     questionRequestResolver: { callId, toolPartId, messageId, requestId in
                         aiChatStore.questionRequest(
@@ -356,16 +295,11 @@ struct MessageListView: View {
             }
 
             Color.clear
+                .frame(height: bottomOverlayInset)
+
+            Color.clear
                 .frame(height: 1)
                 .id(bottomAnchorId)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: MessageListBottomAnchorMaxYKey.self,
-                            value: geo.frame(in: .named(scrollSpaceName)).maxY
-                        )
-                    }
-                )
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -482,17 +416,18 @@ struct MessageListView: View {
         } label: {
             Image(systemName: "arrow.down")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(10)
-                .background(Color.accentColor)
-                .clipShape(Circle())
+                .foregroundStyle(Color.primary)
+                .frame(width: 38, height: 38)
+                .modifier(AIChatFloatingButtonStyle())
         }
         .buttonStyle(.plain)
-        .padding(.trailing, 16)
-        .padding(.bottom, 12)
+        .padding(.bottom, bottomOverlayInset + 4)
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        scrollDistanceToBottom = 0
+        isNearBottom = true
+        isAutoFollowActive = true
         let action = {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
@@ -500,11 +435,28 @@ struct MessageListView: View {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 action()
             }
+            // SwiftUI 的动画滚动在 macOS 上有时会停在距底部几个像素的位置，
+            // 动画结束后再补一次无动画校正，确保最终精确贴到底部。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+                action()
+                scrollDistanceToBottom = 0
+                isNearBottom = true
+                isAutoFollowActive = true
+                _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
+            }
         } else {
             action()
         }
         // 自动滚动后刷新近底部确认时间戳
         _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
+    }
+
+    private func handleScrollMetricsChanged(_ metrics: MessageListScrollMetrics) {
+        scrollDistanceToBottom = metrics.distanceToBottom
+        let config = scrollPolicy.configuration
+        let nearBottom = !metrics.canScrollVertically || metrics.distanceToBottom <= config.nearBottomThreshold
+        let withinAutoFollowZone = !metrics.canScrollVertically || metrics.distanceToBottom <= config.autoFollowBreakThreshold
+        updateNearBottomState(nearBottom: nearBottom, withinAutoFollowZone: withinAutoFollowZone)
     }
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
@@ -569,19 +521,22 @@ struct MessageListView: View {
     }
 }
 
-private struct MessageListViewportHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+private struct MessageListScrollMetrics: Equatable {
+    let distanceToBottom: CGFloat
+    let canScrollVertically: Bool
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
+    init(geometry: ScrollGeometry) {
+        let contentHeight = geometry.contentSize.height
+        let visibleMaxY = geometry.visibleRect.maxY
+        let distanceByVisibleRect = max(0, contentHeight - visibleMaxY)
 
-private struct MessageListBottomAnchorMaxYKey: PreferenceKey {
-    static var defaultValue: CGFloat = .infinity
+        let maxOffsetY = max(0, contentHeight - geometry.containerSize.height)
+        let rawOffsetY = geometry.contentOffset.y + geometry.contentInsets.top
+        let clampedOffsetY = min(max(rawOffsetY, 0), maxOffsetY)
+        let distanceByOffset = max(0, maxOffsetY - clampedOffsetY)
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        self.distanceToBottom = max(distanceByVisibleRect, distanceByOffset)
+        self.canScrollVertically = maxOffsetY > 1
     }
 }
 
@@ -589,6 +544,7 @@ private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
     let prefersFullRender: Bool
     let pendingQuestionToken: String
+    let pendingQuestions: [String: AIQuestionRequestInfo]
     let sessionId: String
     let questionRequestResolver: (String?, String?, String?, String?) -> AIQuestionRequestInfo?
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
@@ -600,6 +556,7 @@ private struct MessageBubble: View, Equatable {
 
     private var isUser: Bool { message.role == .user }
     private var bubbleCornerRadius: CGFloat { 12 }
+    private var contentMaxWidth: CGFloat { isUser ? 520 : 760 }
     private var primaryTextColor: Color { .primary }
     private var secondaryTextColor: Color { .secondary }
 
@@ -612,37 +569,32 @@ private struct MessageBubble: View, Equatable {
             lhs.sessionId == rhs.sessionId
     }
 
-    /// 仅渲染有实际可见内容的 part，避免空 part 也参与布局导致工具卡之间出现“幽灵间距”。
-    private var renderableParts: [AIChatPart] {
-        message.parts.filter { part in
-            isRenderablePart(part)
-        }
+    private var displayNodes: [AIChatMessageDisplayNode] {
+        AIChatMessageLayoutSemantics.displayNodes(
+            for: message,
+            pendingQuestions: pendingQuestions
+        )
     }
 
-    private func isRenderablePart(_ part: AIChatPart) -> Bool {
-        switch part.kind {
-        case .tool, .file, .plan, .compaction:
-            return true
-        case .text, .reasoning:
-            guard let text = part.text else { return false }
-            if message.isStreaming {
-                return normalizedStreamingDisplayText(text, keepOriginalForUser: false) != nil
-            }
-            return normalizedMarkdownDisplayText(text, keepOriginalForUser: false) != nil
-        }
+    private var showsStreamingStatus: Bool {
+        !isUser && message.isStreaming
     }
 
-    /// 相邻 part 之间的动态间距规则：
+    /// 相邻节点之间的动态间距规则：
     /// - 连续工具卡之间使用 8pt 紧凑间距，避免过度分散
-    /// - 推理块（reasoning）紧接工具卡使用 8pt，保持语义连续感
+    /// - 文本块紧接工具卡或计划卡时使用更宽松间距
     /// - 其余组合保持 10pt 阅读节奏
-    private func spacingBeforePart(at index: Int, in parts: [AIChatPart]) -> CGFloat {
+    private func spacingBeforeNode(at index: Int, in nodes: [AIChatMessageDisplayNode]) -> CGFloat {
         guard index > 0 else { return 0 }
-        let previousPart = parts[index - 1]
-        let currentPart = parts[index]
-        switch (previousPart.kind, currentPart.kind) {
-        case (.tool, .tool), (.tool, .reasoning), (.reasoning, .tool):
+        let previousNode = nodes[index - 1]
+        let currentNode = nodes[index]
+        switch (previousNode, currentNode) {
+        case (.part(let lhs), .part(let rhs)) where lhs.kind == .tool && rhs.kind == .tool:
             return 8
+        case (.part(let lhs), .textGroup) where lhs.kind == .tool || lhs.kind == .plan:
+            return 12
+        case (.textGroup, .part(let rhs)) where rhs.kind == .tool:
+            return 12
         default:
             return 10
         }
@@ -651,6 +603,7 @@ private struct MessageBubble: View, Equatable {
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             bubble
+                .frame(maxWidth: contentMaxWidth, alignment: isUser ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.horizontal, 8)
@@ -668,14 +621,17 @@ private struct MessageBubble: View, Equatable {
         if !prefersFullRender {
             lightweightBubble
         } else {
-            let parts = renderableParts
+            let nodes = displayNodes
             VStack(alignment: .leading, spacing: 0) {
-                if parts.isEmpty {
+                if showsStreamingStatus {
+                    streamingStatusView
+                }
+                if nodes.isEmpty {
                     EmptyView()
                 } else {
-                    ForEach(Array(parts.enumerated()), id: \.element.id) { index, part in
-                        partContentView(part)
-                            .padding(.top, spacingBeforePart(at: index, in: parts))
+                    ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
+                        displayNodeView(node)
+                            .padding(.top, spacingBeforeNode(at: index, in: nodes))
                     }
                 }
             }
@@ -691,48 +647,41 @@ private struct MessageBubble: View, Equatable {
     }
 
     @ViewBuilder
+    private func displayNodeView(_ node: AIChatMessageDisplayNode) -> some View {
+        switch node {
+        case .textGroup(let group):
+            textGroupView(group)
+        case .part(let part):
+            partContentView(part)
+        }
+    }
+
+    @ViewBuilder
+    private func textGroupView(_ group: AIChatTextRunGroup) -> some View {
+        if message.isStreaming,
+           let streamingText = styledStreamingText(for: group) {
+            streamingText
+                .textSelection(.enabled)
+                .font(.system(size: 13))
+                .lineSpacing(5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let markdownText = normalizedMarkdownDisplayText(
+            group.markdownText(renderReasoningAsBlockQuote: !isUser),
+            keepOriginalForUser: isUser
+        ) {
+            MarkdownTextView(
+                text: markdownText,
+                role: isUser ? .user : .assistant,
+                baseFontSize: 13
+            )
+        }
+    }
+
+    @ViewBuilder
     private func partContentView(_ part: AIChatPart) -> some View {
         switch part.kind {
-        case .text:
-            if let text = part.text {
-                if message.isStreaming,
-                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                    Text(verbatim: normalizedText)
-                        .textSelection(.enabled)
-                        .font(.system(size: 13))
-                        .foregroundStyle(primaryTextColor)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if isUser,
-                          let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                    MarkdownTextView(
-                        text: markdownText,
-                        baseFontSize: 13,
-                        textColor: primaryTextColor
-                    )
-                } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                    MarkdownTextView(
-                        text: markdownText,
-                        baseFontSize: 13,
-                        textColor: .primary
-                    )
-                }
-            }
-        case .reasoning:
-            if let text = part.text, message.isStreaming,
-               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                Text(verbatim: normalizedText)
-                    .textSelection(.enabled)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else if let text = part.text,
-                      let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                MarkdownTextView(
-                    text: markdownText,
-                    baseFontSize: 12,
-                    textColor: .secondary
-                )
-            }
+        case .text, .reasoning:
+            EmptyView()
         case .file:
             filePartView(part)
         case .plan:
@@ -802,6 +751,33 @@ private struct MessageBubble: View, Equatable {
         )
     }
 
+    private var streamingStatusView: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 8, height: 8)
+            Text("思考中")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0),
+                            Color.accentColor.opacity(0.45),
+                            Color.accentColor.opacity(0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 10)
+                .clipShape(Capsule())
+                .shimmering(active: true, animation: .linear(duration: 1.1).repeatForever(autoreverses: false))
+        }
+        .padding(.bottom, displayNodes.isEmpty ? 0 : 6)
+    }
+
     private var lightweightBubble: some View {
         let summary = compactSummaryText()
         return VStack(alignment: .leading, spacing: 6) {
@@ -830,28 +806,32 @@ private struct MessageBubble: View, Equatable {
 
     private func compactSummaryText() -> String {
         var lines: [String] = []
-        for part in message.parts {
-            switch part.kind {
-            case .text, .reasoning:
-                if let text = part.text?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                   !text.isEmpty {
+        for node in displayNodes {
+            switch node {
+            case .textGroup(let group):
+                let text = group.combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
                     lines.append(text)
                 }
-            case .file:
-                let name = part.filename ?? "attachment"
-                lines.append("[附件] \(name)")
-            case .plan:
-                if let payload = AIPlanCardPayload.from(source: part.source) {
-                    lines.append(payload.summaryLine)
-                } else {
-                    lines.append("[计划] 已更新")
+            case .part(let part):
+                switch part.kind {
+                case .file:
+                    let name = part.filename ?? "attachment"
+                    lines.append("[附件] \(name)")
+                case .plan:
+                    if let payload = AIPlanCardPayload.from(source: part.source) {
+                        lines.append(payload.summaryLine)
+                    } else {
+                        lines.append("[计划] 已更新")
+                    }
+                case .compaction:
+                    lines.append("[系统] 上下文压缩中")
+                case .tool:
+                    let toolName = part.toolName ?? "tool"
+                    lines.append("[工具] \(toolName)")
+                case .text, .reasoning:
+                    break
                 }
-            case .compaction:
-                lines.append("[系统] 上下文压缩中")
-            case .tool:
-                let toolName = part.toolName ?? "tool"
-                lines.append("[工具] \(toolName)")
             }
         }
         if lines.isEmpty { return "" }
@@ -898,6 +878,28 @@ private struct MessageBubble: View, Equatable {
         )
 
         return text
+    }
+
+    private func styledStreamingText(for group: AIChatTextRunGroup) -> Text? {
+        var result: Text?
+
+        for run in group.displayRuns {
+            guard let normalizedText = normalizedStreamingDisplayText(
+                run.text,
+                keepOriginalForUser: isUser
+            ) else {
+                continue
+            }
+
+            let chunk = Text(verbatim: normalizedText)
+                .foregroundColor(
+                    (!isUser && run.kind == .reasoning) ? .secondary : .primary
+                )
+
+            result = result.map { $0 + chunk } ?? chunk
+        }
+
+        return result
     }
 
     /// 完成态 Markdown 规范化：仅统一换行，不压缩内部空行，避免破坏 Markdown 语义。
@@ -961,6 +963,43 @@ private struct MessageBubble: View, Equatable {
     private func imageCacheKey(for part: AIChatPart) -> String? {
         guard let url = part.url, !url.isEmpty else { return nil }
         return "\(part.id)|\(url)"
+    }
+}
+
+private struct AIChatFloatingButtonStyle: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: Circle())
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
+        }
+        #elseif os(macOS)
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: Circle())
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.10), radius: 10, x: 0, y: 5)
+        }
+        #else
+        content
+        #endif
     }
 }
 

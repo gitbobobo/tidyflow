@@ -104,13 +104,19 @@ struct ChatTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
         if textView.string != text {
-            let composing = textView.hasMarkedText()
-            // IME 组合期间避免程序化回写文本，防止打断候选状态
-            if composing { return }
+            let composing = textView.hasMarkedText() || ((textView as? IMEAwareTextView)?.isIMEComposing == true)
+            // 输入被外部清空时，优先复位底层 NSTextView，避免残留旧内容“挂”在顶部。
+            if composing && !text.isEmpty { return }
+            if composing && text.isEmpty {
+                textView.unmarkText()
+            }
             textView.string = text
             // 程序化设置文本后，光标移到末尾
             let endPos = (text as NSString).length
             textView.setSelectedRange(NSRange(location: endPos, length: 0))
+            if text.isEmpty {
+                context.coordinator.resetScrollPosition(in: scrollView)
+            }
             context.coordinator.updateHeight()
             context.coordinator.updateCursorRect()
             context.coordinator.reportInputContext()
@@ -167,16 +173,26 @@ struct ChatTextView: NSViewRepresentable {
         }
 
         func updateCursorRect() {
-            guard let textView = textView,
-                  !textView.string.isEmpty,
+            guard let textView = textView else { return }
+            guard !textView.string.isEmpty,
                   let layoutManager = textView.layoutManager,
-                  let textContainer = textView.textContainer else { return }
+                  let textContainer = textView.textContainer else {
+                DispatchQueue.main.async {
+                    self.parent.cursorRect = .zero
+                }
+                return
+            }
             layoutManager.ensureLayout(for: textContainer)
             let insertionPoint = textView.selectedRange().location
             guard insertionPoint != NSNotFound else { return }
             let charIndex = min(insertionPoint, textView.string.count - 1)
             let numberOfGlyphs = layoutManager.numberOfGlyphs
-            guard numberOfGlyphs > 0 else { return }
+            guard numberOfGlyphs > 0 else {
+                DispatchQueue.main.async {
+                    self.parent.cursorRect = .zero
+                }
+                return
+            }
             let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: charIndex), numberOfGlyphs - 1)
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
             let location = layoutManager.location(forGlyphAt: glyphIndex)
@@ -197,6 +213,11 @@ struct ChatTextView: NSViewRepresentable {
                     )
                 }
             }
+        }
+
+        func resetScrollPosition(in scrollView: NSScrollView) {
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
         func reportInputContext(_ target: NSTextView? = nil) {

@@ -265,8 +265,7 @@ struct ToolCardView: View {
                 sectionHeader(section)
                 MarkdownTextView(
                     text: section.content,
-                    baseFontSize: 12,
-                    textColor: .secondary
+                    baseFontSize: 12
                 )
             }
             .padding(.top, 2)

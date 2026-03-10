@@ -391,7 +391,8 @@ final class AIChatShellProjectionStoreTests: XCTestCase {
             localIsStreaming: false,
             awaitingUserEcho: false,
             abortPendingSessionId: nil,
-            hasPendingFirstContent: true
+            hasPendingFirstContent: true,
+            pendingQuestions: [:]
         )
 
         XCTAssertFalse(projection.presentation.showsEmptyState)
@@ -416,13 +417,16 @@ final class AIChatShellProjectionStoreTests: XCTestCase {
                     isLoadingMessages: false,
                     canLoadOlderMessages: true,
                     isLoadingOlderMessages: false,
-                    messageListIdentity: "main-session-opencode-session-2-1"
+                    messageListIdentity: "main-session-opencode-session-2-1",
+                    shouldReplaceComposer: false
                 ),
                 sessionStatus: nil,
                 contextRemainingPercent: nil,
                 effectiveStreaming: false,
                 canStopStreaming: false,
-                isSendingPending: false
+                isSendingPending: false,
+                activePendingInteraction: nil,
+                queuedPendingInteractionCount: 0
             )
         ))
         XCTAssertFalse(store.updateProjection(store.projection))

@@ -118,13 +118,16 @@ struct ChatInputView: View {
         .padding(.horizontal, cardHorizontalPadding)
         .padding(.top, cardTopPadding)
         .padding(.bottom, cardBottomPadding)
-        .background(floatingCardBackgroundColor, in: .rect(cornerRadius: floatingCardCornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: floatingCardCornerRadius, style: .continuous)
-                .stroke(floatingCardBorderColor, lineWidth: 1.1)
-        }
-        .shadow(color: floatingCardPrimaryShadowColor, radius: 20, x: 0, y: 10)
-        .shadow(color: floatingCardSecondaryShadowColor, radius: 6, x: 0, y: 2)
+        .modifier(
+            AIChatFloatingComposerChrome(
+                colorScheme: colorScheme,
+                cornerRadius: floatingCardCornerRadius,
+                fallbackBackgroundColor: floatingCardBackgroundColor,
+                fallbackBorderColor: floatingCardBorderColor,
+                primaryShadowColor: floatingCardPrimaryShadowColor,
+                secondaryShadowColor: floatingCardSecondaryShadowColor
+            )
+        )
     }
 
     #if os(iOS)
@@ -670,6 +673,10 @@ struct ChatInputView: View {
         inputEditor
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: editorMinHeight, alignment: .topLeading)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+            .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
+            .clipShape(.rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
             .contentShape(.rect)
             .onTapGesture {
                 focusInputEditor()
@@ -1261,7 +1268,7 @@ struct ChatInputView: View {
         #if os(iOS)
         return Color(UIColor.secondarySystemBackground)
         #else
-        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.82 : 0.92)
+        return Color(NSColor.windowBackgroundColor).opacity(colorScheme == .dark ? 0.72 : 0.78)
         #endif
     }
 
@@ -1269,31 +1276,43 @@ struct ChatInputView: View {
         #if os(iOS)
         return colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.12)
         #else
-        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.72 : 0.46)
+        return Color.white.opacity(colorScheme == .dark ? 0.2 : 0.42)
         #endif
     }
 
     private var floatingCardPrimaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.3) : Color.black.opacity(0.14)
+        colorScheme == .dark ? Color.black.opacity(0.34) : Color.black.opacity(0.16)
     }
 
     private var floatingCardSecondaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.18) : Color.black.opacity(0.06)
+        colorScheme == .dark ? Color.black.opacity(0.2) : Color.black.opacity(0.08)
     }
 
     private var toolbarChipBackgroundColor: Color {
         #if os(iOS)
-        return Color(UIColor.secondarySystemBackground)
+        return Color(UIColor.systemBackground).opacity(colorScheme == .dark ? 0.44 : 0.6)
         #else
-        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.9 : 0.92)
+        return Color(NSColor.windowBackgroundColor).opacity(colorScheme == .dark ? 0.42 : 0.54)
         #endif
     }
 
     private var toolbarChipBorderColor: Color {
         #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.07)
+        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
         #else
-        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.45 : 0.28)
+        return Color.white.opacity(colorScheme == .dark ? 0.08 : 0.18)
+        #endif
+    }
+
+    private var editorSurfaceCornerRadius: CGFloat {
+        16
+    }
+
+    private var editorSurfaceBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.systemBackground).opacity(colorScheme == .dark ? 0.18 : 0.42)
+        #else
+        return Color(NSColor.textBackgroundColor).opacity(colorScheme == .dark ? 0.18 : 0.32)
         #endif
     }
 
@@ -1433,6 +1452,40 @@ struct ChatInputView: View {
             }
         }
         .accessibilityIdentifier("tf.ai.input.action-button")
+    }
+}
+
+private struct AIChatFloatingComposerChrome: ViewModifier {
+    let colorScheme: ColorScheme
+    let cornerRadius: CGFloat
+    let fallbackBackgroundColor: Color
+    let fallbackBorderColor: Color
+    let primaryShadowColor: Color
+    let secondaryShadowColor: Color
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .background(.clear, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+                .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(colorScheme == .dark ? 0.16 : 0.28), lineWidth: 0.8)
+                }
+                .shadow(color: primaryShadowColor, radius: 26, x: 0, y: 14)
+                .shadow(color: secondaryShadowColor, radius: 10, x: 0, y: 4)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+                .background(fallbackBackgroundColor, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(fallbackBorderColor, lineWidth: 1.0)
+                }
+                .shadow(color: primaryShadowColor, radius: 22, x: 0, y: 12)
+                .shadow(color: secondaryShadowColor, radius: 8, x: 0, y: 3)
+        }
     }
 }
 

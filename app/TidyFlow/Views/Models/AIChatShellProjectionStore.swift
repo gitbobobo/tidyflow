@@ -10,7 +10,8 @@ extension AIChatPresentationProjection {
         isLoadingMessages: false,
         canLoadOlderMessages: false,
         isLoadingOlderMessages: false,
-        messageListIdentity: "main-session-opencode--0"
+        messageListIdentity: "main-session-opencode--0",
+        shouldReplaceComposer: false
     )
 }
 
@@ -21,6 +22,8 @@ struct AIChatShellProjection: Equatable {
     let effectiveStreaming: Bool
     let canStopStreaming: Bool
     let isSendingPending: Bool
+    let activePendingInteraction: AIChatPendingInteraction?
+    let queuedPendingInteractionCount: Int
 
     static let empty = AIChatShellProjection(
         presentation: .empty,
@@ -28,7 +31,9 @@ struct AIChatShellProjection: Equatable {
         contextRemainingPercent: nil,
         effectiveStreaming: false,
         canStopStreaming: false,
-        isSendingPending: false
+        isSendingPending: false,
+        activePendingInteraction: nil,
+        queuedPendingInteractionCount: 0
     )
 }
 
@@ -46,8 +51,13 @@ enum AIChatShellProjectionSemantics {
         localIsStreaming: Bool,
         awaitingUserEcho: Bool,
         abortPendingSessionId: String?,
-        hasPendingFirstContent: Bool
+        hasPendingFirstContent: Bool,
+        pendingQuestions: [String: AIQuestionRequestInfo]
     ) -> AIChatShellProjection {
+        let pendingInteractionQueue = AIChatMessageLayoutSemantics.pendingInteractionQueue(
+            messages: messages,
+            pendingQuestions: pendingQuestions
+        )
         let presentation = AIChatPresentationSemantics.make(
             tool: tool,
             currentSessionId: currentSessionId,
@@ -58,6 +68,17 @@ enum AIChatShellProjectionSemantics {
             canSwitchTool: canSwitchTool,
             scrollSessionToken: scrollSessionToken
         )
+        let presentationWithComposer = AIChatPresentationProjection(
+            tool: presentation.tool,
+            currentSessionId: presentation.currentSessionId,
+            showsEmptyState: presentation.showsEmptyState,
+            canSwitchTool: presentation.canSwitchTool,
+            isLoadingMessages: presentation.isLoadingMessages,
+            canLoadOlderMessages: presentation.canLoadOlderMessages,
+            isLoadingOlderMessages: presentation.isLoadingOlderMessages,
+            messageListIdentity: presentation.messageListIdentity,
+            shouldReplaceComposer: pendingInteractionQueue.hasPendingInteraction
+        )
         let sessionActive = sessionStatus?.isActive == true
         let effectiveStreaming =
             abortPendingSessionId != nil ||
@@ -66,14 +87,16 @@ enum AIChatShellProjectionSemantics {
             awaitingUserEcho
 
         return AIChatShellProjection(
-            presentation: presentation,
+            presentation: presentationWithComposer,
             sessionStatus: sessionStatus,
             contextRemainingPercent: sessionStatus?.contextRemainingPercent,
             effectiveStreaming: effectiveStreaming,
             canStopStreaming: currentSessionId != nil &&
                 abortPendingSessionId == nil &&
                 (sessionActive || localIsStreaming || awaitingUserEcho),
-            isSendingPending: hasPendingFirstContent
+            isSendingPending: hasPendingFirstContent,
+            activePendingInteraction: pendingInteractionQueue.active,
+            queuedPendingInteractionCount: pendingInteractionQueue.queuedCount
         )
     }
 }
@@ -103,7 +126,8 @@ final class AIChatShellProjectionStore {
         localIsStreaming: Bool,
         awaitingUserEcho: Bool,
         abortPendingSessionId: String?,
-        hasPendingFirstContent: Bool
+        hasPendingFirstContent: Bool,
+        pendingQuestions: [String: AIQuestionRequestInfo]
     ) {
         let next = AIChatShellProjectionSemantics.make(
             tool: tool,
@@ -118,7 +142,8 @@ final class AIChatShellProjectionStore {
             localIsStreaming: localIsStreaming,
             awaitingUserEcho: awaitingUserEcho,
             abortPendingSessionId: abortPendingSessionId,
-            hasPendingFirstContent: hasPendingFirstContent
+            hasPendingFirstContent: hasPendingFirstContent,
+            pendingQuestions: pendingQuestions
         )
         _ = updateProjection(next)
     }
