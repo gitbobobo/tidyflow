@@ -206,6 +206,7 @@ struct MobileAIChatView: View {
         .onAppear {
             appState.openAIChat(project: project, workspace: workspace)
             consumeOneShotHintIfNeeded()
+            consumeOneShotPrefillIfNeeded()
             requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
             refreshShellProjection()
@@ -354,6 +355,13 @@ struct MobileAIChatView: View {
         aiChatHintMessage = message
     }
 
+    private func consumeOneShotPrefillIfNeeded() {
+        guard let text = appState.consumeAIChatOneShotPrefill(project: project, workspace: workspace) else {
+            return
+        }
+        inputText = text
+    }
+
     private func loadOlderMessages() {
         appState.loadOlderAIChatMessages()
     }
@@ -421,8 +429,7 @@ struct MobileAIChatView: View {
                     scheduleReferenceSearch(query: query)
                 },
                 projectNames: appState.allProjectNames,
-                onInputContextChange: nil,
-                cursorRectInInput: .constant(.zero)
+                onInputContextChange: nil
             )
         }
         .padding(.bottom, 8)

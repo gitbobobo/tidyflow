@@ -1,5 +1,6 @@
 import SwiftUI
-import UIKit
+import ImageIO
+import CoreGraphics
 
 /// 工作空间详情页：终端、后台任务、代码变更汇总与工具栏操作。
 struct WorkspaceDetailView: View {
@@ -672,10 +673,10 @@ struct MobileEvidenceView: View {
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
     @StateObject private var evidenceViewer = EvidenceViewerStore()
-    @State private var itemImage: UIImage?
+    @State private var itemImage: CGImage?
     @State private var headerHint: String?
     @State private var showingDetailSheet: Bool = false
-    @State private var screenshotThumbnails: [String: UIImage] = [:]
+    @State private var screenshotThumbnails: [String: CGImage] = [:]
     @State private var screenshotThumbnailLoadingIDs: Set<String> = []
     @State private var screenshotThumbnailLoadFailedIDs: Set<String> = []
     @State private var screenshotThumbnailPendingIDs: [String] = []
@@ -861,7 +862,7 @@ struct MobileEvidenceView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
                     if let thumbnail = screenshotThumbnails[item.itemID] {
-                        Image(uiImage: thumbnail)
+                        Image(decorative: thumbnail, scale: 1)
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1018,7 +1019,7 @@ struct MobileEvidenceView: View {
                         description: Text(itemError)
                     )
                 } else if let itemImage, selectedTab == .screenshot {
-                    Image(uiImage: itemImage)
+                    Image(decorative: itemImage, scale: 1)
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: .infinity)
@@ -1188,7 +1189,8 @@ struct MobileEvidenceView: View {
         screenshotThumbnailLoadingIDs.remove(itemID)
         screenshotThumbnailActiveID = nil
 
-        if let payload, let thumbnail = UIImage(data: Data(payload.content)) {
+        if let payload,
+           let thumbnail = decodeImage(data: Data(payload.content), maxPixelSize: 480) {
             screenshotThumbnails[itemID] = thumbnail
         } else {
             screenshotThumbnailLoadFailedIDs.insert(itemID)
@@ -1205,13 +1207,17 @@ struct MobileEvidenceView: View {
         appState.requestEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
             DispatchQueue.main.async {
                 if let prompt {
-                    UIPasteboard.general.string = prompt.prompt
                     appState.setAIChatOneShotHint(
                         project: prompt.project,
                         workspace: prompt.workspace,
-                        message: "提示词已复制，请在聊天输入框粘贴后发送。"
+                        message: "已填充证据提示词，请确认后发送。"
                     )
-                    headerHint = "已复制提示词，正在跳转聊天页..."
+                    appState.setAIChatOneShotPrefill(
+                        project: prompt.project,
+                        workspace: prompt.workspace,
+                        text: prompt.prompt
+                    )
+                    headerHint = "已准备证据提示词，正在跳转聊天页..."
                     appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
                 } else {
                     let error = errorMessage ?? "未知错误"
@@ -1231,7 +1237,7 @@ struct MobileEvidenceView: View {
                     let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
                     guard currentID == item.itemID else { return }
                     if let payload {
-                        if let image = UIImage(data: Data(payload.content)) {
+                        if let image = decodeImage(data: Data(payload.content)) {
                             itemImage = image
                             evidenceViewer.applyImageLoadResult(
                                 itemID: item.itemID,
@@ -1311,6 +1317,24 @@ struct MobileEvidenceView: View {
                 }
             }
         }
+    }
+
+    private func decodeImage(data: Data, maxPixelSize: Int? = nil) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        if let maxPixelSize {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
+            if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                return thumbnail
+            }
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
     private static func debugPrintChangesIfNeeded() {

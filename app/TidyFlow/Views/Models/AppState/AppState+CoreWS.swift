@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import Darwin
 import TidyFlowShared
 
@@ -155,14 +154,6 @@ extension AppState {
             self?.markStartupFailedIfNeeded(message: message)
         }
 
-        // 注册系统唤醒通知，用于探活 + 自动重连
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleSystemWake()
-        }
     }
 
     /// Start Core process if not already running
@@ -255,10 +246,6 @@ extension AppState {
 
     /// Stop Core process (called on app termination)
     func stopCore() {
-        if let observer = wakeObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
-            wakeObserver = nil
-        }
         deferredAISessionReloadWorkItem?.cancel()
         deferredAISessionReloadWorkItem = nil
         coreProcessManager.stop()

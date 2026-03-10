@@ -2,11 +2,6 @@ import SwiftUI
 import ImageIO
 import CoreGraphics
 import Shimmer
-#if os(macOS)
-import AppKit
-#elseif os(iOS)
-import UIKit
-#endif
 
 private struct ChatImagePreviewPayload {
     let data: Data
@@ -1078,40 +1073,48 @@ private struct FullscreenImageSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        #if os(macOS)
+        #if os(iOS)
+        NavigationStack {
+            imageContent
+                .navigationTitle("图片查看")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+        }
+        #else
         VStack(spacing: 0) {
             HStack {
                 Spacer()
                 Button("关闭") { dismiss() }
-                    .keyboardShortcut(.escape, modifiers: [])
-                    .padding()
             }
-            if let image = NSImage(data: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            imageContent
         }
-        .frame(minWidth: 400, minHeight: 300)
-        #else
-        NavigationView {
-            Group {
-                if let image = UIImage(data: data) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding()
-                }
-            }
-            .navigationTitle("图片查看")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
-            }
-        }
+        .frame(minWidth: 480, minHeight: 360)
         #endif
+    }
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if let image = decodeFullImage() {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .scaledToFit()
+                .padding()
+        } else {
+            ContentUnavailableView("图片加载失败", systemImage: "photo")
+        }
+    }
+
+    private func decodeFullImage() -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }

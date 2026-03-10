@@ -17,8 +17,6 @@ struct AITabView: View {
     @State private var previousSnapshotKey: String?
     /// 自动补全状态
     @StateObject private var autocomplete = AutocompleteState()
-    /// 光标在输入框内的位置（用于定位弹出层）
-    @State private var cursorRectInInput: CGRect = .zero
     /// 输入框光标 UTF16 位置（用于基于光标触发自动补全）
     @State private var inputCursorLocation: Int = 0
     /// 是否处于 IME 组合态（组合态中不刷新自动补全，避免和中文输入法冲突）
@@ -87,6 +85,7 @@ struct AITabView: View {
             restoreAIContextOnAppear()
             requestCurrentSessionStatus()
             consumeOneShotHintIfNeeded()
+            consumeOneShotPrefillIfNeeded()
             refreshShellProjection()
         }
         .onDisappear {
@@ -103,12 +102,14 @@ struct AITabView: View {
             isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
+            consumeOneShotPrefillIfNeeded()
             refreshShellProjection()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
+            consumeOneShotPrefillIfNeeded()
             refreshShellProjection()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
@@ -502,6 +503,14 @@ struct AITabView: View {
         aiChatHintMessage = message
     }
 
+    private func consumeOneShotPrefillIfNeeded() {
+        guard let workspace = appState.selectedWorkspaceKey, !workspace.isEmpty else { return }
+        guard let text = appState.consumeAIChatOneShotPrefill(project: appState.selectedProjectName, workspace: workspace) else {
+            return
+        }
+        inputText = text
+    }
+
     private func handleSessionPanelAction(_ action: AppState.SessionPanelAction) {
         switch action {
         case .loadSession(let session):
@@ -688,8 +697,7 @@ struct AITabView: View {
                 onInputContextChange: { cursorLocation, isComposing in
                     inputCursorLocation = cursorLocation
                     inputIsComposing = isComposing
-                },
-                cursorRectInInput: $cursorRectInInput
+                }
             )
         }
         .padding(.horizontal, floatingComposerHorizontalPadding)

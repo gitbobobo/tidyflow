@@ -235,10 +235,24 @@ extension AppState {
         return hint
     }
 
+    func consumeAIChatOneShotPrefill(project: String, workspace: String) -> String? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        let text = aiChatOneShotPrefillByWorkspace[key]
+        aiChatOneShotPrefillByWorkspace.removeValue(forKey: key)
+        return text
+    }
+
     func setAIChatOneShotHint(project: String, workspace: String, message: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         aiChatOneShotHintByWorkspace[key] = message
+    }
+
+    func setAIChatOneShotPrefill(project: String, workspace: String, text: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        aiChatOneShotPrefillByWorkspace[key] = text
     }
 
     /// 先拉齐每个 AI 工具的 provider/agent 列表，再拉取 Evolution profile，避免冷启动时读到默认配置。

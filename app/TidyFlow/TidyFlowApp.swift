@@ -171,6 +171,7 @@ struct TidyFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
     @StateObject private var localizationManager = LocalizationManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var startupWindowConfigured: Bool = false
 
     init() {
@@ -212,6 +213,11 @@ struct TidyFlowApp: App {
                     }
                 }
                 .preferredColorScheme(.dark)
+                .onChange(of: scenePhase) { _, newPhase in
+                    appState.isSceneActive = (newPhase == .active)
+                    guard newPhase == .active else { return }
+                    appState.handleSceneDidBecomeActive()
+                }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

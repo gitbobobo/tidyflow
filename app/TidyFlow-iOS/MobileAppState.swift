@@ -293,6 +293,7 @@ final class MobileAppState: ObservableObject {
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
     @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
+    @Published var aiChatOneShotPrefillByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
@@ -1731,12 +1732,26 @@ final class MobileAppState: ObservableObject {
         aiChatOneShotHintByWorkspace[key] = message
     }
 
+    func setAIChatOneShotPrefill(project: String, workspace: String, text: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        aiChatOneShotPrefillByWorkspace[key] = text
+    }
+
     func consumeAIChatOneShotHint(project: String, workspace: String) -> String? {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         let hint = aiChatOneShotHintByWorkspace[key]
         aiChatOneShotHintByWorkspace.removeValue(forKey: key)
         return hint
+    }
+
+    func consumeAIChatOneShotPrefill(project: String, workspace: String) -> String? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        let text = aiChatOneShotPrefillByWorkspace[key]
+        aiChatOneShotPrefillByWorkspace.removeValue(forKey: key)
+        return text
     }
 
     func clearEvolutionReplay() {

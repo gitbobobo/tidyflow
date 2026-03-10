@@ -1,28 +1,25 @@
+import CoreGraphics
+import ImageIO
 import SwiftUI
-#if os(iOS)
-import UIKit
-#if canImport(PhotosUI)
+import UniformTypeIdentifiers
+
+#if os(iOS) && canImport(PhotosUI)
 import PhotosUI
 #endif
-#endif
-#if os(macOS)
-import AppKit
-#endif
+
 struct ChatInputView: View {
     @Environment(\.colorScheme) private var colorScheme
+
     @Binding var text: String
     @Binding var imageAttachments: [ImageAttachment]
+
     var isStreaming: Bool
-    /// iOS: 视图出现后自动聚焦输入框。
     var autoFocusOnAppear: Bool = false
-    /// 仅当已有 sessionId 时允许点击停止，避免会话创建竞态下误触。
     var canStopStreaming: Bool = true
-    /// 已发送、等待服务端首个内容到达期间为 true，此时显示 Loading 动画。
     var isSendingPending: Bool = false
     var onSend: () -> Void
     var onStop: () -> Void
 
-    // 模型 / Agent 状态
     var providers: [AIProviderInfo]
     @Binding var selectedModel: AIModelSelection?
     var contextRemainingPercent: Double?
@@ -33,72 +30,79 @@ struct ChatInputView: View {
     var isLoadingModels: Bool = false
     var isLoadingAgents: Bool = false
 
-    // 自动补全
     var autocomplete: AutocompleteState?
     var onSelectAutocomplete: ((AutocompleteItem) -> Void)?
-    /// 代码补全触发回调（prefix, suffix, filePath）
     var onTriggerCodeCompletion: ((String, String?, String?) -> Void)?
-    /// 接受代码补全建议的回调
     var onAcceptCodeCompletion: (() -> Void)?
-    /// iOS 输入辅助：命令列表
     var slashCommands: [AISlashCommandInfo] = []
-    /// iOS 输入辅助：引用列表（文件路径）
     var fileReferenceItems: [String] = []
-    /// iOS 输入辅助：打开引用列表前按需拉取索引
     var onRequestFileReferences: (() -> Void)?
-    /// iOS 输入辅助：引用搜索词变化时触发实时查询
     var onSearchFileReferences: ((String) -> Void)?
-    /// iOS/macOS: 可引用的项目名称列表（用于 @@ 触发的项目补全）
     var projectNames: [String] = []
-    /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
     var onInputContextChange: ((Int, Bool) -> Void)?
-    /// 光标位置（外部读取用于定位弹出层）
-    @Binding var cursorRectInInput: CGRect
 
-    @State private var textContentHeight: CGFloat = 28
-    /// 光标在输入框内的位置（由 NSTextView 上报）
-    @State private var cursorRect: CGRect = .zero
-    @State private var inputFocusRequestToken: Int = 0
+    @State private var textSelection: TextSelection?
+    @FocusState private var inputFocused: Bool
+
     #if os(iOS)
     private enum IOSInputPanelSheet: String, Identifiable {
         case commands
         case references
+
         var id: String { rawValue }
     }
 
-    @FocusState private var isIOSInputFocused: Bool
-    @State private var showIOSInputPanel: Bool = false
+    @State private var showIOSInputPanel = false
     @State private var iOSInputPanelSheet: IOSInputPanelSheet?
-    @State private var commandSearchText: String = ""
-    @State private var referenceSearchText: String = ""
-    @State private var showCameraPicker: Bool = false
+    @State private var commandSearchText = ""
+    @State private var referenceSearchText = ""
+    @FocusState private var commandSearchFocused: Bool
+    @FocusState private var referenceSearchFocused: Bool
     #endif
+
     #if os(iOS) && canImport(PhotosUI)
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    #endif
+
+    #if os(macOS)
+    @State private var showImageImporter = false
+    private let maxImageAttachmentCount = 9
     #endif
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
     }
-    #if os(macOS)
-    private let maxImageAttachmentCount = 9
-    #endif
 
     var body: some View {
         composerCard
             .padding(.horizontal, outerHorizontalPadding)
             .padding(.top, outerTopPadding)
             .padding(.bottom, outerBottomPadding)
-        .onChange(of: cursorRect) { _, newRect in
-            cursorRectInInput = newRect
-        }
-        #if os(macOS)
-        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-            handleDroppedImageProviders(providers)
-            return true
-        }
-        #endif
-        .accessibilityIdentifier("tf.ai.input.container")
+            #if os(macOS)
+            .onDrop(of: [UTType.image.identifier, UTType.fileURL.identifier], isTargeted: nil) { providers in
+                handleDroppedImageProviders(providers)
+            }
+            .fileImporter(
+                isPresented: $showImageImporter,
+                allowedContentTypes: [.png, .jpeg, .gif, .webP, .heic, .heif, .tiff, .bmp],
+                allowsMultipleSelection: true,
+                onCompletion: handleImageImport
+            )
+            #endif
+            .accessibilityIdentifier("tf.ai.input.container")
+            .onAppear {
+                guard autoFocusOnAppear else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    inputFocused = true
+                }
+            }
+            .onChange(of: textSelection) { _, selection in
+                onInputContextChange?(selection?.utf16InsertionOffset(in: text) ?? text.utf16.count, false)
+            }
+            .onChange(of: text) { _, newText in
+                let location = min(textSelection?.utf16InsertionOffset(in: newText) ?? newText.utf16.count, newText.utf16.count)
+                onInputContextChange?(location, false)
+            }
     }
 
     private var composerCard: some View {
@@ -111,7 +115,6 @@ struct ChatInputView: View {
             iOSInputSection
             #else
             inputEditorPanel
-
             toolbar
             #endif
         }
@@ -134,20 +137,9 @@ struct ChatInputView: View {
     private var iOSInputSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             inputEditorPanel
-
             iOSFloatingToolbar
-
             if showIOSInputPanel {
                 iOSInputPanelGrid
-            }
-        }
-        .onAppear {
-            guard autoFocusOnAppear else { return }
-            requestIOSInputFocus()
-        }
-        .onChange(of: isIOSInputFocused) { _, focused in
-            if focused {
-                showIOSInputPanel = false
             }
         }
         .sheet(item: $iOSInputPanelSheet) { item in
@@ -158,16 +150,9 @@ struct ChatInputView: View {
                 iOSReferencePickerSheet
             }
         }
-        .sheet(isPresented: $showCameraPicker) {
-            CameraPickerView { image in
-                guard let data = image.jpegData(compressionQuality: 0.85) else { return }
-                let suffix = UUID().uuidString.prefix(8)
-                let filename = "camera_\(suffix).jpg"
-                imageAttachments.append(ImageAttachment(
-                    filename: filename,
-                    data: data,
-                    mime: "image/jpeg"
-                ))
+        .onChange(of: inputFocused) { _, focused in
+            if focused {
+                showIOSInputPanel = false
             }
         }
     }
@@ -215,17 +200,11 @@ struct ChatInputView: View {
         return LazyVGrid(columns: columns, spacing: 8) {
             iOSImagePanelButton
 
-            iOSCameraPanelButton
-
             Button(action: {
                 commandSearchText = ""
                 openIOSInputSheet(.commands)
             }) {
-                iOSInputPanelTile(
-                    title: "命令",
-                    systemImage: "command",
-                    tint: .orange
-                )
+                iOSInputPanelTile(title: "命令", systemImage: "command", tint: .orange)
             }
             .buttonStyle(.plain)
 
@@ -234,11 +213,7 @@ struct ChatInputView: View {
                 onRequestFileReferences?()
                 openIOSInputSheet(.references)
             }) {
-                iOSInputPanelTile(
-                    title: "引用",
-                    systemImage: "at",
-                    tint: .green
-                )
+                iOSInputPanelTile(title: "引用", systemImage: "at", tint: .green)
             }
             .buttonStyle(.plain)
         }
@@ -252,42 +227,18 @@ struct ChatInputView: View {
             maxSelectionCount: 6,
             matching: .images
         ) {
-            iOSInputPanelTile(
-                title: "图片",
-                systemImage: "photo",
-                tint: .blue
-            )
+            iOSInputPanelTile(title: "图片", systemImage: "photo", tint: .blue)
         }
         .onChange(of: selectedPhotoItems) { _, items in
             handleSelectedPhotoItems(items)
         }
         #else
         Button(action: pickImage) {
-            iOSInputPanelTile(
-                title: "图片",
-                systemImage: "photo",
-                tint: .blue
-            )
+            iOSInputPanelTile(title: "图片", systemImage: "photo", tint: .blue)
         }
         .buttonStyle(.plain)
         #endif
     }
-
-    @ViewBuilder
-    private var iOSCameraPanelButton: some View {
-        #if os(iOS)
-        Button(action: { showCameraPicker = true }) {
-            iOSInputPanelTile(
-                title: "拍照",
-                systemImage: "camera",
-                tint: .purple
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-        #endif
-    }
-
 
     private func iOSInputPanelTile(
         title: String,
@@ -297,145 +248,128 @@ struct ChatInputView: View {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(tint)
+                .foregroundStyle(tint)
             Text(title)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary)
+                .foregroundStyle(.primary)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 72)
-        .background(
+        .background(toolbarChipBackgroundColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(UIColor.secondarySystemBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-        )
+                .stroke(toolbarChipBorderColor, lineWidth: 0.5)
+        }
     }
 
     private var filteredSlashCommandsForIOS: [AISlashCommandInfo] {
         let query = commandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return slashCommands }
         return slashCommands.filter { command in
-            command.name.localizedCaseInsensitiveContains(query)
-                || command.description.localizedCaseInsensitiveContains(query)
+            command.name.localizedStandardContains(query)
+                || command.description.localizedStandardContains(query)
         }
     }
 
     private var filteredFileReferencesForIOS: [String] {
         let query = referenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return fileReferenceItems }
-        return fileReferenceItems.filter { $0.localizedCaseInsensitiveContains(query) }
+        return fileReferenceItems.filter { $0.localizedStandardContains(query) }
     }
 
     private var iOSCommandPickerSheet: some View {
         NavigationStack {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    IOSAutoFocusTextField(text: $commandSearchText, placeholder: "搜索命令")
-                        .frame(height: 22)
+            List {
+                Section {
+                    TextField("搜索命令", text: $commandSearchText)
+                        .focused($commandSearchFocused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(UIColor.secondarySystemBackground))
-                )
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
 
-                List(filteredSlashCommandsForIOS, id: \.id) { command in
-                    Button(action: {
-                        insertSlashCommandAtInputStart(command.name, inputHint: command.inputHint)
-                        iOSInputPanelSheet = nil
-                    }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: slashCommandIcon(command.name))
-                                .frame(width: 18)
-                                .foregroundColor(.accentColor)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("/\(command.name)")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.primary)
-                                let detail = command.description.isEmpty
-                                    ? (command.inputHint ?? "")
-                                    : command.description
-                                if !detail.isEmpty {
-                                    Text(detail)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(2)
+                Section {
+                    ForEach(filteredSlashCommandsForIOS, id: \.id) { command in
+                        Button {
+                            insertSlashCommandAtInputStart(command.name, inputHint: command.inputHint)
+                            iOSInputPanelSheet = nil
+                            inputFocused = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: slashCommandIcon(command.name))
+                                    .frame(width: 18)
+                                    .foregroundStyle(Color.accentColor)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("/\(command.name)")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                    let detail = command.description.isEmpty ? (command.inputHint ?? "") : command.description
+                                    if !detail.isEmpty {
+                                        Text(detail)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
                                 }
                             }
                         }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .navigationTitle("命令")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
                         iOSInputPanelSheet = nil
-                    }) {
-                        Image(systemName: "xmark")
+                        inputFocused = true
                     }
-                    .accessibilityLabel("关闭")
                 }
+            }
+            .task {
+                commandSearchFocused = true
             }
         }
     }
 
     private var iOSReferencePickerSheet: some View {
         NavigationStack {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    IOSAutoFocusTextField(text: $referenceSearchText, placeholder: "搜索引用")
-                        .frame(height: 22)
+            List {
+                Section {
+                    TextField("搜索引用", text: $referenceSearchText)
+                        .focused($referenceSearchFocused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(UIColor.secondarySystemBackground))
-                )
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
 
-                List(filteredFileReferencesForIOS, id: \.self) { path in
-                    Button(action: {
-                        appendFileReferenceToInput(path)
-                        iOSInputPanelSheet = nil
-                    }) {
-                        Text(path)
-                            .font(.system(size: 13))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .foregroundColor(.primary)
+                Section {
+                    ForEach(filteredFileReferencesForIOS, id: \.self) { path in
+                        Button {
+                            appendFileReferenceToInput(path)
+                            iOSInputPanelSheet = nil
+                            inputFocused = true
+                        } label: {
+                            Text(path)
+                                .font(.system(size: 13))
+                                .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .navigationTitle("引用")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
                         iOSInputPanelSheet = nil
-                    }) {
-                        Image(systemName: "xmark")
+                        inputFocused = true
                     }
-                    .accessibilityLabel("关闭")
                 }
             }
-            .onAppear {
+            .task {
                 onSearchFileReferences?(referenceSearchText)
+                referenceSearchFocused = true
             }
             .onChange(of: referenceSearchText) { _, query in
                 onSearchFileReferences?(query)
@@ -444,9 +378,7 @@ struct ChatInputView: View {
     }
 
     private func openIOSInputSheet(_ sheet: IOSInputPanelSheet) {
-        // 先让主输入框失焦，sheet 内的 IOSAutoFocusTextField 会通过 UIKit
-        // becomeFirstResponder() 自动接管键盘，无需 dismissIOSKeyboard()。
-        isIOSInputFocused = false
+        inputFocused = false
         showIOSInputPanel = false
         iOSInputPanelSheet = sheet
     }
@@ -454,21 +386,10 @@ struct ChatInputView: View {
     private func toggleIOSInputPanel() {
         if showIOSInputPanel {
             showIOSInputPanel = false
-            isIOSInputFocused = true
+            inputFocused = true
         } else {
             showIOSInputPanel = true
-            isIOSInputFocused = false
-        }
-    }
-
-    private func requestIOSInputFocus() {
-        showIOSInputPanel = false
-        // 进入页面时多次尝试，覆盖导航动画和键盘系统时序。
-        for delay in [0.0, 0.12, 0.3, 0.6] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard iOSInputPanelSheet == nil else { return }
-                isIOSInputFocused = true
-            }
+            inputFocused = false
         }
     }
 
@@ -482,11 +403,8 @@ struct ChatInputView: View {
         }
         let prefix = "/\(body)"
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            text = "\(prefix) "
-            return
-        }
-        text = "\(prefix) \(text)"
+        text = trimmed.isEmpty ? "\(prefix) " : "\(prefix) \(text)"
+        updateSelectionToEnd()
     }
 
     private func appendFileReferenceToInput(_ path: String) {
@@ -494,27 +412,14 @@ struct ChatInputView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             text = "\(token) "
-            return
-        }
-        if text.hasSuffix(" ") || text.hasSuffix("\n") {
+        } else if text.hasSuffix(" ") || text.hasSuffix("\n") {
             text += "\(token) "
         } else {
             text += " \(token) "
         }
+        updateSelectionToEnd()
     }
     #endif
-
-    private func focusInputEditor() {
-        #if os(iOS)
-        if !isIOSInputFocused {
-            isIOSInputFocused = true
-        }
-        #else
-        inputFocusRequestToken &+= 1
-        #endif
-    }
-
-    // MARK: - 图片预览行
 
     private var imagePreviewRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -530,93 +435,43 @@ struct ChatInputView: View {
         }
     }
 
-    // MARK: - 输入编辑器
+    private var inputEditorPanel: some View {
+        inputEditor
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: editorMinHeight, alignment: .topLeading)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+            .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
+            .clipShape(.rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
+            .contentShape(.rect)
+            .onTapGesture {
+                inputFocused = true
+            }
+    }
 
     private var inputEditor: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
-                Group {
-                    #if os(iOS)
-                    Text("输入消息...")
-                    #else
-                    Text("输入消息...  @ 引用文件  / 斜杠命令")
-                    #endif
-                }
-                    .foregroundColor(.secondary.opacity(0.6))
+                Text(placeholderText)
+                    .foregroundStyle(.secondary.opacity(0.6))
                     .font(.system(size: editorFontSize))
-                    .padding(.horizontal, editorHorizontalInset)
-                    .padding(.vertical, editorVerticalInset)
+                    .padding(.horizontal, editorHorizontalInset + 4)
+                    .padding(.vertical, editorVerticalInset + 3)
                     .allowsHitTesting(false)
             }
 
-            #if os(macOS)
-            ChatTextView(
-                text: $text,
-                contentHeight: $textContentHeight,
-                cursorRect: $cursorRect,
-                focusRequestToken: inputFocusRequestToken,
-                font: .systemFont(ofSize: editorFontSize),
-                onEnter: {
-                    imeDebugLog("ChatInputView.onEnter start text=\(text.debugDescription) canSend=\(canSend) isStreaming=\(isStreaming) autocompleteVisible=\(autocomplete?.isVisible == true)")
-                    // 弹出层可见时，Enter 选择当前项
-                    if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
-                        imeDebugLog("ChatInputView.onEnter select autocomplete item=\(item.value)")
-                        onSelectAutocomplete?(item)
-                        return
-                    }
-                    if canSend && !isStreaming {
-                        imeDebugLog("ChatInputView.onEnter call onSend")
-                        onSend()
-                    } else {
-                        imeDebugLog("ChatInputView.onEnter ignored canSend=\(canSend) isStreaming=\(isStreaming)")
-                    }
-                },
-                isEnterEnabled: { [canSend, isStreaming] in
-                    if let ac = autocomplete, ac.isVisible { return true }
-                    return canSend && !isStreaming
-                },
-                onArrowUp: { autocomplete?.isVisible == true ? { autocomplete?.moveUp(); return true }() : false },
-                onArrowDown: { autocomplete?.isVisible == true ? { autocomplete?.moveDown(); return true }() : false },
-                onEscape: {
-                    if let ac = autocomplete, ac.isVisible {
-                        ac.reset()
-                        return true
-                    }
-                    return false
-                },
-                onTab: {
-                    // Tab 接受代码补全建议
-                    if let ac = autocomplete, ac.mode == .codeCompletion, ac.completionSuggestion != nil {
-                        onAcceptCodeCompletion?()
-                        return true
-                    }
-                    guard let ac = autocomplete, ac.isVisible, let item = ac.selectedItem else { return false }
-                    onSelectAutocomplete?(item)
-                    return true
-                },
-                onPaste: {
-                    handleMacOSPasteImages()
-                },
-                onInputContextChange: onInputContextChange
-            )
-            .frame(height: min(max(textContentHeight, editorCollapsedMinHeight), editorExpandedMaxHeight))
-            #else
-            TextField("", text: $text, axis: .vertical)
+            TextEditor(text: $text, selection: $textSelection)
                 .font(.system(size: editorFontSize))
-                .lineLimit(1...6)
-                .focused($isIOSInputFocused)
-                .padding(.horizontal, editorHorizontalInset - 5)
+                .frame(minHeight: editorCollapsedMinHeight, maxHeight: editorExpandedMaxHeight)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, editorHorizontalInset)
                 .padding(.vertical, editorVerticalInset)
-                .onTapGesture {
-                    if !isIOSInputFocused {
-                        isIOSInputFocused = true
-                    }
+                .focused($inputFocused)
+                .onKeyPress(phases: [.down]) { keyPress in
+                    handleKeyPress(keyPress)
                 }
-            #endif
         }
     }
-
-    // MARK: - 工具栏
 
     private var toolbar: some View {
         HStack(spacing: 8) {
@@ -632,8 +487,6 @@ struct ChatInputView: View {
         }
     }
 
-    // MARK: - Agent 切换按钮
-
     private var agentButton: some View {
         Group {
             if isLoadingAgents {
@@ -641,15 +494,15 @@ struct ChatInputView: View {
             } else if !agents.isEmpty {
                 Menu {
                     ForEach(agents) { agent in
-                        Button(action: {
+                        Button {
                             selectedAgent = agent.name
-                            // 自动切换到 agent 默认模型
                             if let pid = agent.defaultProviderID,
                                let mid = agent.defaultModelID,
-                               !pid.isEmpty, !mid.isEmpty {
+                               !pid.isEmpty,
+                               !mid.isEmpty {
                                 selectedModel = AIModelSelection(providerID: pid, modelID: mid)
                             }
-                        }) {
+                        } label: {
                             HStack {
                                 Text(agent.name)
                                 if let desc = agent.description, !desc.isEmpty {
@@ -659,31 +512,13 @@ struct ChatInputView: View {
                         }
                     }
                 } label: {
-                    toolbarMenuLabel(
-                        title: selectedAgent ?? agents.first?.name ?? "Agent"
-                    )
+                    toolbarMenuLabel(title: selectedAgent ?? agents.first?.name ?? "Agent")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
-
-    private var inputEditorPanel: some View {
-        inputEditor
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: editorMinHeight, alignment: .topLeading)
-            .padding(.horizontal, 2)
-            .padding(.vertical, 2)
-            .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
-            .clipShape(.rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
-            .contentShape(.rect)
-            .onTapGesture {
-                focusInputEditor()
-            }
-    }
-
-    // MARK: - 模型选择按钮
 
     private var modelButton: some View {
         Group {
@@ -694,10 +529,8 @@ struct ChatInputView: View {
                     if availableModelProviders.count <= 1 {
                         if let onlyProvider = availableModelProviders.first {
                             ForEach(onlyProvider.models) { model in
-                                Button(action: {
+                                Button(model.name) {
                                     selectedModel = AIModelSelection(providerID: onlyProvider.id, modelID: model.id)
-                                }) {
-                                    Text(model.name)
                                 }
                             }
                         } else {
@@ -707,19 +540,15 @@ struct ChatInputView: View {
                         ForEach(availableModelProviders) { provider in
                             Menu(provider.name) {
                                 ForEach(provider.models) { model in
-                                    Button(action: {
+                                    Button(model.name) {
                                         selectedModel = AIModelSelection(providerID: provider.id, modelID: model.id)
-                                    }) {
-                                        Text(model.name)
                                     }
                                 }
                             }
                         }
                     }
                 } label: {
-                    toolbarMenuLabel(
-                        title: selectedModelDisplayName
-                    )
+                    toolbarMenuLabel(title: selectedModelDisplayName)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -740,9 +569,7 @@ struct ChatInputView: View {
                         }
                     }
                 } label: {
-                    toolbarMenuLabel(
-                        title: selectedThoughtLevelDisplayName
-                    )
+                    toolbarMenuLabel(title: selectedThoughtLevelDisplayName)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -750,16 +577,15 @@ struct ChatInputView: View {
         }
     }
 
-    /// 仅保留有模型的提供商，避免展示空菜单。
     private var availableModelProviders: [AIProviderInfo] {
         providers.filter { !$0.models.isEmpty }
     }
 
     private var selectedModelDisplayName: String {
         guard let sel = selectedModel else { return "模型" }
-        for p in providers {
-            if let m = p.models.first(where: { $0.id == sel.modelID && p.id == sel.providerID }) {
-                return m.name
+        for provider in providers {
+            if let model = provider.models.first(where: { $0.id == sel.modelID && provider.id == sel.providerID }) {
+                return model.name
             }
         }
         return sel.modelID
@@ -779,10 +605,7 @@ struct ChatInputView: View {
 
     private var selectedThoughtLevelDisplayName: String {
         let trimmed = selectedThoughtLevel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty {
-            return trimmed
-        }
-        return "思考"
+        return trimmed.isEmpty ? "思考" : trimmed
     }
 
     private var loadingPlaceholder: some View {
@@ -829,8 +652,6 @@ struct ChatInputView: View {
         }
     }
 
-    // MARK: - 图片上传按钮
-
     @ViewBuilder
     private var imageUploadButton: some View {
         #if os(iOS) && canImport(PhotosUI)
@@ -876,189 +697,69 @@ struct ChatInputView: View {
 
     private func pickImage() {
         #if os(macOS)
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP]
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.begin { response in
-            guard response == .OK else { return }
-            let urls = panel.urls
-            DispatchQueue.global(qos: .userInitiated).async {
-                let attachments = urls.compactMap(Self.makeImageAttachment)
-                DispatchQueue.main.async {
-                    appendImageAttachments(attachments)
-                }
-            }
-        }
+        showImageImporter = true
         #endif
     }
 
     #if os(macOS)
-    private enum ClipboardImageCandidate {
-        case fileURL(URL)
-        case rawData(Data)
+    private func handleImageImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        let attachments = urls.compactMap(Self.makeImageAttachment(from:))
+        appendImageAttachments(attachments)
     }
 
-    private func handleMacOSPasteImages() -> Bool {
-        let pasteboard = NSPasteboard.general
-        let candidates = collectClipboardImageCandidates(from: pasteboard, maxCount: maxImageAttachmentCount)
-        guard !candidates.isEmpty else {
-            return false
-        }
-
+    private func appendImageAttachments(_ attachments: [ImageAttachment]) {
+        guard !attachments.isEmpty else { return }
         let remaining = max(0, maxImageAttachmentCount - imageAttachments.count)
-        guard remaining > 0 else {
-            return true
-        }
+        guard remaining > 0 else { return }
+        imageAttachments.append(contentsOf: attachments.prefix(remaining))
+    }
 
-        let limitedCandidates = Array(candidates.prefix(remaining))
-        DispatchQueue.global(qos: .userInitiated).async {
-            let attachments = limitedCandidates.compactMap(Self.makeClipboardAttachment)
-            DispatchQueue.main.async {
-                appendImageAttachments(attachments)
+    private static func makeImageAttachment(from url: URL) -> ImageAttachment? {
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
+        let fileInfo = detectImageFileInfo(data: data)
+        guard fileInfo.mime.hasPrefix("image/") else { return nil }
+        return ImageAttachment(filename: url.lastPathComponent, data: data, mime: fileInfo.mime)
+    }
+
+    private func handleDroppedImageProviders(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url: URL?
+                    if let data = item as? Data {
+                        url = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let fileURL = item as? URL {
+                        url = fileURL
+                    } else {
+                        url = nil
+                    }
+                    guard let url, let attachment = Self.makeImageAttachment(from: url) else { return }
+                    DispatchQueue.main.async {
+                        self.appendImageAttachments([attachment])
+                    }
+                }
+                continue
+            }
+
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    let fileInfo = Self.detectImageFileInfo(data: data)
+                    guard fileInfo.mime.hasPrefix("image/") else { return }
+                    let suffix = UUID().uuidString.prefix(8)
+                    let filename = "dropped_\(suffix).\(fileInfo.ext)"
+                    let attachment = ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
+                    DispatchQueue.main.async {
+                        self.appendImageAttachments([attachment])
+                    }
+                }
             }
         }
         return true
     }
-
-    private func collectClipboardImageCandidates(from pasteboard: NSPasteboard, maxCount: Int) -> [ClipboardImageCandidate] {
-        var result: [ClipboardImageCandidate] = []
-
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [
-            .urlReadingFileURLsOnly: true
-        ]
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty {
-            for url in urls {
-                guard Self.isSupportedClipboardImageURL(url) else { continue }
-                result.append(.fileURL(url))
-                if result.count >= maxCount {
-                    return result
-                }
-            }
-        }
-
-        if let items = pasteboard.pasteboardItems, !items.isEmpty {
-            let preferredTypes: [NSPasteboard.PasteboardType] = [
-                .png,
-                .tiff,
-                NSPasteboard.PasteboardType("public.jpeg"),
-                NSPasteboard.PasteboardType("public.heic"),
-                NSPasteboard.PasteboardType("public.heif"),
-                NSPasteboard.PasteboardType("com.compuserve.gif"),
-                NSPasteboard.PasteboardType("org.webmproject.webp")
-            ]
-
-            for item in items {
-                var appended = false
-                for type in preferredTypes {
-                    if let data = item.data(forType: type), !data.isEmpty {
-                        result.append(.rawData(data))
-                        appended = true
-                        break
-                    }
-                }
-                if !appended,
-                   let fileURLString = item.string(forType: .fileURL),
-                   let url = URL(string: fileURLString),
-                   Self.isSupportedClipboardImageURL(url) {
-                    result.append(.fileURL(url))
-                }
-                if result.count >= maxCount {
-                    return result
-                }
-            }
-        }
-
-        if result.isEmpty,
-           let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] {
-            for image in images {
-                guard let tiffData = image.tiffRepresentation else { continue }
-                result.append(.rawData(tiffData))
-                if result.count >= maxCount {
-                    return result
-                }
-            }
-        }
-
-        return result
-    }
-
-    private static func isSupportedClipboardImageURL(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        let supported: Set<String> = [
-            "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp"
-        ]
-        return supported.contains(ext)
-    }
-
-    /// 处理从外部拖入的图像文件或图像数据提供者
-    private func handleDroppedImageProviders(_ providers: [NSItemProvider]) {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
-                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
-                    let url: URL?
-                    if let data = item as? Data {
-                        url = URL(dataRepresentation: data, relativeTo: nil)
-                    } else if let u = item as? URL {
-                        url = u
-                    } else {
-                        return
-                    }
-                    guard let url, let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return }
-                    let fileInfo = Self.detectImageFileInfo(data: data)
-                    guard fileInfo.mime.hasPrefix("image/") else { return }
-                    let attachment = ImageAttachment(
-                        filename: url.lastPathComponent,
-                        data: data,
-                        mime: fileInfo.mime
-                    )
-                    DispatchQueue.main.async {
-                        guard imageAttachments.count < maxImageAttachmentCount else { return }
-                        imageAttachments.append(attachment)
-                    }
-                }
-            } else if provider.hasItemConformingToTypeIdentifier("public.image") {
-                provider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
-                    guard let data, let jpegData = Self.encodeClipboardImageAsJPEG(data) else { return }
-                    let suffix = UUID().uuidString.prefix(8)
-                    let filename = "dropped_\(suffix).jpg"
-                    DispatchQueue.main.async {
-                        guard imageAttachments.count < maxImageAttachmentCount else { return }
-                        imageAttachments.append(ImageAttachment(
-                            filename: filename,
-                            data: jpegData,
-                            mime: "image/jpeg"
-                        ))
-                    }
-                }
-            }
-        }
-    }
-
-
-    private static func encodeClipboardImageAsJPEG(_ sourceData: Data) -> Data? {
-        if let bitmap = NSBitmapImageRep(data: sourceData),
-           let encoded = bitmap.representation(
-               using: .jpeg,
-               properties: [.compressionFactor: 0.85]
-            ) {
-            return encoded
-        }
-
-        guard let image = NSImage(data: sourceData),
-              let tiffData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let encoded = bitmap.representation(
-                  using: .jpeg,
-                  properties: [.compressionFactor: 0.85]
-              ) else {
-            return nil
-        }
-        return encoded
-    }
     #endif
 
-    /// 根据文件头推断图片 MIME 与扩展名
     private static func detectImageFileInfo(data: Data) -> (mime: String, ext: String) {
         let bytes = [UInt8](data.prefix(16))
         if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
@@ -1085,66 +786,21 @@ struct ChatInputView: View {
                 return ("image/heif", "heif")
             }
         }
+        if let source = CGImageSourceCreateWithData(data as CFData, nil),
+           let type = CGImageSourceGetType(source) as String? {
+            switch type {
+            case UTType.tiff.identifier:
+                return ("image/tiff", "tiff")
+            case UTType.bmp.identifier:
+                return ("image/bmp", "bmp")
+            default:
+                break
+            }
+        }
         return ("application/octet-stream", "bin")
     }
 
-    #if os(macOS)
-    private func appendImageAttachments(_ attachments: [ImageAttachment]) {
-        guard !attachments.isEmpty else { return }
-        let remaining = max(0, maxImageAttachmentCount - imageAttachments.count)
-        guard remaining > 0 else { return }
-        imageAttachments.append(contentsOf: attachments.prefix(remaining))
-    }
-
-    private static func makeImageAttachment(from url: URL) -> ImageAttachment? {
-        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
-        let ext = url.pathExtension.lowercased()
-        let mime: String
-        switch ext {
-        case "png": mime = "image/png"
-        case "jpg", "jpeg": mime = "image/jpeg"
-        case "gif": mime = "image/gif"
-        case "webp": mime = "image/webp"
-        case "heic": mime = "image/heic"
-        case "heif": mime = "image/heif"
-        case "tiff", "tif": mime = "image/tiff"
-        default: mime = "image/png"
-        }
-        return ImageAttachment(
-            filename: url.lastPathComponent,
-            data: data,
-            mime: mime
-        )
-    }
-
-    private static func makeClipboardAttachment(from candidate: ClipboardImageCandidate) -> ImageAttachment? {
-        let sourceData: Data
-        let filename: String
-
-        switch candidate {
-        case .fileURL(let url):
-            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
-            sourceData = data
-            filename = url.lastPathComponent
-        case .rawData(let data):
-            sourceData = data
-            let suffix = UUID().uuidString.prefix(8)
-            filename = "clipboard_\(suffix).jpg"
-        }
-
-        guard let jpegData = encodeClipboardImageAsJPEG(sourceData) else { return nil }
-        return ImageAttachment(
-            filename: filename.hasSuffix(".jpg") ? filename : "\(filename).jpg",
-            data: jpegData,
-            mime: "image/jpeg"
-        )
-    }
-    #endif
-
-    private func toolbarMenuLabel(
-        systemImage: String? = nil,
-        title: String
-    ) -> some View {
+    private func toolbarMenuLabel(systemImage: String? = nil, title: String) -> some View {
         HStack(spacing: 6) {
             if let systemImage {
                 Image(systemName: systemImage)
@@ -1179,241 +835,172 @@ struct ChatInputView: View {
             }
     }
 
-    private var dropdownPrimaryTextColor: Color {
-        .primary
-    }
+    private var dropdownPrimaryTextColor: Color { .primary }
+    private var dropdownSecondaryTextColor: Color { .secondary }
 
     private var normalizedContextRemainingPercent: Double? {
-        guard let contextRemainingPercent else { return nil }
-        guard contextRemainingPercent.isFinite else { return nil }
+        guard let contextRemainingPercent, contextRemainingPercent.isFinite else { return nil }
         return min(max(contextRemainingPercent, 0), 100)
     }
 
     private func contextRingColor(for percent: Double) -> Color {
         switch percent {
-        case ..<20:
-            return .red
-        case ..<50:
-            return .orange
-        default:
-            return .green
+        case ..<20: return .red
+        case ..<50: return .orange
+        default: return .green
         }
-    }
-
-    private var dropdownSecondaryTextColor: Color {
-        .secondary
     }
 
     private var outerHorizontalPadding: CGFloat {
         #if os(iOS)
-        return 10
+        10
         #else
-        return 12
+        12
         #endif
     }
 
     private var outerTopPadding: CGFloat {
         #if os(iOS)
-        return 6
+        6
         #else
-        return 8
+        8
         #endif
     }
 
     private var outerBottomPadding: CGFloat {
         #if os(iOS)
-        return 5
+        5
         #else
-        return 6
+        6
         #endif
     }
 
     private var cardHorizontalPadding: CGFloat {
         #if os(iOS)
-        return 12
+        12
         #else
-        return 14
+        14
         #endif
     }
 
     private var cardTopPadding: CGFloat {
         #if os(iOS)
-        return 12
+        12
         #else
-        return 14
+        14
         #endif
     }
 
     private var cardBottomPadding: CGFloat {
         #if os(iOS)
-        return 7
+        7
         #else
-        return 8
+        8
         #endif
     }
-
-    private var cardContentSpacing: CGFloat {
-        10
-    }
-
-    private var floatingCardCornerRadius: CGFloat {
-        #if os(iOS)
-        return 18
-        #else
-        return 18
-        #endif
-    }
-
-    private var floatingCardBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.secondarySystemBackground)
-        #else
-        return Color(NSColor.windowBackgroundColor).opacity(colorScheme == .dark ? 0.72 : 0.78)
-        #endif
-    }
-
-    private var floatingCardBorderColor: Color {
-        #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.12)
-        #else
-        return Color.white.opacity(colorScheme == .dark ? 0.2 : 0.42)
-        #endif
-    }
-
-    private var floatingCardPrimaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.34) : Color.black.opacity(0.16)
-    }
-
-    private var floatingCardSecondaryShadowColor: Color {
-        colorScheme == .dark ? Color.black.opacity(0.2) : Color.black.opacity(0.08)
-    }
-
-    private var toolbarChipBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.systemBackground).opacity(colorScheme == .dark ? 0.44 : 0.6)
-        #else
-        return Color(NSColor.windowBackgroundColor).opacity(colorScheme == .dark ? 0.42 : 0.54)
-        #endif
-    }
-
-    private var toolbarChipBorderColor: Color {
-        #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
-        #else
-        return Color.white.opacity(colorScheme == .dark ? 0.08 : 0.18)
-        #endif
-    }
-
-    private var editorSurfaceCornerRadius: CGFloat {
-        16
-    }
-
-    private var editorSurfaceBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.systemBackground).opacity(colorScheme == .dark ? 0.18 : 0.42)
-        #else
-        return Color(NSColor.textBackgroundColor).opacity(colorScheme == .dark ? 0.18 : 0.32)
-        #endif
-    }
-
+    private var cardContentSpacing: CGFloat { 10 }
+    private var floatingCardCornerRadius: CGFloat { 18 }
+    private var floatingCardBackgroundColor: Color { Color.secondary.opacity(colorScheme == .dark ? 0.18 : 0.08) }
+    private var floatingCardBorderColor: Color { colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.12) }
+    private var floatingCardPrimaryShadowColor: Color { colorScheme == .dark ? Color.black.opacity(0.34) : Color.black.opacity(0.16) }
+    private var floatingCardSecondaryShadowColor: Color { colorScheme == .dark ? Color.black.opacity(0.2) : Color.black.opacity(0.08) }
+    private var toolbarChipBackgroundColor: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04) }
+    private var toolbarChipBorderColor: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08) }
+    private var editorSurfaceCornerRadius: CGFloat { 16 }
+    private var editorSurfaceBackgroundColor: Color { colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.03) }
     private var editorMinHeight: CGFloat {
         #if os(iOS)
-        return 72
+        72
         #else
-        return 60
+        60
         #endif
     }
 
     private var editorCollapsedMinHeight: CGFloat {
         #if os(iOS)
-        return 36
+        36
         #else
-        return 34
+        34
         #endif
     }
 
     private var editorExpandedMaxHeight: CGFloat {
         #if os(iOS)
-        return 108
+        108
         #else
-        return 96
+        96
         #endif
     }
-
-    private var editorFontSize: CGFloat {
-        14
-    }
-
-    private var editorHorizontalInset: CGFloat {
-        6
-    }
-
-    private var editorVerticalInset: CGFloat {
-        6
-    }
-
+    private var editorFontSize: CGFloat { 14 }
+    private var editorHorizontalInset: CGFloat { 6 }
+    private var editorVerticalInset: CGFloat { 6 }
     private var chipFontSize: CGFloat {
         #if os(iOS)
-        return 13
+        13
         #else
-        return 12
+        12
         #endif
     }
 
     private var accessoryButtonDiameter: CGFloat {
         #if os(iOS)
-        return 30
+        30
         #else
-        return 28
+        28
         #endif
     }
 
     private var accessoryIconFontSize: CGFloat {
         #if os(iOS)
-        return 13
+        13
         #else
-        return 12
+        12
         #endif
     }
 
     private var selectorLabelMaxWidth: CGFloat {
         #if os(iOS)
-        return 128
+        128
         #else
-        return 160
+        160
         #endif
     }
 
     private var actionButtonDiameter: CGFloat {
         #if os(iOS)
-        return 32
+        32
         #else
-        return 28
+        28
         #endif
     }
 
     private var actionIconFontSize: CGFloat {
         #if os(iOS)
-        return 14
+        14
         #else
-        return 12
+        12
         #endif
     }
 
     private var contextRingSize: CGFloat {
         #if os(iOS)
-        return 16
+        16
         #else
-        return 14
+        14
         #endif
     }
 
-    // MARK: - 发送/停止按钮
+    private var placeholderText: String {
+        #if os(iOS)
+        "输入消息..."
+        #else
+        "输入消息...  @ 引用文件  / 斜杠命令"
+        #endif
+    }
 
     private var sendOrStopButton: some View {
         Group {
             if isSendingPending {
-                // 等待服务端确认，显示加载动画
                 ZStack {
                     Circle()
                         .fill(Color.gray.opacity(0.55))
@@ -1427,7 +1014,7 @@ struct ChatInputView: View {
                 Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: actionIconFontSize, weight: .bold))
-                        .foregroundColor(canStopStreaming ? .white : .white.opacity(0.72))
+                        .foregroundStyle(canStopStreaming ? .white : .white.opacity(0.72))
                         .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                         .background(canStopStreaming ? Color.red : Color.gray.opacity(0.55))
                         .clipShape(Circle())
@@ -1440,7 +1027,7 @@ struct ChatInputView: View {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: actionIconFontSize, weight: .bold))
-                        .foregroundColor(canSend ? .white : .white.opacity(0.72))
+                        .foregroundStyle(canSend ? .white : .white.opacity(0.72))
                         .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                         .background(canSend ? Color.accentColor : Color.gray.opacity(0.55))
                         .clipShape(Circle())
@@ -1452,6 +1039,58 @@ struct ChatInputView: View {
             }
         }
         .accessibilityIdentifier("tf.ai.input.action-button")
+    }
+
+    private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        switch keyPress.key {
+        case .return:
+            if keyPress.modifiers.contains(.shift) {
+                return .ignored
+            }
+            if let autocomplete, autocomplete.isVisible, let item = autocomplete.selectedItem {
+                onSelectAutocomplete?(item)
+                return .handled
+            }
+            guard canSend && !isStreaming else { return .handled }
+            onSend()
+            return .handled
+        case .tab:
+            if let autocomplete, autocomplete.mode == .codeCompletion, autocomplete.completionSuggestion != nil {
+                onAcceptCodeCompletion?()
+                return .handled
+            }
+            if let autocomplete, autocomplete.isVisible, let item = autocomplete.selectedItem {
+                onSelectAutocomplete?(item)
+                return .handled
+            }
+            return .ignored
+        case .upArrow:
+            if autocomplete?.isVisible == true {
+                autocomplete?.moveUp()
+                return .handled
+            }
+            return .ignored
+        case .downArrow:
+            if autocomplete?.isVisible == true {
+                autocomplete?.moveDown()
+                return .handled
+            }
+            return .ignored
+        case .escape:
+            if autocomplete?.isVisible == true {
+                autocomplete?.reset()
+                return .handled
+            }
+            return .ignored
+        default:
+            return .ignored
+        }
+    }
+
+    private func updateSelectionToEnd() {
+        let endIndex = text.endIndex
+        textSelection = TextSelection(insertionPoint: endIndex)
+        onInputContextChange?(text.utf16.count, false)
     }
 }
 
@@ -1545,9 +1184,8 @@ private struct ImageAttachmentChip: View {
 
     @ViewBuilder
     private var attachmentThumbnail: some View {
-        #if os(macOS)
-        if attachment.thumbnail.size.width > 0, attachment.thumbnail.size.height > 0 {
-            Image(nsImage: attachment.thumbnail)
+        if let image = attachment.previewImage {
+            Image(decorative: image, scale: 1)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 24, height: 24)
@@ -1555,17 +1193,6 @@ private struct ImageAttachmentChip: View {
         } else {
             fallbackThumbnail
         }
-        #else
-        if let image = UIImage(data: attachment.data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 24, height: 24)
-                .clipShape(Circle())
-        } else {
-            fallbackThumbnail
-        }
-        #endif
     }
 
     private var fallbackThumbnail: some View {
@@ -1588,19 +1215,11 @@ private struct ImageAttachmentChip: View {
     }
 
     private var chipBackgroundColor: Color {
-        #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035)
-        #else
-        return Color(NSColor.controlBackgroundColor).opacity(colorScheme == .dark ? 0.86 : 0.9)
-        #endif
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035)
     }
 
     private var chipBorderColor: Color {
-        #if os(iOS)
-        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
-        #else
-        return Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.38 : 0.28)
-        #endif
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
     }
 
     private var filenameMaxWidth: CGFloat {
@@ -1609,6 +1228,39 @@ private struct ImageAttachmentChip: View {
         #else
         return 108
         #endif
+    }
+}
+
+private extension TextSelection {
+    func utf16InsertionOffset(in text: String) -> Int {
+        switch indices {
+        case .selection(let range):
+            return text.utf16.distance(from: text.startIndex, to: range.lowerBound)
+        case .multiSelection:
+            return text.utf16.count
+        @unknown default:
+            return text.utf16.count
+        }
+    }
+}
+
+private extension ImageAttachment {
+    var previewImage: CGImage? {
+        let source = CGImageSourceCreateWithData(data as CFData, nil)
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 128
+        ]
+        if let source,
+           let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) {
+            return thumbnail
+        }
+        if let source {
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        return nil
     }
 }
 
@@ -1629,8 +1281,7 @@ private struct ImageAttachmentChip: View {
             selectedThoughtLevel: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
-            onInputContextChange: nil,
-            cursorRectInInput: .constant(.zero)
+            onInputContextChange: nil
         )
 
         ChatInputView(
@@ -1648,51 +1299,9 @@ private struct ImageAttachmentChip: View {
             selectedThoughtLevel: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
-            onInputContextChange: nil,
-            cursorRectInInput: .constant(.zero)
+            onInputContextChange: nil
         )
     }
     .padding()
     .frame(width: 500)
 }
-
-// MARK: - iOS 相机选择器
-
-#if os(iOS)
-struct CameraPickerView: UIViewControllerRepresentable {
-    var onImageCaptured: (UIImage) -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.cameraCaptureMode = .photo
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onImageCaptured: onImageCaptured) }
-
-    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        let onImageCaptured: (UIImage) -> Void
-
-        init(onImageCaptured: @escaping (UIImage) -> Void) {
-            self.onImageCaptured = onImageCaptured
-        }
-
-        func imagePickerController(
-            _ picker: UIImagePickerController,
-            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-        ) {
-            let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage
-            picker.dismiss(animated: true)
-            if let image { onImageCaptured(image) }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
-        }
-    }
-}
-#endif

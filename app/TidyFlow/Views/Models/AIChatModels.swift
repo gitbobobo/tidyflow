@@ -1,8 +1,5 @@
 import Foundation
 import AppIntents
-#if os(macOS)
-import AppKit
-#endif
 
 enum AIChatRole: String {
     case user
@@ -2051,9 +2048,6 @@ struct ImageAttachment: Identifiable {
     let id: String
     let filename: String
     let data: Data
-    #if os(macOS)
-    let thumbnail: NSImage
-    #endif
     let mime: String
 
     init(filename: String, data: Data, mime: String) {
@@ -2061,9 +2055,6 @@ struct ImageAttachment: Identifiable {
         self.filename = filename
         self.data = data
         self.mime = mime
-        #if os(macOS)
-        self.thumbnail = NSImage(data: data) ?? NSImage()
-        #endif
     }
 }
 

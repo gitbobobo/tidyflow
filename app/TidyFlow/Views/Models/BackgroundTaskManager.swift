@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import UserNotifications
-import AppKit
 
 /// 后台任务管理器，以工作空间为粒度管理任务队列
 class BackgroundTaskManager: ObservableObject {
@@ -159,7 +158,7 @@ class BackgroundTaskManager: ObservableObject {
         appState.toastManager.push(toast)
 
         // 应用不在前台时，发送系统通知提醒用户
-        if !NSApp.isActive {
+        if !appState.isSceneActive {
             sendSystemNotification(for: task)
         }
 
@@ -357,7 +356,7 @@ class BackgroundTaskManager: ObservableObject {
         appState.toastManager.push(toast)
 
         // 应用不在前台时，发送系统通知
-        if !NSApp.isActive {
+        if !appState.isSceneActive {
             sendSystemNotification(for: task)
         }
 

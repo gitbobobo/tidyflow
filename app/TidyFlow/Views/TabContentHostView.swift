@@ -1,5 +1,11 @@
 import SwiftUI
-import AppKit
+import ImageIO
+import CoreGraphics
+
+private let tfPanelBackgroundColor = Color.primary.opacity(0.03)
+private let tfPanelChromeColor = Color.secondary.opacity(0.10)
+private let tfTextSurfaceColor = Color.primary.opacity(0.06)
+private let tfSeparatorColor = Color.secondary.opacity(0.16)
 
 struct TabContentHostView: View {
     let appState: AppState
@@ -124,7 +130,7 @@ private struct BottomPanelVerticalTabList: View {
             .padding(4)
         }
         .frame(width: 172)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(tfPanelBackgroundColor)
         .accessibilityIdentifier("tf.mac.bottomPanel.instance-list.\(category.rawValue)")
     }
 }
@@ -144,10 +150,10 @@ private struct BottomPanelInstanceItemView: View {
 
     private var backgroundColor: Color {
         if isActive {
-            return Color(NSColor.controlBackgroundColor)
+            return tfPanelChromeColor
         }
         if isHovered {
-            return Color(NSColor.controlBackgroundColor).opacity(0.5)
+            return tfPanelChromeColor.opacity(0.5)
         }
         return .clear
     }
@@ -287,7 +293,7 @@ private struct BottomPanelCategoryEmptyView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(tfPanelBackgroundColor)
         .accessibilityIdentifier("tf.mac.bottomPanel.empty.\(category.rawValue)")
     }
 
@@ -340,7 +346,7 @@ struct NoActiveTabView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(tfPanelBackgroundColor)
     }
 }
 
@@ -437,7 +443,7 @@ struct TerminalStatusBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(tfPanelChromeColor)
     }
 }
 
@@ -585,7 +591,7 @@ struct NativeEditorContentView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(tfPanelBackgroundColor)
     }
 
     private var matchStatusText: String {
@@ -771,7 +777,7 @@ struct EditorStatusBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(tfPanelChromeColor)
     }
 }
 
@@ -944,142 +950,73 @@ struct DiffToolbar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(tfPanelChromeColor)
     }
 }
 
-struct NativeCodeEditorView: NSViewRepresentable {
+struct NativeCodeEditorView: View {
     @Binding var text: String
     @Binding var highlightedLine: Int?
     var onUndoRedoStateChange: ((Bool, Bool) -> Void)?
+    @State private var selection: TextSelection?
+    @State private var revealedLineBanner: Int?
+    @FocusState private var isFocused: Bool
 
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: NativeCodeEditorView
-        weak var textView: NSTextView?
-        var suppressChange = false
-        var highlightedRange: NSRange?
-
-        init(parent: NativeCodeEditorView) {
-            self.parent = parent
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard !suppressChange, let textView else { return }
-            parent.text = textView.string
-            notifyUndoRedoStateChange()
-        }
-
-        // MARK: - 撤销/重做
-
-        func performUndo() {
-            guard let textView, let undoManager = textView.undoManager, undoManager.canUndo else { return }
-            undoManager.undo()
-            parent.text = textView.string
-            notifyUndoRedoStateChange()
-        }
-
-        func performRedo() {
-            guard let textView, let undoManager = textView.undoManager, undoManager.canRedo else { return }
-            undoManager.redo()
-            parent.text = textView.string
-            notifyUndoRedoStateChange()
-        }
-
-        func notifyUndoRedoStateChange() {
-            guard let textView, let undoManager = textView.undoManager else {
-                parent.onUndoRedoStateChange?(false, false)
-                return
-            }
-            parent.onUndoRedoStateChange?(undoManager.canUndo, undoManager.canRedo)
-        }
-
-        func reveal(line: Int) {
-            guard line > 0, let textView else { return }
-            let ns = textView.string as NSString
-            var target = 0
-            var currentLine = 1
-            while target < ns.length && currentLine < line {
-                if ns.character(at: target) == 10 {
-                    currentLine += 1
-                }
-                target += 1
-            }
-            textView.setSelectedRange(NSRange(location: min(target, ns.length), length: 0))
-            textView.scrollRangeToVisible(NSRange(location: min(target, ns.length), length: 0))
-
-            if let storage = textView.textStorage {
-                if let old = highlightedRange {
-                    storage.removeAttribute(.backgroundColor, range: old)
-                }
-                let lineEnd = lineEndIndex(ns: ns, start: target)
-                let range = NSRange(location: target, length: max(0, lineEnd - target))
-                highlightedRange = range
-                storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.25), range: range)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                    guard let self, let storage = textView.textStorage, let old = self.highlightedRange else { return }
-                    storage.removeAttribute(.backgroundColor, range: old)
-                    self.highlightedRange = nil
+    var body: some View {
+        TextEditor(text: $text, selection: $selection)
+            .font(.system(size: 13, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .background(tfTextSurfaceColor)
+            .focused($isFocused)
+            .overlay(alignment: .topTrailing) {
+                if let revealedLineBanner {
+                    Text("已定位到第 \(revealedLineBanner) 行")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(10)
                 }
             }
-        }
-
-        private func lineEndIndex(ns: NSString, start: Int) -> Int {
-            var index = start
-            while index < ns.length {
-                if ns.character(at: index) == 10 { break }
-                index += 1
+            .onAppear {
+                isFocused = true
+                onUndoRedoStateChange?(false, false)
+                reveal(line: highlightedLine)
             }
-            return index
+            .onChange(of: text) { _, _ in
+                onUndoRedoStateChange?(false, false)
+            }
+            .onChange(of: highlightedLine) { _, line in
+                reveal(line: line)
+            }
+    }
+
+    private func reveal(line: Int?) {
+        guard let line, line > 0 else { return }
+        let targetIndex = indexForLine(line, in: text)
+        selection = TextSelection(insertionPoint: targetIndex)
+        revealedLineBanner = line
+        DispatchQueue.main.async {
+            highlightedLine = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if revealedLineBanner == line {
+                revealedLineBanner = nil
+            }
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-
-        let textView = NSTextView()
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticDataDetectionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.backgroundColor = NSColor.textBackgroundColor
-        textView.textColor = NSColor.textColor
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = true
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = false
-        textView.string = text
-        textView.delegate = context.coordinator
-        context.coordinator.textView = textView
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? NSTextView else { return }
-        context.coordinator.parent = self
-        if textView.string != text {
-            context.coordinator.suppressChange = true
-            textView.string = text
-            context.coordinator.suppressChange = false
-        }
-        if let line = highlightedLine {
-            context.coordinator.reveal(line: line)
-            DispatchQueue.main.async {
-                self.highlightedLine = nil
+    private func indexForLine(_ line: Int, in text: String) -> String.Index {
+        var currentLine = 1
+        var index = text.startIndex
+        while index < text.endIndex && currentLine < line {
+            if text[index] == "\n" {
+                currentLine += 1
             }
+            index = text.index(after: index)
         }
+        return index
     }
 }
 
@@ -1109,7 +1046,7 @@ struct DiffStatusBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(tfPanelChromeColor)
     }
 }
 
@@ -1135,7 +1072,7 @@ struct DiffPlaceholderView: View {
     let path: String
     var body: some View {
         ZStack {
-            Color(NSColor.textBackgroundColor)
+            tfTextSurfaceColor
             VStack {
                 Image(systemName: "arrow.left.arrow.right.circle")
                     .font(.largeTitle)
@@ -1164,9 +1101,9 @@ struct EvidenceTabView: View {
     @State private var selectedLogID: String?
     @State private var showDetailSheet: Bool = false
     @StateObject private var evidenceViewer = EvidenceViewerStore()
-    @State private var itemImage: NSImage?
+    @State private var itemImage: CGImage?
     @State private var actionMessage: String?
-    @State private var screenshotThumbnails: [String: NSImage] = [:]
+    @State private var screenshotThumbnails: [String: CGImage] = [:]
     @State private var screenshotThumbnailLoadingIDs: Set<String> = []
     @State private var screenshotThumbnailLoadFailedIDs: Set<String> = []
     @State private var screenshotThumbnailPendingIDs: [String] = []
@@ -1295,7 +1232,7 @@ struct EvidenceTabView: View {
             Spacer()
         }
         .padding(.horizontal, 6)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(tfPanelChromeColor)
     }
 
     @ViewBuilder
@@ -1385,7 +1322,7 @@ struct EvidenceTabView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack {
                     if let thumbnail = screenshotThumbnails[item.itemID] {
-                        Image(nsImage: thumbnail)
+                        Image(decorative: thumbnail, scale: 1)
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1440,7 +1377,7 @@ struct EvidenceTabView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                .fill(tfPanelChromeColor.opacity(0.5))
         )
     }
     
@@ -1635,7 +1572,8 @@ struct EvidenceTabView: View {
         screenshotThumbnailLoadingIDs.remove(itemID)
         screenshotThumbnailActiveID = nil
 
-        if let payload, let thumbnail = NSImage(data: Data(payload.content)) {
+        if let payload,
+           let thumbnail = decodeEvidenceImage(data: Data(payload.content), maxPixelSize: 640) {
             screenshotThumbnails[itemID] = thumbnail
         } else {
             screenshotThumbnailLoadFailedIDs.insert(itemID)
@@ -1654,18 +1592,20 @@ struct EvidenceTabView: View {
         appState.requestEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
             DispatchQueue.main.async {
                 if let prompt {
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString(prompt.prompt, forType: .string)
                     appState.setAIChatOneShotHint(
                         project: prompt.project,
                         workspace: prompt.workspace,
-                        message: "提示词已复制，请在聊天输入框粘贴后发送。"
+                        message: "已填充证据提示词，请确认后发送。"
+                    )
+                    appState.setAIChatOneShotPrefill(
+                        project: prompt.project,
+                        workspace: prompt.workspace,
+                        text: prompt.prompt
                     )
                     if let key = appState.currentGlobalWorkspaceKey {
                         appState.showWorkspaceSpecialPage(workspaceKey: key, page: .aiChat)
                     }
-                    actionMessage = "已复制提示词并切换到聊天页"
+                    actionMessage = "已填充提示词并切换到聊天页"
                 } else {
                     let error = errorMessage ?? "未知错误"
                     actionMessage = "重建提示词生成失败：\(error)"
@@ -1686,7 +1626,7 @@ struct EvidenceTabView: View {
                     guard currentID == item.itemID else { return }
                     if let payload {
                         let data = Data(payload.content)
-                        if let image = NSImage(data: data) {
+                        if let image = decodeEvidenceImage(data: data) {
                             itemImage = image
                             evidenceViewer.applyImageLoadResult(
                                 itemID: item.itemID,
@@ -1768,6 +1708,24 @@ struct EvidenceTabView: View {
             }
         }
     }
+
+    private func decodeEvidenceImage(data: Data, maxPixelSize: Int? = nil) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        if let maxPixelSize {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
+            if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                return thumbnail
+            }
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
 }
 
 // MARK: - 证据详情 Sheet
@@ -1777,7 +1735,7 @@ struct EvidenceDetailSheetView: View {
     let item: EvidenceItemInfoV2
     let selectedTab: EvidenceTabType
     @ObservedObject var viewer: EvidenceViewerStore
-    @Binding var itemImage: NSImage?
+    @Binding var itemImage: CGImage?
     var onLoadNextPage: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1839,7 +1797,7 @@ struct EvidenceDetailSheetView: View {
         } else if let itemImage, selectedTab == .screenshot {
             ZStack {
                 Color.black.opacity(0.05)
-                Image(nsImage: itemImage)
+                Image(decorative: itemImage, scale: 1)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -1873,7 +1831,7 @@ struct EvidenceDetailSheetView: View {
                 }
                 .padding(12)
             }
-            .background(Color(NSColor.textBackgroundColor))
+            .background(tfTextSurfaceColor)
             .cornerRadius(10)
             .padding(16)
         } else {
@@ -2275,7 +2233,7 @@ struct EvolutionTabView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(tfPanelChromeColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2717,7 +2675,7 @@ struct EvolutionTabView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isRunning ? Color(NSColor.controlBackgroundColor) : Color.gray.opacity(0.06))
+                .fill(isRunning ? tfPanelChromeColor : Color.gray.opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2973,11 +2931,11 @@ struct EvolutionSessionDrawerView: View {
             }
         }
         #if os(macOS)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(tfPanelBackgroundColor)
         .overlay(
             Rectangle()
                 .frame(width: 1)
-                .foregroundColor(Color(NSColor.separatorColor)),
+                .foregroundColor(tfSeparatorColor),
             alignment: .leading
         )
         #endif

@@ -82,8 +82,8 @@ extension AppState {
         }
     }
 
-    func handleSystemWake() {
-        TFLog.core.info("系统唤醒，延迟探活 WebSocket")
+    func handleSceneDidBecomeActive() {
+        TFLog.core.info("应用切回活跃态，延迟探活 WebSocket")
         // 延迟 1s 等待系统网络栈恢复
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.probeAndReconnectIfNeeded()

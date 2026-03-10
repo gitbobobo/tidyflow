@@ -563,6 +563,8 @@ class AppState: ObservableObject {
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
     /// 内部 one-shot hint，无视图直接观察
     var aiChatOneShotHintByWorkspace: [String: String] = [:]
+    /// 内部 one-shot 输入预填，无视图直接观察
+    var aiChatOneShotPrefillByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false
@@ -570,6 +572,7 @@ class AppState: ObservableObject {
     let subAgentViewerStore: AIChatStore = AIChatStore()
     /// 最近一次 AI 代码审查结果（用于 Git 面板触发后跳转）
     @Published var latestAICodeReviewResult: AICodeReviewResult?
+    @Published var isSceneActive: Bool = true
     /// 当前 AI 代码补全分片流（requestId -> 累计文本）
     @Published var codeCompletionChunks: [String: String] = [:]
     /// 最近完成的 AI 代码补全结果
@@ -765,8 +768,6 @@ class AppState: ObservableObject {
     var terminalAttachRequestedAtByTermId: [String: Date] = [:]
     var terminalDetachRequestedAtByTermId: [String: Date] = [:]
 
-    // 系统唤醒通知观察者
-    var wakeObserver: NSObjectProtocol?
     /// 自动重连内部计数（机制层）；连接语义状态通过 `connectionPhase` 对外暴露。
     var reconnectAttempt = 0
     /// 当前已配置到 WSClient 的 Core 连接目标，用于屏蔽重复 setup。
