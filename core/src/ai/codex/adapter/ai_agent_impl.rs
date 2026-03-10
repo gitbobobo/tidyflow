@@ -209,21 +209,12 @@ impl AiAgent for CodexAppServerAgent {
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            for (idx, item) in items.iter().enumerate() {
-                let item_id = item
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("{}-{}", turn_id, idx));
-                let pending_request_id = pending_request_id_by_item_id
-                    .get(&item_id)
-                    .map(|s| s.as_str());
-                if let Some(msg) =
-                    Self::map_turn_item_to_message(&turn_id, idx, item, pending_request_id)
-                {
-                    messages.push(msg);
-                }
-            }
+            messages.extend(Self::map_turn_items_to_messages(
+                session_id,
+                &turn_id,
+                &items,
+                &pending_request_id_by_item_id,
+            ));
         }
         if let Some(limit) = limit {
             let keep = limit as usize;

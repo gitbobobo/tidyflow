@@ -12,7 +12,7 @@ use crate::ai::{
     AiSessionConfigOptionChoice, AiSessionConfigValue, AiSessionSelectionHint, AiSlashCommand,
 };
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};

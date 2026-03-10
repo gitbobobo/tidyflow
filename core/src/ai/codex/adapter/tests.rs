@@ -1,5 +1,115 @@
 use super::CodexAppServerAgent;
 use crate::ai::{AiQuestionInfo, AiQuestionRequest};
+use std::collections::HashMap;
+
+#[test]
+fn map_turn_items_to_messages_groups_user_and_assistant_parts_by_turn() {
+    let items = vec![
+        serde_json::json!({
+            "id": "item-user-1",
+            "type": "userMessage",
+            "content": [
+                { "type": "text", "text": "请修复会话详情渲染。" }
+            ]
+        }),
+        serde_json::json!({
+            "id": "item-agent-1",
+            "type": "agentMessage",
+            "text": "先检查日志和原始结构。",
+            "phase": "commentary"
+        }),
+        serde_json::json!({
+            "id": "item-reason-1",
+            "type": "reasoning",
+            "summary": ["准备对照 thread/read 返回结构"],
+            "content": []
+        }),
+        serde_json::json!({
+            "id": "item-read-1",
+            "type": "commandExecution",
+            "status": "completed",
+            "command": "sed -n '1,120p' docs/PROTOCOL.md",
+            "commandActions": [
+                { "type": "read", "path": "docs/PROTOCOL.md", "command": "sed -n '1,120p' docs/PROTOCOL.md" }
+            ],
+            "aggregatedOutput": "protocol"
+        }),
+    ];
+
+    let messages = CodexAppServerAgent::map_turn_items_to_messages(
+        "session-1",
+        "turn-1",
+        &items,
+        &HashMap::new(),
+    );
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].id, "codex-user-session-1-turn-1");
+    assert_eq!(messages[0].role, "user");
+    assert_eq!(messages[0].parts.len(), 1);
+    assert_eq!(messages[0].parts[0].text.as_deref(), Some("请修复会话详情渲染。"));
+
+    assert_eq!(messages[1].id, "codex-assistant-session-1-turn-1");
+    assert_eq!(messages[1].role, "assistant");
+    assert_eq!(messages[1].parts.len(), 3);
+    assert_eq!(messages[1].parts[0].part_type, "text");
+    assert_eq!(messages[1].parts[1].part_type, "reasoning");
+    assert_eq!(messages[1].parts[2].part_type, "tool");
+}
+
+#[test]
+fn map_turn_items_to_messages_rewrites_question_tool_call_id_to_pending_request_id() {
+    let items = vec![
+        serde_json::json!({
+            "id": "item-user-1",
+            "type": "userMessage",
+            "content": [
+                { "type": "text", "text": "继续执行" }
+            ]
+        }),
+        serde_json::json!({
+            "id": "item-question-1",
+            "type": "question",
+            "status": "completed",
+            "questions": [
+                {
+                    "id": "confirm",
+                    "header": "确认",
+                    "question": "继续吗？",
+                    "options": [
+                        { "label": "继续", "description": "继续当前流程" }
+                    ],
+                    "multiple": false,
+                    "custom": false
+                }
+            ]
+        }),
+    ];
+    let pending_request_id_by_item_id = HashMap::from([(
+        "item-question-1".to_string(),
+        "pending-request-1".to_string(),
+    )]);
+
+    let messages = CodexAppServerAgent::map_turn_items_to_messages(
+        "session-1",
+        "turn-1",
+        &items,
+        &pending_request_id_by_item_id,
+    );
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].parts.len(), 1);
+    let part = &messages[1].parts[0];
+    assert_eq!(part.part_type, "tool");
+    assert_eq!(part.tool_call_id.as_deref(), Some("pending-request-1"));
+    assert_eq!(
+        part.tool_part_metadata
+            .as_ref()
+            .and_then(|value| value.get("request_id"))
+            .and_then(|value| value.as_str()),
+        Some("pending-request-1")
+    );
+}
 
 #[test]
 fn build_question_from_request_supports_snake_case_user_input() {

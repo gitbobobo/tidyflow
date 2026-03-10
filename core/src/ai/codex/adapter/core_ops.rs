@@ -208,13 +208,26 @@ impl CodexAppServerAgent {
         stream::extract_generic_text_delta(method, params)
     }
 
-    pub(super) fn map_turn_item_to_message(
+    pub(super) fn user_message_id(session_id: &str, turn_id: &str) -> String {
+        stream::user_message_id(session_id, turn_id)
+    }
+
+    pub(super) fn assistant_message_id(session_id: &str, turn_id: &str) -> String {
+        stream::assistant_message_id(session_id, turn_id)
+    }
+
+    pub(super) fn map_turn_items_to_messages(
+        session_id: &str,
         turn_id: &str,
-        index: usize,
-        item: &Value,
-        pending_request_id: Option<&str>,
-    ) -> Option<AiMessage> {
-        stream::map_turn_item_to_message(turn_id, index, item, pending_request_id)
+        items: &[Value],
+        pending_request_id_by_item_id: &HashMap<String, String>,
+    ) -> Vec<AiMessage> {
+        stream::map_turn_items_to_messages(
+            session_id,
+            turn_id,
+            items,
+            pending_request_id_by_item_id,
+        )
     }
 
     pub(super) fn normalize_filename(name: &str) -> String {
@@ -254,15 +267,20 @@ impl CodexAppServerAgent {
         let active_turns = self.active_turns.clone();
         let context_usage_by_session = self.context_usage_by_session.clone();
         let client = self.client.clone();
-        let user_message_id = format!("codex-user-{}-{}", session_id, turn_id);
+        let user_message_id = Self::user_message_id(&session_id, &turn_id);
+        let assistant_message_id = Self::assistant_message_id(&session_id, &turn_id);
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
             role: "user".to_string(),
             selection_hint: None,
         }));
+        let _ = tx.send(Ok(AiEvent::PartUpdated {
+            message_id: user_message_id.clone(),
+            part: AiPart::new_text(format!("{}-text", user_message_id), original_text.clone()),
+        }));
 
         tokio::spawn(async move {
-            let mut known_assistant_messages = HashSet::<String>::new();
+            let mut assistant_announced = false;
             loop {
                 tokio::select! {
                     recv = notifications.recv() => {
@@ -294,17 +312,17 @@ impl CodexAppServerAgent {
                                         if item_id.is_empty() {
                                             continue;
                                         }
-                                        if !known_assistant_messages.contains(item_id) {
-                                            known_assistant_messages.insert(item_id.to_string());
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 part_id: item_id.to_string(),
                                                 part_type: "text".to_string(),
                                                 field: "text".to_string(),
@@ -317,17 +335,17 @@ impl CodexAppServerAgent {
                                         if item_id.is_empty() {
                                             continue;
                                         }
-                                        if !known_assistant_messages.contains(item_id) {
-                                            known_assistant_messages.insert(item_id.to_string());
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 part_id: item_id.to_string(),
                                                 part_type: "reasoning".to_string(),
                                                 field: "text".to_string(),
@@ -346,16 +364,16 @@ impl CodexAppServerAgent {
                                             ) else {
                                                 continue;
                                             };
-                                        if !known_assistant_messages.contains(&item_id) {
-                                            known_assistant_messages.insert(item_id.clone());
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: item_id.clone(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartDelta {
-                                            message_id: item_id.clone(),
+                                            message_id: assistant_message_id.clone(),
                                             part_id: item_id,
                                             part_type: "tool".to_string(),
                                             field,
@@ -371,17 +389,17 @@ impl CodexAppServerAgent {
                                         if item_id.is_empty() {
                                             continue;
                                         }
-                                        if !known_assistant_messages.contains(item_id) {
-                                            known_assistant_messages.insert(item_id.to_string());
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                message_id: item_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 part_id: item_id.to_string(),
                                                 part_type: "text".to_string(),
                                                 field: "text".to_string(),
@@ -390,23 +408,17 @@ impl CodexAppServerAgent {
                                         }
                                     }
                                     "turn/plan/updated" => {
-                                        let plan_turn_id = params
-                                            .get("turnId")
-                                            .or_else(|| params.get("turn_id"))
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or(turn_id.as_str());
-                                        let message_id = format!("codex-plan-{}", plan_turn_id);
-                                        let part_id = format!("{}-summary", message_id);
-                                        if !known_assistant_messages.contains(&message_id) {
-                                            known_assistant_messages.insert(message_id.clone());
+                                        let part_id = format!("{}-plan-summary", assistant_message_id);
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: message_id.clone(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                            message_id,
+                                            message_id: assistant_message_id.clone(),
                                             part: AiPart::new_text(
                                                 part_id,
                                                 CodexAppServerAgent::render_turn_plan_update(&params),
@@ -425,13 +437,10 @@ impl CodexAppServerAgent {
                                         if item_type == "usermessage" {
                                             continue;
                                         }
-                                        let Some(message_id) = item.get("id").and_then(|v| v.as_str()) else {
-                                            continue;
-                                        };
-                                        if !known_assistant_messages.contains(message_id) {
-                                            known_assistant_messages.insert(message_id.to_string());
+                                        if !assistant_announced {
+                                            assistant_announced = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                message_id: message_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
                                                 selection_hint: None,
                                             }));
@@ -443,7 +452,7 @@ impl CodexAppServerAgent {
                                         };
                                         if let Some(part) = CodexAppServerAgent::map_item_to_part(item, status) {
                                             let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                                message_id: message_id.to_string(),
+                                                message_id: assistant_message_id.clone(),
                                                 part,
                                             }));
                                         }
@@ -524,22 +533,22 @@ impl CodexAppServerAgent {
                                         break;
                                     }
                                     _ => {
-                                        if let Some((message_id, part_id, part_type, delta)) =
+                                        if let Some((_message_id, part_id, part_type, delta)) =
                                             CodexAppServerAgent::extract_generic_text_delta(
                                                 event.method.as_str(),
                                                 &params,
                                             )
                                         {
-                                            if !known_assistant_messages.contains(&message_id) {
-                                                known_assistant_messages.insert(message_id.clone());
+                                            if !assistant_announced {
+                                                assistant_announced = true;
                                                 let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                    message_id: message_id.clone(),
+                                                    message_id: assistant_message_id.clone(),
                                                     role: "assistant".to_string(),
                                                     selection_hint: None,
                                                 }));
                                             }
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                message_id,
+                                                message_id: assistant_message_id.clone(),
                                                 part_id,
                                                 part_type,
                                                 field: "text".to_string(),

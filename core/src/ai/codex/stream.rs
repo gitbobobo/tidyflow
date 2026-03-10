@@ -1,5 +1,6 @@
 use crate::ai::codex::tool_mapping::{map_item_to_part, parse_user_text};
 use crate::ai::{AiMessage, AiPart};
+use std::collections::HashMap;
 use serde_json::Value;
 
 fn canonical_method(method: &str) -> String {
@@ -192,36 +193,36 @@ pub(super) fn extract_generic_text_delta(
     Some((item_id.clone(), item_id, part_type, delta))
 }
 
-pub(super) fn map_turn_item_to_message(
+pub(super) fn user_message_id(session_id: &str, turn_id: &str) -> String {
+    format!("codex-user-{}-{}", session_id, turn_id)
+}
+
+pub(super) fn assistant_message_id(session_id: &str, turn_id: &str) -> String {
+    format!("codex-assistant-{}-{}", session_id, turn_id)
+}
+
+fn turn_item_id(turn_id: &str, index: usize, item: &Value) -> String {
+    item.get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{}-{}", turn_id, index))
+}
+
+fn map_turn_item_to_part(
     turn_id: &str,
     index: usize,
     item: &Value,
     pending_request_id: Option<&str>,
-) -> Option<AiMessage> {
+) -> Option<AiPart> {
     let item_type = item
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
-    let item_id = item
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("{}-{}", turn_id, index));
     if item_type == "usermessage" {
-        return Some(AiMessage {
-            id: item_id.clone(),
-            role: "user".to_string(),
-            created_at: None,
-            agent: None,
-            model_provider_id: None,
-            model_id: None,
-            parts: vec![AiPart::new_text(
-                format!("{}-text", item_id),
-                parse_user_text(item),
-            )],
-        });
+        return None;
     }
+    let item_id = turn_item_id(turn_id, index, item);
     map_item_to_part(item, "completed").map(|mut part| {
         if part.part_type == "tool"
             && part
@@ -248,14 +249,65 @@ pub(super) fn map_turn_item_to_message(
             }
         }
 
-        AiMessage {
-            id: item_id,
+        part
+    })
+}
+
+pub(super) fn map_turn_items_to_messages(
+    session_id: &str,
+    turn_id: &str,
+    items: &[Value],
+    pending_request_id_by_item_id: &HashMap<String, String>,
+) -> Vec<AiMessage> {
+    let mut user_parts: Vec<AiPart> = Vec::new();
+    let mut assistant_parts: Vec<AiPart> = Vec::new();
+
+    for (idx, item) in items.iter().enumerate() {
+        let item_type = item
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let item_id = turn_item_id(turn_id, idx, item);
+
+        if item_type == "usermessage" {
+            let text = parse_user_text(item);
+            if !text.trim().is_empty() {
+                user_parts.push(AiPart::new_text(format!("{}-text", item_id), text));
+            }
+            continue;
+        }
+
+        let pending_request_id = pending_request_id_by_item_id
+            .get(&item_id)
+            .map(|s| s.as_str());
+        if let Some(part) = map_turn_item_to_part(turn_id, idx, item, pending_request_id) {
+            assistant_parts.push(part);
+        }
+    }
+
+    let mut messages = Vec::with_capacity(2);
+    if !user_parts.is_empty() {
+        messages.push(AiMessage {
+            id: user_message_id(session_id, turn_id),
+            role: "user".to_string(),
+            created_at: None,
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: user_parts,
+        });
+    }
+    if !assistant_parts.is_empty() {
+        messages.push(AiMessage {
+            id: assistant_message_id(session_id, turn_id),
             role: "assistant".to_string(),
             created_at: None,
             agent: None,
             model_provider_id: None,
             model_id: None,
-            parts: vec![part],
-        }
-    })
+            parts: assistant_parts,
+        });
+    }
+    messages
 }
