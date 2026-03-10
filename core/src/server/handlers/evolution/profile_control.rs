@@ -1,5 +1,8 @@
 use tracing::info;
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use crate::server::context::HandlerContext;
 
 use super::profile::{
@@ -8,6 +11,15 @@ use super::profile::{
 };
 use super::utils::workspace_key;
 use super::EvolutionManager;
+
+/// 全局学习状态存储（按 profile_key 隔离）
+static LEARNING_STORE: OnceLock<Mutex<HashMap<String, super::profile::ProfileLearningState>>> =
+    OnceLock::new();
+
+pub(super) fn learning_store(
+) -> &'static Mutex<HashMap<String, super::profile::ProfileLearningState>> {
+    LEARNING_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 impl EvolutionManager {
     pub(super) async fn update_agent_profile(
@@ -118,6 +130,83 @@ impl EvolutionManager {
             direction_model
         );
 
+        // 自学习回退检查：如果连续失败超过阈值，回退到安全基线
+        if let Some(baseline) = self.check_and_rollback(project, workspace) {
+            info!(
+                "profile learning: 使用安全基线 {}/{}, stages={}",
+                project,
+                workspace,
+                baseline.len()
+            );
+            return baseline;
+        }
+
         profiles
+    }
+
+    /// 记录阶段执行结果到学习状态
+    pub(super) fn record_learning_result(
+        &self,
+        project: &str,
+        workspace: &str,
+        stage: &str,
+        success: bool,
+        duration_ms: Option<u64>,
+        tool_calls: u32,
+    ) {
+        let key = profile_key(project, workspace);
+        if let Ok(mut store) = learning_store().lock() {
+            let state = store.entry(key).or_default();
+            state.record_stage_result(stage, success, duration_ms, tool_calls);
+            tracing::debug!(
+                "profile learning: recorded {}/{} stage={} success={} duration={:?}",
+                project,
+                workspace,
+                stage,
+                success,
+                duration_ms
+            );
+        }
+    }
+
+    /// 记录安全基线（门禁通过时调用）
+    pub(super) fn record_safe_baseline(
+        &self,
+        project: &str,
+        workspace: &str,
+        profiles: Vec<crate::server::protocol::EvolutionStageProfileInfo>,
+    ) {
+        let key = profile_key(project, workspace);
+        if let Ok(mut store) = learning_store().lock() {
+            let state = store.entry(key).or_default();
+            state.record_safe_baseline(profiles);
+            info!(
+                "profile learning: 记录安全基线 {}/{}",
+                project, workspace
+            );
+        }
+    }
+
+    /// 检查是否应回退并返回安全基线
+    pub(super) fn check_and_rollback(
+        &self,
+        project: &str,
+        workspace: &str,
+    ) -> Option<Vec<crate::server::protocol::EvolutionStageProfileInfo>> {
+        let key = profile_key(project, workspace);
+        if let Ok(mut store) = learning_store().lock() {
+            if let Some(state) = store.get_mut(&key) {
+                if state.should_rollback() {
+                    tracing::warn!(
+                        "profile learning: 触发回退 {}/{}，回退次数: {}",
+                        project,
+                        workspace,
+                        state.rollback_count + 1
+                    );
+                    return state.rollback_to_baseline();
+                }
+            }
+        }
+        None
     }
 }
