@@ -114,7 +114,7 @@ struct EvolutionPipelineView: View {
                 noWorkspaceView
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         // 上方内容区：始终展示当前循环运行态
                         cycleDetailArea
 
@@ -352,36 +352,38 @@ struct EvolutionPipelineView: View {
 
         return Group {
             if !runningAgents.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
-                        Spacer()
-                        // 总耗时（累加各代理耗时）
-                        if let total = totalDurationText {
-                            HStack(spacing: 3) {
-                                Image(systemName: "timer")
-                                    .font(.system(size: 9))
-                                Text(total)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                TimelineView(.periodic(from: .now, by: Self.runningSectionRefreshInterval)) { context in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
+                            Spacer()
+                            // 总耗时（累加各代理耗时）
+                            if let total = totalDurationText {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "timer")
+                                        .font(.system(size: 9))
+                                    Text(total)
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                }
+                                .foregroundColor(.secondary)
                             }
-                            .foregroundColor(.secondary)
+                        }
+
+                        ForEach(runningAgents, id: \.stage) { agent in
+                            runningAgentCard(agent, now: context.date)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .top).combined(with: .opacity),
+                                    removal: .move(edge: .bottom).combined(with: .opacity)
+                                ))
                         }
                     }
-
-                    ForEach(runningAgents, id: \.stage) { agent in
-                        runningAgentCard(agent)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .move(edge: .bottom).combined(with: .opacity)
-                            ))
-                    }
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgents.map(\.stage))
                 }
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgents.map(\.stage))
             }
         }
     }
 
-    private func runningAgentCard(_ agent: EvolutionAgentInfoV2) -> some View {
+    private func runningAgentCard(_ agent: EvolutionAgentInfoV2, now: Date) -> some View {
         let startedAtDate = executionStartDate(agent.startedAt)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -416,10 +418,8 @@ struct EvolutionPipelineView: View {
                     Image(systemName: "clock")
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text(formatElapsedTimeFrom(startedAtDate))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    }
+                    Text(formatElapsedTimeFrom(startedAtDate, now: now))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                 }
 
                 Spacer()
@@ -439,7 +439,7 @@ struct EvolutionPipelineView: View {
             .foregroundColor(.secondary)
 
             // 进度条动画
-            PipelineProgressBar()
+            PipelineProgressBar(phase: progressBarPhase(at: now))
         }
         .padding(12)
         .background(
@@ -642,7 +642,7 @@ struct EvolutionPipelineView: View {
     // MARK: - 下方循环列表（点击弹出详情）
 
     private var cycleListArea: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        LazyVStack(alignment: .leading, spacing: 6) {
             // 本轮循环（有运行数据时才显示）
             if hasCurrentCycleRow {
                 cycleListRow(
@@ -677,9 +677,7 @@ struct EvolutionPipelineView: View {
                     color: .gray,
                     title: cycle.displayTitle,
                     startTimeText: cycleStartTimeText(cycle.startDate),
-                    stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
-                        PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
-                    } : cycle.stageEntries,
+                    stageEntries: cycleStageEntries(for: cycle),
                     isHistory: true,
                     onDocumentTap: { openPlanDocumentSheet(for: cycle.id) }
                 ) {
@@ -754,6 +752,20 @@ struct EvolutionPipelineView: View {
             return untitledCycleTitle
         }
         return trimmed
+    }
+
+    private func cycleStageEntries(for cycle: PipelineCycleHistory) -> [PipelineCycleStageEntry] {
+        if !cycle.stageEntries.isEmpty {
+            return cycle.stageEntries
+        }
+        return cycle.stages.enumerated().map { index, stage in
+            PipelineCycleStageEntry(
+                id: "\(cycle.id)::stage::\(index)::\(stage)",
+                stage: stage,
+                agent: "",
+                durationSeconds: 0
+            )
+        }
     }
 
     /// 循环列表行
@@ -1124,7 +1136,7 @@ struct EvolutionPipelineView: View {
                             .foregroundColor(.secondary)
                             .padding(.vertical, 4)
                     } else {
-                        VStack(alignment: .leading, spacing: 8) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
                             ForEach(payload.timelineEntries) { entry in
                                 cycleTimelineRow(entry, payload: payload)
                             }
@@ -1357,7 +1369,7 @@ struct EvolutionPipelineView: View {
             // 彩色分段线条
             HStack(spacing: 2) {
                 let entries = cycle.stageEntries.isEmpty
-                    ? cycle.stages.map { PipelineCycleStageEntry(id: UUID().uuidString, stage: $0, agent: "", durationSeconds: 0) }
+                    ? cycleStageEntries(for: cycle)
                     : cycle.stageEntries
                 ForEach(entries) { entry in
                     RoundedRectangle(cornerRadius: 2)
@@ -1498,9 +1510,7 @@ struct EvolutionPipelineView: View {
 
             // 彩色分段线条
             HStack(spacing: 2) {
-                let entries = cycle.stageEntries.isEmpty
-                    ? cycle.stages.map { PipelineCycleStageEntry(id: UUID().uuidString, stage: $0, agent: "", durationSeconds: 0) }
-                    : cycle.stageEntries
+                let entries = cycleStageEntries(for: cycle)
                 ForEach(entries) { entry in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
@@ -1644,32 +1654,31 @@ struct EvolutionPipelineView: View {
     // MARK: - 进度条
 
     struct PipelineProgressBar: View {
-        @State private var offset: CGFloat = -1
+        let phase: Int
+        private let segmentCount = 8
 
         var body: some View {
-            GeometryReader { geo in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.orange.opacity(0.15))
-                    .frame(height: 3)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(
-                                LinearGradient(
-                                    colors: [.orange.opacity(0), .orange, .orange.opacity(0)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geo.size.width * 0.3, height: 3)
-                            .offset(x: offset * geo.size.width * 0.7)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 2))
+            HStack(spacing: 3) {
+                ForEach(0..<segmentCount, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.orange.opacity(segmentOpacity(for: index)))
+                        .frame(maxWidth: .infinity, minHeight: 3, maxHeight: 3)
+                }
             }
             .frame(height: 3)
-            .onAppear {
-                withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                    offset = 1
-                }
+        }
+
+        private func segmentOpacity(for index: Int) -> Double {
+            let forwardDistance = (index - phase + segmentCount) % segmentCount
+            switch forwardDistance {
+            case 0:
+                return 0.95
+            case 1:
+                return 0.72
+            case 2:
+                return 0.46
+            default:
+                return 0.16
             }
         }
     }
@@ -1683,11 +1692,21 @@ struct EvolutionPipelineView: View {
 
     /// 基于已解析时间计算实时耗时，避免在 TimelineView 中重复做日期解析。
     private func formatElapsedTimeFrom(_ startedAtDate: Date?) -> String {
+        formatElapsedTimeFrom(startedAtDate, now: Date())
+    }
+
+    /// 基于统一时钟计算实时耗时，避免多个卡片各自维护刷新源。
+    private func formatElapsedTimeFrom(_ startedAtDate: Date?, now: Date) -> String {
         guard let startedAtDate else {
             return "0s"
         }
-        let elapsed = Date().timeIntervalSince(startedAtDate)
+        let elapsed = now.timeIntervalSince(startedAtDate)
         return Self.formatDuration(elapsed)
+    }
+
+    private func progressBarPhase(at now: Date) -> Int {
+        let tick = Int(now.timeIntervalSinceReferenceDate / Self.progressBarPhaseDuration)
+        return ((tick % Self.progressBarSegmentCount) + Self.progressBarSegmentCount) % Self.progressBarSegmentCount
     }
 
     /// 将毫秒数格式化为可读时长
@@ -1735,6 +1754,10 @@ struct EvolutionPipelineView: View {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    private static let runningSectionRefreshInterval: TimeInterval = 0.5
+    private static let progressBarPhaseDuration: TimeInterval = 0.5
+    private static let progressBarSegmentCount: Int = 8
 
     /// 计算当前轮次中各代理最近一次会话的累计耗时。
     /// 同一 (stage, agent) 组合在重试后会产生多条执行记录，仅取最新一条，

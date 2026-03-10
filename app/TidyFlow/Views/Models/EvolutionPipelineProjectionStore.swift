@@ -245,7 +245,10 @@ struct EvolutionPipelineProjection: Equatable {
 enum EvolutionPipelineProjectionSemantics {
 #if os(macOS)
     @MainActor
-    static func make(appState: AppState) -> EvolutionPipelineProjection {
+    static func make(
+        appState: AppState,
+        mappedCycleHistories: [PipelineCycleHistory]? = nil
+    ) -> EvolutionPipelineProjection {
         let project = appState.selectedProjectName
         let workspace = appState.selectedWorkspaceKey
         let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace ?? "")
@@ -271,7 +274,7 @@ enum EvolutionPipelineProjectionSemantics {
                 workspace: workspace,
                 normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
             ),
-            cycleHistories: workspaceKey.map { key in
+            cycleHistories: mappedCycleHistories ?? workspaceKey.map { key in
                 (appState.evolutionCycleHistories[key] ?? []).map(mapCycleHistory)
             } ?? []
         )
@@ -283,7 +286,8 @@ enum EvolutionPipelineProjectionSemantics {
     static func make(
         appState: MobileAppState,
         project: String,
-        workspace: String
+        workspace: String,
+        mappedCycleHistories: [PipelineCycleHistory]? = nil
     ) -> EvolutionPipelineProjection {
         let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace)
         let workspaceKey = appState.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
@@ -310,13 +314,14 @@ enum EvolutionPipelineProjectionSemantics {
                 workspace: workspace,
                 normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
             ),
-            cycleHistories: (appState.evolutionCycleHistories[workspaceKey] ?? []).map(mapCycleHistory)
+            cycleHistories: mappedCycleHistories
+                ?? (appState.evolutionCycleHistories[workspaceKey] ?? []).map(mapCycleHistory)
         )
     }
 #endif
 
     @MainActor
-    private static func activeBlockingRequest(
+    static func activeBlockingRequest(
         blocking: EvolutionBlockingRequiredV2?,
         project: String,
         workspace: String?,
@@ -328,7 +333,7 @@ enum EvolutionPipelineProjectionSemantics {
         return EvolutionBlockingRequestProjection(blocking)
     }
 
-    private static func mapCycleHistory(_ cycle: EvolutionCycleHistoryItemV2) -> PipelineCycleHistory {
+    static func mapCycleHistory(_ cycle: EvolutionCycleHistoryItemV2) -> PipelineCycleHistory {
         let startDate = rfc3339Date(from: cycle.createdAt) ?? Date()
         let executionEntries = cycle.executions
             .filter { isExecutionCompletedStatus($0.status) }
@@ -433,21 +438,44 @@ enum EvolutionPipelineProjectionSemantics {
 final class EvolutionPipelineProjectionStore {
     private(set) var projection: EvolutionPipelineProjection = .empty
 
+    @ObservationIgnored
+    private var lastSourceSnapshot: SourceSnapshot?
+    @ObservationIgnored
+    private var cycleHistoryCache = CycleHistoryCache()
+
+    private struct SourceSnapshot: Equatable {
+        let project: String
+        let workspace: String?
+        let scheduler: EvolutionSchedulerInfoV2
+        let control: EvolutionControlProjection
+        let currentItemSignature: Int?
+        let blockingSignature: Int
+        let cycleHistorySignature: Int
+    }
+
+    private struct CycleHistoryCache {
+        var workspaceKey: String = ""
+        var signature: Int = 0
+        var mapped: [PipelineCycleHistory] = []
+    }
+
     #if os(macOS)
     @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
     @ObservationIgnored private weak var boundAppState: AppState?
 
     func bind(appState: AppState) {
         guard boundAppState !== appState else {
-            refresh(appState: appState)
+            refreshIfNeeded(appState: appState)
             return
         }
         boundAppState = appState
         cancellables.removeAll()
+        lastSourceSnapshot = nil
+        cycleHistoryCache = CycleHistoryCache()
 
         let refresh = { [weak self, weak appState] in
             guard let self, let appState else { return }
-            self.refresh(appState: appState)
+            self.refreshIfNeeded(appState: appState)
         }
 
         appState.$selectedProjectName.sink { _ in refresh() }.store(in: &cancellables)
@@ -462,7 +490,27 @@ final class EvolutionPipelineProjectionStore {
     }
 
     func refresh(appState: AppState) {
-        _ = updateProjection(EvolutionPipelineProjectionSemantics.make(appState: appState))
+        let snapshot = makeSourceSnapshot(appState: appState)
+        let rawCycleHistories = rawCycleHistories(
+            appState: appState,
+            project: snapshot.project,
+            workspace: snapshot.workspace
+        )
+        lastSourceSnapshot = snapshot
+        _ = updateProjection(
+            EvolutionPipelineProjectionSemantics.make(
+                appState: appState,
+                mappedCycleHistories: mappedCycleHistories(
+                    workspaceKey: workspaceKey(
+                        project: snapshot.project,
+                        workspace: snapshot.workspace,
+                        normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+                    ),
+                    rawCycleHistories: rawCycleHistories,
+                    signature: snapshot.cycleHistorySignature
+                )
+            )
+        )
     }
     #endif
 
@@ -474,17 +522,19 @@ final class EvolutionPipelineProjectionStore {
 
     func bind(appState: MobileAppState, project: String, workspace: String) {
         guard boundAppState !== appState || boundProject != project || boundWorkspace != workspace else {
-            refresh(appState: appState, project: project, workspace: workspace)
+            refreshIfNeeded(appState: appState, project: project, workspace: workspace)
             return
         }
         boundAppState = appState
         boundProject = project
         boundWorkspace = workspace
         cancellables.removeAll()
+        lastSourceSnapshot = nil
+        cycleHistoryCache = CycleHistoryCache()
 
         let refresh = { [weak self, weak appState] in
             guard let self, let appState else { return }
-            self.refresh(appState: appState, project: project, workspace: workspace)
+            self.refreshIfNeeded(appState: appState, project: project, workspace: workspace)
         }
 
         appState.$evolutionScheduler.sink { _ in refresh() }.store(in: &cancellables)
@@ -497,15 +547,198 @@ final class EvolutionPipelineProjectionStore {
     }
 
     func refresh(appState: MobileAppState, project: String, workspace: String) {
+        let snapshot = makeSourceSnapshot(appState: appState, project: project, workspace: workspace)
+        let rawCycleHistories = rawCycleHistories(
+            appState: appState,
+            project: project,
+            workspace: workspace
+        )
+        lastSourceSnapshot = snapshot
         _ = updateProjection(
             EvolutionPipelineProjectionSemantics.make(
                 appState: appState,
                 project: project,
-                workspace: workspace
+                workspace: workspace,
+                mappedCycleHistories: mappedCycleHistories(
+                    workspaceKey: workspaceKey(
+                        project: project,
+                        workspace: workspace,
+                        normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+                    ),
+                    rawCycleHistories: rawCycleHistories,
+                    signature: snapshot.cycleHistorySignature
+                )
             )
         )
     }
     #endif
+
+    #if os(macOS)
+    private func refreshIfNeeded(appState: AppState) {
+        let snapshot = makeSourceSnapshot(appState: appState)
+        guard snapshot != lastSourceSnapshot else { return }
+        refresh(appState: appState)
+    }
+
+    private func makeSourceSnapshot(appState: AppState) -> SourceSnapshot {
+        let project = appState.selectedProjectName
+        let workspace = appState.selectedWorkspaceKey
+        return SourceSnapshot(
+            project: project,
+            workspace: workspace,
+            scheduler: appState.evolutionScheduler,
+            control: EvolutionControlProjection(
+                appState.evolutionControlCapability(project: project, workspace: workspace)
+            ),
+            currentItemSignature: workspace.flatMap { appState.evolutionItem(project: project, workspace: $0)?.projectionSignature },
+            blockingSignature: blockingSignature(
+                EvolutionPipelineProjectionSemantics.activeBlockingRequest(
+                    blocking: appState.evolutionBlockingRequired,
+                    project: project,
+                    workspace: workspace,
+                    normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+                )
+            ),
+            cycleHistorySignature: cycleHistorySignature(
+                rawCycleHistories(appState: appState, project: project, workspace: workspace)
+            )
+        )
+    }
+    #endif
+
+    #if os(iOS)
+    private func refreshIfNeeded(appState: MobileAppState, project: String, workspace: String) {
+        let snapshot = makeSourceSnapshot(appState: appState, project: project, workspace: workspace)
+        guard snapshot != lastSourceSnapshot else { return }
+        refresh(appState: appState, project: project, workspace: workspace)
+    }
+
+    private func makeSourceSnapshot(
+        appState: MobileAppState,
+        project: String,
+        workspace: String
+    ) -> SourceSnapshot {
+        let controlState = appState.evolutionControlState(project: project, workspace: workspace)
+        return SourceSnapshot(
+            project: project,
+            workspace: workspace,
+            scheduler: appState.evolutionScheduler,
+            control: EvolutionControlProjection(
+                canStart: controlState.canStart,
+                canStop: controlState.canStop,
+                canResume: controlState.canResume,
+                isStartPending: controlState.isStartPending,
+                isStopPending: controlState.isStopPending,
+                isResumePending: controlState.isResumePending
+            ),
+            currentItemSignature: appState.evolutionItem(project: project, workspace: workspace)?.projectionSignature,
+            blockingSignature: blockingSignature(
+                EvolutionPipelineProjectionSemantics.activeBlockingRequest(
+                    blocking: appState.evolutionBlockingRequired,
+                    project: project,
+                    workspace: workspace,
+                    normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+                )
+            ),
+            cycleHistorySignature: cycleHistorySignature(
+                rawCycleHistories(appState: appState, project: project, workspace: workspace)
+            )
+        )
+    }
+    #endif
+
+    #if os(macOS)
+    private func rawCycleHistories(
+        appState: AppState,
+        project: String,
+        workspace: String?
+    ) -> [EvolutionCycleHistoryItemV2] {
+        guard let key = workspaceKey(
+            project: project,
+            workspace: workspace,
+            normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+        ) else {
+            return []
+        }
+        return appState.evolutionCycleHistories[key] ?? []
+    }
+    #endif
+
+    #if os(iOS)
+    private func rawCycleHistories(
+        appState: MobileAppState,
+        project: String,
+        workspace: String
+    ) -> [EvolutionCycleHistoryItemV2] {
+        guard let key = workspaceKey(
+            project: project,
+            workspace: workspace,
+            normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
+        ) else {
+            return []
+        }
+        return appState.evolutionCycleHistories[key] ?? []
+    }
+    #endif
+
+    private func workspaceKey(
+        project: String,
+        workspace: String?,
+        normalizeWorkspace: @MainActor (String) -> String
+    ) -> String? {
+        guard let workspace, !workspace.isEmpty else { return nil }
+        return "\(project):\(normalizeWorkspace(workspace))"
+    }
+
+    private func mappedCycleHistories(
+        workspaceKey: String?,
+        rawCycleHistories: [EvolutionCycleHistoryItemV2],
+        signature: Int
+    ) -> [PipelineCycleHistory] {
+        guard let workspaceKey else { return [] }
+        if cycleHistoryCache.workspaceKey == workspaceKey,
+           cycleHistoryCache.signature == signature {
+            return cycleHistoryCache.mapped
+        }
+        let mapped = rawCycleHistories.map(EvolutionPipelineProjectionSemantics.mapCycleHistory)
+        cycleHistoryCache = CycleHistoryCache(
+            workspaceKey: workspaceKey,
+            signature: signature,
+            mapped: mapped
+        )
+        return mapped
+    }
+
+    private func cycleHistorySignature(_ histories: [EvolutionCycleHistoryItemV2]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(histories.count)
+        for history in histories {
+            hasher.combine(history.cycleID)
+            hasher.combine(history.updatedAt)
+            hasher.combine(history.status)
+            hasher.combine(history.globalLoopRound)
+            hasher.combine(history.executions.count)
+            hasher.combine(history.stages.count)
+            hasher.combine(history.terminalReasonCode ?? "")
+            hasher.combine(history.terminalErrorMessage ?? "")
+        }
+        return hasher.finalize()
+    }
+
+    private func blockingSignature(_ blocking: EvolutionBlockingRequestProjection?) -> Int {
+        var hasher = Hasher()
+        hasher.combine(blocking?.id ?? "")
+        hasher.combine(blocking?.trigger ?? "")
+        hasher.combine(blocking?.cycleID ?? "")
+        hasher.combine(blocking?.stage ?? "")
+        hasher.combine(blocking?.unresolvedItems.count ?? 0)
+        for item in blocking?.unresolvedItems ?? [] {
+            hasher.combine(item.blockerID)
+            hasher.combine(item.status)
+            hasher.combine(item.options.count)
+        }
+        return hasher.finalize()
+    }
 
     @discardableResult
     func updateProjection(_ next: EvolutionPipelineProjection) -> Bool {
