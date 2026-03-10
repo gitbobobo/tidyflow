@@ -118,6 +118,7 @@ impl EvolutionManager {
                 max_parallel_workspaces: DEFAULT_MAX_PARALLEL,
                 seq_by_workspace: HashMap::new(),
                 workspaces: HashMap::new(),
+                adaptive: types::AdaptiveSchedulingState::default(),
             })),
             workers: Arc::new(Mutex::new(HashMap::new())),
             semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_PARALLEL as usize)),
