@@ -6,6 +6,37 @@ import XCTest
 
 final class ChatScrollPolicyTests: XCTestCase {
 
+    // MARK: - 执行闸门测试
+
+    func testExecutionGate_allowsAutoScrollImmediatelyWhenNoManualJump() {
+        var gate = ChatScrollExecutionGate()
+
+        XCTAssertTrue(gate.consumeAutoScrollRequest(), "无手动回底时应立即执行自动贴底")
+        XCTAssertFalse(gate.isManualJumpToBottomInFlight)
+        XCTAssertFalse(gate.hasDeferredAutoScroll)
+    }
+
+    func testExecutionGate_defersAutoScrollDuringManualJump() {
+        var gate = ChatScrollExecutionGate()
+        gate.beginManualJumpToBottom()
+
+        XCTAssertFalse(gate.consumeAutoScrollRequest(), "手动回底进行中应延后自动贴底")
+        XCTAssertTrue(gate.isManualJumpToBottomInFlight)
+        XCTAssertTrue(gate.hasDeferredAutoScroll)
+    }
+
+    func testExecutionGate_completesManualJumpWithSingleDeferredCorrection() {
+        var gate = ChatScrollExecutionGate()
+        gate.beginManualJumpToBottom()
+        XCTAssertFalse(gate.consumeAutoScrollRequest())
+        XCTAssertFalse(gate.consumeAutoScrollRequest(), "多个自动贴底请求在手动回底期间应继续合并")
+
+        XCTAssertTrue(gate.completeManualJumpToBottom(), "手动回底结束后应补一次合并后的自动贴底")
+        XCTAssertFalse(gate.isManualJumpToBottomInFlight)
+        XCTAssertFalse(gate.hasDeferredAutoScroll)
+        XCTAssertFalse(gate.completeManualJumpToBottom(), "重复结束不应再次触发补偿滚动")
+    }
+
     // MARK: - 初始化状态测试
 
     func testInitialState_autoFollowTrue() {

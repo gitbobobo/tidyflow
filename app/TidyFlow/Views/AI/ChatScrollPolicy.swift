@@ -90,6 +90,41 @@ struct ChatScrollDecision: Equatable {
     }
 }
 
+/// 协调“用户手动回到底部”和“尾部更新触发的自动贴底”之间的执行时机。
+///
+/// 当用户主动点击回底按钮后，列表通常会进入一小段程序化滚动窗口；
+/// 若此时流式输出或新消息继续推进，自动贴底会与这次手动滚动重叠，
+/// 造成动画打架、状态重复写入或按钮显隐闪烁。
+///
+/// 这个闸门的策略是：
+/// 1. 手动回底进行中，自动贴底请求先记为 deferred，不立即执行；
+/// 2. 手动回底结束后，若期间确实积累了自动贴底请求，仅补一次最终校正。
+struct ChatScrollExecutionGate: Equatable {
+    private(set) var isManualJumpToBottomInFlight: Bool = false
+    private(set) var hasDeferredAutoScroll: Bool = false
+
+    mutating func beginManualJumpToBottom() {
+        isManualJumpToBottomInFlight = true
+        hasDeferredAutoScroll = false
+    }
+
+    /// 返回 true 表示可以立即执行自动贴底；false 表示应先延后。
+    mutating func consumeAutoScrollRequest() -> Bool {
+        guard isManualJumpToBottomInFlight else { return true }
+        hasDeferredAutoScroll = true
+        return false
+    }
+
+    /// 结束一次手动回底；返回值表示是否需要补一次延后的自动贴底。
+    mutating func completeManualJumpToBottom() -> Bool {
+        guard isManualJumpToBottomInFlight else { return false }
+        isManualJumpToBottomInFlight = false
+        let shouldRunDeferredAutoScroll = hasDeferredAutoScroll
+        hasDeferredAutoScroll = false
+        return shouldRunDeferredAutoScroll
+    }
+}
+
 final class ChatScrollPolicy {
     private(set) var autoFollow: Bool
     private(set) var nearBottom: Bool

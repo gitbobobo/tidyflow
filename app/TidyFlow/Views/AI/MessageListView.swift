@@ -113,6 +113,7 @@ struct MessageListView: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
+    @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
     /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
     /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
@@ -391,6 +392,7 @@ struct MessageListView: View {
     private func handleTailChanged(proxy: ScrollViewProxy) {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.shouldScrollToBottom else { return }
+        guard scrollExecutionGate.consumeAutoScrollRequest() else { return }
         // 新消息出现（messageAppended）用 spring 动画，流式增量（throttledScrollToBottom）保持无动画避免频繁抖动。
         let animation: ChatScrollAnimation = decision.action == .scrollToBottom ? .spring() : .none
         scrollToBottom(proxy: proxy, animation: animation)
@@ -405,6 +407,7 @@ struct MessageListView: View {
             _ = scrollPolicy.reduce(event: .jumpToBottomClicked)
             isAutoFollowActive = true
             isNearBottom = true
+            scrollExecutionGate.beginManualJumpToBottom()
             jumpToBottomRequestID += 1
         } label: {
             Image(systemName: "arrow.down")
@@ -427,12 +430,24 @@ struct MessageListView: View {
         let action = {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
+        let finalizeManualJumpIfNeeded = {
+            guard scrollExecutionGate.completeManualJumpToBottom() else { return }
+            action()
+            scrollDistanceToBottom = 0
+            isNearBottom = true
+            isAutoFollowActive = true
+            _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
+        }
         switch animation {
         case .none:
             action()
+            finalizeManualJumpIfNeeded()
         case .smooth(let duration):
             withAnimation(.easeInOut(duration: duration)) {
                 action()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.08) {
+                finalizeManualJumpIfNeeded()
             }
         case .spring(let response, let dampingFraction):
             withAnimation(.spring(response: response, dampingFraction: dampingFraction)) {
@@ -447,6 +462,7 @@ struct MessageListView: View {
                 isNearBottom = true
                 isAutoFollowActive = true
                 _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
+                finalizeManualJumpIfNeeded()
             }
         }
         // 自动滚动后刷新近底部确认时间戳
