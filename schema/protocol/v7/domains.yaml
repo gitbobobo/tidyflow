@@ -22,6 +22,12 @@ domains:
     action_rule: prefix("file_") | prefix("watch_") | one_of("clipboard_image_upload")
   - id: git
     action_rule: prefix("git_") | one_of("cancel_ai_task")
+    # v1.43 统一运行状态面板新增字段（向后兼容）：
+    # TaskSnapshotEntry 新增：
+    #   duration_ms:  运行耗时（毫秒），Core 在完成时计算
+    #   error_code:   失败诊断码（仅 status=failed 时填充）
+    #   error_detail:  失败诊断详情（仅 status=failed 时填充）
+    #   retryable:    是否可安全重试（bool，Core 根据 task_type + 错误类型判定）
   - id: project
     action_rule: prefix("list_","select_","import_","create_","remove_","project_","workspace_","save_project_commands","run_project_command","cancel_project_command")
   - id: settings
@@ -122,6 +128,12 @@ domains:
       - project
       - workspace
       - cycle_id  # Evolution 消息中条件必须
+    # v1.43 统一运行状态面板新增字段（向后兼容，旧客户端忽略新字段）：
+    # EvolutionWorkspaceItem 和 EvolutionCycleHistoryItem 新增：
+    #   started_at:  循环开始时间（RFC3339），用于面板计时
+    #   duration_ms: 循环运行耗时（毫秒），Core 在终态时计算
+    #   error_code:  失败诊断码（仅终态失败时填充）
+    #   retryable:   是否可安全重试（bool，Core 根据终态类型判定）
   # v1.41: 系统健康诊断与自修复域
   # health_report     - 客户端上报自身运行健康状态
   # health_snapshot   - Core 推送系统健康快照（incidents、摘要）

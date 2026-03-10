@@ -2165,7 +2165,11 @@ pub struct TemplateInfo {
     pub builtin: bool,
 }
 
-/// 任务快照条目（iOS 重连恢复用）
+/// 任务快照条目（统一运行状态面板 + iOS 重连恢复）
+///
+/// 所有字段按 `(project, workspace)` 隔离，客户端不得仅凭 workspace 判断归属。
+/// `duration_ms` / `error_code` / `error_detail` / `retryable` 由 Core 权威输出，
+/// 客户端只消费，不在本地推导。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSnapshotEntry {
     pub task_id: String,
@@ -2181,6 +2185,18 @@ pub struct TaskSnapshotEntry {
     pub started_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<i64>,
+    /// 运行耗时（毫秒），由 Core 在完成时计算（started_at → completed_at）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// 失败诊断码（与 AppError::code() 对齐，仅 status=failed 时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// 失败诊断详情（可为长文本，仅 status=failed 时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
+    /// 是否可安全重试（Core 根据 task_type + 错误类型判定）
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 /// Evolution 阶段代理配置
@@ -2249,6 +2265,9 @@ pub struct EvolutionSchedulerInfo {
 }
 
 /// Evolution 工作空间快照项
+///
+/// 统一运行状态面板所需字段：`started_at` / `duration_ms` / `error_code` / `retryable`
+/// 由 Core 权威输出，客户端只消费，不在本地推导。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionWorkspaceItem {
     pub project: String,
@@ -2271,6 +2290,18 @@ pub struct EvolutionWorkspaceItem {
     pub terminal_error_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_error_message: Option<String>,
+    /// 循环开始时间（RFC3339），用于面板计时
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    /// 循环运行耗时（毫秒），Core 在终态时计算
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// 失败诊断码（仅终态失败时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// 是否可安全重试（Core 根据终态类型判定：failed_exhausted 可重试，failed_system 不可重试）
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2322,6 +2353,15 @@ pub struct EvolutionCycleHistoryItem {
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
     pub stages: Vec<EvolutionCycleStageHistoryEntry>,
+    /// 循环总耗时（毫秒），由 Core 从 created_at → updated_at 计算
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// 失败诊断码（与 terminal_reason_code 对齐，但提供更精确的错误分类）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// 是否可安全重试（failed_exhausted 可重试，failed_system 不可重试）
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

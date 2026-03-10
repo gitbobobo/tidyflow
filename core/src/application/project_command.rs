@@ -209,6 +209,8 @@ pub async fn run_project_command(
             message: None,
             started_at: chrono::Utc::now().timestamp_millis(),
             completed_at: None,
+            error_code: None,
+            error_detail: None,
         },
     )
     .await;

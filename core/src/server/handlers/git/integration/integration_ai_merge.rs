@@ -222,6 +222,8 @@ pub async fn handle_git_ai_merge(
             message: None,
             started_at: Utc::now().timestamp_millis(),
             completed_at: None,
+            error_code: None,
+            error_detail: None,
         },
     )
     .await;

@@ -57,7 +57,7 @@ pub struct RunningAITaskEntry {
 /// AI 任务注册表（task_id → 条目）
 pub type SharedRunningAITasks = Arc<Mutex<HashMap<String, RunningAITaskEntry>>>;
 
-/// 任务历史条目 — 用于 iOS 重连后恢复任务状态
+/// 任务历史条目 — 用于统一运行状态面板与 iOS 重连后恢复任务状态
 #[derive(Debug, Clone)]
 pub struct TaskHistoryEntry {
     pub task_id: String,
@@ -70,6 +70,10 @@ pub struct TaskHistoryEntry {
     pub message: Option<String>,
     pub started_at: i64, // Unix timestamp ms
     pub completed_at: Option<i64>,
+    /// 失败诊断码（与 AppError::code() 对齐）
+    pub error_code: Option<String>,
+    /// 失败诊断详情
+    pub error_detail: Option<String>,
 }
 
 /// 任务历史注册表（全局共享，上限 200 条）
@@ -89,17 +93,33 @@ pub async fn push_task_history(history: &SharedTaskHistory, entry: TaskHistoryEn
     }
 }
 
-/// 更新任务历史条目状态
+/// 更新任务历史条目状态（含失败诊断信息）
 pub async fn update_task_history(
     history: &SharedTaskHistory,
     task_id: &str,
     status: &str,
     message: Option<String>,
 ) {
+    update_task_history_with_diagnostics(history, task_id, status, message, None, None).await;
+}
+
+/// 更新任务历史条目状态，支持附加失败诊断码与详情
+pub async fn update_task_history_with_diagnostics(
+    history: &SharedTaskHistory,
+    task_id: &str,
+    status: &str,
+    message: Option<String>,
+    error_code: Option<String>,
+    error_detail: Option<String>,
+) {
     let mut h = history.lock().await;
     if let Some(entry) = h.iter_mut().find(|e| e.task_id == task_id) {
         entry.status = status.to_string();
         entry.message = message;
+        if status == "failed" {
+            entry.error_code = error_code;
+            entry.error_detail = error_detail;
+        }
         if status != "running" {
             entry.completed_at = Some(Utc::now().timestamp_millis());
         }

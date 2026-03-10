@@ -676,6 +676,56 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - 对应 handler 与 UI 调用方
   - `schema/protocol/v7/README.md`（错误契约部分）
 
+## 统一运行状态面板（v1.43+）
+
+### 概要
+
+为了让 macOS 和 iOS 客户端能统一展示多项目、多工作区下的所有任务（Task）与演化（Evolution）运行态，
+并提供失败诊断与一键重试能力，v1.43 在以下协议结构新增了标准化字段：
+
+- `TaskSnapshotEntry`：新增 `duration_ms`、`error_code`、`error_detail`、`retryable`
+- `EvolutionWorkspaceItem`：新增 `started_at`、`duration_ms`、`error_code`、`retryable`
+- `EvolutionCycleHistoryItem`：新增 `duration_ms`、`error_code`、`retryable`
+
+### 设计原则
+
+1. **Core 权威输出**：所有新增字段由 Rust Core 计算并填充，客户端只消费、不推导。
+2. **多项目/多工作区隔离**：面板数据按 `(project, workspace)` 隔离聚合，不串台。
+3. **重试安全边界**：`retryable` 仅对可安全重试的场景开放：
+   - 任务（Task）：仅 `project_command` 类型且 `status=failed` 才标为可重试。
+   - 演化（Evolution）：仅 `terminal_reason_code=failed_exhausted` 才标为可重试。
+4. **向后兼容**：所有新增字段为可选/默认值，旧客户端忽略即可。
+
+### 重试描述符
+
+重试描述符必须保留完整的归属边界：
+- 任务重试：`project` + `workspace` + `command_id`
+- 演化重试：`project` + `workspace` + `cycle_id`
+
+### 消费路径
+
+| 路径 | 说明 |
+|------|------|
+| WS 推送 `task_status_changed` | 任务快照实时更新，携带新字段 |
+| WS 推送 `evo_cycle_updated` | 演化快照实时更新，携带新字段 |
+| HTTP `GET /api/v1/evolution/...cycle-history` | 历史循环查询，携带新字段 |
+| HTTP `GET /system_snapshot` | 系统快照中任务列表携带新字段 |
+
+### 同步文件
+
+新增协议字段涉及的文件：
+- `schema/protocol/v7/domains.yaml`
+- `schema/protocol/v7/README.md`
+- `core/src/server/protocol/mod.rs`
+- `core/src/application/task.rs`
+- `core/src/server/handlers/evolution/workspace_control.rs`
+- `app/TidyFlowShared/Protocol/GitProtocolModels.swift`
+- `app/TidyFlowShared/Protocol/AIChatProtocolModels.swift`
+- `app/TidyFlowShared/Protocol/SystemHealthModels.swift`
+- `app/TidyFlow/Views/Models/WorkspaceTaskSemantics.swift`
+- `app/TidyFlow/Views/Models/WorkspaceTaskStore.swift`
+- `app/TidyFlow/Views/Models/EvolutionPipelineProjectionStore.swift`
+
 ## 工作区缓存可观测性（v1.40+）
 
 ### HTTP `GET /system_snapshot` 新增 `cache_metrics` 字段

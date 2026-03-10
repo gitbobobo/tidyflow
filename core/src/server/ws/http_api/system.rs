@@ -472,6 +472,10 @@ mod tests {
             terminal_reason_code: terminal_reason_code.map(|v| v.to_string()),
             terminal_error_message: terminal_error_message.map(|v| v.to_string()),
             rate_limit_error_message: rate_limit_error_message.map(|v| v.to_string()),
+            started_at: None,
+            duration_ms: None,
+            error_code: None,
+            retryable: false,
         }
     }
 

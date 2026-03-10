@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -21,6 +21,35 @@ use super::{
 
 fn initial_global_loop_round() -> u32 {
     1
+}
+
+/// 从 RFC3339 起始时间戳到当前时间计算耗时（毫秒）
+fn compute_evo_duration_ms(created_at: &str) -> Option<u64> {
+    let start = DateTime::parse_from_rfc3339(created_at).ok()?;
+    let now = Utc::now();
+    let d = now.signed_duration_since(start).num_milliseconds();
+    if d >= 0 { Some(d as u64) } else { None }
+}
+
+/// 从两个 RFC3339 时间戳间计算耗时（毫秒），用于历史循环
+fn compute_evo_duration_between(created_at: &str, updated_at: &str) -> Option<u64> {
+    let start = DateTime::parse_from_rfc3339(created_at).ok()?;
+    let end = DateTime::parse_from_rfc3339(updated_at).ok()?;
+    let d = end.signed_duration_since(start).num_milliseconds();
+    if d >= 0 { Some(d as u64) } else { None }
+}
+
+/// 从历史循环状态判定是否可重试
+fn is_cycle_retryable(status: &str, terminal_reason_code: Option<&str>) -> bool {
+    // failed_exhausted 表示重试次数耗尽但可以再来
+    if status == "failed_exhausted" {
+        return true;
+    }
+    // terminal_reason_code 指定可重试的场景
+    if let Some(code) = terminal_reason_code {
+        return code == "verify_exhausted" || code == "loop_exhausted";
+    }
+    false
 }
 
 fn is_terminal_execution_status(status: &str) -> bool {
@@ -187,6 +216,10 @@ fn build_cycle_history_item(
         return None;
     }
 
+    let duration_ms = compute_evo_duration_between(&created_at, &updated_at);
+    let retryable = is_cycle_retryable(&status, terminal_reason_code.as_deref());
+    let error_code = terminal_reason_code.clone();
+
     Some(EvolutionCycleHistoryItem {
         cycle_id,
         title: extract_cycle_title_from_cycle_file(cycle_json),
@@ -198,6 +231,9 @@ fn build_cycle_history_item(
         terminal_error_message,
         executions,
         stages,
+        duration_ms,
+        error_code,
+        retryable,
     })
 }
 
@@ -639,6 +675,25 @@ impl EvolutionManager {
                 &w.stage_duration_ms,
             );
 
+            // 统一运行状态面板：计算总耗时和重试资格
+            let is_terminal = matches!(
+                w.status.as_str(),
+                "completed" | "failed_exhausted" | "failed_system" | "stopped"
+            );
+            let started_at = Some(w.created_at.clone());
+            let duration_ms = if is_terminal {
+                compute_evo_duration_ms(&w.created_at)
+            } else {
+                None
+            };
+            // failed_exhausted 可安全重试，failed_system 不可重试
+            let retryable = w.status == "failed_exhausted";
+            let error_code = if is_terminal && w.status != "completed" {
+                w.terminal_reason_code.clone().or_else(|| Some(w.status.clone()))
+            } else {
+                None
+            };
+
             workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),
                 workspace: w.workspace.clone(),
@@ -655,6 +710,10 @@ impl EvolutionManager {
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
+                started_at,
+                duration_ms,
+                error_code,
+                retryable,
             });
         }
 
@@ -960,6 +1019,69 @@ mod tests {
         assert_eq!(stages[0].agent, "DirectionAgent");
         assert_eq!(stages[1].stage, "verify");
         assert_eq!(stages[1].status, "failed");
+    }
+
+    // --- 以下为 WI-005 补齐的运行状态聚合回归护栏 ---
+
+    #[test]
+    fn is_cycle_retryable_should_allow_exhausted_statuses() {
+        use super::is_cycle_retryable;
+        // failed_exhausted 本身可重试
+        assert!(is_cycle_retryable("failed_exhausted", None));
+        assert!(is_cycle_retryable("failed_exhausted", Some("some_code")));
+        // terminal_reason_code 为 verify_exhausted 或 loop_exhausted 可重试
+        assert!(is_cycle_retryable("failed", Some("verify_exhausted")));
+        assert!(is_cycle_retryable("failed", Some("loop_exhausted")));
+        // 其它状态不可重试
+        assert!(!is_cycle_retryable("failed", None));
+        assert!(!is_cycle_retryable("failed_system", None));
+        assert!(!is_cycle_retryable("completed", None));
+        assert!(!is_cycle_retryable("running", None));
+        assert!(!is_cycle_retryable("failed", Some("unknown_code")));
+    }
+
+    #[test]
+    fn compute_evo_duration_between_should_return_positive_or_none() {
+        use super::compute_evo_duration_between;
+        // 正常正向耗时
+        let ms = compute_evo_duration_between("2026-03-01T00:00:00Z", "2026-03-01T00:01:00Z");
+        assert_eq!(ms, Some(60_000));
+        // 同一时间 → 0ms
+        let zero = compute_evo_duration_between("2026-03-01T00:00:00Z", "2026-03-01T00:00:00Z");
+        assert_eq!(zero, Some(0));
+        // 反向时间 → None
+        let neg = compute_evo_duration_between("2026-03-01T00:01:00Z", "2026-03-01T00:00:00Z");
+        assert_eq!(neg, None);
+        // 无效 RFC3339 → None
+        let bad = compute_evo_duration_between("not-a-date", "2026-03-01T00:00:00Z");
+        assert_eq!(bad, None);
+    }
+
+    #[test]
+    fn is_terminal_execution_status_should_match_known_statuses() {
+        use super::is_terminal_execution_status;
+        for status in &[
+            "done",
+            "failed",
+            "blocked",
+            "skipped",
+            "stopped",
+            "interrupted",
+            "completed",
+        ] {
+            assert!(
+                is_terminal_execution_status(status),
+                "{} should be terminal",
+                status
+            );
+        }
+        for status in &["running", "pending", "queued", ""] {
+            assert!(
+                !is_terminal_execution_status(status),
+                "{} should NOT be terminal",
+                status
+            );
+        }
     }
 
     #[test]

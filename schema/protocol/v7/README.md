@@ -27,6 +27,25 @@
 
 ## HTTP/WS 传输边界契约（v7）
 
+### 统一运行状态面板字段契约（v1.43+）
+
+任务快照（`TaskSnapshotEntry`）和演化快照（`EvolutionWorkspaceItem` / `EvolutionCycleHistoryItem`）
+新增以下字段，用于统一运行状态面板的状态聚合、耗时追踪、失败诊断和一键重试：
+
+| 字段 | 类型 | 适用 | 说明 |
+|------|------|------|------|
+| `duration_ms` | `u64?` | Task/Evo | 运行耗时（毫秒），Core 权威计算 |
+| `error_code` | `string?` | Task/Evo | 失败诊断码 |
+| `error_detail` | `string?` | Task | 失败诊断详情 |
+| `retryable` | `bool` | Task/Evo | 是否可安全重试 |
+| `started_at` | `string?` | Evo | 循环开始时间（RFC3339） |
+
+**约束规则：**
+1. 所有新增字段由 Core 权威输出，客户端只消费，不在本地推导。
+2. `retryable` 仅对可安全重试的场景开放（Task: `project_command` 失败可重试；Evo: `failed_exhausted` 可重试）。
+3. 重试描述符必须保留 `project`/`workspace`/`command_id` 或 `cycle_id` 归属边界，不能退回单项目假设。
+4. 新增字段均为可选/默认值，旧客户端忽略即可（向后兼容）。
+
 本节定义哪些能力必须通过 HTTP 读取、哪些通过 WebSocket 流式推送，以及消息必须携带的多工作区边界字段。
 所有实现（Core、macOS、iOS）**必须**遵循此契约；任何不在此声明的私有字段不得作为业务逻辑依据。
 
