@@ -312,6 +312,8 @@ final class MobileAppState: ObservableObject {
     @Published var systemHealthSnapshot: SystemHealthSnapshot?
     /// 按 incident key（"project:workspace:incidentId"）追踪修复状态
     @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
+    /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）
+    @Published var workspaceRecoverySummaries: [String: WorkspaceRecoverySummary] = [:]
 
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
@@ -4082,6 +4084,17 @@ final class MobileAppState: ObservableObject {
                     case .partialSuccess:
                         self.incidentRepairStates[key] = .repaired(requestId: audit.requestId)
                     }
+                }
+            }
+        }
+
+        // 工作区恢复状态摘要：从 system_snapshot workspace_items 提取，按 (project, workspace) 隔离
+        wsClient.onWorkspaceRecoverySummaries = { [weak self] summaries in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for summary in summaries {
+                    let key = "\(summary.project):\(summary.workspace)"
+                    self.workspaceRecoverySummaries[key] = summary
                 }
             }
         }

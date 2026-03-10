@@ -12,6 +12,18 @@ extension WSClient {
             // 工作区缓存可观测性快照（/api/v1/system/snapshot 的 HTTP 响应）
             let metrics = SystemSnapshotCacheMetrics.from(json: json["cache_metrics"])
             onSystemSnapshot?(metrics)
+            // 工作区恢复状态摘要：从 workspace_items 提取，按 (project, workspace) 隔离
+            if let workspaceItems = json["workspace_items"] as? [[String: Any]] {
+                let recoverySummaries = workspaceItems.compactMap { item -> WorkspaceRecoverySummary? in
+                    guard let project = item["project"] as? String,
+                          let workspace = item["workspace"] as? String
+                    else { return nil }
+                    return WorkspaceRecoverySummary.from(json: item, project: project, workspace: workspace)
+                }
+                if !recoverySummaries.isEmpty {
+                    onWorkspaceRecoverySummaries?(recoverySummaries)
+                }
+            }
             return true
         default:
             return false

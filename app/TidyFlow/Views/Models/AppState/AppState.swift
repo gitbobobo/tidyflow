@@ -372,6 +372,8 @@ class AppState: ObservableObject {
     @Published var systemHealthSnapshot: SystemHealthSnapshot?
     /// 按 (project, workspace) 分桶的 incident 修复状态（key: "project:workspace:incidentId"）
     @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
+    /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）
+    @Published var workspaceRecoverySummaries: [String: WorkspaceRecoverySummary] = [:]
 
     // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
     var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]

@@ -294,6 +294,13 @@ pub fn register_builtin_probes(app_state: SharedAppState) {
         Box::new(move || probe_workspace_cache(&state_clone)),
     );
 
+    // 工作区恢复状态探针（检查崩溃/中断后未自愈的工作区）
+    let state_clone2 = app_state.clone();
+    reg.register_probe(
+        "core.workspace_recovery",
+        Box::new(move || probe_workspace_recovery(&state_clone2)),
+    );
+
     // 终端注册表资源压力探针
     reg.register_probe("core.terminal_budget", Box::new(probe_terminal_budget));
 }
@@ -361,6 +368,53 @@ fn probe_workspace_cache(app_state: &SharedAppState) -> Vec<HealthIncident> {
                     context: HealthContext::for_workspace(&project.name, &ws.name),
                 });
             }
+        }
+    }
+    incidents
+}
+
+/// 工作区恢复状态探针：检查持有中断恢复元数据（`interrupted` / `recovering`）的工作区
+///
+/// 每个 incident 携带 `(project, workspace)` 归属上下文，不会跨工作区混用。
+fn probe_workspace_recovery(app_state: &SharedAppState) -> Vec<HealthIncident> {
+    let state = match app_state.try_read() {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let now = unix_ms();
+    let mut incidents = Vec::new();
+
+    for project in state.projects.values() {
+        for ws in project.workspaces.values() {
+            let Some(meta) = ws.recovery_meta.as_ref() else {
+                continue;
+            };
+            if !meta.needs_attention() {
+                continue;
+            }
+            let incident_id = format!(
+                "workspace_recovery_pending:{}:{}",
+                project.name, ws.name
+            );
+            let cursor_hint = meta
+                .recovery_cursor
+                .as_deref()
+                .map(|c| format!("，游标：{c}"))
+                .unwrap_or_default();
+            incidents.push(HealthIncident {
+                incident_id,
+                severity: IncidentSeverity::Warning,
+                recoverability: IncidentRecoverability::Recoverable,
+                source: IncidentSource::CoreWorkspaceCache,
+                root_cause: "workspace_recovery_pending".to_string(),
+                summary: Some(format!(
+                    "工作区 {}/{} 处于 {} 状态，待恢复自愈{}",
+                    project.name, ws.name, meta.recovery_state, cursor_hint
+                )),
+                first_seen_at: now,
+                last_seen_at: now,
+                context: HealthContext::for_workspace(&project.name, &ws.name),
+            });
         }
     }
     incidents

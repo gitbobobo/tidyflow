@@ -115,6 +115,18 @@ extension AppState {
             }
         }
 
+        // 工作区恢复状态摘要：从 system_snapshot workspace_items 提取，按 (project, workspace) 隔离
+        wsClient.onWorkspaceRecoverySummaries = { [weak self] summaries in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                for summary in summaries {
+                    let key = "\(summary.project):\(summary.workspace)"
+                    self.workspaceRecoverySummaries[key] = summary
+                }
+            }
+        }
+
         if configuredWSConnectionTarget == targetIdentity,
            wsClient.currentURL == AppConfig.makeWsURL(port: port, token: authToken),
            (wsClient.isConnected || wsClient.isConnecting) {

@@ -16,7 +16,8 @@ use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
-    TemplateCommand, WorkflowTemplate, Workspace, WorkspaceStatus, WorkspaceTodoItem,
+    TemplateCommand, WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus,
+    WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -362,7 +363,8 @@ impl StateStore {
             r#"
             SELECT
                 project_name, name, worktree_path, branch, status, created_at, last_accessed,
-                setup_success, setup_steps_total, setup_steps_completed, setup_last_error, setup_completed_at
+                setup_success, setup_steps_total, setup_steps_completed, setup_last_error, setup_completed_at,
+                recovery_state, recovery_cursor, recovery_failed_context, recovery_interrupted_at
             FROM workspaces
             ORDER BY project_name, name
             "#,
@@ -426,6 +428,28 @@ impl StateStore {
                 None
             };
 
+            // 恢复元数据：旧快照中缺失时回退为 None（可恢复）
+            let recovery_meta = row
+                .try_get::<Option<String>, _>("recovery_state")
+                .ok()
+                .flatten()
+                .map(|state| WorkspaceRecoveryMeta {
+                    recovery_state: state,
+                    recovery_cursor: row
+                        .try_get::<Option<String>, _>("recovery_cursor")
+                        .ok()
+                        .flatten(),
+                    failed_context: row
+                        .try_get::<Option<String>, _>("recovery_failed_context")
+                        .ok()
+                        .flatten(),
+                    interrupted_at: row
+                        .try_get::<Option<String>, _>("recovery_interrupted_at")
+                        .ok()
+                        .flatten()
+                        .and_then(|s| parse_rfc3339_utc(&s)),
+                });
+
             let workspace = Workspace {
                 name: name.clone(),
                 worktree_path: PathBuf::from(
@@ -437,6 +461,7 @@ impl StateStore {
                 created_at,
                 last_accessed,
                 setup_result,
+                recovery_meta,
             };
 
             project_workspaces
@@ -734,13 +759,30 @@ impl StateStore {
                     (None, None, None, None, None)
                 };
 
+                let (
+                    recovery_state,
+                    recovery_cursor,
+                    recovery_failed_context,
+                    recovery_interrupted_at,
+                ) = if let Some(meta) = workspace.recovery_meta.as_ref() {
+                    (
+                        Some(meta.recovery_state.clone()),
+                        meta.recovery_cursor.clone(),
+                        meta.failed_context.clone(),
+                        meta.interrupted_at.map(|t| t.to_rfc3339()),
+                    )
+                } else {
+                    (None, None, None, None)
+                };
+
                 sqlx::query(
                     r#"
                     INSERT INTO workspaces (
                         project_name, name, worktree_path, branch, status, created_at, last_accessed,
-                        setup_success, setup_steps_total, setup_steps_completed, setup_last_error, setup_completed_at
+                        setup_success, setup_steps_total, setup_steps_completed, setup_last_error, setup_completed_at,
+                        recovery_state, recovery_cursor, recovery_failed_context, recovery_interrupted_at
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                     "#,
                 )
                 .bind(&project.name)
@@ -755,6 +797,10 @@ impl StateStore {
                 .bind(setup_steps_completed)
                 .bind(setup_last_error)
                 .bind(setup_completed_at)
+                .bind(recovery_state)
+                .bind(recovery_cursor)
+                .bind(recovery_failed_context)
+                .bind(recovery_interrupted_at)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -892,6 +938,10 @@ impl StateStore {
                 setup_steps_completed INTEGER,
                 setup_last_error TEXT,
                 setup_completed_at TEXT,
+                recovery_state TEXT,
+                recovery_cursor TEXT,
+                recovery_failed_context TEXT,
+                recovery_interrupted_at TEXT,
                 PRIMARY KEY (project_name, name)
             )
             "#,
@@ -982,6 +1032,29 @@ impl StateStore {
                 .map_err(|e| StateError::WriteError(e.to_string()))?;
         }
         self.ensure_client_settings_columns().await?;
+        self.ensure_workspace_recovery_columns().await?;
+        Ok(())
+    }
+
+    /// 为旧版数据库的 workspaces 表追加恢复元数据列（幂等，列已存在时跳过）
+    async fn ensure_workspace_recovery_columns(&self) -> Result<(), StateError> {
+        let migrations: &[&str] = &[
+            "ALTER TABLE workspaces ADD COLUMN recovery_state TEXT",
+            "ALTER TABLE workspaces ADD COLUMN recovery_cursor TEXT",
+            "ALTER TABLE workspaces ADD COLUMN recovery_failed_context TEXT",
+            "ALTER TABLE workspaces ADD COLUMN recovery_interrupted_at TEXT",
+        ];
+        for sql in migrations {
+            match sqlx::query(sql).execute(&self.pool).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if !msg.contains("duplicate column name") {
+                        return Err(StateError::WriteError(msg));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1121,6 +1194,7 @@ mod tests {
                         last_error: None,
                         completed_at: now,
                     }),
+                    recovery_meta: None,
                 },
             )]),
             commands: vec![ProjectCommand {
@@ -1189,5 +1263,189 @@ mod tests {
             .setup_result
             .as_ref()
             .is_some_and(|r| r.success));
+    }
+
+    /// CHK-003: 工作区恢复元数据按 (project, workspace) 复合键 roundtrip
+    #[tokio::test]
+    async fn workspace_recovery_meta_roundtrip_preserves_composite_key() {
+        use crate::workspace::state::WorkspaceRecoveryMeta;
+        let store = StateStore::open_in_memory_for_test()
+            .await
+            .expect("in-memory store should initialize");
+
+        let now = Utc::now();
+        let interrupted_at = now;
+
+        let mut state = AppState::default();
+        let mut ws_interrupted = Workspace {
+            name: "feature-interrupted".to_string(),
+            worktree_path: PathBuf::from("/tmp/proj-a/.worktrees/feature-interrupted"),
+            branch: "feature/interrupted".to_string(),
+            status: WorkspaceStatus::Initializing,
+            created_at: now,
+            last_accessed: now,
+            setup_result: None,
+            recovery_meta: Some(WorkspaceRecoveryMeta {
+                recovery_state: "interrupted".to_string(),
+                recovery_cursor: Some("step-2-init".to_string()),
+                failed_context: Some(r#"{"cycle_id":"c1","stage":"initializing"}"#.to_string()),
+                interrupted_at: Some(interrupted_at),
+            }),
+        };
+
+        // project-a: feature-interrupted（中断态）
+        let mut proj_a = Project {
+            name: "project-a".to_string(),
+            root_path: PathBuf::from("/tmp/proj-a"),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: now,
+            workspaces: HashMap::new(),
+            commands: vec![],
+        };
+        proj_a
+            .workspaces
+            .insert(ws_interrupted.name.clone(), ws_interrupted.clone());
+
+        // project-b: 同名 feature-interrupted 但状态为 Ready、无恢复元数据
+        let ws_ready = Workspace {
+            name: "feature-interrupted".to_string(),
+            worktree_path: PathBuf::from("/tmp/proj-b/.worktrees/feature-interrupted"),
+            branch: "feature/interrupted".to_string(),
+            status: WorkspaceStatus::Ready,
+            created_at: now,
+            last_accessed: now,
+            setup_result: None,
+            recovery_meta: None,
+        };
+        let mut proj_b = Project {
+            name: "project-b".to_string(),
+            root_path: PathBuf::from("/tmp/proj-b"),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: now,
+            workspaces: HashMap::new(),
+            commands: vec![],
+        };
+        proj_b
+            .workspaces
+            .insert(ws_ready.name.clone(), ws_ready.clone());
+
+        state.projects.insert(proj_a.name.clone(), proj_a);
+        state.projects.insert(proj_b.name.clone(), proj_b);
+
+        store.save(&state).await.expect("save should succeed");
+        let loaded = store.load().await.expect("load should succeed");
+
+        // project-a 中断态应完整恢复，恢复元数据不应泄漏到 project-b
+        let loaded_a = loaded
+            .projects
+            .get("project-a")
+            .expect("project-a should exist");
+        let loaded_ws_a = loaded_a
+            .workspaces
+            .get("feature-interrupted")
+            .expect("workspace should exist in project-a");
+        assert!(
+            matches!(loaded_ws_a.status, WorkspaceStatus::Initializing),
+            "project-a workspace status should be Initializing"
+        );
+        let meta_a = loaded_ws_a
+            .recovery_meta
+            .as_ref()
+            .expect("recovery_meta should be present in project-a");
+        assert_eq!(meta_a.recovery_state, "interrupted");
+        assert_eq!(
+            meta_a.recovery_cursor.as_deref(),
+            Some("step-2-init"),
+            "recovery_cursor should roundtrip"
+        );
+        assert!(
+            meta_a.failed_context.is_some(),
+            "failed_context should roundtrip"
+        );
+        assert!(
+            meta_a.interrupted_at.is_some(),
+            "interrupted_at should roundtrip"
+        );
+
+        // project-b 同名工作区不应受 project-a 的中断态污染
+        let loaded_b = loaded
+            .projects
+            .get("project-b")
+            .expect("project-b should exist");
+        let loaded_ws_b = loaded_b
+            .workspaces
+            .get("feature-interrupted")
+            .expect("workspace should exist in project-b");
+        assert!(
+            matches!(loaded_ws_b.status, WorkspaceStatus::Ready),
+            "project-b workspace status should remain Ready"
+        );
+        assert!(
+            loaded_ws_b.recovery_meta.is_none(),
+            "project-b workspace should have no recovery_meta (no cross-workspace leakage)"
+        );
+    }
+
+    /// CHK-003: 旧快照（无 recovery 列）加载时不应崩溃，应回退为 None
+    #[tokio::test]
+    async fn workspace_missing_recovery_columns_falls_back_gracefully() {
+        use crate::workspace::state::WorkspaceRecoveryMeta;
+        let store = StateStore::open_in_memory_for_test()
+            .await
+            .expect("in-memory store should initialize");
+
+        let now = Utc::now();
+        let mut state = AppState::default();
+
+        // 保存一个无恢复元数据的工作区（模拟旧快照）
+        let ws_normal = Workspace {
+            name: "normal".to_string(),
+            worktree_path: PathBuf::from("/tmp/proj/.worktrees/normal"),
+            branch: "feature/normal".to_string(),
+            status: WorkspaceStatus::Ready,
+            created_at: now,
+            last_accessed: now,
+            setup_result: None,
+            recovery_meta: None, // 无恢复元数据
+        };
+        let mut proj = Project {
+            name: "proj".to_string(),
+            root_path: PathBuf::from("/tmp/proj"),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: now,
+            workspaces: HashMap::new(),
+            commands: vec![],
+        };
+        proj.workspaces.insert(ws_normal.name.clone(), ws_normal);
+        state.projects.insert(proj.name.clone(), proj);
+
+        store.save(&state).await.expect("save should succeed");
+        let loaded = store.load().await.expect("load should succeed");
+
+        let ws = loaded
+            .projects
+            .get("proj")
+            .and_then(|p| p.workspaces.get("normal"))
+            .expect("workspace should exist");
+        assert!(
+            ws.recovery_meta.is_none(),
+            "missing recovery columns should fall back to None without crashing"
+        );
+
+        // 验证 WorkspaceRecoveryMeta::none() 帮助方法语义
+        let meta = WorkspaceRecoveryMeta::none();
+        assert_eq!(meta.recovery_state, "none");
+        assert!(!meta.needs_attention());
+
+        let interrupted_meta = WorkspaceRecoveryMeta {
+            recovery_state: "interrupted".to_string(),
+            recovery_cursor: None,
+            failed_context: None,
+            interrupted_at: None,
+        };
+        assert!(interrupted_meta.needs_attention());
     }
 }

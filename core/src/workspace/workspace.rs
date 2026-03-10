@@ -187,6 +187,7 @@ impl WorkspaceManager {
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             setup_result: None,
+            recovery_meta: None,
         };
 
         // Update state

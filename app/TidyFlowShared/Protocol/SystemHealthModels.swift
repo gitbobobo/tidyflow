@@ -419,3 +419,67 @@ public enum IncidentRepairState: Equatable {
     case repaired(requestId: String)
     case repairFailed(requestId: String, summary: String?)
 }
+
+// MARK: - 工作区恢复元数据（双端共享语义）
+
+/// 工作区崩溃恢复元数据
+///
+/// 与 `core/src/workspace/state.rs` `WorkspaceRecoveryMeta` 保持语义一致。
+/// 按 `(project, workspace)` 路由消费，不允许跨工作区混用。
+public struct WorkspaceRecoveryMeta: Codable, Equatable {
+    /// 恢复状态：`none` | `interrupted` | `recovering` | `recovered`
+    public let recoveryState: String
+    /// 恢复游标（上次已知执行位置）
+    public let recoveryCursor: String?
+    /// 失败上下文（JSON 字符串）
+    public let failedContext: String?
+    /// 中断发生时间（ISO 8601 字符串）
+    public let interruptedAt: String?
+
+    public init(recoveryState: String, recoveryCursor: String? = nil,
+                failedContext: String? = nil, interruptedAt: String? = nil) {
+        self.recoveryState = recoveryState
+        self.recoveryCursor = recoveryCursor
+        self.failedContext = failedContext
+        self.interruptedAt = interruptedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case recoveryState = "recovery_state"
+        case recoveryCursor = "recovery_cursor"
+        case failedContext = "failed_context"
+        case interruptedAt = "interrupted_at"
+    }
+
+    /// 是否处于需要关注的中断/恢复中状态
+    public var needsAttention: Bool {
+        recoveryState == "interrupted" || recoveryState == "recovering"
+    }
+}
+
+/// system_snapshot workspace_item 中的恢复状态摘要（按 (project, workspace) 隔离）
+public struct WorkspaceRecoverySummary: Equatable {
+    /// 工作区所属项目
+    public let project: String
+    /// 工作区名称
+    public let workspace: String
+    /// 恢复状态
+    public let recoveryState: String
+    /// 恢复游标
+    public let recoveryCursor: String?
+
+    public var needsAttention: Bool {
+        recoveryState == "interrupted" || recoveryState == "recovering"
+    }
+
+    /// 从 system_snapshot workspace_item JSON 解析（缺失时返回 nil）
+    public static func from(json: [String: Any], project: String, workspace: String) -> WorkspaceRecoverySummary? {
+        guard let state = json["recovery_state"] as? String else { return nil }
+        return WorkspaceRecoverySummary(
+            project: project,
+            workspace: workspace,
+            recoveryState: state,
+            recoveryCursor: json["recovery_cursor"] as? String
+        )
+    }
+}

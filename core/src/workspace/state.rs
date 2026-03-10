@@ -236,6 +236,46 @@ pub struct Project {
     pub commands: Vec<ProjectCommand>,
 }
 
+/// 工作区崩溃恢复元数据
+///
+/// 记录工作区中断时的运行态、恢复游标与失败上下文。
+/// 按 `(project_name, workspace_name)` 复合键持久化，崩溃重启后仅恢复到所属工作区，
+/// 不会将一个工作区的残留状态施加到另一个工作区。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceRecoveryMeta {
+    /// 恢复状态：`none` | `interrupted` | `recovering` | `recovered`
+    pub recovery_state: String,
+    /// 恢复游标（上次已知执行位置，例如 Evolution 阶段名、步骤 ID 或时间戳字符串）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_cursor: Option<String>,
+    /// 失败上下文（序列化 JSON 字符串，包含中断时的 cycle_id、stage、错误信息等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_context: Option<String>,
+    /// 中断发生时间
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interrupted_at: Option<DateTime<Utc>>,
+}
+
+impl WorkspaceRecoveryMeta {
+    /// 初始无恢复状态（正常运行中）
+    pub fn none() -> Self {
+        Self {
+            recovery_state: "none".to_string(),
+            recovery_cursor: None,
+            failed_context: None,
+            interrupted_at: None,
+        }
+    }
+
+    /// 是否处于中断或正在恢复中（需要关注的状态）
+    pub fn needs_attention(&self) -> bool {
+        matches!(
+            self.recovery_state.as_str(),
+            "interrupted" | "recovering"
+        )
+    }
+}
+
 /// Workspace metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
@@ -246,6 +286,9 @@ pub struct Workspace {
     pub created_at: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
     pub setup_result: Option<SetupResultSummary>,
+    /// 工作区恢复元数据（崩溃/中断后的状态记录，按 (project, workspace) 隔离）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_meta: Option<WorkspaceRecoveryMeta>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -405,6 +448,7 @@ mod tests {
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             setup_result: None,
+            recovery_meta: None,
         }
     }
 
@@ -611,6 +655,7 @@ mod tests {
                     created_at: Utc::now(),
                     last_accessed: Utc::now(),
                     setup_result: None,
+                    recovery_meta: None,
                 },
             );
         }
@@ -678,6 +723,7 @@ mod tests {
                     created_at: Utc::now(),
                     last_accessed: Utc::now(),
                     setup_result: None,
+                    recovery_meta: None,
                 };
                 (ws_name.to_string(), ws)
             })

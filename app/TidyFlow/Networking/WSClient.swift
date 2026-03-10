@@ -190,6 +190,8 @@ class WSClient: NSObject, ObservableObject {
     var onHealthSnapshot: ((SystemHealthSnapshot) -> Void)?
     /// v1.41: Core 推送修复执行结果
     var onHealthRepairResult: ((RepairAuditEntry) -> Void)?
+    /// 工作区恢复状态摘要（从 system_snapshot workspace_items 提取，按 (project, workspace) 隔离）
+    var onWorkspaceRecoverySummaries: (([WorkspaceRecoverySummary]) -> Void)?
 
     func emitClientError(_ message: String) {
         if let handler = errorMessageHandler {

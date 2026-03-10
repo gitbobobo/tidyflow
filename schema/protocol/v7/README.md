@@ -108,6 +108,21 @@ Creating → Initializing → Ready
 (任意状态) → Destroying
 ```
 
+### 工作区恢复状态（`recovery_state`）
+
+`system_snapshot` 的 `workspace_items` 中，每个命名工作区可携带以下可选恢复字段，
+按 `(project, workspace)` 复合键隔离，崩溃重启后不会将一个工作区的恢复状态施加到另一个工作区：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `recovery_state` | `string?` | 恢复状态：`interrupted` \| `recovering` \| `recovered`；正常运行时省略（`None`）|
+| `recovery_cursor` | `string?` | 恢复游标：上次已知执行位置（如 Evolution 阶段名、步骤 ID）；省略时表示无法定位游标 |
+
+**约束规则：**
+1. 客户端**必须**通过 `(project, workspace)` 路由 `recovery_state` 到对应 UI 状态，不允许仅凭工作区名称判断。
+2. `recovery_state` 为 `None` 时（字段不存在或值为 `none`），客户端不应渲染恢复提示。
+3. 健康探针 `core.workspace_recovery` 会为 `recovery_state = interrupted | recovering` 的工作区生成 `Warning` 级 incident，归属上下文携带 `(project, workspace)`。
+
 ### 多项目/多工作区唯一标识
 
 - 工作区唯一键：`(project, workspace)` 二元组。

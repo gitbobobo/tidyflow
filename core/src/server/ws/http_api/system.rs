@@ -69,6 +69,12 @@ pub(in crate::server::ws) struct SystemSnapshotWorkspaceItem {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_reason: Option<String>,
+    /// 工作区恢复状态摘要（按 (project, workspace) 隔离，无中断时为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_state: Option<String>,
+    /// 恢复游标（上次已知执行位置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -243,7 +249,24 @@ async fn build_workspace_items_and_metrics(
                     status: crate::application::project::workspace_status_str(&ws.status),
                     sidebar_status: Default::default(),
                 };
-                items.push(build_workspace_item(project_name.clone(), info, evo_index));
+                let recovery_state = ws.recovery_meta.as_ref().and_then(|m| {
+                    if m.needs_attention() {
+                        Some(m.recovery_state.clone())
+                    } else {
+                        None
+                    }
+                });
+                let recovery_cursor = ws
+                    .recovery_meta
+                    .as_ref()
+                    .and_then(|m| m.recovery_cursor.clone());
+                items.push(build_workspace_item_with_recovery(
+                    project_name.clone(),
+                    info,
+                    evo_index,
+                    recovery_state,
+                    recovery_cursor,
+                ));
                 cache_metrics_list.push(snapshot_to_metrics_info(
                     &WorkspaceCacheSnapshot::from_counters(&project_name, &ws.name, &root),
                 ));
@@ -291,6 +314,17 @@ fn build_workspace_item(
     workspace: WorkspaceInfo,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
 ) -> SystemSnapshotWorkspaceItem {
+    build_workspace_item_with_recovery(project, workspace, evo_index, None, None)
+}
+
+/// 构建工作区快照条目，附带恢复状态字段（按 (project, workspace) 隔离）
+fn build_workspace_item_with_recovery(
+    project: String,
+    workspace: WorkspaceInfo,
+    evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
+    recovery_state: Option<String>,
+    recovery_cursor: Option<String>,
+) -> SystemSnapshotWorkspaceItem {
     let evo = evo_index.get(&(project.clone(), workspace.name.clone()));
     let evolution_status = evo
         .map(|v| v.status.clone())
@@ -309,6 +343,8 @@ fn build_workspace_item(
         evolution_cycle_id,
         title,
         failure_reason,
+        recovery_state,
+        recovery_cursor,
     }
 }
 
@@ -408,6 +444,7 @@ mod tests {
                     created_at: Utc::now(),
                     last_accessed: Utc::now(),
                     setup_result: None,
+                    recovery_meta: None,
                 },
             )]),
             commands: Vec::new(),
@@ -612,5 +649,100 @@ mod tests {
         assert_eq!(snap.scrollback_trim_total, 2);
         assert_eq!(snap.per_workspace.len(), 1);
         assert_eq!(snap.per_workspace[0].project, "proj");
+    }
+
+    /// CHK-005: system_snapshot 多工作区恢复状态隔离 — 不同项目中同名工作区的 recovery_state 独立
+    #[tokio::test]
+    async fn system_snapshot_should_isolate_recovery_state_per_project_workspace() {
+        use crate::workspace::state::{Project, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus};
+        use std::collections::HashMap;
+
+        let mut state = AppState::default();
+        let now = Utc::now();
+
+        // project-a: 同名工作区处于中断态
+        let ws_interrupted = Workspace {
+            name: "feature".to_string(),
+            worktree_path: "/tmp/proj-a/.worktrees/feature".into(),
+            branch: "feature/a".to_string(),
+            status: WorkspaceStatus::Initializing,
+            created_at: now,
+            last_accessed: now,
+            setup_result: None,
+            recovery_meta: Some(WorkspaceRecoveryMeta {
+                recovery_state: "interrupted".to_string(),
+                recovery_cursor: Some("step-2".to_string()),
+                failed_context: None,
+                interrupted_at: Some(now),
+            }),
+        };
+        state.add_project(Project {
+            name: "project-a".to_string(),
+            root_path: "/tmp/proj-a".into(),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: now,
+            workspaces: HashMap::from([("feature".to_string(), ws_interrupted)]),
+            commands: Vec::new(),
+        });
+
+        // project-b: 同名工作区无恢复元数据（正常态）
+        let ws_normal = Workspace {
+            name: "feature".to_string(),
+            worktree_path: "/tmp/proj-b/.worktrees/feature".into(),
+            branch: "feature/b".to_string(),
+            status: WorkspaceStatus::Ready,
+            created_at: now,
+            last_accessed: now,
+            setup_result: None,
+            recovery_meta: None,
+        };
+        state.add_project(Project {
+            name: "project-b".to_string(),
+            root_path: "/tmp/proj-b".into(),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: now,
+            workspaces: HashMap::from([("feature".to_string(), ws_normal)]),
+            commands: Vec::new(),
+        });
+
+        let (items, _) = build_workspace_items_and_metrics(
+            &Arc::new(tokio::sync::RwLock::new(state)),
+            &HashMap::new(),
+        )
+        .await;
+
+        // 找到 project-a/feature 和 project-b/feature
+        let item_a = items
+            .iter()
+            .find(|it| it.project == "project-a" && it.workspace == "feature")
+            .expect("project-a/feature should be in items");
+        let item_b = items
+            .iter()
+            .find(|it| it.project == "project-b" && it.workspace == "feature")
+            .expect("project-b/feature should be in items");
+
+        // project-a 应携带 recovery_state = "interrupted"
+        assert_eq!(
+            item_a.recovery_state.as_deref(),
+            Some("interrupted"),
+            "project-a/feature should have recovery_state=interrupted"
+        );
+        assert_eq!(
+            item_a.recovery_cursor.as_deref(),
+            Some("step-2"),
+            "project-a/feature recovery_cursor should roundtrip"
+        );
+
+        // project-b 不应受 project-a 的中断态影响
+        assert!(
+            item_b.recovery_state.is_none(),
+            "project-b/feature should have no recovery_state (no cross-workspace leakage)"
+        );
+        assert!(
+            item_b.recovery_cursor.is_none(),
+            "project-b/feature should have no recovery_cursor"
+        );
     }
 }

@@ -96,6 +96,8 @@
   - `evolution_cycle_id`（无循环时为 `null`）
   - `title`（有循环且已生成标题时有值，否则为 `null`）
   - `failure_reason`（失败原因汇总，无失败时为 `null`；优先级：`terminal_error_message` > `rate_limit_error_message` > `terminal_reason_code`）
+  - `recovery_state`（可选，崩溃/中断后的恢复状态：`interrupted` | `recovering` | `recovered`；正常运行时省略）
+  - `recovery_cursor`（可选，恢复游标，上次已知执行位置；省略时表示无法定位游标）
 
 ## 项目与工作区生命周期
 
@@ -119,6 +121,25 @@
 | `destroying` | 标记删除中 | 不可使用 |
 
 `default` 虚拟工作区的 `workspace_status` 始终为 `ready`，不随项目状态变化。
+
+### 工作区恢复状态（`recovery_state`）
+
+`system_snapshot` 中 `workspace_items` 的命名工作区可携带以下可选恢复字段：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `recovery_state` | `string?` | 恢复状态：`interrupted` \| `recovering` \| `recovered`；正常时省略 |
+| `recovery_cursor` | `string?` | 恢复游标：上次已知执行位置（如 Evolution 阶段名）；省略时无法定位游标 |
+
+**恢复状态消费约束：**
+1. 客户端**必须**通过 `(project, workspace)` 路由 `recovery_state` 到对应 UI 状态，
+   不允许将一个工作区的恢复状态施加到同名的其他工作区。
+2. `recovery_state` 省略或为 `none` 时，客户端不应渲染恢复提示。
+3. 健康探针 `core.workspace_recovery` 为处于 `interrupted` / `recovering` 状态的工作区
+   生成 `Warning` 级 incident，incident 的 `context` 字段携带精确的 `(project, workspace)` 归属。
+
+持久化层（SQLite `workspaces` 表）以 `(project_name, name)` 为主键存储恢复元数据，
+崩溃重启后不会将一个工作区的残留状态恢复到另一个工作区。
 
 ### 多项目/多工作区消费约束
 
