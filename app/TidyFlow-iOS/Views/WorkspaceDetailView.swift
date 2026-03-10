@@ -2518,7 +2518,7 @@ struct MobileEvolutionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         Text(String(format: "evolution.page.pipeline.roundLabel".localized, detail.round))
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.secondary)
@@ -2527,11 +2527,15 @@ struct MobileEvolutionView: View {
                             .background(Capsule().fill(Color.secondary.opacity(0.12)))
                         Text(detail.title)
                             .font(.headline)
-                            .lineLimit(1)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                         Spacer()
                         Text(localizedWorkspaceStatusDisplay(detail.status))
                             .font(.caption)
                             .foregroundColor(mobileWorkspaceStatusColor(detail.status))
+                            .fixedSize()
                     }
 
                     HStack(spacing: 10) {

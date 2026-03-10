@@ -1074,11 +1074,14 @@ struct EvolutionPipelineView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         roundBadge(round: payload.round, color: .indigo)
                         Text(payload.title)
                             .font(.title3.weight(.semibold))
-                            .lineLimit(1)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                         Spacer()
                         if let status = trimmedNonEmptyText(payload.status) {
                             let info = cycleStatusInfo(status)
@@ -1088,6 +1091,7 @@ struct EvolutionPipelineView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(Capsule().fill(info.color.opacity(0.12)))
+                                .fixedSize()
                         }
                     }
 
