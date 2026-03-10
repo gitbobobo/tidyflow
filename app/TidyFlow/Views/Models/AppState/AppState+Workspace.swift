@@ -36,12 +36,19 @@ extension AppState {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
+        let previousIdentity = selectedWorkspaceIdentity
         // 性能追踪：工作区切换
         let projectName = WorkspaceSelectionSemantics.resolveProjectName(
             projectId: projectId,
             in: projects,
             fallback: selectedProjectName
         )
+        let nextIdentity = WorkspaceIdentity(
+            projectId: projectId,
+            projectName: projectName,
+            workspaceName: workspaceName
+        )
+        let didChangeWorkspaceIdentity = previousIdentity != nextIdentity
         if projects.first(where: { $0.id == projectId }) == nil {
             TFLog.app.error("selectWorkspace failed: project not found for id=\(projectId.uuidString, privacy: .public)")
         }
@@ -62,10 +69,12 @@ extension AppState {
             workspaceName: workspaceName,
             projectId: projectId
         ))
-        // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
-        clearAISelectorBootstrapContexts()
-        // 切换工作空间时清理会话列表分页状态，避免旧请求残留导致界面串页。
-        clearAISessionListPageStates()
+        if didChangeWorkspaceIdentity {
+            // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
+            clearAISelectorBootstrapContexts()
+            // 仅在真实切换到其他项目/工作区时清理会话分页，避免重复点击当前项目把右侧列表清空。
+            clearAISessionListPageStates()
+        }
 
         // 使用全局工作空间键（包含项目名称）来区分不同项目的同名工作空间
         guard let globalKey = currentGlobalWorkspaceKey else {

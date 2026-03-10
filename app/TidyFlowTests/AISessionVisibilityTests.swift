@@ -450,6 +450,55 @@ final class AISessionListSemanticsTests: XCTestCase {
         appState.clearAISessionListPageStates()
         XCTAssertTrue(appState.aiSessionListPageStates.isEmpty, "清理后分页状态应为空")
     }
+
+    func testSelectWorkspace_sameSelectionKeepsExistingSessionPageState() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let projectId = UUID()
+        appState.projects = [
+            ProjectModel(
+                id: projectId,
+                name: "demo",
+                path: nil,
+                workspaces: [
+                    WorkspaceModel(name: "default", root: nil, status: "ready", isDefault: true)
+                ]
+            )
+        ]
+        appState.selectWorkspace(projectId: projectId, workspaceName: "default")
+
+        let session = AISessionInfo(
+            projectName: "demo",
+            workspaceName: "default",
+            aiTool: .codex,
+            id: "s-keep",
+            title: "保留会话",
+            updatedAt: 100,
+            origin: .user
+        )
+        appState.updateSessionListPageState(
+            AISessionListPageState(
+                sessions: [session],
+                hasMore: false,
+                nextCursor: nil,
+                isLoadingInitial: false,
+                isLoadingNextPage: false
+            ),
+            project: "demo",
+            workspace: "default",
+            filter: .all
+        )
+
+        appState.selectWorkspace(projectId: projectId, workspaceName: "default")
+
+        let retainedState = appState.sessionListPageState(for: .all)
+        XCTAssertEqual(retainedState.sessions, [session], "重复选择当前工作区不应清空会话列表分页缓存")
+        XCTAssertFalse(retainedState.isLoadingInitial, "重复选择当前工作区不应把现有分页状态重置为加载态")
+    }
 }
 
 // MARK: - AISessionListDisplayPhase 展示阶段测试
