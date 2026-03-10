@@ -36,9 +36,7 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("health", "health_"),
 ];
 
-pub const CONTAINS_RULES: &[(&str, &str)] = &[
-    ("settings", "client_settings"),
-];
+pub const CONTAINS_RULES: &[(&str, &str)] = &[("settings", "client_settings")];
 
 /// 根据规则表判断 action 是否属于给定 domain。
 pub fn matches_action_domain(domain: &str, action: &str) -> bool {

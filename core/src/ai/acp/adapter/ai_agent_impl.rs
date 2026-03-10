@@ -46,12 +46,12 @@ impl AiAgent for AcpAgent {
         self.ensure_runtime_yolo_for_session(directory, session_id)
             .await?;
 
-        let mut metadata = if let Some(cached) = self.metadata_for_session(directory, session_id).await
-        {
-            cached
-        } else {
-            self.metadata_for_directory(directory).await
-        };
+        let mut metadata =
+            if let Some(cached) = self.metadata_for_session(directory, session_id).await {
+                cached
+            } else {
+                self.metadata_for_directory(directory).await
+            };
         let mode_id = Self::resolve_mode_id(&metadata, agent.as_deref());
         let model_id = model.map(|m| m.model_id);
         let supports_load_session = self.client.supports_load_session().await;
