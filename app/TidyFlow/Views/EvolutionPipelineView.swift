@@ -48,9 +48,8 @@ struct EvolutionPipelineView: View {
     private var currentItem: EvolutionWorkspaceItemV2? { projection.currentItem }
     private var blockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
-    private var runningAgents: [EvolutionAgentInfoV2] {
-        (currentItem?.agents ?? []).filter { normalizedStageStatus($0.status) == "running" }
-    }
+    private var runningAgents: [EvolutionAgentInfoV2] { projection.runningAgents }
+    private var standbyAgents: [PipelineStandbyAgent] { projection.standbyAgents }
 
     /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
     private var primaryControlShowsStop: Bool {
@@ -84,24 +83,7 @@ struct EvolutionPipelineView: View {
     // MARK: - 代理颜色映射
 
     private func stageColor(_ stage: String) -> Color {
-        switch normalizedStageKey(stage) {
-        case "direction":
-            return .cyan
-        case "plan":
-            return .blue
-        case "implement.general":
-            return .orange
-        case "implement.visual":
-            return .pink
-        case "reimplement":
-            return .purple
-        case "verify":
-            return .green
-        case "auto_commit":
-            return .gray
-        default:
-            return .secondary
-        }
+        EvolutionStageSemantics.stageColor(stage)
     }
 
     // MARK: - Body
@@ -346,179 +328,24 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    // MARK: - 运行中代理（放大卡片）
-
-    private var runningAgentSection: some View {
-        return Group {
-            if !runningAgents.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
-                        Spacer()
-                        // 总耗时（累加各代理耗时）
-                        if let total = totalDurationText {
-                            HStack(spacing: 3) {
-                                Image(systemName: "timer")
-                                    .font(.system(size: 9))
-                                Text(total)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            }
-                            .foregroundColor(.secondary)
-                        }
-                    }
-
-                    ForEach(runningAgents, id: \.stage) { agent in
-                        runningAgentCard(agent)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .move(edge: .bottom).combined(with: .opacity)
-                            ))
-                    }
-                }
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgents.map(\.stage))
-            }
-        }
-    }
-
-    private func runningAgentCard(_ agent: EvolutionAgentInfoV2) -> some View {
-        let startedAtDate = executionStartDate(agent.startedAt)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                // AI 工具图标
-                aiToolIcon(for: agent.stage)
-                    .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(stageDisplayName(agent.stage))
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(agent.agent)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-            }
-
-            // 状态信息行
-            HStack(spacing: 12) {
-                // 工具调用次数
-                HStack(spacing: 4) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.system(size: 10))
-                        .foregroundColor(.orange)
-                    Text("\(agent.toolCallCount)")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                }
-
-                // 运行时间（使用核心返回的 started_at）
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                        .foregroundColor(.orange)
-                    elapsedTimeText(startedAtDate)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                }
-
-                Spacer()
-
-                // 查看聊天
-                if canOpenStageSession(stage: agent.stage) {
-                    Button {
-                        openStageSession(stage: agent.stage)
-                    } label: {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .font(.system(size: 10))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("evolution.page.pipeline.viewChat".localized)
-                }
-            }
-            .foregroundColor(.secondary)
-
-            // 进度条动画
-            PipelineProgressBar()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.orange.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1.5)
-        )
-    }
-
-    /// 从 latestMessage 中提取最近若干行，用于卡片摘要显示
-    private func recentLogLines(from message: String?, maxCount: Int = 3) -> [String] {
-        guard let message = message, !message.isEmpty else { return [] }
-        let lines = message.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        return Array(lines.suffix(maxCount))
-    }
-
-    // MARK: - 待命队列（横向胶囊）
-
-    private var standbySection: some View {
-        let standbyAgents = computeStandbyAgents()
-
-        return Group {
-            if !standbyAgents.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
-
-                    // 横向排列，允许换行
-                    StandbyFlowLayout(spacing: 6) {
-                        ForEach(standbyAgents, id: \.stage) { agent in
-                            standbyCapsule(agent)
-                                .transition(.opacity.combined(with: .scale))
-                        }
-                    }
-                }
-                .animation(.easeInOut(duration: 0.3), value: standbyAgents.map(\.stage))
-            }
-        }
-    }
-
-    /// 胶囊形代理标签
-    private func standbyCapsule(_ agent: PipelineStandbyAgent) -> some View {
-        let color = stageColor(agent.stage)
-        return HStack(spacing: 4) {
-            Image(systemName: stageIconName(agent.stage))
-                .font(.system(size: 10))
-
-            Text(stageDisplayName(agent.stage))
-                .font(.system(size: 10))
-                .lineLimit(1)
-
-            if agent.isLoopable {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 8))
-                    .foregroundColor(color.opacity(0.7))
-            }
-        }
-        .foregroundColor(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.12))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(color.opacity(0.25), lineWidth: 0.5)
-        )
-    }
-
     // MARK: - 上方内容区（当前循环）
 
     private var cycleDetailArea: some View {
         VStack(alignment: .leading, spacing: 8) {
             controlSection
             terminalReasonBanner
-            runningAgentSection
-            standbySection
+            EvolutionRunningAgentsSectionView(
+                appState: appState,
+                project: project,
+                workspace: workspace,
+                runningAgents: runningAgents,
+                totalDurationText: projection.totalDurationText,
+                currentItem: currentItem,
+                onOpenStageSession: { stage in
+                    openStageSession(stage: stage)
+                }
+            )
+            EvolutionStandbySectionView(standbyAgents: standbyAgents)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -705,7 +532,7 @@ struct EvolutionPipelineView: View {
     }
 
     private var hasRunningAgents: Bool {
-        (currentItem?.agents ?? []).contains { normalizedStageStatus($0.status) == "running" }
+        !runningAgents.isEmpty
     }
 
     private var currentCycleStartTimeText: String {
@@ -1262,9 +1089,7 @@ struct EvolutionPipelineView: View {
     }
 
     private func executionStartDate(_ value: String?) -> Date? {
-        guard let value = trimmedNonEmptyText(value) else { return nil }
-        return Self.rfc3339Formatter.date(from: value)
-            ?? Self.rfc3339FallbackFormatter.date(from: value)
+        EvolutionPipelineDateFormatting.rfc3339Date(from: value)
     }
 
     // MARK: - 终止/异常原因提示（仅在终止或异常时显示）
@@ -1652,39 +1477,6 @@ struct EvolutionPipelineView: View {
         return nil
     }
 
-    // MARK: - 进度条
-
-    struct PipelineProgressBar: View {
-        @State private var offset: CGFloat = -1
-
-        var body: some View {
-            GeometryReader { geo in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.orange.opacity(0.15))
-                    .frame(height: 3)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(
-                                LinearGradient(
-                                    colors: [.orange.opacity(0), .orange, .orange.opacity(0)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geo.size.width * 0.3, height: 3)
-                            .offset(x: offset * geo.size.width * 0.7)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 2))
-            }
-            .frame(height: 3)
-            .onAppear {
-                withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                    offset = 1
-                }
-            }
-        }
-    }
-
     // MARK: - 时间格式化
 
     /// 根据核心返回的 started_at（RFC3339）计算实时耗时
@@ -1713,31 +1505,12 @@ struct EvolutionPipelineView: View {
 
     /// 将毫秒数格式化为可读时长
     private static func formatDurationMs(_ ms: UInt64) -> String {
-        formatDuration(TimeInterval(ms) / 1000.0)
+        EvolutionPipelineDateFormatting.formatDurationMs(ms)
     }
 
     private static func formatDuration(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds))
-        if total < 60 {
-            return "\(total)s"
-        } else {
-            let minutes = total / 60
-            let secs = total % 60
-            return "\(minutes)m\(String(format: "%02d", secs))s"
-        }
+        EvolutionPipelineDateFormatting.formatDuration(seconds)
     }
-
-    private static let rfc3339Formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    private static let rfc3339FallbackFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
 
     private static let cycleStartDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -1757,59 +1530,7 @@ struct EvolutionPipelineView: View {
         return formatter
     }()
 
-    /// 计算当前轮次中各代理最近一次会话的累计耗时。
-    /// 同一 (stage, agent) 组合在重试后会产生多条执行记录，仅取最新一条，
-    /// 避免把重试前的旧耗时也叠加进来。
-    private var totalDurationText: String? {
-        let completedExecutions = (currentItem?.executions ?? [])
-            .filter { isExecutionCompletedStatus($0.status) }
-        // 按 (stage, agent) 分组，每组只保留 startedAt 最新的条目
-        var latestByKey: [String: EvolutionSessionExecutionEntryV2] = [:]
-        for entry in completedExecutions {
-            let key = "\(entry.stage)|\(entry.agent)"
-            if let existing = latestByKey[key] {
-                if entry.startedAt > existing.startedAt {
-                    latestByKey[key] = entry
-                }
-            } else {
-                latestByKey[key] = entry
-            }
-        }
-        let totalMs = latestByKey.values.compactMap(\.durationMs).reduce(0, +)
-        if totalMs > 0 {
-            return Self.formatDurationMs(totalMs)
-        }
-        // fallback：执行记录不足时使用 agents 快照中的耗时
-        let agentTotalMs = (currentItem?.agents ?? []).compactMap(\.durationMs).reduce(0, +)
-        guard agentTotalMs > 0 else { return nil }
-        return Self.formatDurationMs(agentTotalMs)
-    }
-
     // MARK: - 数据逻辑
-
-    private func computeStandbyAgents() -> [PipelineStandbyAgent] {
-        let agents = currentItem?.agents ?? []
-        let runningStages = Set(
-            agents
-                .filter { normalizedStageStatus($0.status) == "running" }
-                .map(\.stage)
-        )
-        let completedStages = Set(
-            agents
-                .filter { isCompletedStatus(normalizedStageStatus($0.status)) }
-                .map(\.stage)
-        )
-        let candidateStages = Array(Set(agents.map(\.stage))).sorted { lhs, rhs in
-            stageSortOrder(lhs) < stageSortOrder(rhs)
-        }
-
-        return candidateStages.compactMap { stage in
-            let isRunning = runningStages.contains(stage)
-            let isCompleted = completedStages.contains(stage)
-            guard !isRunning && !isCompleted else { return nil }
-            return PipelineStandbyAgent(stage: stage, isLoopable: isRepeatableStage(stage))
-        }
-    }
 
     private func updateTimeline() {
         let startedAt = CFAbsoluteTimeGetCurrent()
@@ -2258,20 +1979,12 @@ struct EvolutionPipelineView: View {
     }
 
     private func isExecutionCompletedStatus(_ status: String) -> Bool {
-        let normalized = normalizedStageStatus(status)
-        if normalized.isEmpty {
-            return false
-        }
-        if ["running", "pending", "queued", "in_progress", "processing"].contains(normalized) {
-            return false
-        }
-        return true
+        EvolutionPipelineDateFormatting.isExecutionCompletedStatus(status)
     }
 
     private func pipelineTimeLabel(from isoString: String?) -> String {
         guard let isoString = trimmedNonEmptyText(isoString),
-              let date = Self.rfc3339Formatter.date(from: isoString)
-                ?? Self.rfc3339FallbackFormatter.date(from: isoString) else {
+              let date = EvolutionPipelineDateFormatting.rfc3339Date(from: isoString) else {
             return Self.pipelineTimeFormatter.string(from: Date())
         }
         return Self.pipelineTimeFormatter.string(from: date)
@@ -2321,11 +2034,6 @@ struct EvolutionPipelineView: View {
 
 // MARK: - 数据模型
 
-struct PipelineStandbyAgent: Equatable {
-    let stage: String
-    let isLoopable: Bool
-}
-
 struct PipelineTimelineEntry: Identifiable, Equatable {
     let id: String
     let stage: String
@@ -2368,22 +2076,8 @@ struct PipelineCycleTimelineEntry: Identifiable, Equatable {
     let sessionID: String?
 
     var startedAtDate: Date? {
-        guard let startedAt else { return nil }
-        return PipelineCycleTimelineEntry.rfc3339Formatter.date(from: startedAt)
-            ?? PipelineCycleTimelineEntry.rfc3339FallbackFormatter.date(from: startedAt)
+        EvolutionPipelineDateFormatting.rfc3339Date(from: startedAt)
     }
-
-    private static let rfc3339Formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    private static let rfc3339FallbackFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
 }
 
 struct PipelineCycleDetailPayload: Identifiable, Equatable {
@@ -2455,6 +2149,287 @@ struct StandbyFlowLayout: Layout {
             currentWidth = currentWidth == 0 ? size.width : currentWidth + spacing + size.width
         }
         return rows.filter { !$0.items.isEmpty }
+    }
+}
+
+// MARK: - 进度条（从 EvolutionPipelineView 提升为顶层，供子视图共享）
+
+struct PipelineProgressBar: View {
+    @State private var offset: CGFloat = -1
+
+    var body: some View {
+        GeometryReader { geo in
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color.orange.opacity(0.15))
+                .frame(height: 3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(
+                            LinearGradient(
+                                colors: [.orange.opacity(0), .orange, .orange.opacity(0)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width * 0.3, height: 3)
+                        .offset(x: offset * geo.size.width * 0.7)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 2))
+        }
+        .frame(height: 3)
+        .onAppear {
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                offset = 1
+            }
+        }
+    }
+}
+
+// MARK: - 运行中代理区（独立子视图，隔离失效域）
+
+/// 运行中代理卡片区，接收预计算的 Equatable 数据，仅在 runningAgents 实际变化时刷新
+struct EvolutionRunningAgentsSectionView: View {
+    let appState: AppState
+    let project: String
+    let workspace: String?
+    let runningAgents: [EvolutionAgentInfoV2]
+    let totalDurationText: String?
+    let currentItem: EvolutionWorkspaceItemV2?
+    var onOpenStageSession: ((String) -> Void)?
+
+    var body: some View {
+        if !runningAgents.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
+                    Spacer()
+                    if let total = totalDurationText {
+                        HStack(spacing: 3) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 9))
+                            Text(total)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundColor(.secondary)
+                    }
+                }
+
+                ForEach(runningAgents, id: \.stage) { agent in
+                    runningAgentCard(agent)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .move(edge: .bottom).combined(with: .opacity)
+                        ))
+                }
+            }
+            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgents.map(\.stage))
+        }
+    }
+
+    private func runningAgentCard(_ agent: EvolutionAgentInfoV2) -> some View {
+        let startedAtDate = executionStartDate(agent.startedAt)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                aiToolIcon(for: agent.stage)
+                    .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(EvolutionStageSemantics.displayName(for: agent.stage))
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(agent.agent)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                    Text("\(agent.toolCallCount)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                    elapsedTimeText(startedAtDate)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+
+                Spacer()
+
+                if canOpenStageSession(stage: agent.stage) {
+                    Button {
+                        openStageSession(stage: agent.stage)
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("evolution.page.pipeline.viewChat".localized)
+                }
+            }
+            .foregroundColor(.secondary)
+
+            PipelineProgressBar()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1.5)
+        )
+    }
+
+    // MARK: - 辅助方法
+
+    private func sectionLabel(_ text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(.bottom, 4)
+    }
+
+    private func aiToolIcon(for stage: String) -> some View {
+        let key = EvolutionStageSemantics.runtimeStageKey(stage)
+        let profile = findProfile(for: key)
+        let toolIconAsset = profile?.aiTool.iconAssetName
+
+        return Group {
+            if let asset = toolIconAsset {
+                Image(asset)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: EvolutionStageSemantics.iconName(for: stage))
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(EvolutionStageSemantics.stageColor(stage))
+            }
+        }
+    }
+
+    private func findProfile(for stageKey: String) -> EvolutionStageProfileInfoV2? {
+        let normalizedProfileStage = EvolutionStageSemantics.profileStageKey(for: stageKey)
+        if let workspace, !workspace.isEmpty {
+            let profiles = appState.evolutionProfiles(project: project, workspace: workspace)
+            if let match = profiles.first(where: { EvolutionStageSemantics.runtimeStageKey($0.stage) == normalizedProfileStage }) {
+                return match
+            }
+        }
+        let defaults = appState.evolutionDefaultProfiles
+        if let match = defaults.first(where: { EvolutionStageSemantics.runtimeStageKey($0.stage) == normalizedProfileStage }) {
+            let model: EvolutionModelSelectionV2? = {
+                guard !match.providerID.isEmpty, !match.modelID.isEmpty else { return nil }
+                return EvolutionModelSelectionV2(providerID: match.providerID, modelID: match.modelID)
+            }()
+            return EvolutionStageProfileInfoV2(
+                stage: match.stage,
+                aiTool: match.aiTool,
+                mode: match.mode.isEmpty ? nil : match.mode,
+                model: model,
+                configOptions: match.configOptions
+            )
+        }
+        return nil
+    }
+
+    private func canOpenStageSession(stage: String) -> Bool {
+        currentItem?.latestResolvedExecution(forExactStage: stage) != nil
+    }
+
+    private func openStageSession(stage: String) {
+        onOpenStageSession?(stage)
+    }
+
+    @ViewBuilder
+    private func elapsedTimeText(_ startedAtDate: Date?) -> some View {
+        if let startedAtDate {
+            Text(startedAtDate, style: .timer)
+                .monospacedDigit()
+        } else {
+            Text("0s")
+        }
+    }
+
+    private func executionStartDate(_ value: String?) -> Date? {
+        EvolutionPipelineDateFormatting.rfc3339Date(from: value)
+    }
+}
+
+// MARK: - 待命代理区（独立子视图，隔离失效域）
+
+/// 待命代理胶囊区，接收预计算的 Equatable 数据，仅在 standbyAgents 实际变化时刷新
+struct EvolutionStandbySectionView: View {
+    let standbyAgents: [PipelineStandbyAgent]
+
+    var body: some View {
+        if !standbyAgents.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
+
+                StandbyFlowLayout(spacing: 6) {
+                    ForEach(standbyAgents, id: \.stage) { agent in
+                        standbyCapsule(agent)
+                            .transition(.opacity.combined(with: .scale))
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: standbyAgents.map(\.stage))
+        }
+    }
+
+    private func standbyCapsule(_ agent: PipelineStandbyAgent) -> some View {
+        let color = EvolutionStageSemantics.stageColor(agent.stage)
+        return HStack(spacing: 4) {
+            Image(systemName: EvolutionStageSemantics.iconName(for: agent.stage))
+                .font(.system(size: 10))
+
+            Text(EvolutionStageSemantics.displayName(for: agent.stage))
+                .font(.system(size: 10))
+                .lineLimit(1)
+
+            if agent.isLoopable {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 8))
+                    .foregroundColor(color.opacity(0.7))
+            }
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(color.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    private func sectionLabel(_ text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(.bottom, 4)
     }
 }
 

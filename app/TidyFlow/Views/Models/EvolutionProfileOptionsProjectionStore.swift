@@ -350,13 +350,18 @@ final class EvolutionProfileOptionsProjectionStore {
         boundContextKey = contextKey
         cancellables.removeAll()
 
-        appState.objectWillChange
-            .sink { _ in
-                DispatchQueue.main.async {
-                    refresh()
-                }
-            }
-            .store(in: &cancellables)
+        // 只订阅影响进化 Profile 选项的属性，避免 AI 流式更新等无关变化触发刷新
+        Publishers.Merge4(
+            appState.$aiProviders.map { _ in () },
+            appState.$aiAgents.map { _ in () },
+            appState.$aiSessionConfigOptions.map { _ in () },
+            appState.$aiChatTool.map { _ in () }
+        )
+        .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
+        .sink { _ in
+            refresh()
+        }
+        .store(in: &cancellables)
 
         refresh()
     }
@@ -377,11 +382,12 @@ final class EvolutionProfileOptionsProjectionStore {
         boundContextKey = contextKey
         cancellables.removeAll()
 
+        // iOS 端相关属性为 private @Published，无法直接订阅；
+        // 使用 throttle 限制 objectWillChange 触发频率，减少无关刷新
         appState.objectWillChange
+            .throttle(for: .milliseconds(200), scheduler: RunLoop.main, latest: true)
             .sink { _ in
-                DispatchQueue.main.async {
-                    refresh()
-                }
+                refresh()
             }
             .store(in: &cancellables)
 

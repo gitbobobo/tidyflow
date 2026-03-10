@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - 自定义终端命令
 
@@ -207,6 +208,27 @@ enum EvolutionStageSemantics {
 
     private static func normalize(_ stage: String) -> String {
         stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func stageColor(_ stage: String) -> Color {
+        switch runtimeStageKey(stage) {
+        case "direction":
+            return .cyan
+        case "plan":
+            return .blue
+        case "implement.general":
+            return .orange
+        case "implement.visual":
+            return .pink
+        case "reimplement":
+            return .purple
+        case "verify":
+            return .green
+        case "auto_commit":
+            return .gray
+        default:
+            return .secondary
+        }
     }
 }
 

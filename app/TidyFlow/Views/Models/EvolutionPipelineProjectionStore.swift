@@ -86,6 +86,11 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     }
 }
 
+struct PipelineStandbyAgent: Equatable {
+    let stage: String
+    let isLoopable: Bool
+}
+
 struct EvolutionControlProjection: Equatable {
     let canStart: Bool
     let canStop: Bool
@@ -228,6 +233,12 @@ struct EvolutionPipelineProjection: Equatable {
     let currentItem: EvolutionWorkspaceItemV2?
     let blockingRequest: EvolutionBlockingRequestProjection?
     let cycleHistories: [PipelineCycleHistory]
+    /// 预计算：当前正在运行的代理列表
+    let runningAgents: [EvolutionAgentInfoV2]
+    /// 预计算：待命代理列表（已排序、去重）
+    let standbyAgents: [PipelineStandbyAgent]
+    /// 预计算：当前循环总耗时文本
+    let totalDurationText: String?
 
     static let empty = EvolutionPipelineProjection(
         project: "",
@@ -238,7 +249,10 @@ struct EvolutionPipelineProjection: Equatable {
         control: .empty,
         currentItem: nil,
         blockingRequest: nil,
-        cycleHistories: []
+        cycleHistories: [],
+        runningAgents: [],
+        standbyAgents: [],
+        totalDurationText: nil
     )
 }
 
@@ -258,6 +272,9 @@ enum EvolutionPipelineProjectionSemantics {
             ? appState.globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
             : nil
 
+        let currentItem = workspace.flatMap { appState.evolutionItem(project: project, workspace: $0) }
+        let hotData = precomputeHotData(currentItem: currentItem)
+
         return EvolutionPipelineProjection(
             project: project,
             workspace: workspace,
@@ -267,7 +284,7 @@ enum EvolutionPipelineProjectionSemantics {
             control: EvolutionControlProjection(
                 appState.evolutionControlCapability(project: project, workspace: workspace)
             ),
-            currentItem: workspace.flatMap { appState.evolutionItem(project: project, workspace: $0) },
+            currentItem: currentItem,
             blockingRequest: activeBlockingRequest(
                 blocking: appState.evolutionBlockingRequired,
                 project: project,
@@ -276,7 +293,10 @@ enum EvolutionPipelineProjectionSemantics {
             ),
             cycleHistories: mappedCycleHistories ?? workspaceKey.map { key in
                 (appState.evolutionCycleHistories[key] ?? []).map(mapCycleHistory)
-            } ?? []
+            } ?? [],
+            runningAgents: hotData.runningAgents,
+            standbyAgents: hotData.standbyAgents,
+            totalDurationText: hotData.totalDurationText
         )
     }
 #endif
@@ -292,6 +312,8 @@ enum EvolutionPipelineProjectionSemantics {
         let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace)
         let workspaceKey = appState.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         let controlState = appState.evolutionControlState(project: project, workspace: workspace)
+        let currentItem = appState.evolutionItem(project: project, workspace: workspace)
+        let hotData = precomputeHotData(currentItem: currentItem)
 
         return EvolutionPipelineProjection(
             project: project,
@@ -307,7 +329,7 @@ enum EvolutionPipelineProjectionSemantics {
                 isStopPending: controlState.isStopPending,
                 isResumePending: controlState.isResumePending
             ),
-            currentItem: appState.evolutionItem(project: project, workspace: workspace),
+            currentItem: currentItem,
             blockingRequest: activeBlockingRequest(
                 blocking: appState.evolutionBlockingRequired,
                 project: project,
@@ -315,7 +337,10 @@ enum EvolutionPipelineProjectionSemantics {
                 normalizeWorkspace: appState.normalizeEvolutionWorkspaceName
             ),
             cycleHistories: mappedCycleHistories
-                ?? (appState.evolutionCycleHistories[workspaceKey] ?? []).map(mapCycleHistory)
+                ?? (appState.evolutionCycleHistories[workspaceKey] ?? []).map(mapCycleHistory),
+            runningAgents: hotData.runningAgents,
+            standbyAgents: hotData.standbyAgents,
+            totalDurationText: hotData.totalDurationText
         )
     }
 #endif
@@ -331,6 +356,85 @@ enum EvolutionPipelineProjectionSemantics {
         guard blocking.project == project else { return nil }
         guard normalizeWorkspace(blocking.workspace) == normalizeWorkspace(workspace) else { return nil }
         return EvolutionBlockingRequestProjection(blocking)
+    }
+
+    // MARK: - 预计算热点数据
+
+    private struct HotData {
+        let runningAgents: [EvolutionAgentInfoV2]
+        let standbyAgents: [PipelineStandbyAgent]
+        let totalDurationText: String?
+    }
+
+    private static func precomputeHotData(currentItem: EvolutionWorkspaceItemV2?) -> HotData {
+        let agents = currentItem?.agents ?? []
+        let runningAgents = agents.filter {
+            $0.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "running"
+        }
+
+        // 待命代理：排除运行中和已完成的阶段
+        let runningStages = Set(runningAgents.map(\.stage))
+        let completedStatuses: Set<String> = [
+            "completed", "done", "success", "succeeded", "已完成", "完成"
+        ]
+        let completedStages = Set(
+            agents
+                .filter { completedStatuses.contains($0.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+                .map(\.stage)
+        )
+        let candidateStages = Array(Set(agents.map(\.stage))).sorted { lhs, rhs in
+            EvolutionStageSemantics.stageSortOrder(lhs) < EvolutionStageSemantics.stageSortOrder(rhs)
+        }
+        let standbyAgents = candidateStages.compactMap { stage -> PipelineStandbyAgent? in
+            guard !runningStages.contains(stage) && !completedStages.contains(stage) else { return nil }
+            return PipelineStandbyAgent(stage: stage, isLoopable: EvolutionStageSemantics.isRepeatableStage(stage))
+        }
+
+        // 总耗时文本
+        let totalDurationText = computeTotalDurationText(currentItem: currentItem, agents: agents)
+
+        return HotData(
+            runningAgents: runningAgents,
+            standbyAgents: standbyAgents,
+            totalDurationText: totalDurationText
+        )
+    }
+
+    private static func computeTotalDurationText(
+        currentItem: EvolutionWorkspaceItemV2?,
+        agents: [EvolutionAgentInfoV2]
+    ) -> String? {
+        let completedExecutions = (currentItem?.executions ?? [])
+            .filter { isExecutionCompletedStatus($0.status) }
+        var latestByKey: [String: EvolutionSessionExecutionEntryV2] = [:]
+        for entry in completedExecutions {
+            let key = "\(entry.stage)|\(entry.agent)"
+            if let existing = latestByKey[key] {
+                if entry.startedAt > existing.startedAt {
+                    latestByKey[key] = entry
+                }
+            } else {
+                latestByKey[key] = entry
+            }
+        }
+        let totalMs = latestByKey.values.compactMap(\.durationMs).reduce(0, +)
+        if totalMs > 0 {
+            return formatDuration(TimeInterval(totalMs) / 1000.0)
+        }
+        let agentTotalMs = agents.compactMap(\.durationMs).reduce(0, +)
+        guard agentTotalMs > 0 else { return nil }
+        return formatDuration(TimeInterval(agentTotalMs) / 1000.0)
+    }
+
+    private static func formatDuration(_ seconds: TimeInterval) -> String {
+        let totalSeconds = Int(seconds)
+        if totalSeconds < 60 {
+            return "\(totalSeconds)s"
+        } else {
+            let minutes = totalSeconds / 60
+            let secs = totalSeconds % 60
+            return "\(minutes)m\(String(format: "%02d", secs))s"
+        }
     }
 
     static func mapCycleHistory(_ cycle: EvolutionCycleHistoryItemV2) -> PipelineCycleHistory {
@@ -396,8 +500,7 @@ enum EvolutionPipelineProjectionSemantics {
     }
 
     private static func rfc3339Date(from value: String?) -> Date? {
-        guard let text = trimmedNonEmptyText(value) else { return nil }
-        return rfc3339Formatter.date(from: text) ?? rfc3339FallbackFormatter.date(from: text)
+        EvolutionPipelineDateFormatting.rfc3339Date(from: value)
     }
 
     private static func trimmedNonEmptyText(_ value: String?) -> String? {
@@ -407,17 +510,7 @@ enum EvolutionPipelineProjectionSemantics {
     }
 
     private static func isExecutionCompletedStatus(_ status: String) -> Bool {
-        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized.isEmpty {
-            return false
-        }
-        return ![
-            "running",
-            "pending",
-            "queued",
-            "in_progress",
-            "processing"
-        ].contains(normalized)
+        EvolutionPipelineDateFormatting.isExecutionCompletedStatus(status)
     }
 
     private static let rfc3339Formatter: ISO8601DateFormatter = {
@@ -431,6 +524,52 @@ enum EvolutionPipelineProjectionSemantics {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
+}
+
+// MARK: - 进化面板共享日期/状态工具
+
+/// 进化面板各组件共享的日期解析与执行状态判断，避免多处重复定义格式化器
+enum EvolutionPipelineDateFormatting {
+    static let rfc3339Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static let rfc3339FallbackFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    static func rfc3339Date(from value: String?) -> Date? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return rfc3339Formatter.date(from: trimmed) ?? rfc3339FallbackFormatter.date(from: trimmed)
+    }
+
+    /// 判断执行状态是否为"已完成"（非运行中/待处理状态均视为已完成）
+    static func isExecutionCompletedStatus(_ status: String) -> Bool {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.isEmpty { return false }
+        return !["running", "pending", "queued", "in_progress", "processing"].contains(normalized)
+    }
+
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        if total < 60 {
+            return "\(total)s"
+        } else {
+            let minutes = total / 60
+            let secs = total % 60
+            return "\(minutes)m\(String(format: "%02d", secs))s"
+        }
+    }
+
+    static func formatDurationMs(_ ms: UInt64) -> String {
+        formatDuration(TimeInterval(ms) / 1000.0)
+    }
 }
 
 @MainActor
@@ -478,13 +617,19 @@ final class EvolutionPipelineProjectionStore {
             self.refreshIfNeeded(appState: appState)
         }
 
-        appState.$selectedProjectName.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$selectedWorkspaceKey.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionScheduler.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionWorkspaceItems.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionCycleHistories.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionBlockingRequired.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionPendingActionByWorkspace.sink { _ in refresh() }.store(in: &cancellables)
+        // 合并多路订阅为单一管道，避免同一次状态更新触发多次 refresh
+        Publishers.MergeMany([
+            appState.$selectedProjectName.map { _ in () }.eraseToAnyPublisher(),
+            appState.$selectedWorkspaceKey.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionScheduler.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
+        ])
+        .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+        .sink { _ in refresh() }
+        .store(in: &cancellables)
 
         refresh()
     }
@@ -537,11 +682,17 @@ final class EvolutionPipelineProjectionStore {
             self.refreshIfNeeded(appState: appState, project: project, workspace: workspace)
         }
 
-        appState.$evolutionScheduler.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionWorkspaceItems.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionCycleHistories.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionBlockingRequired.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$evolutionPendingActionByWorkspace.sink { _ in refresh() }.store(in: &cancellables)
+        // 合并多路订阅为单一管道，避免同一次状态更新触发多次 refresh
+        Publishers.MergeMany([
+            appState.$evolutionScheduler.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
+        ])
+        .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+        .sink { _ in refresh() }
+        .store(in: &cancellables)
 
         refresh()
     }

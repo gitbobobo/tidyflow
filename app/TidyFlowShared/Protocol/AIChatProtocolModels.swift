@@ -2142,6 +2142,11 @@ public struct EvolutionWorkspaceItemV2: Equatable {
     public let terminalErrorMessage: String?
     public let rateLimitErrorMessage: String?
 
+    /// 预计算的签名，避免在刷新链路中重复 hash 遍历
+    public let statusStageRoundSignature: Int
+    public let timelineSignature: Int
+    public let projectionSignature: Int
+
     public var workspaceKey: String {
         "\(project):\(workspace)"
     }
@@ -2150,59 +2155,6 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         agents
             .filter { $0.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "running" }
             .map(\.agent)
-    }
-
-    public var statusStageRoundSignature: Int {
-        var hasher = Hasher()
-        hasher.combine(project)
-        hasher.combine(workspace)
-        hasher.combine(cycleID)
-        hasher.combine(status)
-        hasher.combine(currentStage)
-        hasher.combine(globalLoopRound)
-        hasher.combine(loopRoundLimit)
-        hasher.combine(verifyIteration)
-        hasher.combine(verifyIterationLimit)
-        hasher.combine(terminalReasonCode ?? "")
-        hasher.combine(terminalErrorMessage ?? "")
-        hasher.combine(rateLimitErrorMessage ?? "")
-        return hasher.finalize()
-    }
-
-    public var timelineSignature: Int {
-        var hasher = Hasher()
-        hasher.combine(project)
-        hasher.combine(workspace)
-        hasher.combine(cycleID)
-        hasher.combine(globalLoopRound)
-        hasher.combine(executions.count)
-        for execution in executions {
-            hasher.combine(execution.stage)
-            hasher.combine(execution.sessionID)
-            hasher.combine(execution.status)
-            hasher.combine(execution.startedAt)
-            hasher.combine(execution.completedAt ?? "")
-            hasher.combine(execution.durationMs ?? 0)
-            hasher.combine(execution.toolCallCount)
-        }
-        for agent in agents {
-            hasher.combine(agent.stage)
-            hasher.combine(agent.agent)
-            hasher.combine(agent.status)
-            hasher.combine(agent.startedAt ?? "")
-            hasher.combine(agent.durationMs ?? 0)
-            hasher.combine(agent.toolCallCount)
-        }
-        return hasher.finalize()
-    }
-
-    public var projectionSignature: Int {
-        var hasher = Hasher()
-        hasher.combine(statusStageRoundSignature)
-        hasher.combine(timelineSignature)
-        hasher.combine(agents.count)
-        hasher.combine(executions.count)
-        return hasher.finalize()
     }
 
     public func latestResolvedExecution(forExactStage stage: String) -> EvolutionSessionExecutionEntryV2? {
@@ -2266,6 +2218,54 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         self.terminalReasonCode = terminalReasonCode
         self.terminalErrorMessage = terminalErrorMessage
         self.rateLimitErrorMessage = rateLimitErrorMessage
+
+        // 预计算签名，避免多次重复遍历 agents/executions 做 hash
+        var ssrHasher = Hasher()
+        ssrHasher.combine(project)
+        ssrHasher.combine(workspace)
+        ssrHasher.combine(cycleID)
+        ssrHasher.combine(status)
+        ssrHasher.combine(currentStage)
+        ssrHasher.combine(globalLoopRound)
+        ssrHasher.combine(loopRoundLimit)
+        ssrHasher.combine(verifyIteration)
+        ssrHasher.combine(verifyIterationLimit)
+        ssrHasher.combine(terminalReasonCode ?? "")
+        ssrHasher.combine(terminalErrorMessage ?? "")
+        ssrHasher.combine(rateLimitErrorMessage ?? "")
+        self.statusStageRoundSignature = ssrHasher.finalize()
+
+        var tlHasher = Hasher()
+        tlHasher.combine(project)
+        tlHasher.combine(workspace)
+        tlHasher.combine(cycleID)
+        tlHasher.combine(globalLoopRound)
+        tlHasher.combine(executions.count)
+        for execution in executions {
+            tlHasher.combine(execution.stage)
+            tlHasher.combine(execution.sessionID)
+            tlHasher.combine(execution.status)
+            tlHasher.combine(execution.startedAt)
+            tlHasher.combine(execution.completedAt ?? "")
+            tlHasher.combine(execution.durationMs ?? 0)
+            tlHasher.combine(execution.toolCallCount)
+        }
+        for agent in agents {
+            tlHasher.combine(agent.stage)
+            tlHasher.combine(agent.agent)
+            tlHasher.combine(agent.status)
+            tlHasher.combine(agent.startedAt ?? "")
+            tlHasher.combine(agent.durationMs ?? 0)
+            tlHasher.combine(agent.toolCallCount)
+        }
+        self.timelineSignature = tlHasher.finalize()
+
+        var projHasher = Hasher()
+        projHasher.combine(self.statusStageRoundSignature)
+        projHasher.combine(self.timelineSignature)
+        projHasher.combine(agents.count)
+        projHasher.combine(executions.count)
+        self.projectionSignature = projHasher.finalize()
     }
 }
 
