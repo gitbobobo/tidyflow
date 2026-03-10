@@ -86,6 +86,68 @@ pub fn build_multi_project_context(
         .collect()
 }
 
+/// 基于已持久化上下文快照构建多项目上下文。
+///
+/// - `mentions`: 需要收集上下文的项目名称列表
+/// - `snapshots`: 项目名称 -> 上下文快照 的映射（来自已持久化的 session_index）
+/// - `projects`: 项目名称 -> workspace 根目录路径 的映射（用于 git fallback）
+/// - `workspace_root`: 回退根目录
+pub fn build_multi_project_context_with_snapshots(
+    mentions: &[String],
+    snapshots: &HashMap<String, crate::server::protocol::ai::AiSessionContextSnapshot>,
+    projects: &HashMap<String, String>,
+    workspace_root: &Path,
+) -> Vec<ProjectContextSummary> {
+    mentions
+        .iter()
+        .map(|name| {
+            let context_text = if let Some(snap) = snapshots.get(name) {
+                build_context_from_snapshot(name, snap)
+            } else {
+                let dir = projects
+                    .get(name)
+                    .map(|s| s.as_str().to_string())
+                    .unwrap_or_else(|| workspace_root.join(name).to_string_lossy().into_owned());
+                collect_git_context(&dir)
+            };
+            ProjectContextSummary {
+                project_name: name.clone(),
+                context_text,
+            }
+        })
+        .collect()
+}
+
+/// 从上下文快照构建注入文本（供跨工作区引用时使用）
+fn build_context_from_snapshot(
+    project_name: &str,
+    snapshot: &crate::server::protocol::ai::AiSessionContextSnapshot,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(summary) = &snapshot.context_summary {
+        if !summary.trim().is_empty() {
+            parts.push(format!("## 会话摘要（来自 {}）\n{}", snapshot.session_id, summary.trim()));
+        }
+    }
+    if let Some(hint) = &snapshot.selection_hint {
+        let mut hint_parts = Vec::new();
+        if let Some(agent) = &hint.agent {
+            hint_parts.push(format!("agent={}", agent));
+        }
+        if let Some(model) = &hint.model_id {
+            hint_parts.push(format!("model={}", model));
+        }
+        if !hint_parts.is_empty() {
+            parts.push(format!("## 模型配置\n{}", hint_parts.join(", ")));
+        }
+    }
+    if parts.is_empty() {
+        format!("[项目 {} 有会话历史但无可用摘要]", project_name)
+    } else {
+        parts.join("\n\n")
+    }
+}
+
 /// 在给定目录运行 git status --short 和 git log --oneline -3，
 /// 拼成文本摘要（最多 20 行 status + 3 行 log）。
 fn collect_git_context(dir: &str) -> String {
@@ -189,5 +251,58 @@ mod tests {
             "空集合上下文构建耗时 {}ms，超过 500ms 预算",
             elapsed.as_millis()
         );
+    }
+
+    #[test]
+    fn test_build_cross_workspace_context_with_snapshots() {
+        use crate::server::protocol::ai::{AiSessionContextSnapshot, SessionSelectionHint};
+        use std::collections::HashMap;
+
+        let mentions = vec!["backend".to_string()];
+        let mut snapshots: HashMap<String, AiSessionContextSnapshot> = HashMap::new();
+        snapshots.insert(
+            "backend".to_string(),
+            AiSessionContextSnapshot {
+                project_name: "backend".to_string(),
+                workspace_name: "default".to_string(),
+                ai_tool: "codex".to_string(),
+                session_id: "s1".to_string(),
+                snapshot_at_ms: 1000,
+                message_count: 10,
+                context_summary: Some("已完成用户认证模块".to_string()),
+                selection_hint: None,
+                context_remaining_percent: Some(60.0),
+            },
+        );
+
+        let result = build_multi_project_context_with_snapshots(
+            &mentions,
+            &snapshots,
+            &HashMap::new(),
+            Path::new("/tmp"),
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].project_name, "backend");
+        assert!(
+            result[0].context_text.contains("已完成用户认证模块"),
+            "应包含快照摘要内容"
+        );
+    }
+
+    #[test]
+    fn test_cross_workspace_context_fallback_on_missing_snapshot() {
+        use crate::server::protocol::ai::AiSessionContextSnapshot;
+        use std::collections::HashMap;
+
+        let mentions = vec!["frontend".to_string()];
+        let result = build_multi_project_context_with_snapshots(
+            &mentions,
+            &HashMap::new(),
+            &HashMap::new(),
+            Path::new("/nonexistent/path"),
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].project_name, "frontend");
     }
 }

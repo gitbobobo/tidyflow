@@ -164,6 +164,7 @@ class WSClient: NSObject, ObservableObject {
     var onAICodeReviewResult: ((AICodeReviewResult) -> Void)?
     var onAICodeCompletionChunk: ((AICodeCompletionChunk) -> Void)?
     var onAICodeCompletionDone: ((AICodeCompletionDone) -> Void)?
+    var onAIContextSnapshotUpdated: (([String: Any]) -> Void)?
     // Evolution
     var onEvoPulse: (() -> Void)?
     var onEvoWorkspaceStatusEvent: ((EvolutionWorkspaceStatusEventV2) -> Void)?

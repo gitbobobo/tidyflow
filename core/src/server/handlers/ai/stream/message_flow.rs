@@ -217,6 +217,52 @@ async fn emit_ai_session_messages_update_with_ops(
     .await;
 }
 
+/// ai_chat_done 时持久化会话上下文快照，供重启恢复和跨工作区上下文复用
+async fn save_done_context_snapshot(
+    ai_state: &SharedAIState,
+    snapshot: &crate::server::handlers::ai::utils::AiStreamSnapshot,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+) {
+    let message_count = snapshot.messages.len() as u32;
+    let context_summary = snapshot.messages.iter().rev()
+        .find(|m| m.role == "assistant")
+        .and_then(|m| m.parts.first())
+        .and_then(|p| p.text.as_ref())
+        .map(|t| {
+            let bytes = t.as_bytes();
+            if bytes.len() <= 500 {
+                t.clone()
+            } else {
+                String::from_utf8_lossy(&bytes[..500]).into_owned()
+            }
+        });
+    let ctx_snapshot = crate::server::handlers::ai::session_index_store::AiSessionContextSnapshotStored {
+        snapshot_at_ms: now_ms(),
+        message_count,
+        context_summary,
+        selection_hint: snapshot.selection_hint.clone(),
+        context_remaining_percent: None,
+    };
+    if let Err(e) = super::super::save_session_context_snapshot(
+        ai_state,
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        &ctx_snapshot,
+    )
+    .await
+    {
+        warn!(
+            "Failed to save context snapshot: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+            project_name, workspace_name, ai_tool, session_id, e
+        );
+    }
+}
+
 async fn touch_session_index_updated_at_with_warn(
     ai_state: &SharedAIState,
     project_name: &str,
@@ -975,6 +1021,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             true,
                                         )
                                         .await;
+                                        save_done_context_snapshot(&ai_state_cloned, &snapshot, &project_name, &workspace_name, &ai_tool, &session_id).await;
                                     }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
@@ -1090,6 +1137,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     true,
                                 )
                                 .await;
+                                save_done_context_snapshot(&ai_state_cloned, &snapshot, &project_name, &workspace_name, &ai_tool, &session_id).await;
                             }
                             let _ = emit_server_message_with_state(
                                 &output_tx,
@@ -1686,6 +1734,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             true,
                                         )
                                         .await;
+                                        save_done_context_snapshot(&ai_state_cloned, &snapshot, &project_name, &workspace_name, &ai_tool, &session_id).await;
                                     }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
@@ -1796,6 +1845,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     true,
                                 )
                                 .await;
+                                save_done_context_snapshot(&ai_state_cloned, &snapshot, &project_name, &workspace_name, &ai_tool, &session_id).await;
                             }
                             let _ = emit_server_message_with_state(
                                 &output_tx,

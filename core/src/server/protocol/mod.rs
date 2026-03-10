@@ -1585,6 +1585,29 @@ pub enum ServerMessage {
         session_id: String,
         status: ai::AiSessionStatusInfo,
     },
+    #[serde(rename = "ai_session_context_snapshot_result")]
+    AISessionContextSnapshotResult {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        snapshot: Option<ai::AiSessionContextSnapshot>,
+    },
+    #[serde(rename = "ai_cross_context_snapshots_result")]
+    AICrossContextSnapshotsResult {
+        project_name: String,
+        workspace_name: String,
+        snapshots: Vec<ai::AiSessionContextSnapshot>,
+    },
+    #[serde(rename = "ai_context_snapshot_updated")]
+    AIContextSnapshotUpdated {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        snapshot: ai::AiSessionContextSnapshot,
+    },
     #[serde(rename = "ai_provider_list")]
     AIProviderListResult {
         project_name: String,

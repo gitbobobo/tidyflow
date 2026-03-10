@@ -49,6 +49,8 @@ domains:
       - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/agents
       - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/slash-commands
       - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/session-config-options
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/context-snapshot
+      - GET /api/v1/projects/:project/workspaces/:workspace/ai/context-snapshots
     ws_read_via_http_required:
       - ai_session_list
       - ai_session_messages
@@ -57,6 +59,8 @@ domains:
       - ai_agent_list
       - ai_slash_commands
       - ai_session_config_options
+      - ai_session_context_snapshot
+      - ai_cross_context_snapshots
     # WS 专用订阅控制（不提供 HTTP 等价入口）
     ws_only_actions:
       - ai_session_subscribe
@@ -72,6 +76,7 @@ domains:
       - ai_question_asked
       - ai_question_cleared
       - ai_session_started
+      - ai_context_snapshot_updated
     # 必须携带的多工作区边界字段
     required_boundary_fields:
       - project

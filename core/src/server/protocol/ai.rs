@@ -688,6 +688,62 @@ pub struct ProjectMentionMeta {
     pub resolved: Option<bool>,
 }
 
+/// AI 会话上下文快照（可跨工作区复用的会话知识摘要）
+///
+/// 在会话 `ai_chat_done` 时持久化，用于：
+/// 1. 重启后恢复会话上下文（selection hint、上下文使用率）
+/// 2. 跨工作区上下文引用（@@project-name 语法时注入）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionContextSnapshot {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    /// 快照保存时间（毫秒时间戳）
+    pub snapshot_at_ms: i64,
+    /// 快照时刻的会话消息总数
+    pub message_count: u32,
+    /// 语义摘要文本（可选，供跨工作区注入；来自最后一条 assistant 消息的内容精简）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_summary: Option<String>,
+    /// 最后使用的模型/Agent 选择提示
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_hint: Option<SessionSelectionHint>,
+    /// 最后已知的上下文使用率（剩余百分比 0-100）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_remaining_percent: Option<f64>,
+}
+
+/// HTTP GET 读取单个会话上下文快照响应（type: ai_session_context_snapshot_result）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionContextSnapshotResult {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    /// 已保存的快照；若会话未结束或尚未保存，为 null
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<AiSessionContextSnapshot>,
+}
+
+/// HTTP GET 跨工作区上下文快照列表响应（type: ai_cross_context_snapshots_result）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiCrossContextSnapshotsResult {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub snapshots: Vec<AiSessionContextSnapshot>,
+}
+
+/// WS 推送：会话上下文快照已更新（type: ai_context_snapshot_updated）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiContextSnapshotUpdated {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    pub snapshot: AiSessionContextSnapshot,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -52,6 +52,14 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::http_api::ai_session_config_options_handler),
         )
         .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/context-snapshot",
+            get(crate::server::ws::http_api::ai_session_context_snapshot_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/context-snapshots",
+            get(crate::server::ws::http_api::ai_cross_context_snapshots_handler),
+        )
+        .route(
             "/api/v1/evolution/snapshot",
             get(crate::server::ws::http_api::evolution_snapshot_handler),
         )

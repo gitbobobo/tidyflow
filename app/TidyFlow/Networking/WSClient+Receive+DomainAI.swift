@@ -222,6 +222,13 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_context_snapshot_updated":
+            if let handler = aiMessageHandler {
+                handler.handleAIContextSnapshotUpdated(json)
+            } else {
+                onAIContextSnapshotUpdated?(json)
+            }
+            return true
         default:
             return false
         }

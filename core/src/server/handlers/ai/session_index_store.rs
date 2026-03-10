@@ -10,6 +10,19 @@ use tokio::sync::Mutex;
 use crate::server::protocol::ai::AiSessionOrigin;
 use crate::workspace::sqlite_store;
 
+/// 持久化存储形式的上下文快照（不含 routing 字段，由 index 的 PK 提供）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionContextSnapshotStored {
+    pub snapshot_at_ms: i64,
+    pub message_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_remaining_percent: Option<f64>,
+}
+
 const AI_SESSION_LIST_DEFAULT_PAGE_SIZE: u32 = 50;
 const AI_SESSION_LIST_MAX_PAGE_SIZE: u32 = 200;
 
@@ -431,6 +444,21 @@ impl AiSessionIndexStore {
         .await
         .map_err(|e| format!("failed to backfill ai session origin: {}", e))?;
 
+        let has_context_snapshot = sqlx::query("PRAGMA table_info(ai_session_index)")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("failed to inspect ai session index schema: {}", e))?
+            .into_iter()
+            .any(|row| row.try_get::<String, _>("name").unwrap_or_default() == "context_snapshot_json");
+        if !has_context_snapshot {
+            sqlx::query(
+                "ALTER TABLE ai_session_index ADD COLUMN context_snapshot_json TEXT",
+            )
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("failed to migrate ai session index schema (context_snapshot): {}", e))?;
+        }
+
         self.schema_initialized.store(true, Ordering::Release);
         Ok(())
     }
@@ -446,6 +474,123 @@ impl AiSessionIndexStore {
             .map_err(|e| format!("failed to connect ai session index pool: {}", e))?;
         *guard = Some(pool.clone());
         Ok(pool)
+    }
+
+    pub async fn save_context_snapshot(
+        &self,
+        project_name: &str,
+        workspace_name: &str,
+        ai_tool: &str,
+        session_id: &str,
+        snapshot: &AiSessionContextSnapshotStored,
+    ) -> Result<(), String> {
+        self.ensure_schema().await?;
+        let pool = self.pool().await?;
+        let json = serde_json::to_string(snapshot)
+            .map_err(|e| format!("failed to serialize context snapshot: {}", e))?;
+        sqlx::query(
+            r#"
+            UPDATE ai_session_index
+            SET context_snapshot_json = ?1
+            WHERE project_name = ?2
+              AND workspace_name = ?3
+              AND ai_tool = ?4
+              AND session_id = ?5
+            "#,
+        )
+        .bind(&json)
+        .bind(project_name)
+        .bind(workspace_name)
+        .bind(ai_tool)
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("failed to save context snapshot: {}", e))?;
+        Ok(())
+    }
+
+    pub async fn get_context_snapshot(
+        &self,
+        project_name: &str,
+        workspace_name: &str,
+        ai_tool: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionContextSnapshotStored>, String> {
+        self.ensure_schema().await?;
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            r#"
+            SELECT context_snapshot_json
+            FROM ai_session_index
+            WHERE project_name = ?1
+              AND workspace_name = ?2
+              AND ai_tool = ?3
+              AND session_id = ?4
+            "#,
+        )
+        .bind(project_name)
+        .bind(workspace_name)
+        .bind(ai_tool)
+        .bind(session_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| format!("failed to get context snapshot: {}", e))?;
+
+        let json_str: Option<String> = row
+            .as_ref()
+            .and_then(|r| r.try_get::<Option<String>, _>("context_snapshot_json").ok().flatten());
+
+        match json_str {
+            None => Ok(None),
+            Some(json) => serde_json::from_str(&json)
+                .map(Some)
+                .map_err(|e| format!("failed to deserialize context snapshot: {}", e)),
+        }
+    }
+
+    pub async fn list_context_snapshots(
+        &self,
+        project_name: &str,
+        workspace_name: &str,
+        filter_ai_tool: Option<&str>,
+    ) -> Result<Vec<(AiSessionIndexEntry, AiSessionContextSnapshotStored)>, String> {
+        self.ensure_schema().await?;
+        let pool = self.pool().await?;
+
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT project_name, workspace_name, ai_tool, directory, session_id,
+                   title, created_at_ms, updated_at_ms, session_origin, context_snapshot_json
+            FROM ai_session_index
+            WHERE project_name = "#,
+        );
+        builder.push_bind(project_name);
+        builder.push(" AND workspace_name = ");
+        builder.push_bind(workspace_name);
+        builder.push(" AND context_snapshot_json IS NOT NULL");
+        if let Some(tool) = filter_ai_tool {
+            builder.push(" AND ai_tool = ");
+            builder.push_bind(tool);
+        }
+        builder.push(" ORDER BY updated_at_ms DESC");
+
+        let rows = builder
+            .build()
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("failed to list context snapshots: {}", e))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let json_str: Option<String> = row.try_get("context_snapshot_json").ok().flatten();
+            let entry = map_row_to_entry(row);
+            if let Some(json) = json_str {
+                if let Ok(snapshot) = serde_json::from_str::<AiSessionContextSnapshotStored>(&json) {
+                    result.push((entry, snapshot));
+                }
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -856,5 +1001,78 @@ mod tests {
             listed.entries[0].session_origin,
             AiSessionOrigin::User
         ));
+    }
+
+    #[tokio::test]
+    async fn should_save_and_get_context_snapshot() {
+        let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
+
+        store
+            .record_created(
+                "proj1",
+                "default",
+                "codex",
+                "/tmp/proj1",
+                "snap-test-001",
+                "快照测试会话",
+                1000,
+                AiSessionOrigin::User,
+            )
+            .await
+            .expect("record session");
+
+        let initial = store
+            .get_context_snapshot("proj1", "default", "codex", "snap-test-001")
+            .await
+            .expect("get snapshot");
+        assert!(initial.is_none(), "初始应无快照");
+
+        let snapshot = AiSessionContextSnapshotStored {
+            snapshot_at_ms: 2000,
+            message_count: 5,
+            context_summary: Some("这是一个测试摘要".to_string()),
+            selection_hint: None,
+            context_remaining_percent: Some(72.5),
+        };
+        store
+            .save_context_snapshot("proj1", "default", "codex", "snap-test-001", &snapshot)
+            .await
+            .expect("save snapshot");
+
+        let loaded = store
+            .get_context_snapshot("proj1", "default", "codex", "snap-test-001")
+            .await
+            .expect("get snapshot after save")
+            .expect("snapshot should exist");
+
+        assert_eq!(loaded.message_count, 5);
+        assert_eq!(loaded.context_summary.as_deref(), Some("这是一个测试摘要"));
+        assert_eq!(loaded.context_remaining_percent, Some(72.5));
+    }
+
+    #[tokio::test]
+    async fn should_list_context_snapshots() {
+        let store = AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory store");
+
+        for (id, title) in [("s1", "会话1"), ("s2", "会话2")] {
+            store
+                .record_created("proj2", "ws", "codex", "/tmp/proj2", id, title, 100, AiSessionOrigin::User)
+                .await
+                .expect("record");
+        }
+
+        let snap = AiSessionContextSnapshotStored {
+            snapshot_at_ms: 1500,
+            message_count: 3,
+            context_summary: Some("s1 摘要".to_string()),
+            selection_hint: None,
+            context_remaining_percent: None,
+        };
+        store.save_context_snapshot("proj2", "ws", "codex", "s1", &snap).await.expect("save");
+
+        let list = store.list_context_snapshots("proj2", "ws", None).await.expect("list");
+        assert_eq!(list.len(), 1, "只有 s1 有快照");
+        assert_eq!(list[0].0.session_id, "s1");
+        assert_eq!(list[0].1.message_count, 3);
     }
 }

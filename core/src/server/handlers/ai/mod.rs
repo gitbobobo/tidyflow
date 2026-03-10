@@ -21,7 +21,7 @@ mod stream;
 mod utils;
 
 pub use ai_state::AIState;
-pub(crate) use session_index_store::{AiSessionIndexPage, AiSessionIndexStore};
+pub(crate) use session_index_store::{AiSessionIndexPage, AiSessionIndexStore, AiSessionContextSnapshotStored};
 pub(crate) use utils::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
     ensure_agent, infer_selection_hint_from_messages, map_ai_messages_for_wire,
@@ -122,6 +122,54 @@ pub(crate) async fn delete_session_index_entry(
     };
     store
         .delete(project_name, workspace_name, ai_tool, session_id)
+        .await
+}
+
+pub(crate) async fn save_session_context_snapshot(
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    snapshot: &session_index_store::AiSessionContextSnapshotStored,
+) -> Result<(), String> {
+    let store = {
+        let ai = ai_state.lock().await;
+        ai.session_index_store.clone()
+    };
+    store
+        .save_context_snapshot(project_name, workspace_name, ai_tool, session_id, snapshot)
+        .await
+}
+
+pub(crate) async fn get_session_context_snapshot(
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+) -> Result<Option<session_index_store::AiSessionContextSnapshotStored>, String> {
+    let store = {
+        let ai = ai_state.lock().await;
+        ai.session_index_store.clone()
+    };
+    store
+        .get_context_snapshot(project_name, workspace_name, ai_tool, session_id)
+        .await
+}
+
+pub(crate) async fn list_session_context_snapshots(
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    filter_ai_tool: Option<&str>,
+) -> Result<Vec<(session_index_store::AiSessionIndexEntry, session_index_store::AiSessionContextSnapshotStored)>, String> {
+    let store = {
+        let ai = ai_state.lock().await;
+        ai.session_index_store.clone()
+    };
+    store
+        .list_context_snapshots(project_name, workspace_name, filter_ai_tool)
         .await
 }
 

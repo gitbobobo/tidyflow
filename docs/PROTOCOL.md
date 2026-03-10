@@ -359,6 +359,27 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 }
 ```
 
+## AI 会话上下文快照（Context Snapshot）
+
+### 读取单个会话上下文快照
+- 端点：`GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/context-snapshot`
+- 响应 type：`ai_session_context_snapshot_result`
+- 字段：`project_name`, `workspace_name`, `ai_tool`, `session_id`, `snapshot`（可为 null）
+- `snapshot` 字段：`snapshot_at_ms`, `message_count`, `context_summary`（可为 null）, `selection_hint`（可为 null）, `context_remaining_percent`（可为 null）
+
+### 读取跨工作区上下文快照列表
+- 端点：`GET /api/v1/projects/:project/workspaces/:workspace/ai/context-snapshots`（支持 `?ai_tool=` 筛选）
+- 响应 type：`ai_cross_context_snapshots_result`
+- 字段：`project_name`, `workspace_name`, `snapshots`（数组，每项含完整 `AiSessionContextSnapshot`）
+- 用途：为跨工作区上下文复用（@@project 语法）提供已持久化快照，不依赖当前运行状态
+
+### 上下文快照流式事件
+- `ai_context_snapshot_updated`：会话 `ai_chat_done` 后，Core 推送最新快照到当前订阅方
+- 携带字段：`project_name`, `workspace_name`, `ai_tool`, `session_id`, `snapshot`
+
+### 归属边界
+所有快照读取和事件必须通过 `(project, workspace, ai_tool, session_id)` 四元组路由，不允许跨工作区写入当前会话状态。
+
 ## AI 会话历史分页（HTTP `.../messages`）
 
 - 客户端请求：

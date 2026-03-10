@@ -484,3 +484,68 @@ final class AISessionListDisplayPhaseTests: XCTestCase {
         )
     }
 }
+
+// MARK: - AI 会话上下文快照语义测试（WI-004/WI-005）
+
+final class AISessionContextSnapshotSemanticsTests: XCTestCase {
+
+    func testContextSnapshotKeyMatchesSessionKey() {
+        let sessionKey = AISessionSemantics.sessionKey(
+            project: "p", workspace: "w", aiTool: .opencode, sessionId: "sid"
+        )
+        let snapshotKey = AISessionSemantics.contextSnapshotKey(
+            project: "p", workspace: "w", aiTool: .opencode, sessionId: "sid"
+        )
+        XCTAssertEqual(sessionKey, snapshotKey, "快照缓存键与会话键必须完全一致")
+    }
+
+    func testSelectionHintFromSnapshotPrefersPrimary() {
+        let primary = AISessionSelectionHint(agent: "auto", modelProviderID: nil, modelID: "gpt-4", configOptions: nil)
+        let fallback = AISessionSelectionHint(agent: "manual", modelProviderID: nil, modelID: "claude", configOptions: nil)
+        let snap = AISessionContextSnapshot(
+            projectName: "p", workspaceName: "w",
+            aiTool: .codex, sessionId: "s",
+            snapshotAtMs: 1000, messageCount: 5,
+            contextSummary: nil, selectionHint: primary,
+            contextRemainingPercent: nil
+        )
+        let result = AISessionSemantics.selectionHintFromSnapshot(snap, fallback: fallback)
+        XCTAssertEqual(result?.agent, "auto", "应优先使用快照中的 selection hint")
+    }
+
+    func testSelectionHintFromNilSnapshotReturnsFallback() {
+        let fallback = AISessionSelectionHint(agent: "fallback-agent", modelProviderID: nil, modelID: nil, configOptions: nil)
+        let result = AISessionSemantics.selectionHintFromSnapshot(nil, fallback: fallback)
+        XCTAssertEqual(result?.agent, "fallback-agent", "无快照时应使用 fallback hint")
+    }
+
+    func testContextSnapshotFromJsonParsesCorrectly() {
+        let json: [String: Any] = [
+            "project_name": "proj",
+            "workspace_name": "ws",
+            "ai_tool": "codex",
+            "session_id": "s1",
+            "snapshot_at_ms": Int64(9999),
+            "message_count": 7,
+            "context_summary": "已完成核心功能",
+            "context_remaining_percent": 55.0
+        ]
+        let snap = AISessionContextSnapshot.from(json: json)
+        XCTAssertNotNil(snap, "应成功解析快照 JSON")
+        XCTAssertEqual(snap?.projectName, "proj")
+        XCTAssertEqual(snap?.sessionId, "s1")
+        XCTAssertEqual(snap?.messageCount, 7)
+        XCTAssertEqual(snap?.contextSummary, "已完成核心功能")
+        XCTAssertEqual(snap?.contextRemainingPercent, 55.0)
+    }
+
+    func testContextSnapshotFromJsonMissingRequiredFieldsReturnsNil() {
+        let json: [String: Any] = [
+            "project_name": "proj",
+            "workspace_name": "ws",
+            // missing ai_tool and session_id
+        ]
+        let snap = AISessionContextSnapshot.from(json: json)
+        XCTAssertNil(snap, "缺少必要字段时应返回 nil")
+    }
+}

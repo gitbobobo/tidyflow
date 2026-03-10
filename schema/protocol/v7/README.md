@@ -352,3 +352,19 @@ Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Co
 | `health_repair_result` | Core → 客户端 | Core 推送修复执行结果与审计记录 |
 
 详见 `docs/PROTOCOL.md` 的"系统健康诊断与自修复域"章节。
+
+## AI 会话上下文快照（Context Snapshot）
+
+每个 `(project, workspace, ai_tool, session_id)` 会话在 `ai_chat_done` 时保存上下文快照。
+
+快照包含以下字段：
+- `message_count`：快照时刻的会话消息总数
+- `context_summary`：来自最后一条 assistant 消息的语义摘要（最多 500 字节，可为 null）
+- `selection_hint`：最后使用的模型/Agent 选择提示（可为 null）
+- `context_remaining_percent`：最后已知的上下文使用率（剩余百分比 0-100，可为 null）
+
+HTTP 读取接口：
+- `GET .../ai/:ai_tool/sessions/:session_id/context-snapshot`：读取单个会话快照
+- `GET .../ai/context-snapshots`：读取跨工作区快照列表（支持 `?ai_tool=` 筛选）
+
+跨工作区引用：使用 `@@project-name` 语法后，注入对应项目已持久化的上下文快照（`context_summary` 与 `selection_hint`），不依赖当前运行状态。

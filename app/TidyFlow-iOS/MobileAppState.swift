@@ -270,6 +270,8 @@ final class MobileAppState: ObservableObject {
     @Published var aiSlashCommands: [AISlashCommandInfo] = []
     @Published var isAILoadingModels: Bool = false
     @Published var isAILoadingAgents: Bool = false
+    /// AI 会话上下文快照缓存：`contextSnapshotKey(project:workspace:aiTool:sessionId:)` -> 快照
+    @Published var aiSessionContextSnapshots: [String: AISessionContextSnapshot] = [:]
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
     private var explorerFileRequestLastSentAt: [String: Date] = [:]
     // Evolution 状态
@@ -5105,6 +5107,23 @@ extension MobileAppState {
         aiSessionListStore.renameSession(updated, newTitle: updated.title)
     }
 
+    func handleAIContextSnapshotUpdated(_ json: [String: Any]) {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiToolRaw = json["ai_tool"] as? String,
+              let aiTool = AIChatTool(rawValue: aiToolRaw),
+              let sessionId = json["session_id"] as? String,
+              let snapshotJson = json["snapshot"] as? [String: Any],
+              let snapshot = AISessionContextSnapshot.from(json: snapshotJson) else { return }
+        let key = AISessionSemantics.contextSnapshotKey(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId
+        )
+        aiSessionContextSnapshots[key] = snapshot
+    }
+
     /// 处理 HTTP 读取失败（多工作区安全版本）。
     ///
     /// 与 macOS `handleHTTPReadFailure` 语义对齐：
@@ -5222,5 +5241,9 @@ final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
 
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
         dispatchToMain { $0.handleAISessionRenameResult(ev) }
+    }
+
+    func handleAIContextSnapshotUpdated(_ json: [String: Any]) {
+        dispatchToMain { $0.handleAIContextSnapshotUpdated(json) }
     }
 }

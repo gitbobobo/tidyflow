@@ -2367,6 +2367,38 @@ pub(crate) fn normalize_ai_audio_parts(
     Some(normalized)
 }
 
+/// 获取指定项目/工作区中最近有上下文快照的会话（用于跨工作区上下文复用）
+/// 按 updated_at_ms 排序，返回最近的快照
+pub(crate) async fn get_latest_context_snapshot_for_project(
+    ai_state: &super::SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    filter_ai_tool: Option<&str>,
+) -> Option<crate::server::protocol::ai::AiSessionContextSnapshot> {
+    let entries = super::list_session_context_snapshots(
+        ai_state,
+        project_name,
+        workspace_name,
+        filter_ai_tool,
+    )
+    .await
+    .ok()?;
+
+    entries.into_iter().next().map(|(entry, stored)| {
+        crate::server::protocol::ai::AiSessionContextSnapshot {
+            project_name: entry.project_name,
+            workspace_name: entry.workspace_name,
+            ai_tool: entry.ai_tool,
+            session_id: entry.session_id,
+            snapshot_at_ms: stored.snapshot_at_ms,
+            message_count: stored.message_count,
+            context_summary: stored.context_summary,
+            selection_hint: stored.selection_hint,
+            context_remaining_percent: stored.context_remaining_percent,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

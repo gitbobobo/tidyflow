@@ -208,3 +208,53 @@ pub(in crate::server::ws) async fn ai_session_config_options_handler(
     .map_err(|e| qctx.map_query_error(e))?;
     json_from_server_message(response)
 }
+
+#[derive(Debug, Deserialize, Default)]
+pub(in crate::server::ws) struct ContextSnapshotListQuery {
+    #[serde(default)]
+    ai_tool: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+pub(in crate::server::ws) async fn ai_session_context_snapshot_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<AiSessionPath>,
+    Query(query): Query<OptionalSessionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx =
+        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
+    let response = crate::server::handlers::ai::session::query_ai_session_context_snapshot(
+        &ctx.app_state,
+        &ctx.ai_state,
+        &path.project,
+        &path.workspace,
+        &path.ai_tool,
+        &path.session_id,
+    )
+    .await
+    .map_err(|e| qctx.map_query_error(e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn ai_cross_context_snapshots_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<ContextSnapshotListQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::ai::session::query_ai_cross_context_snapshots(
+        &ctx.app_state,
+        &ctx.ai_state,
+        &path.project,
+        &path.workspace,
+        query.ai_tool.as_deref(),
+    )
+    .await
+    .map_err(|e| qctx.map_query_error(e))?;
+    json_from_server_message(response)
+}

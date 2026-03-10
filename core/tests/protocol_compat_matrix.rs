@@ -612,3 +612,93 @@ async fn test_evidence_ws_read_via_http_required() {
         "error payload 应携带 workspace 字段"
     );
 }
+
+// ============================================================================
+// 协议类型单元测试（不需要运行服务器，直接验证 Rust 协议类型序列化）
+// ============================================================================
+
+#[test]
+fn test_session_info_boundary_fields_required() {
+    use tidyflow_core::server::protocol::ai::{AiSessionOrigin, SessionInfo};
+    let s = SessionInfo {
+        project_name: "proj".to_string(),
+        workspace_name: "ws".to_string(),
+        ai_tool: "codex".to_string(),
+        id: "s1".to_string(),
+        title: "测试".to_string(),
+        updated_at: 1000,
+        session_origin: AiSessionOrigin::User,
+    };
+    let j = serde_json::to_value(&s).unwrap();
+    assert!(j.get("project_name").is_some());
+    assert!(j.get("workspace_name").is_some());
+    assert!(j.get("ai_tool").is_some());
+    assert!(j.get("id").is_some());
+}
+
+#[test]
+fn test_context_snapshot_serialization_roundtrip() {
+    use tidyflow_core::server::protocol::ai::AiSessionContextSnapshot;
+    let snap = AiSessionContextSnapshot {
+        project_name: "proj".to_string(),
+        workspace_name: "ws".to_string(),
+        ai_tool: "codex".to_string(),
+        session_id: "s1".to_string(),
+        snapshot_at_ms: 9999,
+        message_count: 7,
+        context_summary: Some("已完成核心功能".to_string()),
+        selection_hint: None,
+        context_remaining_percent: Some(55.0),
+    };
+    let json_str = serde_json::to_string(&snap).unwrap();
+    let parsed: AiSessionContextSnapshot = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(parsed.project_name, "proj");
+    assert_eq!(parsed.workspace_name, "ws");
+    assert_eq!(parsed.session_id, "s1");
+    assert_eq!(parsed.message_count, 7);
+    assert_eq!(parsed.context_remaining_percent, Some(55.0));
+}
+
+#[test]
+fn test_server_message_context_snapshot_result_type() {
+    use tidyflow_core::server::protocol::ServerMessage;
+    let msg = ServerMessage::AISessionContextSnapshotResult {
+        project_name: "proj".to_string(),
+        workspace_name: "ws".to_string(),
+        ai_tool: "codex".to_string(),
+        session_id: "s1".to_string(),
+        snapshot: None,
+    };
+    let j = serde_json::to_value(&msg).unwrap();
+    assert_eq!(j["type"].as_str().unwrap(), "ai_session_context_snapshot_result");
+    assert_eq!(j["project_name"].as_str().unwrap(), "proj");
+    assert!(j.get("session_id").is_some());
+}
+
+#[test]
+fn test_server_message_cross_context_snapshots_result_type() {
+    use tidyflow_core::server::protocol::ServerMessage;
+    let msg = ServerMessage::AICrossContextSnapshotsResult {
+        project_name: "proj".to_string(),
+        workspace_name: "ws".to_string(),
+        snapshots: vec![],
+    };
+    let j = serde_json::to_value(&msg).unwrap();
+    assert_eq!(j["type"].as_str().unwrap(), "ai_cross_context_snapshots_result");
+}
+
+#[test]
+fn test_evolution_system_session_not_visible_in_default_list() {
+    use tidyflow_core::server::protocol::ai::{AiSessionOrigin, SessionInfo};
+    let s = SessionInfo {
+        project_name: "proj".to_string(),
+        workspace_name: "ws".to_string(),
+        ai_tool: "codex".to_string(),
+        id: "evo-s1".to_string(),
+        title: "自动化会话".to_string(),
+        updated_at: 1000,
+        session_origin: AiSessionOrigin::EvolutionSystem,
+    };
+    let j = serde_json::to_value(&s).unwrap();
+    assert_eq!(j["session_origin"].as_str().unwrap(), "evolution_system");
+}

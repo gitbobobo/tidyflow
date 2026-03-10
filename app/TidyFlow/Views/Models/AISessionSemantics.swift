@@ -6,6 +6,63 @@ import Foundation
 // pending question request 重建、消息 part 去重规则，以及分页默认值。
 // macOS 与 iOS 通过此层共享规则，不再各自维护同义私有实现。
 
+// MARK: - AI 会话上下文快照
+
+/// AI 会话上下文快照（可跨工作区复用的会话知识摘要）
+/// 与 Core 协议中 `AiSessionContextSnapshot` 对应。
+struct AISessionContextSnapshot: Equatable {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+    let snapshotAtMs: Int64
+    let messageCount: Int
+    let contextSummary: String?
+    let selectionHint: AISessionSelectionHint?
+    let contextRemainingPercent: Double?
+
+    static func from(json: [String: Any]) -> AISessionContextSnapshot? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiToolRaw = json["ai_tool"] as? String,
+              let aiTool = AIChatTool(rawValue: aiToolRaw),
+              let sessionId = json["session_id"] as? String else { return nil }
+        let snapshotAtMs: Int64
+        switch json["snapshot_at_ms"] {
+        case let v as Int64: snapshotAtMs = v
+        case let v as Int: snapshotAtMs = Int64(v)
+        case let v as NSNumber: snapshotAtMs = v.int64Value
+        default: snapshotAtMs = 0
+        }
+        let messageCount = json["message_count"] as? Int ?? 0
+        let contextSummary = json["context_summary"] as? String
+        let selectionHint: AISessionSelectionHint?
+        if let hintJson = json["selection_hint"] as? [String: Any] {
+            let hint = AISessionSelectionHint(
+                agent: hintJson["agent"] as? String,
+                modelProviderID: hintJson["model_provider_id"] as? String,
+                modelID: hintJson["model_id"] as? String,
+                configOptions: nil
+            )
+            selectionHint = hint.isEmpty ? nil : hint
+        } else {
+            selectionHint = nil
+        }
+        let contextRemainingPercent = (json["context_remaining_percent"] as? NSNumber)?.doubleValue
+        return AISessionContextSnapshot(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            snapshotAtMs: snapshotAtMs,
+            messageCount: messageCount,
+            contextSummary: contextSummary,
+            selectionHint: selectionHint,
+            contextRemainingPercent: contextRemainingPercent
+        )
+    }
+}
+
 enum AISessionSemantics {
 
     // MARK: - 分页常量
@@ -313,6 +370,29 @@ enum AISessionSemantics {
         raw.trimmingCharacters(in: .whitespacesAndNewlines)
            .lowercased()
            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    // MARK: - 上下文快照缓存键
+
+    /// 会话上下文快照缓存键：`project::workspace::aiTool::sessionId`
+    /// 与 sessionKey 格式一致，确保跨端缓存格式完全统一。
+    static func contextSnapshotKey(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> String {
+        sessionKey(project: project, workspace: workspace, aiTool: aiTool, sessionId: sessionId)
+    }
+
+    /// 从上下文快照恢复 selection hint。
+    /// 优先使用快照中的 selection_hint，fallback 到推导逻辑。
+    static func selectionHintFromSnapshot(
+        _ snapshot: AISessionContextSnapshot?,
+        fallback: AISessionSelectionHint?
+    ) -> AISessionSelectionHint? {
+        guard let snapshot = snapshot else { return fallback }
+        return mergedSelectionHint(primary: snapshot.selectionHint, fallback: fallback)
     }
 }
 

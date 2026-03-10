@@ -182,6 +182,7 @@ public extension AIMessageHandler {
     func handleAICodeReviewResult(_ ev: AICodeReviewResult) {}
     func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) {}
     func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) {}
+    func handleAIContextSnapshotUpdated(_ json: [String: Any]) {}
 }
 
 public protocol EvolutionMessageHandler: AnyObject {

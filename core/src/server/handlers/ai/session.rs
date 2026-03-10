@@ -1396,6 +1396,83 @@ pub(super) async fn handle_ai_code_completion(
     Ok(true)
 }
 
+/// HTTP 读取单个会话上下文快照
+pub(crate) async fn query_ai_session_context_snapshot(
+    _app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+) -> Result<ServerMessage, String> {
+    let stored = super::get_session_context_snapshot(
+        ai_state,
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+    )
+    .await?;
+
+    let snapshot = stored.map(|s| crate::server::protocol::ai::AiSessionContextSnapshot {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool: ai_tool.to_string(),
+        session_id: session_id.to_string(),
+        snapshot_at_ms: s.snapshot_at_ms,
+        message_count: s.message_count,
+        context_summary: s.context_summary,
+        selection_hint: s.selection_hint,
+        context_remaining_percent: s.context_remaining_percent,
+    });
+
+    Ok(ServerMessage::AISessionContextSnapshotResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool: ai_tool.to_string(),
+        session_id: session_id.to_string(),
+        snapshot,
+    })
+}
+
+/// HTTP 读取跨工作区上下文快照列表（用于跨工作区上下文复用）
+pub(crate) async fn query_ai_cross_context_snapshots(
+    _app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    filter_ai_tool: Option<&str>,
+) -> Result<ServerMessage, String> {
+    let entries = super::list_session_context_snapshots(
+        ai_state,
+        project_name,
+        workspace_name,
+        filter_ai_tool,
+    )
+    .await?;
+
+    let snapshots = entries
+        .into_iter()
+        .map(|(entry, stored)| crate::server::protocol::ai::AiSessionContextSnapshot {
+            project_name: entry.project_name,
+            workspace_name: entry.workspace_name,
+            ai_tool: entry.ai_tool,
+            session_id: entry.session_id,
+            snapshot_at_ms: stored.snapshot_at_ms,
+            message_count: stored.message_count,
+            context_summary: stored.context_summary,
+            selection_hint: stored.selection_hint,
+            context_remaining_percent: stored.context_remaining_percent,
+        })
+        .collect();
+
+    Ok(ServerMessage::AICrossContextSnapshotsResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        snapshots,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

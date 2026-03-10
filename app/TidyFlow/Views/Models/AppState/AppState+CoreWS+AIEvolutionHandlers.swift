@@ -1320,4 +1320,23 @@ extension AppState {
             handleClientErrorMessage(error.message)
         }
     }
+
+    func handleAIContextSnapshotUpdated(_ json: [String: Any]) {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiToolRaw = json["ai_tool"] as? String,
+              let aiTool = AIChatTool(rawValue: aiToolRaw),
+              let sessionId = json["session_id"] as? String,
+              let snapshotJson = json["snapshot"] as? [String: Any],
+              let snapshot = AISessionContextSnapshot.from(json: snapshotJson) else { return }
+        let key = AISessionSemantics.contextSnapshotKey(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId
+        )
+        DispatchQueue.main.async {
+            self.aiSessionContextSnapshots[key] = snapshot
+        }
+    }
 }

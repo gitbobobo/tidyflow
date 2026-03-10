@@ -574,6 +574,9 @@ class AppState: ObservableObject {
     @Published var codeCompletionChunks: [String: String] = [:]
     /// 最近完成的 AI 代码补全结果
     @Published var latestCodeCompletionResult: AICodeCompletionDone?
+    /// AI 会话上下文快照缓存：`contextSnapshotKey(project:workspace:aiTool:sessionId:)` -> 快照
+    /// 在 `ai_context_snapshot_updated` 事件到达时更新，用于会话恢复和选择提示推导。
+    @Published var aiSessionContextSnapshots: [String: AISessionContextSnapshot] = [:]
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
