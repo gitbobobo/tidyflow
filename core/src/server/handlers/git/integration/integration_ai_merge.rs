@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use chrono::Utc;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -24,7 +24,7 @@ pub async fn handle_git_ai_merge(
     workspace: String,
     ai_agent: Option<String>,
     default_branch: String,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {

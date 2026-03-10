@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::handlers::dispatch_handlers;
@@ -9,7 +9,7 @@ use super::{branch_commit, history, integration, stage_ops, status_diff};
 /// 标准 Git 消息路由（按既有顺序短路匹配）。
 pub async fn handle_standard_git_routes(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {

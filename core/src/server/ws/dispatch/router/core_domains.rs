@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -6,7 +6,7 @@ use crate::server::ws::send_message;
 
 pub(super) async fn handle_system_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::Ping => {
@@ -19,7 +19,7 @@ pub(super) async fn handle_system_domain(
 
 pub(super) async fn handle_terminal_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::terminal::handle_terminal_message(client_msg, socket, ctx).await
@@ -27,7 +27,7 @@ pub(super) async fn handle_terminal_domain(
 
 pub(super) async fn handle_git_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::git::handle_git_message(client_msg, socket, &ctx.app_state, ctx).await
@@ -35,7 +35,7 @@ pub(super) async fn handle_git_domain(
 
 pub(super) async fn handle_project_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::project::handle_project_message(client_msg, socket, ctx).await
@@ -43,7 +43,7 @@ pub(super) async fn handle_project_domain(
 
 pub(super) async fn handle_settings_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::settings::handle_settings_message(client_msg, socket, ctx).await
@@ -55,7 +55,7 @@ pub(super) fn handle_log_domain(client_msg: &ClientMessage) -> Result<bool, Stri
 
 pub(super) async fn handle_ai_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::ai::handle_ai_message(
@@ -72,7 +72,7 @@ pub(super) async fn handle_ai_domain(
 
 pub(super) async fn handle_evidence_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::evidence::handle_evidence_message(client_msg, socket, ctx).await
@@ -80,7 +80,7 @@ pub(super) async fn handle_evidence_domain(
 
 pub(super) async fn handle_evolution_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::evolution::handle_evolution_message(client_msg, socket, ctx).await
@@ -88,7 +88,7 @@ pub(super) async fn handle_evolution_domain(
 
 pub(super) async fn handle_health_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::health::handle_health_message(client_msg, socket, ctx).await

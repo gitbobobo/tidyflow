@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::{trace, warn};
 
 use crate::server::context::HandlerContext;
@@ -22,6 +22,7 @@ struct DispatchInput {
 }
 
 fn build_dispatch_input(data: &[u8]) -> Result<DispatchInput, String> {
+    let decode_started = std::time::Instant::now();
     let envelope = envelope::decode_and_validate_envelope(data)?;
     let route = parse_domain_route(&envelope.domain)
         .ok_or_else(|| format!("Unknown domain: {}", envelope.domain))?;
@@ -32,6 +33,7 @@ fn build_dispatch_input(data: &[u8]) -> Result<DispatchInput, String> {
         ));
     }
     let client_msg = envelope::envelope_payload_to_client_message(&envelope)?;
+    crate::server::perf::record_ws_decode_ms(decode_started.elapsed().as_millis() as u64);
     Ok(DispatchInput {
         envelope,
         route,
@@ -42,14 +44,17 @@ fn build_dispatch_input(data: &[u8]) -> Result<DispatchInput, String> {
 async fn dispatch_parsed_message(
     route: crate::server::protocol::domain_table::DomainRoute,
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
     watcher: &shared_types::DispatchWatcher,
 ) -> Result<bool, String> {
-    router::dispatch_domain_handler(route, client_msg, socket, ctx, watcher).await
+    let dispatch_started = std::time::Instant::now();
+    let result = router::dispatch_domain_handler(route, client_msg, socket, ctx, watcher).await;
+    crate::server::perf::record_ws_dispatch_ms(dispatch_started.elapsed().as_millis() as u64);
+    result
 }
 
-async fn send_unhandled_message(socket: &mut WebSocket) -> Result<(), String> {
+async fn send_unhandled_message(socket: &WebSocket) -> Result<(), String> {
     send_message(
         socket,
         &ServerMessage::Error {
@@ -69,7 +74,7 @@ async fn send_unhandled_message(socket: &mut WebSocket) -> Result<(), String> {
 /// v6：客户端消息统一使用 `ClientEnvelopeV6`
 pub(super) async fn handle_client_message(
     data: &[u8],
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
     watcher: &shared_types::DispatchWatcher,
 ) -> Result<(), String> {

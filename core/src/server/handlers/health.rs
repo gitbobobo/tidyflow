@@ -2,7 +2,7 @@
 //!
 //! 处理客户端健康上报（`health_report`）和修复动作请求（`health_repair`）。
 
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -13,7 +13,7 @@ use crate::server::ws::send_message;
 /// 返回 `Ok(true)` 表示消息已处理，`Ok(false)` 表示不属于本处理器。
 pub async fn handle_health_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {

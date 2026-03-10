@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v7/action_rules.csv`
+//! 来源：`schema/protocol/v8/action_rules.csv`
 //! 生成命令：`./scripts/tools/gen_protocol_action_table.sh`
 
 pub const EXACT_RULES: &[(&str, &str)] = &[
@@ -36,7 +36,9 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("health", "health_"),
 ];
 
-pub const CONTAINS_RULES: &[(&str, &str)] = &[("settings", "client_settings")];
+pub const CONTAINS_RULES: &[(&str, &str)] = &[
+    ("settings", "client_settings"),
+];
 
 /// 根据规则表判断 action 是否属于给定 domain。
 pub fn matches_action_domain(domain: &str, action: &str) -> bool {

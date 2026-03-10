@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::{info, warn};
 
 use crate::server::context::HandlerContext;
@@ -7,7 +7,7 @@ use crate::server::ws::send_message;
 
 pub async fn handle_clipboard_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     _ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {

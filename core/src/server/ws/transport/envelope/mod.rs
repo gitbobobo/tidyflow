@@ -56,11 +56,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn encode_server_message_event_kind_for_output() {
+    async fn encode_server_message_event_kind_for_output_batch() {
         let bytes = crate::server::ws::with_request_id(None, async {
-            encode_server_message(&ServerMessage::Output {
-                data: vec![1, 2, 3],
-                term_id: Some("t1".to_string()),
+            encode_server_message(&ServerMessage::OutputBatch {
+                items: vec![crate::server::protocol::terminal::TerminalOutputBatchItem {
+                    term_id: "t1".to_string(),
+                    data: vec![1, 2, 3],
+                }],
             })
             .expect("encode should succeed")
         })
@@ -68,7 +70,7 @@ mod tests {
         let env: ServerEnvelopeV6 = rmp_serde::from_slice(&bytes).expect("decode envelope");
         assert_eq!(env.request_id, None);
         assert_eq!(env.domain, "terminal");
-        assert_eq!(env.action, "output");
+        assert_eq!(env.action, "output_batch");
         assert_eq!(env.kind, "event");
         assert!(env.seq >= 1);
         assert!(env.server_ts > 0);

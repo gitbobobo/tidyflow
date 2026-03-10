@@ -1,34 +1,25 @@
-use axum::extract::ws::WebSocket;
 use tracing::{debug, info, trace};
 
 use crate::server::context::{ConnectionMeta, HandlerContext, SharedAppState};
 use crate::server::protocol::ServerMessage;
-use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
+use crate::server::watcher::WatchEvent;
 use crate::server::ws::connection::shared_types::{RemoteTermRx, TaskBroadcastRx};
+use crate::server::ws::OutboundTx;
 
 mod batch;
 mod channels;
-mod socket;
+pub(super) mod socket;
 
-pub(in crate::server::ws) struct SocketDeps<'a> {
-    pub socket: &'a mut WebSocket,
-    pub conn_meta: &'a ConnectionMeta,
-    pub handler_ctx: &'a HandlerContext,
-    pub watcher: &'a std::sync::Arc<tokio::sync::Mutex<WorkspaceWatcher>>,
-    pub app_state: &'a SharedAppState,
-}
-
-pub(in crate::server::ws) struct ChannelDeps<'a> {
-    pub agg_rx: &'a mut tokio::sync::mpsc::Receiver<(String, Vec<u8>)>,
-    pub rx_watch: &'a mut tokio::sync::mpsc::Receiver<WatchEvent>,
-    pub cmd_output_rx: &'a mut tokio::sync::mpsc::Receiver<ServerMessage>,
-    pub task_broadcast_rx: &'a mut TaskBroadcastRx,
-    pub remote_term_rx: &'a mut Option<RemoteTermRx>,
-}
-
-pub(in crate::server::ws) struct LoopDeps<'a> {
-    pub socket: SocketDeps<'a>,
-    pub channels: ChannelDeps<'a>,
+pub(in crate::server::ws) struct EventLoopDeps {
+    pub conn_meta: ConnectionMeta,
+    pub handler_ctx: HandlerContext,
+    pub app_state: SharedAppState,
+    pub outbound_tx: OutboundTx,
+    pub agg_rx: tokio::sync::mpsc::Receiver<(String, Vec<u8>)>,
+    pub rx_watch: tokio::sync::mpsc::Receiver<WatchEvent>,
+    pub cmd_output_rx: tokio::sync::mpsc::Receiver<ServerMessage>,
+    pub task_broadcast_rx: TaskBroadcastRx,
+    pub remote_term_rx: Option<RemoteTermRx>,
 }
 
 pub(super) enum LoopControl {
@@ -36,19 +27,8 @@ pub(super) enum LoopControl {
     Break,
 }
 
-pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
-    let socket = &mut *deps.socket.socket;
-    let conn_meta = deps.socket.conn_meta;
-    let handler_ctx = deps.socket.handler_ctx;
-    let watcher = deps.socket.watcher;
-    let app_state = deps.socket.app_state;
-    let agg_rx = &mut *deps.channels.agg_rx;
-    let rx_watch = &mut *deps.channels.rx_watch;
-    let cmd_output_rx = &mut *deps.channels.cmd_output_rx;
-    let task_broadcast_rx = &mut *deps.channels.task_broadcast_rx;
-    let remote_term_rx = &mut *deps.channels.remote_term_rx;
-
-    info!("Entering main WebSocket loop");
+pub(in crate::server::ws) async fn run_outbound_event_loop(mut deps: EventLoopDeps) {
+    info!("Entering outbound event loop");
     crate::util::flush_logs();
     let mut loop_count: u64 = 0;
     let mut last_log_time = std::time::Instant::now();
@@ -59,84 +39,71 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
         let select_started = std::time::Instant::now();
 
         if loop_count == 1 {
-            debug!("First loop iteration, about to call tokio::select!");
+            debug!("First outbound loop iteration, about to call tokio::select!");
             crate::util::flush_logs();
         } else if last_log_time.elapsed().as_secs() >= 5 {
-            trace!("Main loop still running, iteration {}", loop_count);
+            trace!("Outbound loop still running, iteration {}", loop_count);
             crate::util::flush_logs();
             last_log_time = std::time::Instant::now();
         }
 
         let (select_wait_ms, handle_ms, should_break) = tokio::select! {
-            msg_result = socket.recv() => {
+            Some((term_id, output)) = deps.agg_rx.recv() => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
                 let handle_started = std::time::Instant::now();
-                let mut should_break = false;
-                if let LoopControl::Break = socket::handle_socket_recv_result(
-                    msg_result,
-                    socket,
-                    handler_ctx,
-                    watcher,
-                    conn_meta,
-                )
-                .await {
-                    should_break = true;
-                }
-                let handle_ms = handle_started.elapsed().as_millis() as u64;
-                (select_wait_ms, handle_ms, should_break)
-            }
-
-            Some((term_id, output)) = agg_rx.recv() => {
-                let select_wait_ms = select_started.elapsed().as_millis() as u64;
-                let handle_started = std::time::Instant::now();
-                let (batched, total) = batch::collect_batched_output(term_id, output, agg_rx);
+                let (batched, total) = batch::collect_batched_output(term_id, output, &mut deps.agg_rx);
                 let mut should_break = false;
 
                 trace!("Batched PTY output: {} terminals, {} bytes total", batched.len(), total);
 
-                if let LoopControl::Break = batch::forward_batched_output(socket, batched).await {
+                if let LoopControl::Break = batch::forward_batched_output(&deps.outbound_tx, batched).await {
                     should_break = true;
                 }
                 let handle_ms = handle_started.elapsed().as_millis() as u64;
                 (select_wait_ms, handle_ms, should_break)
             }
 
-            Some(watch_event) = rx_watch.recv() => {
+            Some(watch_event) = deps.rx_watch.recv() => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
                 let handle_started = std::time::Instant::now();
-                channels::handle_watch_channel_event(watch_event, socket, app_state, handler_ctx).await;
+                channels::handle_watch_channel_event(
+                    watch_event,
+                    &deps.outbound_tx,
+                    &deps.app_state,
+                    &deps.handler_ctx
+                ).await;
                 let handle_ms = handle_started.elapsed().as_millis() as u64;
                 (select_wait_ms, handle_ms, false)
             }
 
-            Some(msg) = cmd_output_rx.recv() => {
+            Some(msg) = deps.cmd_output_rx.recv() => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
                 let handle_started = std::time::Instant::now();
-                channels::handle_cmd_output_event(msg, socket).await;
+                channels::handle_cmd_output_event(msg, &deps.outbound_tx).await;
                 let handle_ms = handle_started.elapsed().as_millis() as u64;
                 (select_wait_ms, handle_ms, false)
             }
 
-            result = task_broadcast_rx.recv() => {
+            result = deps.task_broadcast_rx.recv() => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
                 let handle_started = std::time::Instant::now();
-                crate::server::perf::record_task_broadcast_queue_depth(task_broadcast_rx.len() as u64);
-                channels::handle_task_broadcast_channel_event(result, socket, conn_meta).await;
+                crate::server::perf::record_task_broadcast_queue_depth(deps.task_broadcast_rx.len() as u64);
+                channels::handle_task_broadcast_channel_event(result, &deps.outbound_tx, &deps.conn_meta).await;
                 let handle_ms = handle_started.elapsed().as_millis() as u64;
                 (select_wait_ms, handle_ms, false)
             }
 
-            result = channels::recv_remote_term_event(remote_term_rx) => {
+            result = channels::recv_remote_term_event(&mut deps.remote_term_rx) => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
                 let handle_started = std::time::Instant::now();
-                channels::handle_remote_term_channel_event(result, socket, conn_meta).await;
+                channels::handle_remote_term_channel_event(result, &deps.outbound_tx, &deps.conn_meta).await;
                 let handle_ms = handle_started.elapsed().as_millis() as u64;
                 (select_wait_ms, handle_ms, false)
             }
 
             else => {
                 let select_wait_ms = select_started.elapsed().as_millis() as u64;
-                debug!("All channels closed, exiting");
+                debug!("All outbound channels closed, exiting");
                 (select_wait_ms, 0, true)
             }
         };

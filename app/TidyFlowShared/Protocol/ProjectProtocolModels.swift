@@ -3,7 +3,7 @@ import Foundation
 // MARK: - 项目级命令模型
 
 /// 项目级命令配置（作为后台任务执行，不新建终端 tab）
-public struct ProjectCommand: Identifiable, Codable, Equatable {
+public struct ProjectCommand: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var name: String
     public var icon: String

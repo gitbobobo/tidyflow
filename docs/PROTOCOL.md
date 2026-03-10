@@ -1,4 +1,4 @@
-# TidyFlow Protocol v7
+# TidyFlow Protocol v8
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -11,10 +11,10 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 7`
-- 协议 schema 权威源：`schema/protocol/v7/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 8`
+- 协议 schema 权威源：`schema/protocol/v8/`
 
-## 消息模型（v7 包络，结构沿用 v6）
+## 消息模型（v8 包络，结构沿用 v6）
 
 - 客户端请求：
 - `ClientEnvelopeV6 { request_id, domain, action, payload, client_ts }`
@@ -163,7 +163,7 @@
 
 ## HTTP/WS 一致性边界与多工作区字段约束
 
-本节为 `schema/protocol/v7/` 的人类可读说明，**两者必须保持一致**。
+本节为 `schema/protocol/v8/` 的人类可读说明，**两者必须保持一致**。
 
 ### 多工作区边界字段
 
@@ -201,7 +201,7 @@
 - 若当前 `(project, workspace)` 已在本地状态中，直接按事件字段增量更新，不发起全量 HTTP snapshot 请求。
 - 若 `(project, workspace)` 不在本地状态中（首次收到），允许对该工作区发起定向 HTTP snapshot 请求；但此请求**不得**以全量 `GET /api/v1/evolution/snapshot`（无过滤参数）覆盖其他工作区的缓存。
 
-## 客户端设置字段（v7）
+## 客户端设置字段（v8）
 
 - `SaveClientSettings` 与 `ClientSettingsResult` 不再包含 `app_language`。
 - `app_language` 改为客户端本地偏好：
@@ -217,10 +217,11 @@
 ## 兼容策略
 
 - 本版本不向后兼容 v6。
-- 客户端必须发送 v7 包络；服务端统一返回 v7 包络。
+- 客户端必须发送 v8 包络；服务端统一返回 v8 包络。
+- 终端输出事件统一为 `output_batch`，payload 为 `items: [{ term_id, data }]`。
 - AI 聊天流式事件已硬切旧协议：
   - 已移除：`ai_chat_message_updated`、`ai_chat_part_updated`、`ai_chat_part_delta`
-  - 仅保留：`ai_session_messages_update`（`messages` / `ops` / `cache_revision`）作为流式主链路
+  - 仅保留：`ai_session_messages_update`（`messages` / `ops` / `from_revision` / `to_revision`）作为流式主链路
   - `ai_chat_done`、`ai_chat_error` 保留为终态控制事件，不承担 token 增量职责
 
 ## 主要能力范围

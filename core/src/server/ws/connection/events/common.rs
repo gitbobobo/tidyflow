@@ -1,10 +1,10 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::error;
 
 use crate::server::protocol::ServerMessage;
 
 pub(in crate::server::ws) async fn emit_message(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     msg: &ServerMessage,
     error_context: &str,
 ) {

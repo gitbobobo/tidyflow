@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use axum::extract::ws::WebSocket;
 use tracing::error;
 
-use crate::server::protocol::ServerMessage;
+use crate::server::protocol::{terminal::TerminalOutputBatchItem, ServerMessage};
+use crate::server::ws::OutboundTx as WebSocket;
 
 use super::LoopControl;
 
@@ -21,6 +21,7 @@ pub(super) fn collect_batched_output(
         .or_default()
         .extend(first_output);
 
+    let mut flush_reason = "channel_drain";
     while total < MAX_BATCH_SIZE {
         match agg_rx.try_recv() {
             Ok((id, data)) => {
@@ -30,22 +31,25 @@ pub(super) fn collect_batched_output(
             Err(_) => break,
         }
     }
+    if total >= MAX_BATCH_SIZE {
+        flush_reason = "size_limit";
+    }
+    crate::server::perf::record_ws_batch_flush(total, flush_reason);
     (batched, total)
 }
 
 pub(super) async fn forward_batched_output(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     batched: HashMap<String, Vec<u8>>,
 ) -> LoopControl {
-    for (id, data) in batched {
-        let msg = ServerMessage::Output {
-            data,
-            term_id: Some(id),
-        };
-        if let Err(e) = crate::server::ws::send_message(socket, &msg).await {
-            error!("Failed to send output message: {}", e);
-            return LoopControl::Break;
-        }
+    let items = batched
+        .into_iter()
+        .map(|(term_id, data)| TerminalOutputBatchItem { term_id, data })
+        .collect::<Vec<_>>();
+    let msg = ServerMessage::OutputBatch { items };
+    if let Err(e) = crate::server::ws::send_message(socket, &msg).await {
+        error!("Failed to send output batch message: {}", e);
+        return LoopControl::Break;
     }
     LoopControl::Continue
 }

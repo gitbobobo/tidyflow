@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_build_cross_workspace_context_with_snapshots() {
-        use crate::server::protocol::ai::{AiSessionContextSnapshot, SessionSelectionHint};
+        use crate::server::protocol::ai::AiSessionContextSnapshot;
         use std::collections::HashMap;
 
         let mentions = vec!["backend".to_string()];
@@ -296,7 +296,6 @@ mod tests {
 
     #[test]
     fn test_cross_workspace_context_fallback_on_missing_snapshot() {
-        use crate::server::protocol::ai::AiSessionContextSnapshot;
         use std::collections::HashMap;
 
         let mentions = vec!["frontend".to_string()];

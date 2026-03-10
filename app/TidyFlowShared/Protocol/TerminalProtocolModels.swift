@@ -1,5 +1,20 @@
 import Foundation
 
+public struct TerminalOutputBatchItem {
+    public let termId: String
+    public let data: [UInt8]
+
+    public static func from(json: [String: Any]) -> TerminalOutputBatchItem? {
+        guard let termId = json["term_id"] as? String else { return nil }
+        return TerminalOutputBatchItem(termId: termId, data: WSBinary.decodeBytes(json["data"]))
+    }
+
+    public init(termId: String, data: [UInt8]) {
+        self.termId = termId
+        self.data = data
+    }
+}
+
 /// 终端会话列表项
 public struct TerminalSessionInfo {
     public let termId: String

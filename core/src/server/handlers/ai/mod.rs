@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::server::context::{SharedAppState, TaskBroadcastTx};
@@ -22,7 +22,7 @@ mod utils;
 
 pub use ai_state::AIState;
 pub(crate) use session_index_store::{
-    AiSessionContextSnapshotStored, AiSessionIndexPage, AiSessionIndexStore,
+    AiSessionIndexPage, AiSessionIndexStore,
 };
 pub(crate) use utils::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
@@ -183,7 +183,7 @@ pub(crate) async fn list_session_context_snapshots(
 
 pub async fn handle_ai_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,

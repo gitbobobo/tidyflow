@@ -1,6 +1,6 @@
 pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
     if action.starts_with("term_")
-        || action == "output"
+        || action == "output_batch"
         || action == "exit"
         || action == "terminal_spawned"
         || action == "terminal_killed"
@@ -51,7 +51,7 @@ pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
 /// 客户端通过这两个字段将事件路由到正确的缓存桶，不允许依赖全局单例工作区状态。
 pub(in crate::server::ws) fn is_event_action(action: &str) -> bool {
     // 终端 / 文件 / Git 事件
-    action == "output"
+    action == "output_batch"
         || action == "exit"
         || action == "file_changed"
         || action == "git_status_changed"

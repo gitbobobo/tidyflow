@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use std::sync::{Arc, Mutex as StdMutex};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -11,7 +11,7 @@ use super::profile::{direction_model_label, normalize_profiles_lenient};
 use super::{maybe_manager, StartWorkspaceReq, DEFAULT_LOOP_ROUND_LIMIT};
 
 async fn send_read_via_http_required(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     action: &str,
     project: Option<String>,
     workspace: Option<String>,
@@ -35,7 +35,7 @@ async fn send_read_via_http_required(
 
 pub(super) async fn handle_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     let Some(manager) = maybe_manager() else {
@@ -262,7 +262,7 @@ pub(super) async fn handle_message(
 }
 
 async fn send_snapshot(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     manager: &super::EvolutionManager,
     ctx: &HandlerContext,
 ) -> Result<(), String> {

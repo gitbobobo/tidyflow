@@ -1282,7 +1282,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "workspace_name": "default",
             "ai_tool": "codex",
             "session_id": "s1",
-            "cache_revision": 8,
+            "from_revision": 7,
+            "to_revision": 8,
             "is_streaming": true,
             "ops": [
                 [
@@ -1299,7 +1300,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
 
         let result = AISessionMessagesUpdateV2.from(json: json)
         XCTAssertNotNil(result)
-        XCTAssertEqual(result?.cacheRevision, 8)
+        XCTAssertEqual(result?.fromRevision, 7)
+        XCTAssertEqual(result?.toRevision, 8)
         XCTAssertEqual(result?.isStreaming, true)
         guard let op = result?.ops?.first else {
             XCTFail("缺少 ops")
@@ -1323,7 +1325,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "workspace_name": "default",
             "ai_tool": "codex",
             "session_id": "s2",
-            "cache_revision": 11,
+            "from_revision": 10,
+            "to_revision": 11,
             "is_streaming": false,
             "messages": [
                 [
@@ -1342,7 +1345,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
 
         let result = AISessionMessagesUpdateV2.from(json: json)
         XCTAssertNotNil(result)
-        XCTAssertEqual(result?.cacheRevision, 11)
+        XCTAssertEqual(result?.fromRevision, 10)
+        XCTAssertEqual(result?.toRevision, 11)
         XCTAssertEqual(result?.isStreaming, false)
         XCTAssertEqual(result?.messages?.count, 1)
         XCTAssertEqual(result?.messages?.first?.parts.first?.text, "snapshot")

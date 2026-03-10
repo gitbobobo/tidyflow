@@ -1077,12 +1077,17 @@ final class AIChatStore {
         return result
     }
 
-    /// 仅接受单调不回退的 cache_revision，避免异步快照覆盖更晚到达的增量。
+    /// 仅接受单调不回退、且不出现 revision 断层的流式更新。
     @discardableResult
-    func shouldApplySessionCacheRevision(_ revision: UInt64, sessionId: String) -> Bool {
+    func shouldApplySessionCacheRevision(
+        fromRevision: UInt64,
+        toRevision: UInt64,
+        sessionId: String
+    ) -> Bool {
         let current = sessionCacheRevisionBySessionId[sessionId] ?? 0
-        guard revision >= current else { return false }
-        sessionCacheRevisionBySessionId[sessionId] = revision
+        guard toRevision >= current else { return false }
+        guard current == 0 || fromRevision <= current else { return false }
+        sessionCacheRevisionBySessionId[sessionId] = toRevision
         return true
     }
 

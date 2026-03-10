@@ -1277,7 +1277,7 @@ mod tests {
         let interrupted_at = now;
 
         let mut state = AppState::default();
-        let mut ws_interrupted = Workspace {
+        let ws_interrupted = Workspace {
             name: "feature-interrupted".to_string(),
             worktree_path: PathBuf::from("/tmp/proj-a/.worktrees/feature-interrupted"),
             branch: "feature/interrupted".to_string(),

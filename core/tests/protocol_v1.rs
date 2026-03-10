@@ -182,8 +182,8 @@ async fn recv_envelope(
                 // 解码 MessagePack 信封
                 match rmp_serde::from_slice::<ServerEnvelope>(&data) {
                     Ok(envelope) => {
-                        // 跳过 output 事件（太多）
-                        if envelope.action != "output" {
+                        // 跳过 output_batch 事件（太多）
+                        if envelope.action != "output_batch" {
                             println!(
                                 "  Received: domain={}, action={}, kind={}",
                                 envelope.domain, envelope.action, envelope.kind
@@ -463,28 +463,32 @@ async fn test_terminal_io() {
     let mut found = false;
     for _ in 0..30 {
         if let Some(env) = recv_envelope(&mut read).await {
-            if env.action == "output" {
-                // payload.data 可能是 base64 字符串或字节数组
-                if let Some(data_b64) = env.payload["data"].as_str() {
-                    let data = BASE64.decode(data_b64).unwrap_or_default();
-                    let text = String::from_utf8_lossy(&data);
-                    if text.contains("TIDYFLOW_V1_TEST") {
-                        found = true;
-                        break;
-                    }
-                } else if let Some(data_arr) = env.payload["data"].as_array() {
-                    // data 可能是字节数组
-                    let data: Vec<u8> = data_arr
-                        .iter()
-                        .filter_map(|v| v.as_u64().map(|b| b as u8))
-                        .collect();
-                    let text = String::from_utf8_lossy(&data);
-                    if text.contains("TIDYFLOW_V1_TEST") {
-                        found = true;
-                        break;
+            if env.action == "output_batch" {
+                let items = env.payload["items"].as_array().cloned().unwrap_or_default();
+                for item in items {
+                    if let Some(data_b64) = item["data"].as_str() {
+                        let data = BASE64.decode(data_b64).unwrap_or_default();
+                        let text = String::from_utf8_lossy(&data);
+                        if text.contains("TIDYFLOW_V1_TEST") {
+                            found = true;
+                            break;
+                        }
+                    } else if let Some(data_arr) = item["data"].as_array() {
+                        let data: Vec<u8> = data_arr
+                            .iter()
+                            .filter_map(|v| v.as_u64().map(|b| b as u8))
+                            .collect();
+                        let text = String::from_utf8_lossy(&data);
+                        if text.contains("TIDYFLOW_V1_TEST") {
+                            found = true;
+                            break;
+                        }
                     }
                 }
             }
+        }
+        if found {
+            break;
         }
     }
     assert!(found, "Did not receive expected output");

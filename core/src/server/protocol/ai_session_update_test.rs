@@ -8,7 +8,8 @@ fn ai_session_messages_update_ops_mode_codec_roundtrip() {
         workspace_name: "w".to_string(),
         ai_tool: "codex".to_string(),
         session_id: "s1".to_string(),
-        cache_revision: 7,
+        from_revision: 6,
+        to_revision: 7,
         is_streaming: true,
         selection_hint: None,
         messages: None,
@@ -27,13 +28,15 @@ fn ai_session_messages_update_ops_mode_codec_roundtrip() {
 
     match decoded {
         ServerMessage::AISessionMessagesUpdate {
-            cache_revision,
+            from_revision,
+            to_revision,
             is_streaming,
             messages,
             ops,
             ..
         } => {
-            assert_eq!(cache_revision, 7);
+            assert_eq!(from_revision, 6);
+            assert_eq!(to_revision, 7);
             assert!(is_streaming);
             assert!(messages.is_none());
             let ops = ops.expect("ops should exist");
@@ -54,7 +57,8 @@ fn ai_session_messages_update_messages_mode_codec_roundtrip() {
         workspace_name: "w".to_string(),
         ai_tool: "codex".to_string(),
         session_id: "s2".to_string(),
-        cache_revision: 11,
+        from_revision: 10,
+        to_revision: 11,
         is_streaming: false,
         selection_hint: None,
         messages: Some(vec![MessageInfo {
@@ -89,13 +93,15 @@ fn ai_session_messages_update_messages_mode_codec_roundtrip() {
 
     match decoded {
         ServerMessage::AISessionMessagesUpdate {
-            cache_revision,
+            from_revision,
+            to_revision,
             is_streaming,
             messages,
             ops,
             ..
         } => {
-            assert_eq!(cache_revision, 11);
+            assert_eq!(from_revision, 10);
+            assert_eq!(to_revision, 11);
             assert!(!is_streaming);
             assert!(ops.is_none());
             let messages = messages.expect("messages should exist");

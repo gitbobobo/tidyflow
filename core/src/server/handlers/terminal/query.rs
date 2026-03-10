@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::info;
 
 use crate::application::terminal as terminal_app;
@@ -8,7 +8,7 @@ use crate::server::ws::send_message;
 
 pub async fn handle_query_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {

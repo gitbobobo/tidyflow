@@ -1,8 +1,10 @@
 use axum::extract::ws::{Message, WebSocket};
+use futures::StreamExt;
 use tracing::{error, info, trace, warn};
 
 use crate::server::context::{ConnectionMeta, HandlerContext};
 use crate::server::watcher::WorkspaceWatcher;
+use crate::server::ws::OutboundTx;
 
 use super::LoopControl;
 
@@ -16,9 +18,9 @@ fn describe_socket_message(msg: &Message) -> String {
     }
 }
 
-pub(super) async fn handle_socket_recv_result(
+async fn handle_socket_recv_result(
     msg_result: Option<Result<Message, axum::Error>>,
-    socket: &mut WebSocket,
+    outbound_tx: &OutboundTx,
     handler_ctx: &HandlerContext,
     watcher: &std::sync::Arc<tokio::sync::Mutex<WorkspaceWatcher>>,
     conn_meta: &ConnectionMeta,
@@ -34,7 +36,7 @@ pub(super) async fn handle_socket_recv_result(
         Some(Ok(Message::Binary(data))) => {
             super::super::events::handle_binary_client_message(
                 &data,
-                socket,
+                outbound_tx,
                 handler_ctx,
                 watcher,
                 conn_meta,
@@ -67,6 +69,24 @@ pub(super) async fn handle_socket_recv_result(
                 conn_meta.conn_id
             );
             LoopControl::Break
+        }
+    }
+}
+
+pub(in crate::server::ws) async fn run_reader_loop(
+    mut socket_rx: futures::stream::SplitStream<WebSocket>,
+    outbound_tx: OutboundTx,
+    handler_ctx: HandlerContext,
+    watcher: std::sync::Arc<tokio::sync::Mutex<WorkspaceWatcher>>,
+    conn_meta: ConnectionMeta,
+) -> bool {
+    loop {
+        let msg_result = socket_rx.next().await;
+        if let LoopControl::Break =
+            handle_socket_recv_result(msg_result, &outbound_tx, &handler_ctx, &watcher, &conn_meta)
+                .await
+        {
+            return false;
         }
     }
 }

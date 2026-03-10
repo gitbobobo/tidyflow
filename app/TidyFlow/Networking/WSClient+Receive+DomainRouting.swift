@@ -51,7 +51,7 @@ extension WSClient {
     private static let receiveSupplementalExactRules: Set<String> = [
         "system:hello",
         "system:pong",
-        "terminal:output",
+        "terminal:output_batch",
         "terminal:exit",
         "terminal:remote_term_changed",
         "project:projects",

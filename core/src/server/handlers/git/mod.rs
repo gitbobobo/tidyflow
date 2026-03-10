@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::protocol::ClientMessage;
@@ -13,7 +13,7 @@ mod status_diff;
 /// 处理 Git 相关的客户端消息
 pub async fn handle_git_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {

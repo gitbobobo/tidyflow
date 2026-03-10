@@ -2,6 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalOutputBatchItem {
+    pub term_id: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// 终端相关的客户端消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -92,11 +99,9 @@ pub enum TerminalResponse {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
     },
-    Output {
-        #[serde(with = "serde_bytes")]
-        data: Vec<u8>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        term_id: Option<String>,
+    #[serde(rename = "output_batch")]
+    OutputBatch {
+        items: Vec<TerminalOutputBatchItem>,
     },
     Exit {
         code: i32,

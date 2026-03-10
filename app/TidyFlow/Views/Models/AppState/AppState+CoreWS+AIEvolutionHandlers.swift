@@ -262,11 +262,12 @@ extension AppState {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     guard store.shouldApplySessionCacheRevision(
-                        ev.cacheRevision,
+                        fromRevision: ev.fromRevision,
+                        toRevision: ev.toRevision,
                         sessionId: ev.sessionId
                     ) else {
                         TFLog.app.debug(
-                            "AI session_messages_update(snapshot) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                            "AI session_messages_update(snapshot) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), from=\(ev.fromRevision), to=\(ev.toRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
                         )
                         return
                     }
@@ -296,11 +297,12 @@ extension AppState {
 
         if let ops = ev.ops {
             guard store.shouldApplySessionCacheRevision(
-                ev.cacheRevision,
+                fromRevision: ev.fromRevision,
+                toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else {
                 TFLog.app.debug(
-                    "AI session_messages_update(ops) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                    "AI session_messages_update(ops) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), from=\(ev.fromRevision), to=\(ev.toRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
                 )
                 return
             }
@@ -328,11 +330,12 @@ extension AppState {
 
         if !ev.isStreaming {
             guard store.shouldApplySessionCacheRevision(
-                ev.cacheRevision,
+                fromRevision: ev.fromRevision,
+                toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else {
                 TFLog.app.debug(
-                    "AI session_messages_update(terminal) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                    "AI session_messages_update(terminal) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), from=\(ev.fromRevision), to=\(ev.toRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
                 )
                 return
             }

@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{resolve_workspace, SharedAppState};
 use crate::server::git;
@@ -8,7 +8,7 @@ use crate::server::ws::send_message;
 pub(crate) async fn handle_git_fetch(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, project, workspace).await {

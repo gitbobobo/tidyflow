@@ -570,7 +570,8 @@ pub(crate) fn ai_session_messages_update_encoded_len(
     workspace_name: &str,
     ai_tool: &str,
     session_id: &str,
-    cache_revision: u64,
+    from_revision: u64,
+    to_revision: u64,
     is_streaming: bool,
     selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
     messages: Option<Vec<crate::server::protocol::ai::MessageInfo>>,
@@ -581,7 +582,8 @@ pub(crate) fn ai_session_messages_update_encoded_len(
         workspace_name: workspace_name.to_string(),
         ai_tool: ai_tool.to_string(),
         session_id: session_id.to_string(),
-        cache_revision,
+        from_revision,
+        to_revision,
         is_streaming,
         selection_hint,
         messages,
@@ -597,6 +599,7 @@ pub(crate) fn build_ai_session_messages_update(
     workspace_name: &str,
     ai_tool: &str,
     session_id: &str,
+    from_revision: u64,
     snapshot: &AiStreamSnapshot,
     ops: Option<Vec<crate::server::protocol::ai::AiSessionCacheOpInfo>>,
     allow_snapshot_messages_fallback: bool,
@@ -607,6 +610,7 @@ pub(crate) fn build_ai_session_messages_update(
             workspace_name,
             ai_tool,
             session_id,
+            from_revision,
             snapshot.cache_revision(),
             snapshot.is_streaming,
             snapshot.selection_hint.clone(),
@@ -620,7 +624,8 @@ pub(crate) fn build_ai_session_messages_update(
                     workspace_name: workspace_name.to_string(),
                     ai_tool: ai_tool.to_string(),
                     session_id: session_id.to_string(),
-                    cache_revision: snapshot.cache_revision(),
+                    from_revision,
+                    to_revision: snapshot.cache_revision(),
                     is_streaming: snapshot.is_streaming,
                     selection_hint: snapshot.selection_hint.clone(),
                     messages: None,
@@ -651,6 +656,7 @@ pub(crate) fn build_ai_session_messages_update(
             workspace_name,
             ai_tool,
             session_id,
+            from_revision,
             snapshot.cache_revision(),
             snapshot.is_streaming,
             snapshot.selection_hint.clone(),
@@ -663,7 +669,8 @@ pub(crate) fn build_ai_session_messages_update(
                     workspace_name: workspace_name.to_string(),
                     ai_tool: ai_tool.to_string(),
                     session_id: session_id.to_string(),
-                    cache_revision: snapshot.cache_revision(),
+                    from_revision,
+                    to_revision: snapshot.cache_revision(),
                     is_streaming: snapshot.is_streaming,
                     selection_hint: snapshot.selection_hint.clone(),
                     messages: full_messages,
@@ -678,7 +685,8 @@ pub(crate) fn build_ai_session_messages_update(
         workspace_name: workspace_name.to_string(),
         ai_tool: ai_tool.to_string(),
         session_id: session_id.to_string(),
-        cache_revision: snapshot.cache_revision(),
+        from_revision,
+        to_revision: snapshot.cache_revision(),
         is_streaming: snapshot.is_streaming,
         selection_hint: snapshot.selection_hint.clone(),
         messages: None,
@@ -692,16 +700,16 @@ pub(crate) async fn ai_session_subscriber_conn_ids(
     origin_conn_id: &str,
 ) -> HashSet<String> {
     let ai = ai_state.lock().await;
-    ai.session_subscriptions
-        .iter()
-        .filter_map(|(conn_id, keys)| {
-            if conn_id == origin_conn_id || !keys.contains(session_key) {
-                None
-            } else {
-                Some(conn_id.clone())
-            }
-        })
-        .collect()
+    let targets = ai
+        .session_subscribers_by_key
+        .get(session_key)
+        .into_iter()
+        .flat_map(|conn_ids| conn_ids.iter())
+        .filter(|conn_id| conn_id.as_str() != origin_conn_id)
+        .cloned()
+        .collect::<HashSet<_>>();
+    crate::server::perf::record_ai_subscriber_fanout(targets.len());
+    targets
 }
 
 pub(crate) async fn emit_server_message(
@@ -2379,38 +2387,6 @@ pub(crate) fn normalize_ai_audio_parts(
     Some(normalized)
 }
 
-/// 获取指定项目/工作区中最近有上下文快照的会话（用于跨工作区上下文复用）
-/// 按 updated_at_ms 排序，返回最近的快照
-pub(crate) async fn get_latest_context_snapshot_for_project(
-    ai_state: &super::SharedAIState,
-    project_name: &str,
-    workspace_name: &str,
-    filter_ai_tool: Option<&str>,
-) -> Option<crate::server::protocol::ai::AiSessionContextSnapshot> {
-    let entries = super::list_session_context_snapshots(
-        ai_state,
-        project_name,
-        workspace_name,
-        filter_ai_tool,
-    )
-    .await
-    .ok()?;
-
-    entries.into_iter().next().map(|(entry, stored)| {
-        crate::server::protocol::ai::AiSessionContextSnapshot {
-            project_name: entry.project_name,
-            workspace_name: entry.workspace_name,
-            ai_tool: entry.ai_tool,
-            session_id: entry.session_id,
-            snapshot_at_ms: stored.snapshot_at_ms,
-            message_count: stored.message_count,
-            context_summary: stored.context_summary,
-            selection_hint: stored.selection_hint,
-            context_remaining_percent: stored.context_remaining_percent,
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2510,7 +2486,8 @@ mod tests {
             workspace_name: "w".to_string(),
             ai_tool: "codex".to_string(),
             session_id: "s1".to_string(),
-            cache_revision: 1,
+            from_revision: 0,
+            to_revision: 1,
             is_streaming: true,
             selection_hint: None,
             messages: None,
@@ -2666,6 +2643,7 @@ mod tests {
             "w",
             "codex",
             "s1",
+            snapshot.cache_revision().saturating_sub(1),
             &snapshot,
             Some(vec![oversized_op]),
             false,

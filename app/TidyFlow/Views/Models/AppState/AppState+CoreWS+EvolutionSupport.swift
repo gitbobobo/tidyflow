@@ -764,7 +764,8 @@ extension AppState {
         }
         if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return true }
         guard evolutionReplayStore.shouldApplySessionCacheRevision(
-            ev.cacheRevision,
+            fromRevision: ev.fromRevision,
+            toRevision: ev.toRevision,
             sessionId: ev.sessionId
         ) else {
             return true
@@ -853,7 +854,8 @@ extension AppState {
         }
         if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return true }
         guard subAgentViewerStore.shouldApplySessionCacheRevision(
-            ev.cacheRevision,
+            fromRevision: ev.fromRevision,
+            toRevision: ev.toRevision,
             sessionId: ev.sessionId
         ) else {
             return true

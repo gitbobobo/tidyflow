@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use std::path::PathBuf;
 use tracing::{debug, info};
 
@@ -9,7 +9,7 @@ use crate::server::ws::{send_message, subscribe_terminal, unsubscribe_terminal};
 
 pub async fn handle_lifecycle_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {

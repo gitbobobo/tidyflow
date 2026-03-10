@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use serde_json::Value;
 use std::path::Path;
 use tracing::{info, warn};
@@ -14,7 +14,7 @@ use crate::util::shell_launch::{wrap_command_for_login_zsh, LOGIN_ZSH_PATH};
 
 pub async fn handle_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     _ctx: &HandlerContext,
 ) -> Result<bool, String> {
@@ -549,7 +549,7 @@ pub async fn handle_cancel_ai_task(
     project: &str,
     workspace: &str,
     operation_type: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     let mut registry = ctx.running_ai_tasks.lock().await;

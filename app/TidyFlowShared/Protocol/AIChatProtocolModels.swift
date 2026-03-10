@@ -285,7 +285,8 @@ public struct AISessionMessagesUpdateV2 {
     public let workspaceName: String
     public let aiTool: AIChatTool
     public let sessionId: String
-    public let cacheRevision: UInt64
+    public let fromRevision: UInt64
+    public let toRevision: UInt64
     public let isStreaming: Bool
     public let selectionHint: AISessionSelectionHint?
     public let messages: [AIProtocolMessageInfo]?
@@ -296,7 +297,8 @@ public struct AISessionMessagesUpdateV2 {
               let workspaceName = json["workspace_name"] as? String,
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
-        let cacheRevision = parseUInt64(json["cache_revision"])
+        let fromRevision = parseUInt64(json["from_revision"])
+        let toRevision = parseUInt64(json["to_revision"])
         let isStreaming = parseBool(json["is_streaming"]) ?? false
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
 
@@ -314,7 +316,8 @@ public struct AISessionMessagesUpdateV2 {
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
-            cacheRevision: cacheRevision,
+            fromRevision: fromRevision,
+            toRevision: toRevision,
             isStreaming: isStreaming,
             selectionHint: selectionHint,
             messages: messages,
@@ -322,12 +325,13 @@ public struct AISessionMessagesUpdateV2 {
         )
     }
 
-    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, cacheRevision: UInt64, isStreaming: Bool, selectionHint: AISessionSelectionHint?, messages: [AIProtocolMessageInfo]?, ops: [AIProtocolSessionCacheOp]?) {
+    public init(projectName: String, workspaceName: String, aiTool: AIChatTool, sessionId: String, fromRevision: UInt64, toRevision: UInt64, isStreaming: Bool, selectionHint: AISessionSelectionHint?, messages: [AIProtocolMessageInfo]?, ops: [AIProtocolSessionCacheOp]?) {
         self.projectName = projectName
         self.workspaceName = workspaceName
         self.aiTool = aiTool
         self.sessionId = sessionId
-        self.cacheRevision = cacheRevision
+        self.fromRevision = fromRevision
+        self.toRevision = toRevision
         self.isStreaming = isStreaming
         self.selectionHint = selectionHint
         self.messages = messages

@@ -2068,7 +2068,8 @@ final class MobileAppState: ObservableObject {
         }
         if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return true }
         guard subAgentViewerStore.shouldApplySessionCacheRevision(
-            ev.cacheRevision,
+            fromRevision: ev.fromRevision,
+            toRevision: ev.toRevision,
             sessionId: ev.sessionId
         ) else {
             return true
@@ -4754,7 +4755,8 @@ extension MobileAppState {
 
         if let messages = ev.messages {
             guard aiChatStore.shouldApplySessionCacheRevision(
-                ev.cacheRevision,
+                fromRevision: ev.fromRevision,
+                toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else { return }
             // 共享消息流归一化入口，与 ai_session_messages 走同一链路
@@ -4775,7 +4777,8 @@ extension MobileAppState {
 
         if let ops = ev.ops {
             guard aiChatStore.shouldApplySessionCacheRevision(
-                ev.cacheRevision,
+                fromRevision: ev.fromRevision,
+                toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else { return }
             aiChatStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
@@ -4787,7 +4790,8 @@ extension MobileAppState {
 
         if !ev.isStreaming {
             guard aiChatStore.shouldApplySessionCacheRevision(
-                ev.cacheRevision,
+                fromRevision: ev.fromRevision,
+                toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else { return }
             aiChatStore.applySessionCacheOps([], isStreaming: false)

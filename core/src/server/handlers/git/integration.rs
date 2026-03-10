@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::protocol::ClientMessage;
@@ -8,7 +8,7 @@ mod integration_ai_merge;
 
 pub async fn handle_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {

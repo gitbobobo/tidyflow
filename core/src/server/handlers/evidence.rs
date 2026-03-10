@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use chrono::Utc;
 use serde::Deserialize;
 use walkdir::WalkDir;
@@ -75,7 +75,7 @@ struct EvidenceChunkPayload {
 }
 
 async fn send_read_via_http_required(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     action: &str,
     project: Option<String>,
     workspace: Option<String>,
@@ -144,7 +144,7 @@ struct ValidatedEvidenceIndex {
 
 pub async fn handle_evidence_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     _ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {

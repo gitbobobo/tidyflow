@@ -1,4 +1,5 @@
 use axum::extract::ws::WebSocket;
+use futures::StreamExt;
 use tracing::{error, info};
 
 use crate::server::context::{
@@ -44,46 +45,90 @@ async fn initialize_runtime(
     .await
 }
 
-fn build_loop_deps<'a>(
-    socket: &'a mut WebSocket,
-    conn_meta: &'a ConnectionMeta,
-    runtime: &'a mut runtime::SocketRuntime,
-) -> loop_driver::LoopDeps<'a> {
-    loop_driver::LoopDeps {
-        socket: loop_driver::SocketDeps {
-            socket,
-            conn_meta,
-            handler_ctx: &runtime.handler_ctx,
-            watcher: &runtime.watcher,
-            app_state: &runtime.app_state,
-        },
-        channels: loop_driver::ChannelDeps {
-            agg_rx: &mut runtime.agg_rx,
-            rx_watch: &mut runtime.rx_watch,
-            cmd_output_rx: &mut runtime.cmd_output_rx,
-            task_broadcast_rx: &mut runtime.task_broadcast_rx,
-            remote_term_rx: &mut runtime.remote_term_rx,
-        },
-    }
-}
-
 async fn run_connection_loop(
-    socket: &mut WebSocket,
+    socket: WebSocket,
     conn_meta: &ConnectionMeta,
-    runtime: &mut runtime::SocketRuntime,
+    runtime: runtime::SocketRuntime,
 ) -> bool {
-    if let Err(e) = stages::send_hello_message(socket).await {
-        error!("Failed to send Hello message: {}", e);
+    let (outbound_tx, outbound_rx) = crate::server::ws::create_outbound_channel();
+    if let Err(e) = stages::send_hello_message(&outbound_tx).await {
+        error!("Failed to enqueue Hello message: {}", e);
         return false;
     }
 
-    let mut loop_deps = build_loop_deps(socket, conn_meta, runtime);
-    loop_driver::run_main_loop(&mut loop_deps).await;
-    true
+    let (socket_tx, socket_rx) = socket.split();
+    let reader_conn_meta = conn_meta.clone();
+    let writer_conn_id = conn_meta.conn_id.clone();
+
+    let runtime::SocketRuntime {
+        app_state,
+        subscribed_terms: _,
+        watcher,
+        handler_ctx,
+        agg_rx,
+        rx_watch,
+        cmd_output_rx,
+        task_broadcast_rx,
+        remote_term_rx,
+    } = runtime;
+
+    let reader_task = tokio::spawn(loop_driver::socket::run_reader_loop(
+        socket_rx,
+        outbound_tx.clone(),
+        handler_ctx.clone(),
+        watcher.clone(),
+        reader_conn_meta,
+    ));
+
+    let event_task = tokio::spawn(loop_driver::run_outbound_event_loop(
+        loop_driver::EventLoopDeps {
+            conn_meta: conn_meta.clone(),
+            handler_ctx,
+            app_state,
+            outbound_tx: outbound_tx.clone(),
+            agg_rx,
+            rx_watch,
+            cmd_output_rx,
+            task_broadcast_rx,
+            remote_term_rx,
+        },
+    ));
+
+    let writer_task = tokio::spawn(crate::server::ws::run_writer_loop(
+        socket_tx,
+        outbound_rx,
+        writer_conn_id,
+    ));
+
+    let mut reader_task = reader_task;
+    let mut event_task = event_task;
+    let mut writer_task = writer_task;
+
+    let result = tokio::select! {
+        result = &mut reader_task => {
+            event_task.abort();
+            drop(outbound_tx);
+            let _ = writer_task.await;
+            result.ok().unwrap_or(false)
+        }
+        result = &mut writer_task => {
+            event_task.abort();
+            reader_task.abort();
+            result.ok().unwrap_or(false)
+        }
+        result = &mut event_task => {
+            reader_task.abort();
+            drop(outbound_tx);
+            let writer_ok = writer_task.await.ok().unwrap_or(false);
+            result.is_ok() && writer_ok
+        }
+    };
+
+    result
 }
 
 pub(super) async fn handle_socket(
-    mut socket: WebSocket,
+    socket: WebSocket,
     app_state: SharedAppState,
     save_tx: tokio::sync::mpsc::Sender<()>,
     registry: SharedTerminalRegistry,
@@ -100,7 +145,7 @@ pub(super) async fn handle_socket(
         "New WebSocket connection established (conn_id={}, remote={})",
         conn_meta.conn_id, conn_meta.is_remote
     );
-    let mut runtime = initialize_runtime(
+    let runtime = initialize_runtime(
         app_state,
         save_tx,
         registry,
@@ -115,18 +160,19 @@ pub(super) async fn handle_socket(
     )
     .await;
 
-    if !run_connection_loop(&mut socket, &conn_meta, &mut runtime).await {
-        // Hello 消息发送失败，跳过清理（此连接未建立任何订阅）
-        return;
+    let subscribed_terms = runtime.subscribed_terms.clone();
+    let handler_ctx = runtime.handler_ctx.clone();
+
+    if !run_connection_loop(socket, &conn_meta, runtime).await {
+        // Hello 消息入队失败或连接异常关闭，统一走清理。
     }
 
-    // 连接关闭后按 conn_id 语义清理所有订阅，防止旧连接残留
     cleanup::cleanup_on_disconnect(
-        &runtime.subscribed_terms,
+        &subscribed_terms,
         &conn_meta,
         &remote_sub_registry,
-        &runtime.handler_ctx,
-        &runtime.handler_ctx.ai_state,
+        &handler_ctx,
+        &handler_ctx.ai_state,
     )
     .await;
 }

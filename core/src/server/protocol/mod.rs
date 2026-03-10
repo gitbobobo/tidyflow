@@ -16,8 +16,8 @@ mod action_table_test;
 #[cfg(test)]
 mod ai_session_update_test;
 
-/// Protocol version: 7 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 7;
+/// Protocol version: 8 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 8;
 
 // ============================================================================
 // 多工作区边界字段约束（v7 协议层权威声明）
@@ -883,11 +883,9 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         capabilities: Option<Vec<String>>,
     },
-    Output {
-        #[serde(with = "serde_bytes")]
-        data: Vec<u8>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        term_id: Option<String>,
+    #[serde(rename = "output_batch")]
+    OutputBatch {
+        items: Vec<terminal::TerminalOutputBatchItem>,
     },
     Exit {
         code: i32,
@@ -1560,7 +1558,8 @@ pub enum ServerMessage {
         workspace_name: String,
         ai_tool: String,
         session_id: String,
-        cache_revision: u64,
+        from_revision: u64,
+        to_revision: u64,
         is_streaming: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         selection_hint: Option<ai::SessionSelectionHint>,
@@ -2685,9 +2684,9 @@ mod tests {
         let server_envelope = json!({
             "seq": 2,
             "domain": "terminal",
-            "action": "output",
+            "action": "output_batch",
             "kind": "event",
-            "payload": {"data": "base64encoded"},
+            "payload": {"items": []},
             "server_ts": 1234567890
         });
         assert!(server_envelope.get("request_id").is_none());
@@ -2703,8 +2702,8 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v7() {
-        assert_eq!(PROTOCOL_VERSION, 7);
+    fn protocol_version_is_v8() {
+        assert_eq!(PROTOCOL_VERSION, 8);
     }
 
     #[test]

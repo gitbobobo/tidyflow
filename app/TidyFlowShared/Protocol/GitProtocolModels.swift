@@ -415,7 +415,7 @@ public struct DiffParser {
 // MARK: - Phase C3-1: Git Status Protocol Models
 
 /// Single item in git status list
-public struct GitStatusItem: Identifiable, Equatable {
+public struct GitStatusItem: Identifiable, Equatable, Sendable {
     public let id: String  // Use path as unique ID
     public let path: String
     public let status: String  // M, A, D, ??, R, C, etc.
@@ -631,7 +631,7 @@ public struct GitStatusCache: Equatable {
 
 /// 从 GitStatusCache 或 MobileWorkspaceGitDetailState 提炼出的统一展示语义。
 /// 作为 macOS 与 iOS Git 面板的单一展示入口，消除两端重复的 status 字符串判断逻辑。
-public struct GitPanelSemanticSnapshot: Equatable {
+public struct GitPanelSemanticSnapshot: Equatable, Sendable {
     /// 已暂存的文件列表
     public let stagedItems: [GitStatusItem]
     /// 未暂存的已跟踪文件（status != "??"）

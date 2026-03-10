@@ -28,6 +28,8 @@ pub struct AIState {
     /// 连接订阅的会话集合：key = conn_id，value = session_keys 集合
     /// session_key 格式与 active_streams 相同："{tool}::{directory}::{session_id}"
     pub session_subscriptions: HashMap<String, HashSet<String>>,
+    /// 会话反向订阅索引：key = session_key，value = conn_id 集合
+    pub session_subscribers_by_key: HashMap<String, HashSet<String>>,
 }
 
 impl AIState {
@@ -47,7 +49,52 @@ impl AIState {
             maintenance_started: false,
             status_push_initialized: false,
             session_subscriptions: HashMap::new(),
+            session_subscribers_by_key: HashMap::new(),
         }
+    }
+}
+
+impl AIState {
+    pub fn subscribe_session(&mut self, conn_id: &str, session_key: &str) {
+        self.session_subscriptions
+            .entry(conn_id.to_string())
+            .or_default()
+            .insert(session_key.to_string());
+        self.session_subscribers_by_key
+            .entry(session_key.to_string())
+            .or_default()
+            .insert(conn_id.to_string());
+    }
+
+    pub fn unsubscribe_session(&mut self, conn_id: &str, session_key: &str) {
+        if let Some(keys) = self.session_subscriptions.get_mut(conn_id) {
+            keys.remove(session_key);
+            if keys.is_empty() {
+                self.session_subscriptions.remove(conn_id);
+            }
+        }
+        if let Some(conn_ids) = self.session_subscribers_by_key.get_mut(session_key) {
+            conn_ids.remove(conn_id);
+            if conn_ids.is_empty() {
+                self.session_subscribers_by_key.remove(session_key);
+            }
+        }
+    }
+
+    pub fn unsubscribe_all_sessions_for_connection(&mut self, conn_id: &str) -> usize {
+        let Some(keys) = self.session_subscriptions.remove(conn_id) else {
+            return 0;
+        };
+        let count = keys.len();
+        for key in keys {
+            if let Some(conn_ids) = self.session_subscribers_by_key.get_mut(&key) {
+                conn_ids.remove(conn_id);
+                if conn_ids.is_empty() {
+                    self.session_subscribers_by_key.remove(&key);
+                }
+            }
+        }
+        count
     }
 }
 

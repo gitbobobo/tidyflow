@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::HandlerContext;
 use crate::server::handlers::dispatch_handlers;
@@ -10,7 +10,7 @@ mod query;
 /// 处理设置相关的客户端消息
 pub async fn handle_settings_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     dispatch_handlers!(

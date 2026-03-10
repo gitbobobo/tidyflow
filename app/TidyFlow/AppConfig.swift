@@ -6,7 +6,7 @@ enum AppConfig {
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
     /// Core/Web 前后端协议版本（必须与 Core `PROTOCOL_VERSION` 一致）
-    static let protocolVersion: Int = 7
+    static let protocolVersion: Int = 8
 
     // MARK: - Port Configuration
 

@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tokio::sync::mpsc;
 
 use crate::server::context::{SharedAppState, TaskBroadcastTx};
@@ -9,7 +9,7 @@ use super::{session, stream, SharedAIState};
 
 pub(crate) async fn handle_stream_routes(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
@@ -72,7 +72,7 @@ pub(crate) async fn handle_stream_routes(
 
 pub(crate) async fn handle_session_routes(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
@@ -91,7 +91,7 @@ pub(crate) async fn handle_session_routes(
 
 pub(crate) async fn handle_subscription_routes(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     conn_id: &str,

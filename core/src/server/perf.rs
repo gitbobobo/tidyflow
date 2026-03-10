@@ -34,6 +34,26 @@ static WS_OUTBOUND_SELECT_WAIT_MAX_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_COUNT: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_HANDLE_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_decode_ms`
+static WS_DECODE_MS: AtomicU64 = AtomicU64::new(0);
+static WS_DECODE_COUNT: AtomicU64 = AtomicU64::new(0);
+static WS_DECODE_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_dispatch_ms`
+static WS_DISPATCH_MS: AtomicU64 = AtomicU64::new(0);
+static WS_DISPATCH_COUNT: AtomicU64 = AtomicU64::new(0);
+static WS_DISPATCH_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_encode_ms`
+static WS_ENCODE_MS: AtomicU64 = AtomicU64::new(0);
+static WS_ENCODE_COUNT: AtomicU64 = AtomicU64::new(0);
+static WS_ENCODE_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_outbound_queue_depth`
+static WS_OUTBOUND_QUEUE_DEPTH: AtomicU64 = AtomicU64::new(0);
+/// `ws_batch_flush_size`
+static WS_BATCH_FLUSH_SIZE: AtomicU64 = AtomicU64::new(0);
+static WS_BATCH_FLUSH_COUNT: AtomicU64 = AtomicU64::new(0);
+/// `ai_subscriber_fanout`
+static AI_SUBSCRIBER_FANOUT: AtomicU64 = AtomicU64::new(0);
+static AI_SUBSCRIBER_FANOUT_MAX: AtomicU64 = AtomicU64::new(0);
 /// `evolution_cycle_update_emitted_total`
 static EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `evolution_cycle_update_debounced_total`
@@ -174,8 +194,22 @@ pub fn record_ws_outbound_loop_tick(ms: u64) {
         let handle_ms = WS_OUTBOUND_HANDLE_MS.load(Ordering::Relaxed);
         let handle_max_ms = WS_OUTBOUND_HANDLE_MAX_MS.load(Ordering::Relaxed);
         let handle_count = WS_OUTBOUND_HANDLE_COUNT.load(Ordering::Relaxed);
+        let decode_ms = WS_DECODE_MS.load(Ordering::Relaxed);
+        let decode_max_ms = WS_DECODE_MAX_MS.load(Ordering::Relaxed);
+        let decode_count = WS_DECODE_COUNT.load(Ordering::Relaxed);
+        let dispatch_ms = WS_DISPATCH_MS.load(Ordering::Relaxed);
+        let dispatch_max_ms = WS_DISPATCH_MAX_MS.load(Ordering::Relaxed);
+        let dispatch_count = WS_DISPATCH_COUNT.load(Ordering::Relaxed);
+        let encode_ms = WS_ENCODE_MS.load(Ordering::Relaxed);
+        let encode_max_ms = WS_ENCODE_MAX_MS.load(Ordering::Relaxed);
+        let encode_count = WS_ENCODE_COUNT.load(Ordering::Relaxed);
+        let outbound_queue_depth = WS_OUTBOUND_QUEUE_DEPTH.load(Ordering::Relaxed);
+        let batch_flush_size = WS_BATCH_FLUSH_SIZE.load(Ordering::Relaxed);
+        let batch_flush_count = WS_BATCH_FLUSH_COUNT.load(Ordering::Relaxed);
+        let ai_subscriber_fanout = AI_SUBSCRIBER_FANOUT.load(Ordering::Relaxed);
+        let ai_subscriber_fanout_max = AI_SUBSCRIBER_FANOUT_MAX.load(Ordering::Relaxed);
         info!(
-            "perf ws_outbound_loop_tick_ms={} ws_outbound_loop_tick_max_ms={} ws_outbound_loop_tick_count={} ws_outbound_select_wait_ms={} ws_outbound_select_wait_max_ms={} ws_outbound_select_wait_count={} ws_outbound_handle_ms={} ws_outbound_handle_max_ms={} ws_outbound_handle_count={}",
+            "perf ws_outbound_loop_tick_ms={} ws_outbound_loop_tick_max_ms={} ws_outbound_loop_tick_count={} ws_outbound_select_wait_ms={} ws_outbound_select_wait_max_ms={} ws_outbound_select_wait_count={} ws_outbound_handle_ms={} ws_outbound_handle_max_ms={} ws_outbound_handle_count={} ws_decode_ms={} ws_decode_max_ms={} ws_decode_count={} ws_dispatch_ms={} ws_dispatch_max_ms={} ws_dispatch_count={} ws_encode_ms={} ws_encode_max_ms={} ws_encode_count={} ws_outbound_queue_depth={} ws_batch_flush_size={} ws_batch_flush_count={} ai_subscriber_fanout={} ai_subscriber_fanout_max={}",
             ms,
             max_ms,
             count,
@@ -184,9 +218,61 @@ pub fn record_ws_outbound_loop_tick(ms: u64) {
             select_wait_count,
             handle_ms,
             handle_max_ms,
-            handle_count
+            handle_count,
+            decode_ms,
+            decode_max_ms,
+            decode_count,
+            dispatch_ms,
+            dispatch_max_ms,
+            dispatch_count,
+            encode_ms,
+            encode_max_ms,
+            encode_count,
+            outbound_queue_depth,
+            batch_flush_size,
+            batch_flush_count,
+            ai_subscriber_fanout,
+            ai_subscriber_fanout_max
         );
     }
+}
+
+pub fn record_ws_decode_ms(ms: u64) {
+    WS_DECODE_MS.store(ms, Ordering::Relaxed);
+    WS_DECODE_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_max(&WS_DECODE_MAX_MS, ms);
+}
+
+pub fn record_ws_dispatch_ms(ms: u64) {
+    WS_DISPATCH_MS.store(ms, Ordering::Relaxed);
+    WS_DISPATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_max(&WS_DISPATCH_MAX_MS, ms);
+}
+
+pub fn record_ws_encode_ms(ms: u64) {
+    WS_ENCODE_MS.store(ms, Ordering::Relaxed);
+    WS_ENCODE_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_max(&WS_ENCODE_MAX_MS, ms);
+}
+
+pub fn record_ws_outbound_queue_depth(depth: u64) {
+    WS_OUTBOUND_QUEUE_DEPTH.store(depth, Ordering::Relaxed);
+}
+
+pub fn record_ws_batch_flush(size: usize, reason: &str) {
+    WS_BATCH_FLUSH_SIZE.store(size as u64, Ordering::Relaxed);
+    let count = WS_BATCH_FLUSH_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if perf_logging_enabled() && count % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf ws_batch_flush_size={} ws_batch_flush_reason={}",
+            size, reason
+        );
+    }
+}
+
+pub fn record_ai_subscriber_fanout(count: usize) {
+    AI_SUBSCRIBER_FANOUT.store(count as u64, Ordering::Relaxed);
+    update_max(&AI_SUBSCRIBER_FANOUT_MAX, count as u64);
 }
 
 pub fn record_evolution_cycle_update_emitted() {

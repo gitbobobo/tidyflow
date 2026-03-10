@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{
     resolve_project, resolve_workspace, resolve_workspace_branch, SharedAppState,
@@ -11,7 +11,7 @@ pub(crate) async fn handle_git_rebase(
     project: &str,
     workspace: &str,
     onto_branch: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
@@ -84,7 +84,7 @@ pub(crate) async fn handle_git_rebase(
 pub(crate) async fn handle_git_rebase_continue(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
@@ -156,7 +156,7 @@ pub(crate) async fn handle_git_rebase_continue(
 pub(crate) async fn handle_git_rebase_abort(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
@@ -229,7 +229,7 @@ pub(crate) async fn handle_git_rebase_onto_default(
     project: &str,
     workspace: &str,
     default_branch: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let (proj_ctx, source_branch) =
@@ -330,7 +330,7 @@ pub(crate) async fn handle_git_rebase_onto_default(
 
 pub(crate) async fn handle_git_rebase_onto_default_continue(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -404,7 +404,7 @@ pub(crate) async fn handle_git_rebase_onto_default_continue(
 
 pub(crate) async fn handle_git_rebase_onto_default_abort(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {

@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use std::path::PathBuf;
 
 use crate::server::context::{resolve_project, SharedAppState};
@@ -8,7 +8,7 @@ use crate::server::ws::send_message;
 
 pub(crate) async fn handle_git_ensure_integration_worktree(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -80,7 +80,7 @@ pub(crate) async fn handle_git_merge_to_default(
     project: &str,
     workspace: &str,
     default_branch: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let (proj_ctx, source_branch) =
@@ -182,7 +182,7 @@ pub(crate) async fn handle_git_merge_to_default(
 
 pub(crate) async fn handle_git_merge_continue(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -255,7 +255,7 @@ pub(crate) async fn handle_git_merge_continue(
 
 pub(crate) async fn handle_git_merge_abort(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -328,7 +328,7 @@ pub(crate) async fn handle_git_merge_abort(
 
 pub(crate) async fn handle_git_reset_integration_worktree(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -398,7 +398,7 @@ pub(crate) async fn handle_git_conflict_detail(
     workspace: &str,
     path: &str,
     context: &str,
-    socket: &mut axum::extract::ws::WebSocket,
+    socket: &crate::server::ws::OutboundTx,
     app_state: &crate::server::context::SharedAppState,
 ) -> Result<bool, String> {
     use crate::server::context::resolve_workspace;
@@ -492,7 +492,7 @@ pub(crate) async fn handle_git_conflict_action(
     path: &str,
     context: &str,
     action: &str,
-    socket: &mut axum::extract::ws::WebSocket,
+    socket: &crate::server::ws::OutboundTx,
     app_state: &crate::server::context::SharedAppState,
 ) -> Result<bool, String> {
     use crate::server::context::resolve_workspace;

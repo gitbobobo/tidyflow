@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::{trace, warn};
 
 use crate::server::context::{ConnectionMeta, HandlerContext};
@@ -8,7 +8,7 @@ use super::common::emit_message;
 
 pub(in crate::server::ws) async fn handle_binary_client_message(
     data: &[u8],
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     handler_ctx: &HandlerContext,
     watcher: &std::sync::Arc<tokio::sync::Mutex<crate::server::watcher::WorkspaceWatcher>>,
     conn_meta: &ConnectionMeta,

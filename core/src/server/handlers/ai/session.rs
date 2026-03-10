@@ -1,5 +1,5 @@
 use crate::ai::session_status::{AiSessionStatus, AiSessionStatusMeta};
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -252,7 +252,7 @@ fn truncate_tool_view_sections_for_history(
 
 pub(super) async fn handle_ai_read_via_http_required(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
 ) -> Result<bool, String> {
     // 提取 action 名称与 project/workspace（用于多工作区归属提示）
     let (action, project, workspace) = match msg {
@@ -954,7 +954,7 @@ pub(super) async fn handle_ai_session_delete(
 
 pub(super) async fn handle_ai_session_set_config_option(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
@@ -1003,7 +1003,7 @@ pub(super) async fn handle_ai_session_set_config_option(
 
 pub(super) async fn handle_ai_session_subscribe(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     conn_id: &str,
@@ -1024,10 +1024,7 @@ pub(super) async fn handle_ai_session_subscribe(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.session_subscriptions
-            .entry(conn_id.to_string())
-            .or_default()
-            .insert(key.clone());
+        ai.subscribe_session(conn_id, &key);
     }
 
     send_message(
@@ -1066,12 +1063,7 @@ pub(super) async fn handle_ai_session_unsubscribe(
 
     {
         let mut ai = ai_state.lock().await;
-        if let Some(keys) = ai.session_subscriptions.get_mut(conn_id) {
-            keys.remove(&key);
-            if keys.is_empty() {
-                ai.session_subscriptions.remove(conn_id);
-            }
-        }
+        ai.unsubscribe_session(conn_id, &key);
     }
 
     Ok(true)
@@ -1079,7 +1071,7 @@ pub(super) async fn handle_ai_session_unsubscribe(
 
 pub(super) async fn handle_ai_session_rename(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
@@ -1137,7 +1129,7 @@ pub(super) async fn handle_ai_session_rename(
 
 pub(super) async fn query_ai_session_search(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
@@ -1194,7 +1186,7 @@ pub(super) async fn query_ai_session_search(
 
 pub(super) async fn handle_ai_code_review(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
@@ -1295,7 +1287,7 @@ pub(super) async fn handle_ai_code_review(
 /// 处理 AI 代码补全请求（流式推送分片到客户端）
 pub(super) async fn handle_ai_code_completion(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {

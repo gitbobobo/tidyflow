@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::SharedAppState;
 use crate::server::handlers::dispatch_handlers;
@@ -11,7 +11,7 @@ mod read_write;
 /// 处理文件相关的客户端消息
 pub async fn handle_file_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     dispatch_handlers!(

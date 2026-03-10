@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::{info, trace};
 
 use crate::server::context::HandlerContext;
@@ -8,7 +8,7 @@ use crate::server::ws::send_message;
 
 pub(super) async fn handle_file_domain(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
     watcher: &DispatchWatcher,
 ) -> Result<bool, String> {
@@ -28,7 +28,7 @@ pub(super) async fn handle_file_domain(
 async fn handle_watch_subscribe(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
     watcher: &DispatchWatcher,
 ) -> Result<(), String> {
@@ -75,7 +75,7 @@ async fn handle_watch_subscribe(
 }
 
 async fn handle_watch_unsubscribe(
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     watcher: &DispatchWatcher,
 ) -> Result<(), String> {
     info!("WatchUnsubscribe");
@@ -86,7 +86,7 @@ async fn handle_watch_unsubscribe(
 
 async fn handle_regular_file_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     crate::server::handlers::file::handle_file_message(client_msg, socket, &ctx.app_state).await

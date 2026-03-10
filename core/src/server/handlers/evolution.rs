@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
@@ -34,7 +34,7 @@ use types::{EvolutionState, SnapshotResult, StageSession, StartWorkspaceReq, Wor
 
 pub async fn handle_evolution_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     route::handle_message(client_msg, socket, ctx).await

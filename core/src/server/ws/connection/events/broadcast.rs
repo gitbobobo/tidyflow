@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn};
 
@@ -20,7 +20,7 @@ fn is_task_broadcast_target_match(event: &TaskBroadcastEvent, conn_id: &str) -> 
 
 pub(in crate::server::ws) async fn handle_task_broadcast_event(
     result: TaskBroadcastRecvResult,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     conn_meta: &ConnectionMeta,
 ) {
     match result {
@@ -65,7 +65,7 @@ pub(in crate::server::ws) async fn handle_task_broadcast_event(
 
 pub(in crate::server::ws) async fn handle_remote_term_event(
     result: RemoteTermRecvResult,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     conn_meta: &ConnectionMeta,
 ) {
     match result {

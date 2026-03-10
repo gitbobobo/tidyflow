@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::domain_table::DomainRoute;
@@ -11,7 +11,7 @@ mod file_domain;
 pub(super) async fn dispatch_domain_handler(
     route: DomainRoute,
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
     watcher: &DispatchWatcher,
 ) -> Result<bool, String> {

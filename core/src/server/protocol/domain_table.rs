@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v7/domains.yaml`
+//! 来源：`schema/protocol/v8/domains.yaml`
 //! 生成命令：`./scripts/tools/gen_protocol_domain_table.sh`
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

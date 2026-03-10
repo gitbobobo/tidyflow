@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::{
     resolve_project, resolve_workspace, resolve_workspace_branch, SharedAppState,
@@ -10,7 +10,7 @@ use crate::server::ws::send_message;
 pub(crate) async fn handle_git_op_status(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
@@ -80,7 +80,7 @@ pub(crate) async fn handle_git_op_status(
 
 pub(crate) async fn handle_git_integration_status(
     project: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let proj_ctx = match resolve_project(app_state, project).await {
@@ -159,7 +159,7 @@ pub(crate) async fn handle_git_integration_status(
 pub(crate) async fn handle_git_check_branch_up_to_date(
     project: &str,
     workspace: &str,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     let (proj_ctx, current_branch) =

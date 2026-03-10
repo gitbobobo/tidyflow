@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::debug;
 
 use crate::application::file::{invalidate_file_index_cache, update_file_index_incrementally};
@@ -15,7 +15,7 @@ const INCREMENTAL_UPDATE_PATH_THRESHOLD: usize = 32;
 
 pub(in crate::server::ws) async fn handle_watch_event(
     watch_event: WatchEvent,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
     _handler_ctx: &HandlerContext,
 ) {
@@ -75,7 +75,7 @@ pub(in crate::server::ws) async fn handle_watch_event(
 
 pub(in crate::server::ws) async fn forward_command_output(
     msg: ServerMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
 ) {
     emit_message(socket, &msg, "Failed to send command output message").await;
 }

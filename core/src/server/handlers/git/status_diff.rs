@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 use tracing::warn;
 
 use crate::server::context::{resolve_workspace, SharedAppState};
@@ -8,7 +8,7 @@ use crate::server::ws::send_message;
 
 pub async fn handle_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
     match client_msg {

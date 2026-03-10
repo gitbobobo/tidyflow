@@ -8,7 +8,7 @@ import TidyFlowShared
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
 /// Minimal WebSocket client for Core communication
-/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v7，包络结构沿用 v6）
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v8，包络结构沿用 v6）
 class WSClient: NSObject, ObservableObject {
     enum HTTPReadRequestContext: Equatable {
         case aiProviderList(project: String, workspace: String, aiTool: AIChatTool)
@@ -45,7 +45,7 @@ class WSClient: NSObject, ObservableObject {
     private(set) var wsAuthToken: String?
     /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
     private var pendingReconnectWorkItem: DispatchWorkItem?
-    /// 最近一次已处理的服务端 seq（v7 包络），用于丢弃乱序/重复消息
+    /// 最近一次已处理的服务端 seq（v8 包络），用于丢弃乱序/重复消息
     var lastServerSeq: UInt64 = 0
     /// 当前连接身份；每次建立新 socket 都会刷新，用于屏蔽旧连接的延迟回调。
     var connectionIdentity: String?
@@ -185,7 +185,7 @@ class WSClient: NSObject, ObservableObject {
     /// 结构化 Core 错误回调（含错误码与上下文）
     var onCoreError: ((CoreError) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
-    /// v7 包络元信息流（用于上层统一路由/观测）
+    /// v8 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
     /// v1.41: Core 推送系统健康快照
     var onHealthSnapshot: ((SystemHealthSnapshot) -> Void)?
@@ -236,6 +236,12 @@ class WSClient: NSObject, ObservableObject {
         queue.qualityOfService = .userInitiated
         return queue
     }()
+    /// 终端高频事件 reducer 队列，先做批量归并，再切回主线程提交。
+    let terminalReducerQueue = DispatchQueue(label: "com.tidyflow.ws.reducer.terminal", qos: .userInitiated)
+    /// AI 高频事件 reducer 队列，避免主线程承担原始流式消息解析。
+    let aiReducerQueue = DispatchQueue(label: "com.tidyflow.ws.reducer.ai", qos: .userInitiated)
+    /// 文件/Git 变更 reducer 队列，统一承接最终一致性通知。
+    let workspaceReducerQueue = DispatchQueue(label: "com.tidyflow.ws.reducer.workspace", qos: .utility)
 
     override init() {
         super.init()

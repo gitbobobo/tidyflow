@@ -4142,7 +4142,13 @@ impl EvolutionManager {
                                 self.broadcast(
                                     ctx,
                                     build_ai_session_messages_update(
-                                        project, workspace, ai_tool, session_id, &snapshot, None,
+                                        project,
+                                        workspace,
+                                        ai_tool,
+                                        session_id,
+                                        snapshot.cache_revision().saturating_sub(1),
+                                        &snapshot,
+                                        None,
                                         true,
                                     ),
                                 )
@@ -4172,7 +4178,13 @@ impl EvolutionManager {
                                 self.broadcast(
                                     ctx,
                                     build_ai_session_messages_update(
-                                        project, workspace, ai_tool, session_id, &snapshot, None,
+                                        project,
+                                        workspace,
+                                        ai_tool,
+                                        session_id,
+                                        snapshot.cache_revision().saturating_sub(1),
+                                        &snapshot,
+                                        None,
                                         true,
                                     ),
                                 )
@@ -4217,6 +4229,7 @@ impl EvolutionManager {
                                     workspace,
                                     ai_tool,
                                     session_id,
+                                    snapshot.cache_revision().saturating_sub(1),
                                     &snapshot,
                                     Some(vec![op]),
                                     false,
@@ -4255,6 +4268,7 @@ impl EvolutionManager {
                                         workspace,
                                         ai_tool,
                                         session_id,
+                                        snapshot.cache_revision().saturating_sub(1),
                                         &snapshot,
                                         Some(emit_ops),
                                         false,
@@ -4297,6 +4311,7 @@ impl EvolutionManager {
                                         workspace,
                                         ai_tool,
                                         session_id,
+                                        snapshot.cache_revision().saturating_sub(1),
                                         &snapshot,
                                         Some(emit_ops),
                                         false,
@@ -4340,7 +4355,14 @@ impl EvolutionManager {
                         self.broadcast(
                             ctx,
                             build_ai_session_messages_update(
-                                project, workspace, ai_tool, session_id, &snapshot, None, true,
+                                project,
+                                workspace,
+                                ai_tool,
+                                session_id,
+                                snapshot.cache_revision().saturating_sub(1),
+                                &snapshot,
+                                None,
+                                true,
                             ),
                         )
                         .await;
@@ -4354,7 +4376,14 @@ impl EvolutionManager {
                         self.broadcast(
                             ctx,
                             build_ai_session_messages_update(
-                                project, workspace, ai_tool, session_id, &snapshot, None, true,
+                                project,
+                                workspace,
+                                ai_tool,
+                                session_id,
+                                snapshot.cache_revision().saturating_sub(1),
+                                &snapshot,
+                                None,
+                                true,
                             ),
                         )
                         .await;

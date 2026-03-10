@@ -32,13 +32,15 @@ extension WSClient {
 
     func handleTerminalDomain(_ action: String, json: [String: Any]) -> Bool {
         switch action {
-        case "output":
-            let termId = json["term_id"] as? String
-            let bytes = WSBinary.decodeBytes(json["data"])
-            if let handler = terminalMessageHandler {
-                handler.handleTerminalOutput(termId, bytes)
-            } else {
-                onTerminalOutput?(termId, bytes)
+        case "output_batch":
+            let items = (json["items"] as? [[String: Any]] ?? [])
+                .compactMap(TerminalOutputBatchItem.from(json:))
+            for item in items {
+                if let handler = terminalMessageHandler {
+                    handler.handleTerminalOutput(item.termId, item.data)
+                } else {
+                    onTerminalOutput?(item.termId, item.data)
+                }
             }
             return true
         case "exit":

@@ -1,4 +1,4 @@
-use axum::extract::ws::WebSocket;
+use crate::server::ws::OutboundTx as WebSocket;
 
 use crate::server::context::HandlerContext;
 use crate::server::handlers::dispatch_handlers;
@@ -13,7 +13,7 @@ mod runtime;
 /// 入口签名保持不变；按能力域顺序分发到子模块。
 pub async fn handle_project_message(
     client_msg: &ClientMessage,
-    socket: &mut WebSocket,
+    socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     dispatch_handlers!(
