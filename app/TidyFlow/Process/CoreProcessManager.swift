@@ -387,7 +387,7 @@ class CoreProcessManager: ObservableObject {
         proc.executableURL = binaryURL
         proc.arguments = ["serve"]
 
-        // Set environment variable
+        // 按当前 App bundle 归一化 Core 环境，避免继承父进程的开发变量污染生产版。
         var env = ProcessInfo.processInfo.environment
         if let token = currentWSToken, !token.isEmpty {
             env["TIDYFLOW_WS_TOKEN"] = token
@@ -395,6 +395,9 @@ class CoreProcessManager: ObservableObject {
         if Self.isRunAppDebugBundle {
             env["TIDYFLOW_LOG_SUFFIX"] = "dev"
             env["TIDYFLOW_DEV"] = "1"
+        } else {
+            env.removeValue(forKey: "TIDYFLOW_LOG_SUFFIX")
+            env.removeValue(forKey: "TIDYFLOW_DEV")
         }
         proc.environment = env
 
