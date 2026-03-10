@@ -300,6 +300,21 @@ final class EvidenceRecorder {
         "ev-\(deviceType)-\(runID)-\(scenarioSlug)-\(order)"
     }
 
+    /// 构建或补全 workspace_context 字段，确保 run_id 和 device_type 可追溯
+    ///
+    /// 格式: "<scenario>:<device>:run_id=<r>:project=<p>:workspace=<w>"
+    /// 如果调用方已提供 workspaceContext 则原样返回（信任调用方契约）。
+    func enrichWorkspaceContext(
+        scenario: String,
+        workspaceContext: String?
+    ) -> String? {
+        if let provided = workspaceContext, !provided.isEmpty {
+            return provided
+        }
+        // 默认补全 run_id 和 device_type 以便回归校验时可定位
+        return "\(scenario):\(deviceType):run_id=\(runID)"
+    }
+
     private func sanitizeScenario(_ scenario: String) -> String {
         let lowered = scenario.lowercased()
         let replaced = lowered.replacingOccurrences(of: "_", with: "-")

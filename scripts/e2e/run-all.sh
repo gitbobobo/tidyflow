@@ -82,6 +82,8 @@ if [[ $skip_verify -eq 0 ]] && command -v python3 &>/dev/null; then
     if python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
         --evidence-root "$TF_EVIDENCE_ROOT" \
         --run-id "$run_id" \
+        --project "${TF_PROJECT:-tidyflow}" \
+        --workspace "${TF_WORKSPACE:-default}" \
         --require-devices iphone ipad mac \
         --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION; then
         echo "[e2e] 证据校验通过"

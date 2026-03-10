@@ -46,8 +46,8 @@ print_usage() {
   e2e [--device iphone|ipad|mac|all] [--run-id <run_id>]
       运行端到端测试，并由测试代码自动产出证据与 evidence.index.json
 
-  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|integration|build_macos|build_ios|build|verify] [--dry-run]
-      兼容旧入口，已迁移为 e2e 串行执行（iphone -> ipad -> mac）
+  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|protocol_check|core_regression|system_health|evidence_integrity|apple_regression|apple_build] [--dry-run] [--verify-only] [--project <name>] [--workspace <name>] [--json] [--skip-apple]
+      统一质量门禁入口，明确阶段划分和失败语义，所有链路共享
 
   apple-build [macos|ios] [--skip-core]
       构建 Apple 客户端（Debug），用于验证改动不破坏编译：
