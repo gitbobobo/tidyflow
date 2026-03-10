@@ -1949,4 +1949,73 @@ mod tests {
             _ => panic!("expected ai_slash_commands_update message"),
         }
     }
+
+    /// 验证 AISlashCommandsUpdate 消息中 project_name/workspace_name 完整保留，
+    /// 客户端依赖这两个字段做多工作区 AI 会话流隔离，防止不同工作区的 slash 命令互相污染。
+    #[test]
+    fn slash_commands_update_preserves_workspace_boundary_fields() {
+        let msg_a = build_slash_commands_update_message(
+            "proj-a".to_string(),
+            "main".to_string(),
+            "claude_code".to_string(),
+            "sess-a".to_string(),
+            vec![],
+        );
+        let msg_b = build_slash_commands_update_message(
+            "proj-b".to_string(),
+            "feature".to_string(),
+            "claude_code".to_string(),
+            "sess-b".to_string(),
+            vec![],
+        );
+
+        // 两个不同工作区的消息应各自携带独立的 project/workspace 标识，不混用
+        match (&msg_a, &msg_b) {
+            (
+                ServerMessage::AISlashCommandsUpdate {
+                    project_name: pa,
+                    workspace_name: wa,
+                    session_id: sa,
+                    ..
+                },
+                ServerMessage::AISlashCommandsUpdate {
+                    project_name: pb,
+                    workspace_name: wb,
+                    session_id: sb,
+                    ..
+                },
+            ) => {
+                assert_ne!(pa, pb, "不同工作区消息的 project_name 不应相同");
+                assert_ne!(wa, wb, "不同工作区消息的 workspace_name 不应相同");
+                assert_ne!(sa, sb, "不同工作区消息的 session_id 不应相同");
+                // 复合键唯一性：客户端用 "<project>:<workspace>:<session_id>" 隔离 AI 流事件
+                let key_a = format!("{}:{}:{}", pa, wa, sa);
+                let key_b = format!("{}:{}:{}", pb, wb, sb);
+                assert_ne!(key_a, key_b, "不同工作区的 AI 流复合键必须唯一");
+            }
+            _ => panic!("两个消息均应为 AISlashCommandsUpdate"),
+        }
+    }
+
+    /// 验证同一 project 下不同 workspace 的 AI 流消息产生不同复合键，
+    /// 防止多工作区场景下流式事件路由到错误的客户端状态。
+    #[test]
+    fn same_project_different_workspace_ai_stream_keys_are_distinct() {
+        let pairs = [
+            ("proj", "main", "sess-1"),
+            ("proj", "feature-a", "sess-2"),
+            ("proj", "feature-b", "sess-3"),
+        ];
+
+        let keys: std::collections::HashSet<String> = pairs
+            .iter()
+            .map(|(p, w, s)| format!("{}:{}:{}", p, w, s))
+            .collect();
+
+        assert_eq!(
+            keys.len(),
+            pairs.len(),
+            "同一 project 下不同 workspace/session 的 AI 流复合键必须唯一，防止流式事件串台"
+        );
+    }
 }

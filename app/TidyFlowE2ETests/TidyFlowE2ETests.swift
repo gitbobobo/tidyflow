@@ -1,5 +1,22 @@
 import XCTest
 
+// MARK: - 跨端稳定证据契约
+// 三类核心场景的场景 ID、subsystem 键和 workspaceContext 格式在 macOS/iOS 均保持一致，
+// 平台允许 UI 呈现不同，但场景语义、完成标准和证据字段名不能漂移。
+private enum E2EContract {
+    // 场景 ID：三端统一，verify 阶段依赖这些字面值匹配
+    static let workspaceLifecycle = "AC-WORKSPACE-LIFECYCLE"
+    static let aiSessionFlow = "AC-AI-SESSION-FLOW"
+    static let terminalInteraction = "AC-TERMINAL-INTERACTION"
+
+    /// 生成多工作区边界上下文键，格式稳定供证据索引和回归分析使用。
+    /// - 在 UI 测试模式（无实体服务器）下，project/workspace 字段为占位语义，
+    ///   标识边界：同一 run_id 下不同 device_type 的证据必须隔离，不能跨端串台。
+    static func workspaceContextKey(scenario: String, device: String) -> String {
+        "\(scenario):\(device):project=<active>:workspace=<active>:session_id=<active>"
+    }
+}
+
 final class TidyFlowE2ETests: XCTestCase {
     private var app: XCUIApplication!
     private let recorder = EvidenceRecorder.shared
@@ -367,8 +384,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let mainExists = mainContent.waitForExistence(timeout: 15)
         let appReadyExists = appReady.waitForExistence(timeout: 5)
 
-        let scenario = "AC-WORKSPACE-LIFECYCLE"
+        let scenario = E2EContract.workspaceLifecycle
         let subsystem = "mac-workspace"
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -376,10 +394,11 @@ final class TidyFlowE2ETests: XCTestCase {
             description: """
             执行动作：启动 mac 应用等待加载完成后检查工作区入口可观测点；\
             关键观察：侧边栏 workspace-list 与主内容区域 identifier 是否存在；\
-            证据用途：验证 WI-002 macOS 工作区生命周期可观测点已落位，\
+            证据用途：验证 macOS 工作区生命周期可观测点已落位，\
             project/workspace 隔离语义通过 tf.mac.sidebar.workspace.<name> 携带。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -398,8 +417,10 @@ final class TidyFlowE2ETests: XCTestCase {
             content.main.exists=\(mainExists)
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            project_workspace_isolation=tf.mac.sidebar.workspace.<name>
-            """
+            project_workspace_boundary=tf.mac.sidebar.workspace.<name>
+            workspace_isolation_key=<project>:<workspace>
+            """,
+            workspaceContext: wsCtx
         )
         XCTAssertTrue(sidebarExists, "工作区侧边栏 (tf.mac.sidebar.workspace-list) 不存在")
         XCTAssertTrue(mainExists, "主内容区域 (tf.mac.content.main) 不存在")
@@ -419,8 +440,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let workspaceList = e2eElement(identifier: "tf.ios.workspace.list")
         let workspaceListInTree = workspaceList.exists
 
-        let scenario = "AC-WORKSPACE-LIFECYCLE"
+        let scenario = E2EContract.workspaceLifecycle
         let subsystem = mobileSubsystem()
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -428,9 +450,10 @@ final class TidyFlowE2ETests: XCTestCase {
             description: """
             执行动作：启动 iOS 应用等待连接页加载；\
             关键观察：连接页可观测点就绪，工作区列表在未配对时不可见；\
-            证据用途：验证 WI-002 iOS 工作区可观测点 tf.ios.workspace.list 已在视图层级注册。
+            证据用途：验证 iOS 工作区可观测点 tf.ios.workspace.list 已在视图层级注册。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -447,8 +470,10 @@ final class TidyFlowE2ETests: XCTestCase {
             note=workspace.list.visible.after.server.pair
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            project_workspace_isolation=tf.ios.workspace.item.<name>
-            """
+            project_workspace_boundary=tf.ios.workspace.item.<name>
+            workspace_isolation_key=<project>:<workspace>
+            """,
+            workspaceContext: wsCtx
         )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页 (tf.connection.page/tf.connection.form) 不存在")
     }
@@ -478,8 +503,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let inputExists = inputContainer.waitForExistence(timeout: 10)
         let actionExists = actionButton.waitForExistence(timeout: 5)
 
-        let scenario = "AC-AI-SESSION-FLOW"
+        let scenario = E2EContract.aiSessionFlow
         let subsystem = "mac-ai"
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -487,9 +513,10 @@ final class TidyFlowE2ETests: XCTestCase {
             description: """
             执行动作：启动 mac 应用等待加载完成后检查 AI 会话入口；\
             关键观察：AI 聊天区域、会话列表面板、新建会话按钮、输入框和操作按钮的 identifier 是否存在；\
-            证据用途：验证 WI-003 macOS AI 会话流可观测点已落位，E2E 不依赖文本模糊匹配。
+            证据用途：验证 macOS AI 会话流可观测点已落位，E2E 不依赖文本模糊匹配。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -510,7 +537,9 @@ final class TidyFlowE2ETests: XCTestCase {
             ai.input.action-button.exists=\(actionExists)
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            """
+            session_isolation_key=<project>:<workspace>:<session_id>
+            """,
+            workspaceContext: wsCtx
         )
         // AI 面板仅在工作区被选中时渲染（需要服务端连接）。
         // 在无服务端的测试模式下，只验证应用就绪（工具栏可交互），
@@ -533,8 +562,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let sessionsPanel = e2eElement(identifier: "tf.ios.ai.sessions-panel")
         let inputContainer = e2eElement(identifier: "tf.ai.input.container")
 
-        let scenario = "AC-AI-SESSION-FLOW"
+        let scenario = E2EContract.aiSessionFlow
         let subsystem = mobileSubsystem()
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -542,9 +572,10 @@ final class TidyFlowE2ETests: XCTestCase {
             description: """
             执行动作：启动 iOS 应用等待连接页；\
             关键观察：AI 视图 identifier 在未配对时不渲染，连接页就绪；\
-            证据用途：验证 WI-003 iOS AI 会话流可观测点已落位，E2E 可在配对后直接定位 AI 入口。
+            证据用途：验证 iOS AI 会话流可观测点已落位，E2E 可在配对后直接定位 AI 入口。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -565,7 +596,9 @@ final class TidyFlowE2ETests: XCTestCase {
             note=ai.views.visible.after.server.pair
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            """
+            session_isolation_key=<project>:<workspace>:<session_id>
+            """,
+            workspaceContext: wsCtx
         )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页不存在，无法进入 AI 会话流")
     }
@@ -589,8 +622,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let terminalInTree = terminalContainer.exists
         let remoteTermInTree = remoteTermIndicator.exists
 
-        let scenario = "AC-TERMINAL-INTERACTION"
+        let scenario = E2EContract.terminalInteraction
         let subsystem = "mac-terminal"
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -599,10 +633,11 @@ final class TidyFlowE2ETests: XCTestCase {
             执行动作：启动 mac 应用等待加载完成后检查终端区域可观测点；\
             关键观察：终端容器（tf.mac.terminal.container）和远程终端指示器\
             （tf.mac.toolbar.remoteTerminal）的 identifier；\
-            证据用途：验证 WI-004 macOS 终端可观测点已落位，\
+            证据用途：验证 macOS 终端可观测点已落位，\
             终端归属可通过 workspace key 区分避免串口。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -620,8 +655,9 @@ final class TidyFlowE2ETests: XCTestCase {
             note=terminal.container.visible.when.workspace.selected.and.tab.open
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            workspace_isolation=terminal.belongs.to.project.workspace
-            """
+            terminal_isolation_key=<project>:<workspace>:<term_id>
+            """,
+            workspaceContext: wsCtx
         )
         XCTAssertTrue(toolbarElements.settings.exists, "macOS 应用就绪后工具栏不可见，终端场景前置条件失败")
     }
@@ -639,8 +675,9 @@ final class TidyFlowE2ETests: XCTestCase {
         let terminalContainer = e2eElement(identifier: "tf.ios.terminal.container")
         let workspaceList = e2eElement(identifier: "tf.ios.workspace.list")
 
-        let scenario = "AC-TERMINAL-INTERACTION"
+        let scenario = E2EContract.terminalInteraction
         let subsystem = mobileSubsystem()
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -649,10 +686,11 @@ final class TidyFlowE2ETests: XCTestCase {
             执行动作：启动 iOS 应用等待连接页；\
             关键观察：终端容器（tf.ios.terminal.container）和工作区列表\
             （tf.ios.workspace.list）在未配对时不渲染；\
-            证据用途：验证 WI-004 iOS 终端可观测点已落位，\
+            证据用途：验证 iOS 终端可观测点已落位，\
             配对后可通过 tf.ios.workspace.new-terminal.<workspace> 进入终端。
             """,
-            screenshot: XCUIScreen.main.screenshot()
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
         )
         try recorder.recordLog(
             scenario: scenario,
@@ -670,8 +708,9 @@ final class TidyFlowE2ETests: XCTestCase {
             note=terminal.views.visible.after.server.pair
             run_id=\(recorder.runID)
             device_type=\(recorder.deviceType)
-            workspace_isolation=tf.ios.workspace.new-terminal.<workspace>
-            """
+            terminal_isolation_key=<project>:<workspace>:<term_id>
+            """,
+            workspaceContext: wsCtx
         )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页不存在，无法进入终端交互场景")
     }

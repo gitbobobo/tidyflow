@@ -17,6 +17,9 @@ struct EvidenceItem: Codable {
     let scenario: String?
     let subsystem: String?
     let createdAt: String?
+    /// 多工作区边界上下文：格式 "<scenario>:<device>:project=<p>:workspace=<w>"
+    /// 供回归失败时直接定位 project/workspace 串台问题，所有三端场景保持相同键结构
+    let workspaceContext: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -29,6 +32,7 @@ struct EvidenceItem: Codable {
         case scenario
         case subsystem
         case createdAt = "created_at"
+        case workspaceContext = "workspace_context"
     }
 }
 
@@ -140,7 +144,8 @@ final class EvidenceRecorder {
         subsystem: String,
         title: String,
         description: String,
-        screenshot: XCUIScreenshot
+        screenshot: XCUIScreenshot,
+        workspaceContext: String? = nil
     ) throws -> EvidenceItem {
         try lock.withLock {
             try validateDeviceType()
@@ -168,7 +173,8 @@ final class EvidenceRecorder {
                 description: description,
                 scenario: scenario,
                 subsystem: subsystem,
-                createdAt: nowUTC()
+                createdAt: nowUTC(),
+                workspaceContext: workspaceContext
             )
             try append(item: item)
             return item
@@ -181,7 +187,8 @@ final class EvidenceRecorder {
         subsystem: String,
         title: String,
         description: String,
-        body: String
+        body: String,
+        workspaceContext: String? = nil
     ) throws -> EvidenceItem {
         try lock.withLock {
             try validateDeviceType()
@@ -196,15 +203,17 @@ final class EvidenceRecorder {
 
             let fileName = "\(scenarioSlug)-\(String(format: "%03d", order)).log"
             let fileURL = targetDir.appendingPathComponent(fileName)
-            let logContent = """
+            var logContent = """
             [time] \(nowUTC())
             [device_type] \(deviceType)
             [scenario] \(scenario)
             [title] \(title)
             [description] \(description)
-            [detail]
-            \(body)
             """
+            if let ctx = workspaceContext {
+                logContent += "\n[workspace_context] \(ctx)"
+            }
+            logContent += "\n[detail]\n\(body)"
             try logContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
             let relativePath = try makeRelativePath(for: fileURL)
@@ -218,7 +227,8 @@ final class EvidenceRecorder {
                 description: description,
                 scenario: scenario,
                 subsystem: subsystem,
-                createdAt: nowUTC()
+                createdAt: nowUTC(),
+                workspaceContext: workspaceContext
             )
             try append(item: item)
             return item

@@ -46,19 +46,34 @@ fi
 
 echo "[e2e] 三端串行执行开始: run_id=$run_id evidence_root=$TF_EVIDENCE_ROOT"
 
-status=0
+# 记录各设备执行状态（使用变量前缀，兼容 bash 3.2）
+device_status_iphone="ok"
+device_status_ipad="ok"
+device_status_mac="ok"
+overall_status=0
+
 for device in iphone ipad mac; do
     echo "[e2e] ===== 开始执行 $device ====="
-    if ! "$PROJECT_ROOT/scripts/e2e/$device.sh" --run-id "$run_id"; then
-        echo "[e2e] $device 执行失败"
-        status=1
+    if "$PROJECT_ROOT/scripts/e2e/$device.sh" --run-id "$run_id"; then
+        eval "device_status_${device}=ok"
+        echo "[e2e] $device 执行成功"
+    else
+        eval "device_status_${device}=FAILED"
+        overall_status=1
+        echo "[e2e] $device 执行失败（继续执行后续设备）"
     fi
 done
 
-if [[ $status -eq 0 ]]; then
-    echo "[e2e] 三端执行完成: run_id=$run_id"
+echo "[e2e] ===== 三端执行汇总: run_id=$run_id ====="
+for device in iphone ipad mac; do
+    varname="device_status_${device}"
+    echo "[e2e]   $device: ${!varname}"
+done
+
+if [[ $overall_status -eq 0 ]]; then
+    echo "[e2e] 三端执行全部成功: run_id=$run_id"
 else
-    echo "[e2e] 存在失败设备: run_id=$run_id"
+    echo "[e2e] 存在失败设备（见汇总）: run_id=$run_id"
 fi
 
 # 可选：执行证据索引完整性校验
@@ -75,4 +90,4 @@ if [[ $skip_verify -eq 0 ]] && command -v python3 &>/dev/null; then
     fi
 fi
 
-exit $status
+exit $overall_status

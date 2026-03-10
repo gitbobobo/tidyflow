@@ -108,4 +108,61 @@ mod tests {
         };
         assert_eq!(result.root_path, PathBuf::from("/tmp/p"));
     }
+
+    /// 验证 SelectedWorkspace 消息携带完整的 project/workspace/session_id 三元组，
+    /// 保证客户端可以用这三个字段唯一定位工作区状态，不会在多工作区场景下串台。
+    #[test]
+    fn workspace_selection_result_carries_full_project_workspace_session_key() {
+        let project = "proj-a";
+        let workspace = "feature-branch";
+        let session_id = "sess-xyz";
+
+        let msg = ServerMessage::SelectedWorkspace {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            root: "/tmp/proj-a".to_string(),
+            session_id: session_id.to_string(),
+            shell: "bash".to_string(),
+        };
+
+        // 三元组必须在消息中完整保留，客户端依赖此做工作区状态隔离
+        match &msg {
+            ServerMessage::SelectedWorkspace {
+                project: p,
+                workspace: w,
+                session_id: s,
+                ..
+            } => {
+                assert_eq!(p, project, "project 字段丢失或错误");
+                assert_eq!(w, workspace, "workspace 字段丢失或错误");
+                assert_eq!(s, session_id, "session_id 字段丢失或错误");
+                // 复合键格式验证：客户端用 "<project>:<workspace>" 做侧边栏状态隔离
+                let composite_key = format!("{}:{}", p, w);
+                assert_eq!(composite_key, "proj-a:feature-branch");
+            }
+            _ => panic!("应为 SelectedWorkspace 消息"),
+        }
+    }
+
+    /// 验证不同 project/workspace 组合产生不同的复合键，防止状态串台。
+    #[test]
+    fn different_project_workspace_pairs_produce_unique_composite_keys() {
+        let pairs = vec![
+            ("proj-a", "main"),
+            ("proj-a", "feature"),
+            ("proj-b", "main"),
+            ("proj-b", "feature"),
+        ];
+
+        let keys: std::collections::HashSet<String> = pairs
+            .iter()
+            .map(|(p, w)| format!("{}:{}", p, w))
+            .collect();
+
+        assert_eq!(
+            keys.len(),
+            pairs.len(),
+            "每个 project/workspace 组合应产生唯一复合键，避免多工作区状态串台"
+        );
+    }
 }

@@ -9,11 +9,13 @@
 
 # 证据根目录：优先使用已有环境变量，否则使用默认路径
 : "${TF_EVIDENCE_ROOT:=$PROJECT_ROOT/.tidyflow/evidence}"
+export TF_EVIDENCE_ROOT
 
 # 确保证据目录存在
 mkdir -p "$TF_EVIDENCE_ROOT"
 
 # 写入运行上下文文件，供测试代码读取 run_id / device_type / evidence_root
+# 注意：串行三端执行时，每个设备依次写入；后写的不会影响前一个设备已完成的证据目录。
 tf_write_run_context() {
     local device="${1:?device 参数缺失}"
     local run_id="${2:?run_id 参数缺失}"

@@ -49,6 +49,19 @@ print_usage() {
   quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|integration|build_macos|build_ios|build|verify] [--dry-run]
       兼容旧入口，已迁移为 e2e 串行执行（iphone -> ipad -> mac）
 
+  apple-build [macos|ios] [--skip-core]
+      构建 Apple 客户端（Debug），用于验证改动不破坏编译：
+        macos: xcodebuild macOS Debug build（platform=macOS）
+        ios:   xcodebuild iOS Simulator Debug build（iPhone 16, OS=18.6）
+      默认同时构建两端（串行）。--skip-core 强制 SKIP_CORE_BUILD=1。
+
+  apple-regression [--macos-only] [--ios-only]
+      运行 Apple 端多工作区定向回归测试（macOS Debug，xcodebuild test）：
+        - TidyFlowTests/TerminalWorkspaceIsolationTests
+        - TidyFlowTests/WorkspaceSharedStateSemanticsTests
+        - TidyFlowTests/EvolutionReplaySessionIsolationTests
+      回归目标：验证工作区切换、终端隔离、AI 会话缓存和演化回放不会跨 project/workspace 串台。
+
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）
 
@@ -72,6 +85,34 @@ run_core_cargo() {
     set -e
     ./scripts/tools/core_target_guard.sh finalize "$action"
     return "$exit_code"
+}
+
+# 构建 macOS Debug
+build_macos() {
+    local skip_core="${1:-1}"
+    echo "[tidyflow] 构建 macOS Debug (SKIP_CORE_BUILD=$skip_core)..."
+    xcodebuild \
+        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+        -scheme TidyFlow \
+        -configuration Debug \
+        -destination 'platform=macOS' \
+        -derivedDataPath "$PROJECT_ROOT/build" \
+        "SKIP_CORE_BUILD=$skip_core" \
+        build
+}
+
+# 构建 iOS Simulator Debug
+build_ios() {
+    local skip_core="${1:-1}"
+    echo "[tidyflow] 构建 iOS Simulator Debug (SKIP_CORE_BUILD=$skip_core)..."
+    xcodebuild \
+        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+        -scheme TidyFlow \
+        -configuration Debug \
+        -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
+        -derivedDataPath "$PROJECT_ROOT/build" \
+        "SKIP_CORE_BUILD=$skip_core" \
+        build
 }
 
 cmd="${1:-}"
@@ -124,6 +165,67 @@ case "$cmd" in
         ;;
     quality-gate)
         exec ./scripts/e2e/quality-gate.sh "$@"
+        ;;
+    apple-build)
+        sub="${1:-both}"
+        skip_core=1
+        for arg in "$@"; do
+            [[ "$arg" == "--skip-core" ]] && skip_core=1
+        done
+        case "$sub" in
+            macos)
+                build_macos "$skip_core"
+                ;;
+            ios)
+                build_ios "$skip_core"
+                ;;
+            both|--skip-core)
+                # 串行：先 macOS 再 iOS
+                build_macos "$skip_core"
+                build_ios "$skip_core"
+                ;;
+            *)
+                echo "[tidyflow] apple-build 支持: macos | ios（默认两端串行）"
+                exit 1
+                ;;
+        esac
+        ;;
+    apple-regression)
+        macos_only=0
+        ios_only=0
+        for arg in "$@"; do
+            [[ "$arg" == "--macos-only" ]] && macos_only=1
+            [[ "$arg" == "--ios-only" ]] && ios_only=1
+        done
+        regression_tests=(
+            "-only-testing:TidyFlowTests/TerminalWorkspaceIsolationTests"
+            "-only-testing:TidyFlowTests/WorkspaceSharedStateSemanticsTests"
+            "-only-testing:TidyFlowTests/EvolutionReplaySessionIsolationTests"
+        )
+        if [[ $ios_only -eq 0 ]]; then
+            echo "[tidyflow] 运行 macOS 多工作区定向回归..."
+            xcodebuild \
+                -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+                -scheme TidyFlow \
+                -configuration Debug \
+                -destination 'platform=macOS' \
+                -derivedDataPath "$PROJECT_ROOT/build" \
+                SKIP_CORE_BUILD=1 \
+                test \
+                "${regression_tests[@]}"
+        fi
+        if [[ $macos_only -eq 0 ]]; then
+            echo "[tidyflow] 运行 iOS Simulator 多工作区定向回归..."
+            xcodebuild \
+                -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+                -scheme TidyFlow \
+                -configuration Debug \
+                -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
+                -derivedDataPath "$PROJECT_ROOT/build" \
+                SKIP_CORE_BUILD=1 \
+                test \
+                "${regression_tests[@]}"
+        fi
         ;;
     build)
         sub="${1:-}"

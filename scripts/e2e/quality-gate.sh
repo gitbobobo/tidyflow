@@ -7,6 +7,10 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# 加载共享引导脚本（统一 TF_EVIDENCE_ROOT 解析）
+# shellcheck source=scripts/e2e/fixtures/bootstrap.sh
+source "$PROJECT_ROOT/scripts/e2e/fixtures/bootstrap.sh"
+
 generate_run_id() {
     date -u +%Y%m%d-%H%M%S
 }
@@ -67,11 +71,12 @@ if [[ "$step" != "all" ]]; then
     echo "[quality-gate] 已迁移到统一 e2e，忽略旧 step=$step，仅执行 all"
 fi
 
+echo "[quality-gate] cycle=$cycle_id run_id=$run_id evidence_root=$TF_EVIDENCE_ROOT"
+
 # --verify-only 跳过测试执行，仅运行证据校验
 if [[ $verify_only -eq 1 ]]; then
-    EVIDENCE_ROOT="${TF_EVIDENCE_ROOT:-$PROJECT_ROOT/.tidyflow/evidence}"
     exec python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
-        --evidence-root "$EVIDENCE_ROOT" \
+        --evidence-root "$TF_EVIDENCE_ROOT" \
         --run-id "$run_id" \
         --require-devices iphone ipad mac \
         --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION

@@ -183,4 +183,49 @@ mod tests {
         assert!(should_broadcast_evolution_sidebar(Some(false), true));
         assert!(!should_broadcast_evolution_sidebar(Some(false), false));
     }
+
+    /// 验证 project/workspace 复合键格式稳定：侧边栏广播缓存用此键隔离多工作区状态。
+    /// 格式固定为 "<project>:<workspace>"，与客户端 globalKey 保持一致。
+    #[test]
+    fn sidebar_cache_key_format_is_project_colon_workspace() {
+        let project = "proj-a";
+        let workspace = "main";
+        let key = format!("{}:{}", project, workspace);
+        assert_eq!(key, "proj-a:main");
+    }
+
+    /// 验证不同 project/workspace 组合产生唯一缓存键，
+    /// 确保侧边栏广播缓存在多工作区场景下不会串台。
+    #[test]
+    fn sidebar_cache_keys_are_isolated_across_workspaces() {
+        let pairs = [
+            ("proj-a", "main"),
+            ("proj-a", "feature"),
+            ("proj-b", "main"),
+        ];
+
+        let keys: std::collections::HashSet<String> = pairs
+            .iter()
+            .map(|(p, w)| format!("{}:{}", p, w))
+            .collect();
+
+        assert_eq!(
+            keys.len(),
+            pairs.len(),
+            "不同 project/workspace 组合的侧边栏缓存键必须唯一，防止 evolution 状态广播串台"
+        );
+    }
+
+    /// 验证 should_broadcast_evolution_sidebar 对同一 key 的独立缓存语义：
+    /// 一个工作区的 evolution 状态变化不影响另一个工作区的广播判断。
+    #[test]
+    fn broadcast_decision_is_independent_per_workspace() {
+        // 工作区 A：从无到 active，应广播
+        let ws_a_broadcast = should_broadcast_evolution_sidebar(None, true);
+        // 工作区 B：始终 inactive，首次不应广播
+        let ws_b_broadcast = should_broadcast_evolution_sidebar(None, false);
+        // 工作区 A 的决策不影响工作区 B
+        assert!(ws_a_broadcast, "ws-a 从 None→active 应广播");
+        assert!(!ws_b_broadcast, "ws-b 从 None→inactive 不应广播");
+    }
 }

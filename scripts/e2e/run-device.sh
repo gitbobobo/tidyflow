@@ -100,7 +100,7 @@ xcodebuild -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
     -destination "$destination" \
     -derivedDataPath "$PROJECT_ROOT/build" \
     "SKIP_CORE_BUILD=$skip_core_build" \
-    "TF_EVIDENCE_ROOT=$EVIDENCE_ROOT" \
+    "TF_EVIDENCE_ROOT=$TF_EVIDENCE_ROOT" \
     "TF_E2E_RUN_ID=$run_id" \
     "TF_DEVICE_TYPE=$device" \
     "UI_TEST_MODE=1" \

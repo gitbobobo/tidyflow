@@ -3,7 +3,7 @@ import XCTest
 
 // MARK: - TerminalWorkspaceIsolation 单元测试
 // 覆盖：多项目多工作区隔离、关闭清理不串台、断线 stale 标记与 ACK 隔离
-// 验证工作项 WI-002、WI-003 的工作区边界保证
+// 验证工作项 WI-003 的工作区边界保证
 
 final class TerminalWorkspaceIsolationTests: XCTestCase {
 
