@@ -32,6 +32,160 @@ fn normalized_update_token(raw: &str) -> String {
         .replace(' ', "_")
 }
 
+fn canonical_tool_token(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>()
+}
+
+fn parsed_input_object(value: Option<&Value>) -> Option<serde_json::Map<String, Value>> {
+    match value {
+        Some(Value::Object(map)) => Some(map.clone()),
+        Some(Value::String(text)) => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|parsed| parsed.as_object().cloned()),
+        _ => None,
+    }
+}
+
+fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
+    let normalized = canonical_tool_token(token);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "read" | "readfile" | "view" | "viewfile" | "viewing" | "fileread"
+    ) || normalized.starts_with("read")
+        || normalized.starts_with("view")
+    {
+        return Some("read");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "edit" | "editing" | "editfile" | "replace" | "strreplace" | "stringreplace"
+            | "applypatch" | "multiedit" | "patch"
+    ) || normalized.starts_with("edit")
+        || normalized.starts_with("replace")
+        || normalized.starts_with("patch")
+        || normalized.starts_with("applypatch")
+        || normalized.starts_with("multiedit")
+    {
+        return Some("edit");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "write" | "writing" | "writefile" | "overwrite" | "createfile"
+    ) || normalized.starts_with("write")
+        || normalized.starts_with("createfile")
+    {
+        return Some("write");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "bash"
+            | "terminal"
+            | "shell"
+            | "command"
+            | "commandexecution"
+            | "runcommand"
+            | "executecommand"
+            | "execcommand"
+            | "shellcommand"
+            | "terminalcommand"
+    ) || normalized.starts_with("terminal")
+        || normalized.starts_with("shell")
+        || normalized.starts_with("runcommand")
+        || normalized.starts_with("executecommand")
+        || normalized.starts_with("execcommand")
+    {
+        return Some("bash");
+    }
+
+    if normalized == "grep" || normalized.starts_with("search") {
+        return Some("grep");
+    }
+
+    if matches!(normalized.as_str(), "list" | "listfiles" | "ls") || normalized.starts_with("list")
+    {
+        return Some("list");
+    }
+
+    None
+}
+
+fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
+    let input = parsed_input_object(value)?;
+    let has_path = ["path", "file", "filePath", "file_path"]
+        .iter()
+        .any(|key| input.get(*key).is_some());
+    let has_view_range = ["view_range", "viewRange", "range"]
+        .iter()
+        .any(|key| input.get(*key).is_some());
+    let has_edit_payload = ["old_str", "oldStr", "new_str", "newStr", "diff", "patch"]
+        .iter()
+        .any(|key| input.get(*key).is_some());
+    let has_command = [
+        "command",
+        "cmd",
+        "script",
+        "commandLine",
+        "command_line",
+        "shellCommand",
+        "shell_command",
+    ]
+        .iter()
+        .any(|key| input.get(*key).is_some());
+    let has_query = ["query", "pattern"]
+        .iter()
+        .any(|key| input.get(*key).is_some());
+
+    if has_edit_payload && has_path {
+        return Some("edit");
+    }
+    if has_view_range && has_path {
+        return Some("read");
+    }
+    if has_command {
+        return Some("bash");
+    }
+    if has_query {
+        return Some("grep");
+    }
+    if has_path {
+        return Some("read");
+    }
+    None
+}
+
+fn normalize_tool_name(
+    raw_name: Option<&str>,
+    tool_title: Option<&str>,
+    raw_input: Option<&Value>,
+    tool_kind: Option<&str>,
+) -> String {
+    for candidate in [raw_name, tool_title, tool_kind] {
+        if let Some(mapped) = candidate.and_then(infer_tool_name_from_token) {
+            return mapped.to_string();
+        }
+    }
+
+    if let Some(mapped) = infer_tool_name_from_input(raw_input) {
+        return mapped.to_string();
+    }
+
+    raw_name
+        .and_then(normalize_non_empty_token)
+        .or_else(|| tool_kind.and_then(normalize_non_empty_token))
+        .or_else(|| tool_title.and_then(normalize_non_empty_token))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn normalized_content_type(content: &serde_json::Map<String, Value>) -> String {
     content
         .get("type")
@@ -209,6 +363,72 @@ fn parse_tool_call_locations(
     }
 }
 
+fn parse_tool_call_locations_from_value(value: &Value) -> Option<Vec<AiToolCallLocation>> {
+    let Some(obj) = parsed_input_object(Some(value)) else {
+        return None;
+    };
+
+    let mut location = parse_tool_call_location(&Value::Object(obj.clone())).unwrap_or(
+        AiToolCallLocation {
+            uri: None,
+            path: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+            label: None,
+        },
+    );
+    if location.path.is_none() {
+        location.path = obj
+            .get("path")
+            .or_else(|| obj.get("file"))
+            .or_else(|| obj.get("filePath"))
+            .or_else(|| obj.get("file_path"))
+            .and_then(|v| v.as_str())
+            .and_then(normalize_non_empty_token);
+    }
+    if location.uri.is_none() {
+        location.uri = obj
+            .get("uri")
+            .or_else(|| obj.get("url"))
+            .and_then(|v| v.as_str())
+            .and_then(normalize_non_empty_token);
+    }
+    if location.label.is_none() {
+        location.label = obj
+            .get("label")
+            .or_else(|| obj.get("title"))
+            .and_then(|v| v.as_str())
+            .and_then(normalize_non_empty_token);
+    }
+    if location.line.is_none() || location.end_line.is_none() {
+        if let Some((line, end_line)) = obj
+            .get("view_range")
+            .or_else(|| obj.get("viewRange"))
+            .and_then(|value| value.as_array())
+            .and_then(|items| {
+                let start = parse_u32_from_value(items.first());
+                let end = parse_u32_from_value(items.get(1)).or(start);
+                start.map(|start| (start, end.unwrap_or(start)))
+            })
+        {
+            location.line.get_or_insert(line);
+            location.end_line.get_or_insert(end_line);
+        }
+    }
+    if location.path.is_none()
+        && location.uri.is_none()
+        && location.line.is_none()
+        && location.end_line.is_none()
+        && location.label.is_none()
+    {
+        return None;
+    }
+
+    Some(vec![location])
+}
+
 fn tool_locations_to_json(locations: &[AiToolCallLocation]) -> Value {
     Value::Array(
         locations
@@ -302,8 +522,8 @@ pub(crate) fn parse_tool_call_update_content(
         .or_else(|| content.get("label"))
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token);
-    // 工具名优先从 toolName/name 提取，回退到 title 中冒号前的部分（如 "ReadFile: path" → "ReadFile"）
-    let tool_name = content
+    // 工具名优先从 toolName/name 提取，回退到 title；随后统一归一化为前端可识别的卡片类型。
+    let raw_tool_name = content
         .get("toolName")
         .or_else(|| content.get("tool_name"))
         .or_else(|| content.get("name"))
@@ -314,8 +534,7 @@ pub(crate) fn parse_tool_call_update_content(
             tool_title
                 .as_ref()
                 .map(|title| title.split(':').next().unwrap_or(title).trim().to_string())
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+        });
     let status = Some(normalize_tool_status(
         content
             .get("status")
@@ -352,6 +571,12 @@ pub(crate) fn parse_tool_call_update_content(
             raw_input = Some(Value::String(text.clone()));
         }
     }
+    let tool_name = normalize_tool_name(
+        raw_tool_name.as_deref(),
+        tool_title.as_deref(),
+        raw_input.as_ref(),
+        tool_kind.as_deref(),
+    );
 
     let explicit_output = content
         .get("rawOutput")
@@ -375,18 +600,20 @@ pub(crate) fn parse_tool_call_update_content(
         }
     });
 
-    let locations = parse_tool_call_locations(content).or_else(|| {
-        raw_output
-            .as_ref()
-            .and_then(|v| v.get("locations"))
-            .and_then(|v| v.as_array())
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(parse_tool_call_location)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|rows| !rows.is_empty())
-    });
+    let locations = parse_tool_call_locations(content)
+        .or_else(|| raw_input.as_ref().and_then(parse_tool_call_locations_from_value))
+        .or_else(|| {
+            raw_output
+                .as_ref()
+                .and_then(|v| v.get("locations"))
+                .and_then(|v| v.as_array())
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(parse_tool_call_location)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|rows| !rows.is_empty())
+        });
 
     let progress_delta = content
         .get("progress")
@@ -741,7 +968,7 @@ mod tests {
             "sessionUpdate": "tool_call"
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call").unwrap();
-        assert_eq!(parsed.tool_name, "ReadFile");
+        assert_eq!(parsed.tool_name, "read");
         assert_eq!(parsed.tool_call_id.as_deref(), Some("abc/tool_123"));
         assert_eq!(parsed.tool_title.as_deref(), Some("ReadFile"));
         assert_eq!(parsed.status.as_deref(), Some("running"));
@@ -760,7 +987,7 @@ mod tests {
             "sessionUpdate": "tool_call_update"
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
-        assert_eq!(parsed.tool_name, "ReadFile");
+        assert_eq!(parsed.tool_name, "read");
         assert_eq!(parsed.tool_title.as_deref(), Some("ReadFile: CHANGELOG.md"));
         assert_eq!(parsed.status.as_deref(), Some("running"));
         // 进行中时内容作为 raw_input
@@ -863,6 +1090,106 @@ mod tests {
             "sessionUpdate": "tool_call_update"
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
-        assert_eq!(parsed.tool_name, "WriteFile");
+        assert_eq!(parsed.tool_name, "write");
+    }
+
+    #[test]
+    fn test_tool_name_from_viewing_title_and_view_range_input() {
+        let update = json!({
+            "status": "completed",
+            "title": "Viewing ../src/lib.rs",
+            "toolCallId": "view-1",
+            "rawInput": {
+                "path": "/tmp/src/lib.rs",
+                "view_range": [12, 20]
+            },
+            "rawOutput": {
+                "type": "text",
+                "text": "line 12"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "read");
+        assert_eq!(
+            parsed
+                .locations
+                .as_ref()
+                .and_then(|items| items.first())
+                .and_then(|item| item.path.as_deref()),
+            Some("/tmp/src/lib.rs")
+        );
+        assert_eq!(
+            parsed
+                .locations
+                .as_ref()
+                .and_then(|items| items.first())
+                .and_then(|item| item.line),
+            Some(12)
+        );
+        assert_eq!(
+            parsed
+                .locations
+                .as_ref()
+                .and_then(|items| items.first())
+                .and_then(|item| item.end_line),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn test_tool_name_from_editing_title_and_replace_payload() {
+        let update = json!({
+            "status": "completed",
+            "title": "Editing ../src/lib.rs",
+            "toolCallId": "edit-1",
+            "rawInput": {
+                "path": "/tmp/src/lib.rs",
+                "old_str": "before",
+                "new_str": "after"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "edit");
+        assert_eq!(
+            parsed
+                .locations
+                .as_ref()
+                .and_then(|items| items.first())
+                .and_then(|item| item.path.as_deref()),
+            Some("/tmp/src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn test_tool_name_from_command_style_alias_and_descriptive_title() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "executeCommand",
+            "title": "验证 event_bus_concurrent_test",
+            "toolCallId": "cmd-1",
+            "rawInput": {
+                "command": "cargo test --test event_bus_concurrent_test",
+                "description": "验证 event_bus_concurrent_test",
+                "mode": "sync"
+            },
+            "rawOutput": {
+                "type": "terminal",
+                "output": "test result: ok"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "bash");
+        assert_eq!(parsed.tool_title.as_deref(), Some("验证 event_bus_concurrent_test"));
+        assert_eq!(
+            parsed
+                .raw_input
+                .as_ref()
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("cargo test --test event_bus_concurrent_test")
+        );
     }
 }
