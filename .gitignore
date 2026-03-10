@@ -143,7 +143,7 @@ docs/product-requirements.md
 commit_result.json
 # Temporary workspace files
 w-*
-WI-005_*
+WI-005*
 tidyflow_wi005_*
 
 app/TidyFlow/Web/main/
