@@ -295,10 +295,11 @@ struct AboutSection: View {
             Spacer()
 
             // 应用图标
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(systemName: "square.stack.3d.up.fill")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 96, height: 96)
+                .frame(width: 84, height: 84)
+                .foregroundStyle(Color.accentColor)
 
             // 应用名称
             Text("TidyFlow")

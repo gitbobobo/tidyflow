@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// iOS 端命令图标：支持 SF Symbol / brand:* / custom:*，失败回退 terminal。
 struct MobileCommandIconView: View {
@@ -21,22 +20,11 @@ struct MobileCommandIconView: View {
                 }
             } else if iconName.hasPrefix("custom:") {
                 let filename = String(iconName.dropFirst(7))
-                if let image = loadCustomIcon(filename) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: size, height: size)
-                } else {
-                    fallbackIcon
-                }
+                customIconView(filename)
             } else {
-                if UIImage(systemName: iconName) != nil {
-                    Image(systemName: iconName)
-                        .font(.system(size: size * 0.7))
-                        .frame(width: size, height: size)
-                } else {
-                    fallbackIcon
-                }
+                Image(systemName: iconName)
+                    .font(.system(size: size * 0.7))
+                    .frame(width: size, height: size)
             }
         }
     }
@@ -47,8 +35,23 @@ struct MobileCommandIconView: View {
             .frame(width: size, height: size)
     }
 
-    private func loadCustomIcon(_ filename: String) -> UIImage? {
-        let path = "\(NSHomeDirectory())/.tidyflow/assets/\(filename)"
-        return UIImage(contentsOfFile: path)
+    @ViewBuilder
+    private func customIconView(_ filename: String) -> some View {
+        let url = URL(fileURLWithPath: "\(NSHomeDirectory())/.tidyflow/assets/\(filename)")
+        if FileManager.default.fileExists(atPath: url.path) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: size, height: size)
+                default:
+                    fallbackIcon
+                }
+            }
+        } else {
+            fallbackIcon
+        }
     }
 }

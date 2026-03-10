@@ -27,29 +27,12 @@ enum FAQData {
 /// 带复制按钮的命令块
 struct CopyableCommandView: View {
     let command: String
-    @State private var copied = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(command)
-                .font(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(command, forType: .string)
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    copied = false
-                }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .foregroundStyle(copied ? .green : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("common.copy".localized)
-        }
+        Text(command)
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(Color.black.opacity(0.25))
         .cornerRadius(6)

@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// Shows Core process status (Starting/Running/Restarting/Failed) with port info
 struct CoreStatusView: View {
@@ -287,17 +286,6 @@ private struct WorkspaceIssuePopoverView: View {
         }
         .buttonStyle(.plain)
         .help(canJump ? "toolbar.diagnostics.jumpToIssue".localized : "toolbar.diagnostics.cannotJump".localized)
-        .contextMenu {
-            Button("toolbar.diagnostics.copyIssue".localized) {
-                copyIssueDetail(item)
-            }
-            Button("toolbar.diagnostics.copyIssuePath".localized) {
-                copyText(item.displayPath)
-            }
-            Button("toolbar.diagnostics.copyIssueSummary".localized) {
-                copyText(item.summary)
-            }
-        }
     }
 
     private func issueLocationText(_ item: ProjectDiagnosticItem) -> String {
@@ -318,16 +306,6 @@ private struct WorkspaceIssuePopoverView: View {
             .clipShape(Capsule())
     }
 
-    private func copyIssueDetail(_ item: ProjectDiagnosticItem) {
-        let loc = issueLocationText(item)
-        let text = "\(item.severity.localizedName): \(item.summary)\n\(item.displayPath) \(loc)"
-        copyText(text)
-    }
-
-    private func copyText(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
 }
 
 private extension DiagnosticSeverity {
@@ -363,11 +341,10 @@ private extension DiagnosticSeverity {
 struct AppTitleView: View {
     var body: some View {
         HStack(spacing: 6) {
-            if let appIcon = NSApp.applicationIconImage {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-            }
+            Image(systemName: "square.stack.3d.up.fill")
+                .resizable()
+                .frame(width: 16, height: 16)
+                .foregroundStyle(Color.accentColor)
             Text("TidyFlow")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)

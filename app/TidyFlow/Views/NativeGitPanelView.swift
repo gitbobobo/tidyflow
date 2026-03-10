@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 // 已拆分：
 // - FloatingPanelController.swift   浮动面板控制器

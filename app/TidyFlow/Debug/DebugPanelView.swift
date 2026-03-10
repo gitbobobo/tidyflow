@@ -1,6 +1,5 @@
 #if os(macOS)
 import SwiftUI
-import AppKit
 
 /// Hidden Debug Panel for developers
 /// Access via Cmd+Shift+D
@@ -168,15 +167,6 @@ struct DebugPanelView: View {
                 }
                 .disabled(isLoadingLog)
 
-                Button(action: copyLogToClipboard) {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-                .disabled(logTailText.isEmpty)
-
-                Button(action: revealInFinder) {
-                    Label("Reveal in Finder", systemImage: "folder")
-                }
-
                 Spacer()
 
                 Text("\(logTailText.components(separatedBy: .newlines).count) lines")
@@ -205,18 +195,6 @@ struct DebugPanelView: View {
             }
         }
     }
-
-    private func copyLogToClipboard() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(logTailText, forType: .string)
-    }
-
-    private func revealInFinder() {
-        let logDir = Self.logDirectory
-        NSWorkspace.shared.activateFileViewerSelecting([logDir])
-    }
-
     private var timeFormatter: DateFormatter {
         let f = DateFormatter()
         f.timeStyle = .medium

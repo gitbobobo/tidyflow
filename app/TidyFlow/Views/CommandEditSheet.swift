@@ -1,8 +1,4 @@
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-import UniformTypeIdentifiers
-#endif
 
 // MARK: - 命令编辑弹窗
 
@@ -217,9 +213,9 @@ struct IconPickerSheet: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedIcon == icon 
-                          ? Color.accentColor.opacity(0.2) 
-                          : Color(NSColor.controlBackgroundColor))
+                    .fill(selectedIcon == icon
+                          ? Color.accentColor.opacity(0.2)
+                          : Color.secondary.opacity(0.12))
                     .frame(width: 40, height: 40)
                 
                 Image(systemName: icon)
@@ -236,9 +232,9 @@ struct IconPickerSheet: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedIcon == "brand:\(brand.rawValue)" 
-                          ? Color.accentColor.opacity(0.2) 
-                          : Color(NSColor.controlBackgroundColor))
+                    .fill(selectedIcon == "brand:\(brand.rawValue)"
+                          ? Color.accentColor.opacity(0.2)
+                          : Color.secondary.opacity(0.12))
                     .frame(width: 40, height: 40)
                 
                 Image(brand.assetName)
@@ -277,23 +273,12 @@ struct CommandIconView: View {
             } else if iconName.hasPrefix("custom:") {
                 // 自定义图标
                 let filename = String(iconName.dropFirst(7))
-                if let image = loadCustomIconImage(filename) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: size, height: size)
-                } else {
-                    fallbackIcon
-                }
+                customIconView(filename)
             } else {
                 // SF Symbol
-                if isSystemSymbolAvailable(iconName) {
-                    Image(systemName: iconName)
-                        .font(.system(size: size * 0.7))
-                        .frame(width: size, height: size)
-                } else {
-                    fallbackIcon
-                }
+                Image(systemName: iconName)
+                    .font(.system(size: size * 0.7))
+                    .frame(width: size, height: size)
             }
         }
     }
@@ -304,20 +289,24 @@ struct CommandIconView: View {
             .frame(width: size, height: size)
     }
 
-    private func isSystemSymbolAvailable(_ name: String) -> Bool {
-        #if canImport(AppKit)
-        if #available(macOS 11.0, *) {
-            return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
-        }
-        return false
-        #else
-        return true
-        #endif
-    }
-    
-    private func loadCustomIconImage(_ filename: String) -> NSImage? {
-        let path = FileManager.default.homeDirectoryForCurrentUser
+    @ViewBuilder
+    private func customIconView(_ filename: String) -> some View {
+        let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".tidyflow/assets/\(filename)")
-        return NSImage(contentsOf: path)
+        if FileManager.default.fileExists(atPath: url.path) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: size, height: size)
+                default:
+                    fallbackIcon
+                }
+            }
+        } else {
+            fallbackIcon
+        }
     }
 }

@@ -1,10 +1,29 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - 设置页面主视图
 //
 // 组件拆分至：
 // - CommandEditSheet.swift  — CommandEditSheet + IconPickerSheet + CommandIconView
 // - AIAgentAboutViews.swift — AIAgentSection + AboutSection
+
+private struct TemplateExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        self.data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
 
 struct SettingsContentView: View {
     @EnvironmentObject var appState: AppState
@@ -502,6 +521,7 @@ struct TemplatesSection: View {
     @State private var showingAddSheet = false
     @State private var editingTemplate: TemplateInfo?
     @State private var showingImportPicker = false
+    @State private var exportTemplate: TemplateInfo?
 
     var body: some View {
         List {
@@ -514,6 +534,8 @@ struct TemplatesSection: View {
                     ForEach(builtins) { tpl in
                         TemplateRow(template: tpl, onEdit: {
                             editingTemplate = tpl
+                        }, onExport: {
+                            exportTemplate = tpl
                         }, onDelete: nil)
                     }
                 }
@@ -527,6 +549,8 @@ struct TemplatesSection: View {
                     ForEach(customs) { tpl in
                         TemplateRow(template: tpl, onEdit: {
                             editingTemplate = tpl
+                        }, onExport: {
+                            exportTemplate = tpl
                         }, onDelete: {
                             appState.deleteTemplate(templateId: tpl.id)
                         })
@@ -564,11 +588,44 @@ struct TemplatesSection: View {
                 importTemplateFromFile(url: url)
             }
         }
+        .fileExporter(
+            isPresented: Binding(
+                get: { exportTemplate != nil },
+                set: { newValue in
+                    if !newValue {
+                        exportTemplate = nil
+                    }
+                }
+            ),
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: exportTemplateFileName
+        ) { _ in
+            exportTemplate = nil
+        }
         #endif
         .onAppear {
             appState.loadTemplates()
         }
     }
+
+    #if os(macOS)
+    private var exportDocument: TemplateExportDocument {
+        guard let exportTemplate,
+              let data = try? JSONSerialization.data(
+                withJSONObject: exportTemplate.toDict(),
+                options: [.prettyPrinted]
+              ) else {
+            return TemplateExportDocument(data: Data("{}".utf8))
+        }
+        return TemplateExportDocument(data: data)
+    }
+
+    private var exportTemplateFileName: String {
+        guard let exportTemplate else { return "template.json" }
+        return "\(exportTemplate.name).json"
+    }
+    #endif
 
     #if os(macOS)
     /// 从文件导入模板
@@ -587,6 +644,7 @@ struct TemplatesSection: View {
 private struct TemplateRow: View {
     let template: TemplateInfo
     let onEdit: () -> Void
+    let onExport: () -> Void
     let onDelete: (() -> Void)?
 
     var body: some View {
@@ -611,7 +669,7 @@ private struct TemplateRow: View {
             Spacer()
             // 导出按钮
             #if os(macOS)
-            Button(action: { exportTemplateToFile(template) }) {
+            Button(action: onExport) {
                 Image(systemName: "square.and.arrow.up").foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
@@ -629,19 +687,6 @@ private struct TemplateRow: View {
         }
         .padding(.vertical, 2)
     }
-
-    #if os(macOS)
-    private func exportTemplateToFile(_ tpl: TemplateInfo) {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "\(tpl.name).json"
-        if panel.runModal() == .OK, let url = panel.url {
-            if let data = try? JSONSerialization.data(withJSONObject: tpl.toDict(), options: .prettyPrinted) {
-                try? data.write(to: url)
-            }
-        }
-    }
-    #endif
 }
 
 /// 模板编辑 Sheet

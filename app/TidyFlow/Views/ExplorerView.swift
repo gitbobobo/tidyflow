@@ -88,28 +88,6 @@ struct FileTreeView: View {
                     } label: {
                         Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
-
-                    Divider()
-                }
-
-                // 复制工作空间根目录绝对路径
-                Button {
-                    if let workspacePath = appState.selectedWorkspacePath {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(workspacePath, forType: .string)
-                        appState.clipboardHasFiles = false
-                    }
-                } label: {
-                    Label("rightPanel.copyPath".localized, systemImage: "link")
-                }
-
-                // 复制相对路径（根目录为 "."）
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(".", forType: .string)
-                    appState.clipboardHasFiles = false
-                } label: {
-                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
                 }
             }
             .sheet(isPresented: $showNewFileDialog) {
@@ -349,27 +327,6 @@ struct FileRowView: View {
                     } label: {
                         Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
-                }
-
-                Divider()
-
-                Button {
-                    if let workspacePath = appState.selectedWorkspacePath {
-                        let absolutePath = (workspacePath as NSString).appendingPathComponent(item.path)
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(absolutePath, forType: .string)
-                        appState.clipboardHasFiles = false
-                    }
-                } label: {
-                    Label("rightPanel.copyPath".localized, systemImage: "link")
-                }
-
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(item.path, forType: .string)
-                    appState.clipboardHasFiles = false
-                } label: {
-                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
                 }
 
                 Divider()

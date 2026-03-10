@@ -1,7 +1,4 @@
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#endif
 
 /// Project Tree Sidebar - Shows Projects > Workspaces hierarchy
 /// UX-1: Replaces flat workspace list with collapsible project tree
@@ -255,16 +252,6 @@ struct ProjectRowView: View {
         .contextMenu {
             if !isDeleting {
                 if let path = defaultWorkspacePath ?? projectPath {
-                    Button {
-                        copyPathToPasteboard(path)
-                    } label: {
-                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        openInFinder(path)
-                    } label: {
-                        Label("sidebar.openInFinder".localized, systemImage: "folder")
-                    }
                     Menu {
                         ForEach(ExternalEditor.allCases, id: \.self) { editor in
                             Button {
@@ -352,20 +339,6 @@ struct ProjectRowView: View {
         )
     }
 }
-
-#if canImport(AppKit)
-private func copyPathToPasteboard(_ path: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(path, forType: .string)
-}
-
-private func openInFinder(_ path: String) {
-    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
-}
-#else
-private func copyPathToPasteboard(_ path: String) {}
-private func openInFinder(_ path: String) {}
-#endif
 
 // MARK: - Workspace Row
 
@@ -480,16 +453,6 @@ struct WorkspaceRowView: View {
             if !isDeleting {
                 // ── 路径 / 打开 ──
                 if let path = workspacePath {
-                    Button {
-                        copyPathToPasteboard(path)
-                    } label: {
-                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        openInFinder(path)
-                    } label: {
-                        Label("sidebar.openInFinder".localized, systemImage: "folder")
-                    }
                     Menu {
                         ForEach(ExternalEditor.allCases, id: \.self) { editor in
                             Button {
@@ -671,7 +634,7 @@ struct AIMergeResultSheet: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .frame(maxHeight: 200)
-                                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                                .background(Color.primary.opacity(0.06))
                                 .cornerRadius(4)
                             },
                             label: {

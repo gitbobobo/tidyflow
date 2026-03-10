@@ -2,8 +2,6 @@ import SwiftUI
 import TidyFlowShared
 
 #if os(macOS)
-import AppKit
-
 // MARK: - macOS Git 冲突向导视图
 
 /// macOS Git 冲突向导

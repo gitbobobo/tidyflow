@@ -1,11 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
-
 struct ToolCardView: View {
     let name: String
     let callID: String?
@@ -348,14 +342,6 @@ struct ToolCardView: View {
                 .foregroundColor(.accentColor)
             }
 
-            if section.copyable {
-                Button("复制") {
-                    copyToClipboard(section.content)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundColor(.accentColor)
-            }
         }
     }
 
@@ -482,14 +468,5 @@ struct ToolCardView: View {
         default:
             return "wrench.and.screwdriver"
         }
-    }
-
-    private func copyToClipboard(_ text: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #else
-        UIPasteboard.general.string = text
-        #endif
     }
 }

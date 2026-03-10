@@ -1,11 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
-
 /// 独立 Diff 渲染组件，视觉对齐 VS Code / GitHub 风格
 struct UnifiedDiffView: View {
     let diff: ParsedDiff
@@ -111,13 +105,7 @@ struct UnifiedDiffView: View {
     }
 
     private var rowHeight: CGFloat {
-        #if os(macOS)
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        return ceil(font.ascender - font.descender + font.leading)
-        #else
-        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        return ceil(font.lineHeight)
-        #endif
+        14
     }
 
     private func rowBackground(_ kind: DiffRowKind) -> Color {
