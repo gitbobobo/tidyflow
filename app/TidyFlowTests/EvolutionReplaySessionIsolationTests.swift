@@ -186,6 +186,68 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
         XCTAssertNotEqual(ctx1, ctx2, "不同 aiTool 的 Context 应不相等")
     }
 
+    // MARK: - WI-005: 门禁生命周期与隔离护栏
+
+    /// 验证 clearAll + setCurrentSessionId 不会让旧 cycle 的会话事件泄漏到新 cycle
+    func testNewCycleDoesNotInheritOldCycleSubscriptions() {
+        let store = AIChatStore()
+
+        // 旧 cycle 的会话
+        store.setCurrentSessionId("cycle-old-session")
+        store.addSubscription("cycle-old-aux")
+        XCTAssertEqual(store.subscribedSessionIds.count, 2)
+
+        // 模拟新 cycle 开始：clearAll 重置状态
+        store.clearAll()
+        store.setCurrentSessionId("cycle-new-session")
+
+        XCTAssertFalse(store.subscribedSessionIds.contains("cycle-old-session"),
+                       "新 cycle 不应继承旧 cycle 的会话订阅")
+        XCTAssertFalse(store.subscribedSessionIds.contains("cycle-old-aux"),
+                       "新 cycle 不应继承旧 cycle 的辅助订阅")
+        XCTAssertTrue(store.subscribedSessionIds.contains("cycle-new-session"),
+                      "新 cycle 的当前会话应在订阅集合中")
+        XCTAssertEqual(store.subscribedSessionIds.count, 1,
+                       "新 cycle 应只有一个订阅会话")
+    }
+
+    /// 验证多次 clearAll 调用的幂等性
+    func testMultipleClearAllCallsAreIdempotent() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("session-x")
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m1", role: "user")],
+            isStreaming: false
+        )
+
+        store.clearAll()
+        store.clearAll()
+        store.clearAll()
+
+        XCTAssertTrue(store.subscribedSessionIds.isEmpty, "多次 clearAll 后订阅集合应为空")
+        XCTAssertNil(store.currentSessionId, "多次 clearAll 后 currentSessionId 应为 nil")
+        XCTAssertTrue(store.messages.isEmpty, "多次 clearAll 后消息列表应为空")
+    }
+
+    /// 验证跨项目的 Context 不会发生 hash 碰撞
+    func testCoordinatorContextHashIsolationAcrossProjects() {
+        let ctx1 = AISessionHistoryCoordinator.Context(
+            project: "projectA",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "same-session"
+        )
+        let ctx2 = AISessionHistoryCoordinator.Context(
+            project: "projectB",
+            workspace: "default",
+            aiTool: .claude_code,
+            sessionId: "same-session"
+        )
+        // 使用 Set 测试 hash 隔离
+        let set: Set<AISessionHistoryCoordinator.Context> = [ctx1, ctx2]
+        XCTAssertEqual(set.count, 2, "不同项目的 Context 在 Set 中不应碰撞")
+    }
+
     private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

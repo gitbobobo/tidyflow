@@ -179,4 +179,77 @@ final class WorkspaceSharedStateSemanticsTests: XCTestCase {
                        "切换工作区后旧工作区不应为选中态")
         XCTAssertTrue(machine.isSelected(projectName: "P", workspaceName: "feature-b"))
     }
+
+    // MARK: - WI-005: 门禁生命周期与一致性回归
+
+    /// 验证多项目场景下 clear + restore 不会把旧项目状态带入新项目
+    func testClearAndRestore_doesNotLeakOldProjectState() {
+        let machine = WorkspaceViewStateMachine()
+
+        // 旧项目状态
+        let oldId = UUID()
+        machine.apply(.select(projectName: "OldProject", workspaceName: "main", projectId: oldId))
+        XCTAssertTrue(machine.isSelected(projectName: "OldProject", workspaceName: "main"))
+
+        // 切换项目：clear + restore 新项目
+        machine.apply(.clear)
+        machine.apply(.restore(projectName: "NewProject", workspaceName: "main"))
+
+        XCTAssertFalse(machine.isSelected(projectName: "OldProject", workspaceName: "main"),
+                       "clear 后旧项目不应为选中态")
+        XCTAssertTrue(machine.isSelected(projectName: "NewProject", workspaceName: "main"),
+                      "restore 后新项目应为选中态")
+        XCTAssertNil(machine.selected?.projectId,
+                     "restore 不应继承旧项目的 UUID")
+    }
+
+    /// 验证多工作区快速切换的状态一致性：
+    /// 连续切换多个工作区后，只有最后一个应处于选中态
+    func testRapidWorkspaceSwitching_onlyLastSelected() {
+        let machine = WorkspaceViewStateMachine()
+        let workspaces = (1...10).map { "ws-\($0)" }
+
+        for ws in workspaces {
+            machine.apply(.select(projectName: "P", workspaceName: ws, projectId: nil))
+        }
+
+        // 只有最后一个应选中
+        for ws in workspaces.dropLast() {
+            XCTAssertFalse(machine.isSelected(projectName: "P", workspaceName: ws),
+                           "快速切换后只有最后工作区应选中，但 \(ws) 仍为选中态")
+        }
+        XCTAssertTrue(machine.isSelected(projectName: "P", workspaceName: "ws-10"))
+    }
+
+    /// 验证 globalKey 在跨项目跨工作区场景下的唯一性
+    func testGlobalKey_uniquenessAcrossProjectsAndWorkspaces() {
+        let combinations = [
+            ("P1", "W1"), ("P1", "W2"), ("P2", "W1"), ("P2", "W2"),
+            ("P1:W", "1"), // 测试包含分隔符的项目名
+        ]
+        var keys = Set<String>()
+        for (proj, ws) in combinations {
+            let state = WorkspaceViewState(projectName: proj, workspaceName: ws)
+            let inserted = keys.insert(state.globalKey).inserted
+            XCTAssertTrue(inserted, "globalKey '\(state.globalKey)' 不应与其他组合碰撞")
+        }
+    }
+
+    /// 验证恢复状态在门禁周期结束后可被完全清除
+    func testGateLifecycle_restoreAndClear_fullCleanup() {
+        let machine = WorkspaceViewStateMachine()
+
+        // 模拟 verify 阶段的恢复
+        machine.apply(.restore(projectName: "Proj", workspaceName: "verify-ws"))
+        XCTAssertTrue(machine.selected?.isRestored == true)
+
+        // 门禁通过后 clear
+        machine.apply(.clear)
+        XCTAssertNil(machine.selected, "门禁通过后 clear 应完全清除状态")
+
+        // 进入下一阶段
+        machine.apply(.select(projectName: "Proj", workspaceName: "next-ws", projectId: nil))
+        XCTAssertFalse(machine.selected?.isRestored == true,
+                       "新阶段不应继承上一阶段的 isRestored 标记")
+    }
 }

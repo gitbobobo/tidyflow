@@ -14,7 +14,7 @@ struct AISessionHistoryCoordinator {
 
     /// 唯一标识一个 AI 会话的四元组。
     /// 历史加载必须携带完整上下文，不得仅用 sessionId 做宽松匹配。
-    struct Context: Equatable {
+    struct Context: Equatable, Hashable {
         let project: String
         let workspace: String
         let aiTool: AIChatTool

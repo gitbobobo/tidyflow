@@ -334,4 +334,82 @@ final class TerminalListDisplayPhaseTests: XCTestCase {
             name: termId, icon: nil, remoteSubscribers: []
         )
     }
+
+    // MARK: - WI-005: 多项目多工作区隔离护栏
+
+    /// 验证大量终端在多项目多工作区下的过滤正确性
+    func testIsolation_manyProjectsAndWorkspaces_correctFiltering() {
+        var terminals: [TerminalSessionInfo] = []
+        // 生成 3 项目 × 3 工作区 × 5 终端 = 45 终端
+        for p in 1...3 {
+            for w in 1...3 {
+                for t in 1...5 {
+                    terminals.append(makeTerminal(
+                        termId: "t-p\(p)-w\(w)-\(t)",
+                        project: "proj\(p)",
+                        workspace: "ws\(w)"
+                    ))
+                }
+            }
+        }
+
+        // 每个项目+工作区组合应精确过滤出 5 个终端
+        for p in 1...3 {
+            for w in 1...3 {
+                let phase = TerminalListDisplayPhase.from(
+                    project: "proj\(p)", workspace: "ws\(w)",
+                    allTerminals: terminals, pinnedIds: []
+                )
+                if case .content(let result) = phase {
+                    XCTAssertEqual(result.count, 5,
+                                   "proj\(p)/ws\(w) 应有 5 个终端，实际 \(result.count)")
+                    for info in result {
+                        XCTAssertTrue(info.termId.hasPrefix("t-p\(p)-w\(w)-"),
+                                      "终端 \(info.termId) 不属于 proj\(p)/ws\(w)")
+                    }
+                } else {
+                    XCTFail("proj\(p)/ws\(w) 应返回 .content")
+                }
+            }
+        }
+    }
+
+    /// 验证不存在的项目/工作区组合返回空
+    func testIsolation_nonexistentProjectWorkspace_returnsEmpty() {
+        let terminals = [
+            makeTerminal(termId: "t1", project: "existingProj", workspace: "existingWs"),
+        ]
+        let phase = TerminalListDisplayPhase.from(
+            project: "nonexistent", workspace: "nonexistent",
+            allTerminals: terminals, pinnedIds: []
+        )
+        if case .empty = phase {
+            // 预期结果
+        } else {
+            XCTFail("不存在的项目/工作区组合应返回空态")
+        }
+    }
+
+    /// 验证 pinned 终端不会跨项目/工作区泄漏
+    func testPinnedTerminals_doNotLeakAcrossWorkspaces() {
+        let terminals = [
+            makeTerminal(termId: "t-p1-w1", project: "p1", workspace: "w1"),
+            makeTerminal(termId: "t-p1-w2", project: "p1", workspace: "w2"),
+            makeTerminal(termId: "t-p2-w1", project: "p2", workspace: "w1"),
+        ]
+        // pin p2/w1 的终端，但从 p1/w1 视角查看
+        let phase = TerminalListDisplayPhase.from(
+            project: "p1", workspace: "w1",
+            allTerminals: terminals, pinnedIds: ["t-p2-w1"]
+        )
+        if case .content(let result) = phase {
+            let ids = Set(result.map(\.termId))
+            XCTAssertFalse(ids.contains("t-p2-w1"),
+                           "其他项目的 pinned 终端不应出现在当前项目/工作区视图")
+            XCTAssertTrue(ids.contains("t-p1-w1"),
+                          "当前工作区的终端应保留")
+        } else {
+            XCTFail("p1/w1 应有终端内容")
+        }
+    }
 }
