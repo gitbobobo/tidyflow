@@ -26,8 +26,11 @@ class WSClient: NSObject, ObservableObject {
         let json: [String: Any]
     }
     // MARK: - MessagePack 编解码器（跨 extension 文件访问）
-    let msgpackEncoder = MessagePackEncoder()
-    let msgpackDecoder = MessagePackDecoder()
+    // MessagePacker 的 Encoder/Decoder 内部持有可变 storage/codingPath，
+    // 在多条 reducer 队列并发解码时复用实例会发生数据竞争，重则直接崩溃。
+    // 这里统一改为按次创建，避免热路径共享可变状态。
+    func makeMessagePackEncoder() -> MessagePackEncoder { MessagePackEncoder() }
+    func makeMessagePackDecoder() -> MessagePackDecoder { MessagePackDecoder() }
     @Published private(set) var isConnected: Bool = false
     /// 标记当前断连是否为主动行为（disconnect/reconnect），用于区分意外断连
     var isIntentionalDisconnect: Bool = false

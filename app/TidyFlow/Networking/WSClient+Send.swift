@@ -853,7 +853,7 @@ extension WSClient {
             "client_ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
         let codable = AnyCodable.from(envelope)
-        return try msgpackEncoder.encode(codable)
+        return try makeMessagePackEncoder().encode(codable)
     }
 
     func encodeTypedEnvelope<Body: TypedWSRequest>(_ body: Body, requestId: String?) throws -> Data {
@@ -864,7 +864,7 @@ extension WSClient {
             payload: body,
             clientTs: UInt64(Date().timeIntervalSince1970 * 1000)
         )
-        return try msgpackEncoder.encode(envelope)
+        return try makeMessagePackEncoder().encode(envelope)
     }
 
     // MARK: - Send Messages

@@ -184,11 +184,11 @@ extension WSClient {
     }
 
     private func decodeEnvelopeHeader(_ data: Data) throws -> ServerEnvelopeHeader {
-        try msgpackDecoder.decode(ServerEnvelopeHeader.self, from: data)
+        try makeMessagePackDecoder().decode(ServerEnvelopeHeader.self, from: data)
     }
 
     private func decodeServerEnvelope(_ data: Data) throws -> DecodedServerEnvelope {
-        let envelope = try msgpackDecoder.decode(FallbackServerEnvelope.self, from: data)
+        let envelope = try makeMessagePackDecoder().decode(FallbackServerEnvelope.self, from: data)
         guard let payload = envelope.payload.toDictionary else {
             throw NSError(
                 domain: "WSClient",
@@ -252,7 +252,7 @@ extension WSClient {
             terminalReducerQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    let envelope = try self.msgpackDecoder.decode(
+                    let envelope = try self.makeMessagePackDecoder().decode(
                         TypedServerEnvelope<TerminalOutputBatchPayload>.self,
                         from: data
                     )
@@ -273,7 +273,7 @@ extension WSClient {
             aiReducerQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    let envelope = try self.msgpackDecoder.decode(
+                    let envelope = try self.makeMessagePackDecoder().decode(
                         TypedServerEnvelope<AIRawMessagesUpdatePayload>.self,
                         from: data
                     )
@@ -296,7 +296,7 @@ extension WSClient {
             workspaceReducerQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    let envelope = try self.msgpackDecoder.decode(
+                    let envelope = try self.makeMessagePackDecoder().decode(
                         TypedServerEnvelope<FileChangedPayload>.self,
                         from: data
                     )
@@ -320,7 +320,7 @@ extension WSClient {
             workspaceReducerQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    let envelope = try self.msgpackDecoder.decode(
+                    let envelope = try self.makeMessagePackDecoder().decode(
                         TypedServerEnvelope<GitStatusChangedPayload>.self,
                         from: data
                     )
