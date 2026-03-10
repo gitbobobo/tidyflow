@@ -47,7 +47,9 @@ fn is_cycle_retryable(status: &str, terminal_reason_code: Option<&str>) -> bool 
     }
     // terminal_reason_code 指定可重试的场景
     if let Some(code) = terminal_reason_code {
-        return code == "verify_exhausted" || code == "loop_exhausted";
+        return code == "verify_exhausted"
+            || code == "loop_exhausted"
+            || code == "evo_gate_decision_blocked";
     }
     false
 }

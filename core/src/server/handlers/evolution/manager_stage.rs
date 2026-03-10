@@ -5376,9 +5376,56 @@ impl EvolutionManager {
                 }
                 _ if is_runtime_verify_stage(stage) => {
                     if verify_pass {
-                        entry.terminal_reason_code = None;
-                        entry.terminal_error_message = None;
-                        next_stage = "auto_commit".to_string();
+                        // WI-002: 在 verify 通过后、进入 auto_commit 前消费系统健康门禁裁决
+                        let gate = crate::server::health::evaluate_gate_decision(
+                            &entry.project,
+                            &entry.workspace,
+                            &entry.cycle_id,
+                            entry.verify_iteration,
+                        );
+                        use crate::server::protocol::health::GateVerdict;
+                        match gate.verdict {
+                            GateVerdict::Pass | GateVerdict::Skip => {
+                                entry.terminal_reason_code = None;
+                                entry.terminal_error_message = None;
+                                next_stage = "auto_commit".to_string();
+                            }
+                            GateVerdict::Fail => {
+                                // 门禁失败：如果还有重试次数则重试，否则标记失败
+                                if entry.verify_iteration + 1 < entry.verify_iteration_limit {
+                                    entry.terminal_reason_code = None;
+                                    entry.terminal_error_message = Some(
+                                        format!("质量门禁阻断: {:?}", gate.failure_reasons),
+                                    );
+                                    entry.verify_iteration += 1;
+                                    let reimplement_stage =
+                                        reimplement_stage_name(entry.verify_iteration);
+                                    Self::ensure_runtime_stage_state_pending(
+                                        &mut entry.stage_statuses,
+                                        &mut entry.stage_tool_call_counts,
+                                        &reimplement_stage,
+                                    );
+                                    entry.stage_statuses.insert(
+                                        reimplement_stage.clone(),
+                                        "pending".to_string(),
+                                    );
+                                    entry
+                                        .stage_tool_call_counts
+                                        .insert(reimplement_stage.clone(), 0);
+                                    entry.stage_started_ats.remove(&reimplement_stage);
+                                    entry.stage_duration_ms.remove(&reimplement_stage);
+                                    next_stage = reimplement_stage;
+                                } else {
+                                    entry.status = "failed_exhausted".to_string();
+                                    entry.terminal_reason_code =
+                                        Some("evo_gate_decision_blocked".to_string());
+                                    entry.terminal_error_message = Some(
+                                        format!("质量门禁阻断: {:?}", gate.failure_reasons),
+                                    );
+                                    next_stage = previous.clone();
+                                }
+                            }
+                        }
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;

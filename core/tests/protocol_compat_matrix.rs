@@ -82,7 +82,11 @@ impl ServerGuard {
             loop {
                 match reader.read_line(&mut line) {
                     Ok(0) => {
-                        std::thread::sleep(Duration::from_millis(50));
+                        // EOF：服务器进程 stdout 已关闭，进程可能已退出
+                        let _ = tx.send(Err(
+                            "服务器进程 stdout 已关闭（进程可能已退出）".into(),
+                        ));
+                        return;
                     }
                     Ok(_) if line.contains("TIDYFLOW_BOOTSTRAP") => {
                         let _ = tx.send(Ok(()));

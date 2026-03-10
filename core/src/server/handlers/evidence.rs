@@ -993,6 +993,71 @@ fn sanitize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+/// 按 run_id 过滤并验证证据条目的作用域一致性（WI-003）
+///
+/// 返回 (匹配条目数, 问题列表)。用于门禁和脚本共享的证据校验逻辑。
+pub fn validate_evidence_for_run_id(
+    workspace_root: &Path,
+    run_id: &str,
+    required_devices: &[&str],
+) -> (usize, Vec<EvidenceIssueInfo>) {
+    let evidence_root = workspace_root.join(EVIDENCE_ROOT_RELATIVE);
+    let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
+    let mut issues = Vec::new();
+
+    if !index_file.exists() {
+        issues.push(issue_warning(
+            "index_missing",
+            format!("证据索引文件不存在: {}", index_file.display()),
+        ));
+        return (0, issues);
+    }
+
+    let index = match load_and_validate_index(&index_file, &evidence_root) {
+        Ok(idx) => idx,
+        Err(err) => {
+            issues.push(issue_warning("index_invalid", err));
+            return (0, issues);
+        }
+    };
+
+    // 按 run_id 过滤
+    let run_items: Vec<&ValidatedEvidenceItem> = index
+        .items
+        .iter()
+        .filter(|item| item.item_id.contains(run_id) || item.path.contains(run_id))
+        .collect();
+
+    // 检查每个设备是否有证据
+    for device in required_devices {
+        let has_device = run_items.iter().any(|i| i.device_type == *device);
+        if !has_device {
+            issues.push(issue_warning(
+                "device_missing_for_run",
+                format!(
+                    "设备 {} 在 run_id={} 中无证据条目",
+                    device, run_id
+                ),
+            ));
+        }
+    }
+
+    // 检查产物文件实际存在
+    for item in &run_items {
+        if !item.full_path.exists() {
+            issues.push(issue_warning(
+                "artifact_missing_for_run",
+                format!(
+                    "run_id={} 的证据产物不存在: {}",
+                    run_id, item.path
+                ),
+            ));
+        }
+    }
+
+    (run_items.len(), issues)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1132,5 +1197,66 @@ mod tests {
         assert_eq!(chunk.offset, 2);
         assert_eq!(chunk.next_offset, 6);
         assert!(!chunk.eof);
+    }
+
+    #[test]
+    fn validate_evidence_for_run_id_detects_missing_device() {
+        let dir = tempdir().expect("tempdir");
+        let evidence_root = dir.path().join(".tidyflow/evidence");
+        fs::create_dir_all(evidence_root.join("iphone")).expect("create iphone dir");
+        fs::write(evidence_root.join("iphone/a.png"), b"1").expect("write file");
+
+        let index_file = evidence_root.join("evidence.index.json");
+        fs::write(
+            &index_file,
+            r#"{
+                "$schema_version":"1.0",
+                "updated_at":"2026-03-10T08:00:00Z",
+                "items":[
+                    {"id":"ev-run1-iphone","device_type":"iphone","type":"screenshot","order":1,"path":"iphone/a.png","title":"t","description":"d"}
+                ]
+            }"#,
+        )
+        .expect("write index");
+
+        let (count, issues) =
+            validate_evidence_for_run_id(dir.path(), "run1", &["iphone", "mac"]);
+        assert_eq!(count, 1);
+        // mac 设备应该报缺失
+        assert!(issues.iter().any(|i| i.code == "device_missing_for_run"
+            && i.message.contains("mac")));
+    }
+
+    #[test]
+    fn validate_evidence_for_run_id_passes_with_all_devices() {
+        let dir = tempdir().expect("tempdir");
+        let evidence_root = dir.path().join(".tidyflow/evidence");
+        fs::create_dir_all(evidence_root.join("iphone")).expect("create dir");
+        fs::create_dir_all(evidence_root.join("mac")).expect("create dir");
+        fs::write(evidence_root.join("iphone/a.png"), b"1").expect("write");
+        fs::write(evidence_root.join("mac/a.log"), b"1").expect("write");
+
+        let index_file = evidence_root.join("evidence.index.json");
+        fs::write(
+            &index_file,
+            r#"{
+                "$schema_version":"1.0",
+                "updated_at":"2026-03-10T08:00:00Z",
+                "items":[
+                    {"id":"ev-run2-iphone","device_type":"iphone","type":"screenshot","order":1,"path":"iphone/a.png","title":"t","description":"d"},
+                    {"id":"ev-run2-mac","device_type":"mac","type":"log","order":1,"path":"mac/a.log","title":"t","description":"d"}
+                ]
+            }"#,
+        )
+        .expect("write index");
+
+        let (count, issues) =
+            validate_evidence_for_run_id(dir.path(), "run2", &["iphone", "mac"]);
+        assert_eq!(count, 2);
+        assert!(
+            issues.is_empty(),
+            "expected no issues, got: {:?}",
+            issues
+        );
     }
 }
