@@ -33,7 +33,6 @@ struct MobileAIChatView: View {
     @State private var projectionStore = AIChatShellProjectionStore()
     @State private var floatingComposerHeight: CGFloat = 0
 
-    private let floatingComposerSpacing: CGFloat = 10
     private let floatingComposerMinimumReserveHeight: CGFloat = 152
 
     private var aiToolBinding: Binding<AIChatTool> {
@@ -388,7 +387,8 @@ struct MobileAIChatView: View {
     }
 
     private var reservedMessageBottomInset: CGFloat {
-        max(floatingComposerHeight, floatingComposerMinimumReserveHeight) + floatingComposerSpacing
+        max(floatingComposerHeight, floatingComposerMinimumReserveHeight) +
+            AIChatComposerLayoutSemantics.messageBottomClearance
     }
 
     private var inputArea: some View {
