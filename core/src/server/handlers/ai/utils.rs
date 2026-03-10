@@ -118,7 +118,13 @@ impl AiStreamSnapshot {
                 self.ensure_message(message_id, role);
             }
             crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part } => {
-                let msg_idx = self.ensure_message(message_id, "assistant");
+                let existing_role = self
+                    .message_index_by_id
+                    .get(message_id)
+                    .and_then(|idx| self.messages.get(*idx))
+                    .map(|message| message.role.clone())
+                    .unwrap_or_else(|| "assistant".to_string());
+                let msg_idx = self.ensure_message(message_id, &existing_role);
                 if let Some((part_msg_idx, part_idx)) = self.part_index_by_id.get(&part.id).copied()
                 {
                     if part_msg_idx == msg_idx && part_idx < self.messages[msg_idx].parts.len() {
@@ -144,7 +150,13 @@ impl AiStreamSnapshot {
                 field,
                 delta,
             } => {
-                let msg_idx = self.ensure_message(message_id, "assistant");
+                let existing_role = self
+                    .message_index_by_id
+                    .get(message_id)
+                    .and_then(|idx| self.messages.get(*idx))
+                    .map(|message| message.role.clone())
+                    .unwrap_or_else(|| "assistant".to_string());
+                let msg_idx = self.ensure_message(message_id, &existing_role);
                 let (part_msg_idx, part_idx) = self.ensure_part(msg_idx, part_id, part_type);
                 if part_msg_idx < self.messages.len()
                     && part_idx < self.messages[part_msg_idx].parts.len()
@@ -2556,6 +2568,57 @@ mod tests {
         let third = snapshot.touch_activity(false);
         assert!(second > first);
         assert!(third > second);
+    }
+
+    #[test]
+    fn stream_snapshot_part_updates_should_preserve_existing_user_role() {
+        let mut snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                message_id: "user-1".to_string(),
+                role: "user".to_string(),
+            },
+            None,
+        );
+        snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated {
+                message_id: "user-1".to_string(),
+                part: crate::server::protocol::ai::PartInfo {
+                    id: "user-1-text".to_string(),
+                    part_type: "text".to_string(),
+                    text: Some("阶段提示".to_string()),
+                    mime: None,
+                    filename: None,
+                    url: None,
+                    synthetic: None,
+                    ignored: None,
+                    source: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_kind: None,
+                    tool_view: None,
+                },
+            },
+            None,
+        );
+        assert_eq!(snapshot.messages.len(), 1);
+        assert_eq!(snapshot.messages[0].role, "user");
+
+        snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id: "user-1".to_string(),
+                part_id: "user-1-text".to_string(),
+                part_type: "text".to_string(),
+                field: "text".to_string(),
+                delta: "\n补充上下文".to_string(),
+            },
+            None,
+        );
+        assert_eq!(snapshot.messages[0].role, "user");
+        assert_eq!(
+            snapshot.messages[0].parts[0].text.as_deref(),
+            Some("阶段提示\n补充上下文")
+        );
     }
 
     #[test]

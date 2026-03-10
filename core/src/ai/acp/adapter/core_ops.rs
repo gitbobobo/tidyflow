@@ -1722,7 +1722,7 @@ impl AcpAgent {
                     Self::push_chunk_message(
                         &mut messages,
                         &self.profile.message_id_prefix,
-                        "assistant",
+                        Self::role_for_session_update(&session_update),
                         part_type,
                         &text,
                     );
