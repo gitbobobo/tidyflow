@@ -178,26 +178,28 @@ private struct TreeRowActivityIndicatorsView: View {
     let indicators: [TreeRowActivityIndicator]
 
     var body: some View {
-        indicatorIcons(maskStyle: false)
-            .shimmering(
-                active: !indicators.isEmpty,
-                animation: .linear(duration: 1.8).repeatForever(autoreverses: false),
-                gradient: Gradient(colors: [
-                    .clear,
-                    Color.white.opacity(0.85),
-                    .clear
-                ]),
-                bandSize: 0.45,
-                mode: .overlay()
-            )
+        ZStack {
+            indicatorIcons(foregroundStyle: .secondary)
+            indicatorIcons(foregroundStyle: Color.white.opacity(0.95))
+                .shimmering(
+                    active: !indicators.isEmpty,
+                    animation: .linear(duration: 1.8).repeatForever(autoreverses: false),
+                    gradient: Gradient(colors: [
+                        .clear,
+                        .white,
+                        .clear
+                    ]),
+                    bandSize: 0.45,
+                    mode: .mask
+                )
+        }
     }
 
-    @ViewBuilder
-    private func indicatorIcons(maskStyle: Bool) -> some View {
+    private func indicatorIcons(foregroundStyle: Color) -> some View {
         HStack(spacing: 4) {
             ForEach(indicators) { indicator in
                 CommandIconView(iconName: indicator.iconName, size: 11)
-                    .foregroundColor(maskStyle ? .white : .secondary)
+                    .foregroundStyle(foregroundStyle)
                     .frame(width: 12, height: 12)
             }
         }
