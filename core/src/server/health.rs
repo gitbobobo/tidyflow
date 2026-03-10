@@ -703,6 +703,9 @@ pub fn evaluate_gate_decision(
 mod tests {
     use super::*;
 
+    /// 序列化访问全局 HealthRegistry 的测试，避免并行测试间的锁竞争
+    static GATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn make_incident(
         id: &str,
         severity: IncidentSeverity,
@@ -815,6 +818,7 @@ mod tests {
 
     #[test]
     fn gate_decision_pass_when_healthy() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
         // 创建一个独立的注册表来测试门禁裁决逻辑
         let decision = evaluate_gate_decision("proj", "ws", "cycle-1", 0);
         use crate::server::protocol::health::{GateVerdict, SystemHealthStatus};
@@ -833,8 +837,10 @@ mod tests {
 
     #[test]
     fn gate_decision_fail_when_critical_incident() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
         let registry = global();
-        let mut reg = registry.try_write().unwrap();
+        // 使用 blocking_write() 代替 try_write()，避免并行测试时锁竞争导致 TryLockError panic
+        let mut reg = registry.blocking_write();
         // 注入 critical incident
         reg.active_incidents.insert(
             "gate_test_critical".to_string(),
@@ -854,14 +860,16 @@ mod tests {
         assert_eq!(decision.retry_count, 1);
 
         // 清理
-        let mut reg = registry.try_write().unwrap();
+        let mut reg = registry.blocking_write();
         reg.active_incidents.remove("gate_test_critical");
     }
 
     #[test]
     fn gate_decision_isolated_by_project_workspace() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
         let registry = global();
-        let mut reg = registry.try_write().unwrap();
+        // 使用 blocking_write() 代替 try_write()，避免并行测试时锁竞争导致 TryLockError panic
+        let mut reg = registry.blocking_write();
         reg.active_incidents.insert(
             "gate_isolation_critical".to_string(),
             make_incident(
@@ -885,7 +893,7 @@ mod tests {
         assert_eq!(decision_a.verdict, GateVerdict::Fail);
 
         // 清理
-        let mut reg = registry.try_write().unwrap();
+        let mut reg = registry.blocking_write();
         reg.active_incidents.remove("gate_isolation_critical");
     }
 }
