@@ -392,10 +392,7 @@ fn probe_workspace_recovery(app_state: &SharedAppState) -> Vec<HealthIncident> {
             if !meta.needs_attention() {
                 continue;
             }
-            let incident_id = format!(
-                "workspace_recovery_pending:{}:{}",
-                project.name, ws.name
-            );
+            let incident_id = format!("workspace_recovery_pending:{}:{}", project.name, ws.name);
             let cursor_hint = meta
                 .recovery_cursor
                 .as_deref()

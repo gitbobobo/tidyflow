@@ -21,7 +21,9 @@ mod stream;
 mod utils;
 
 pub use ai_state::AIState;
-pub(crate) use session_index_store::{AiSessionIndexPage, AiSessionIndexStore, AiSessionContextSnapshotStored};
+pub(crate) use session_index_store::{
+    AiSessionContextSnapshotStored, AiSessionIndexPage, AiSessionIndexStore,
+};
 pub(crate) use utils::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, emit_ops_for_cache_op,
     ensure_agent, infer_selection_hint_from_messages, map_ai_messages_for_wire,
@@ -163,7 +165,13 @@ pub(crate) async fn list_session_context_snapshots(
     project_name: &str,
     workspace_name: &str,
     filter_ai_tool: Option<&str>,
-) -> Result<Vec<(session_index_store::AiSessionIndexEntry, session_index_store::AiSessionContextSnapshotStored)>, String> {
+) -> Result<
+    Vec<(
+        session_index_store::AiSessionIndexEntry,
+        session_index_store::AiSessionContextSnapshotStored,
+    )>,
+    String,
+> {
     let store = {
         let ai = ai_state.lock().await;
         ai.session_index_store.clone()

@@ -670,7 +670,10 @@ fn test_server_message_context_snapshot_result_type() {
         snapshot: None,
     };
     let j = serde_json::to_value(&msg).unwrap();
-    assert_eq!(j["type"].as_str().unwrap(), "ai_session_context_snapshot_result");
+    assert_eq!(
+        j["type"].as_str().unwrap(),
+        "ai_session_context_snapshot_result"
+    );
     assert_eq!(j["project_name"].as_str().unwrap(), "proj");
     assert!(j.get("session_id").is_some());
 }
@@ -684,7 +687,10 @@ fn test_server_message_cross_context_snapshots_result_type() {
         snapshots: vec![],
     };
     let j = serde_json::to_value(&msg).unwrap();
-    assert_eq!(j["type"].as_str().unwrap(), "ai_cross_context_snapshots_result");
+    assert_eq!(
+        j["type"].as_str().unwrap(),
+        "ai_cross_context_snapshots_result"
+    );
 }
 
 #[test]

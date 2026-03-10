@@ -126,7 +126,11 @@ fn build_context_from_snapshot(
     let mut parts = Vec::new();
     if let Some(summary) = &snapshot.context_summary {
         if !summary.trim().is_empty() {
-            parts.push(format!("## 会话摘要（来自 {}）\n{}", snapshot.session_id, summary.trim()));
+            parts.push(format!(
+                "## 会话摘要（来自 {}）\n{}",
+                snapshot.session_id,
+                summary.trim()
+            ));
         }
     }
     if let Some(hint) = &snapshot.selection_hint {

@@ -269,10 +269,7 @@ impl WorkspaceRecoveryMeta {
 
     /// 是否处于中断或正在恢复中（需要关注的状态）
     pub fn needs_attention(&self) -> bool {
-        matches!(
-            self.recovery_state.as_str(),
-            "interrupted" | "recovering"
-        )
+        matches!(self.recovery_state.as_str(), "interrupted" | "recovering")
     }
 }
 

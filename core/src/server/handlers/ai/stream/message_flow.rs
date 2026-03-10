@@ -227,7 +227,10 @@ async fn save_done_context_snapshot(
     session_id: &str,
 ) {
     let message_count = snapshot.messages.len() as u32;
-    let context_summary = snapshot.messages.iter().rev()
+    let context_summary = snapshot
+        .messages
+        .iter()
+        .rev()
         .find(|m| m.role == "assistant")
         .and_then(|m| m.parts.first())
         .and_then(|p| p.text.as_ref())
@@ -239,13 +242,14 @@ async fn save_done_context_snapshot(
                 String::from_utf8_lossy(&bytes[..500]).into_owned()
             }
         });
-    let ctx_snapshot = crate::server::handlers::ai::session_index_store::AiSessionContextSnapshotStored {
-        snapshot_at_ms: now_ms(),
-        message_count,
-        context_summary,
-        selection_hint: snapshot.selection_hint.clone(),
-        context_remaining_percent: None,
-    };
+    let ctx_snapshot =
+        crate::server::handlers::ai::session_index_store::AiSessionContextSnapshotStored {
+            snapshot_at_ms: now_ms(),
+            message_count,
+            context_summary,
+            selection_hint: snapshot.selection_hint.clone(),
+            context_remaining_percent: None,
+        };
     if let Err(e) = super::super::save_session_context_snapshot(
         ai_state,
         project_name,

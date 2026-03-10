@@ -1453,17 +1453,19 @@ pub(crate) async fn query_ai_cross_context_snapshots(
 
     let snapshots = entries
         .into_iter()
-        .map(|(entry, stored)| crate::server::protocol::ai::AiSessionContextSnapshot {
-            project_name: entry.project_name,
-            workspace_name: entry.workspace_name,
-            ai_tool: entry.ai_tool,
-            session_id: entry.session_id,
-            snapshot_at_ms: stored.snapshot_at_ms,
-            message_count: stored.message_count,
-            context_summary: stored.context_summary,
-            selection_hint: stored.selection_hint,
-            context_remaining_percent: stored.context_remaining_percent,
-        })
+        .map(
+            |(entry, stored)| crate::server::protocol::ai::AiSessionContextSnapshot {
+                project_name: entry.project_name,
+                workspace_name: entry.workspace_name,
+                ai_tool: entry.ai_tool,
+                session_id: entry.session_id,
+                snapshot_at_ms: stored.snapshot_at_ms,
+                message_count: stored.message_count,
+                context_summary: stored.context_summary,
+                selection_hint: stored.selection_hint,
+                context_remaining_percent: stored.context_remaining_percent,
+            },
+        )
         .collect();
 
     Ok(ServerMessage::AICrossContextSnapshotsResult {

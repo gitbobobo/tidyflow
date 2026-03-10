@@ -449,14 +449,19 @@ impl AiSessionIndexStore {
             .await
             .map_err(|e| format!("failed to inspect ai session index schema: {}", e))?
             .into_iter()
-            .any(|row| row.try_get::<String, _>("name").unwrap_or_default() == "context_snapshot_json");
+            .any(|row| {
+                row.try_get::<String, _>("name").unwrap_or_default() == "context_snapshot_json"
+            });
         if !has_context_snapshot {
-            sqlx::query(
-                "ALTER TABLE ai_session_index ADD COLUMN context_snapshot_json TEXT",
-            )
-            .execute(&pool)
-            .await
-            .map_err(|e| format!("failed to migrate ai session index schema (context_snapshot): {}", e))?;
+            sqlx::query("ALTER TABLE ai_session_index ADD COLUMN context_snapshot_json TEXT")
+                .execute(&pool)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "failed to migrate ai session index schema (context_snapshot): {}",
+                        e
+                    )
+                })?;
         }
 
         self.schema_initialized.store(true, Ordering::Release);
@@ -536,9 +541,11 @@ impl AiSessionIndexStore {
         .await
         .map_err(|e| format!("failed to get context snapshot: {}", e))?;
 
-        let json_str: Option<String> = row
-            .as_ref()
-            .and_then(|r| r.try_get::<Option<String>, _>("context_snapshot_json").ok().flatten());
+        let json_str: Option<String> = row.as_ref().and_then(|r| {
+            r.try_get::<Option<String>, _>("context_snapshot_json")
+                .ok()
+                .flatten()
+        });
 
         match json_str {
             None => Ok(None),
@@ -585,7 +592,8 @@ impl AiSessionIndexStore {
             let json_str: Option<String> = row.try_get("context_snapshot_json").ok().flatten();
             let entry = map_row_to_entry(row);
             if let Some(json) = json_str {
-                if let Ok(snapshot) = serde_json::from_str::<AiSessionContextSnapshotStored>(&json) {
+                if let Ok(snapshot) = serde_json::from_str::<AiSessionContextSnapshotStored>(&json)
+                {
                     result.push((entry, snapshot));
                 }
             }
@@ -1056,7 +1064,16 @@ mod tests {
 
         for (id, title) in [("s1", "会话1"), ("s2", "会话2")] {
             store
-                .record_created("proj2", "ws", "codex", "/tmp/proj2", id, title, 100, AiSessionOrigin::User)
+                .record_created(
+                    "proj2",
+                    "ws",
+                    "codex",
+                    "/tmp/proj2",
+                    id,
+                    title,
+                    100,
+                    AiSessionOrigin::User,
+                )
                 .await
                 .expect("record");
         }
@@ -1068,9 +1085,15 @@ mod tests {
             selection_hint: None,
             context_remaining_percent: None,
         };
-        store.save_context_snapshot("proj2", "ws", "codex", "s1", &snap).await.expect("save");
+        store
+            .save_context_snapshot("proj2", "ws", "codex", "s1", &snap)
+            .await
+            .expect("save");
 
-        let list = store.list_context_snapshots("proj2", "ws", None).await.expect("list");
+        let list = store
+            .list_context_snapshots("proj2", "ws", None)
+            .await
+            .expect("list");
         assert_eq!(list.len(), 1, "只有 s1 有快照");
         assert_eq!(list[0].0.session_id, "s1");
         assert_eq!(list[0].1.message_count, 3);

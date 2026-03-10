@@ -204,10 +204,8 @@ mod tests {
             ("proj-b", "main"),
         ];
 
-        let keys: std::collections::HashSet<String> = pairs
-            .iter()
-            .map(|(p, w)| format!("{}:{}", p, w))
-            .collect();
+        let keys: std::collections::HashSet<String> =
+            pairs.iter().map(|(p, w)| format!("{}:{}", p, w)).collect();
 
         assert_eq!(
             keys.len(),
