@@ -1071,3 +1071,155 @@ public struct UnifiedRetryDescriptor: Equatable {
         "\(project):\(workspace)"
     }
 }
+
+// MARK: - 智能演化分析摘要（v1.45: 统一分析契约）
+
+/// 瓶颈类型分类（Core 权威判定，客户端不得重新推导）
+public enum BottleneckKind: String, Codable, CaseIterable {
+    case resource
+    case rateLimit = "rate_limit"
+    case recurringFailure = "recurring_failure"
+    case performanceDegradation = "performance_degradation"
+    case configuration
+    case protocolInconsistency = "protocol_inconsistency"
+}
+
+/// 分析建议的归属范围
+public enum AnalysisScopeLevel: String, Codable, CaseIterable {
+    case system
+    case workspace
+}
+
+/// 优化建议条目
+public struct OptimizationSuggestion: Codable, Equatable {
+    public var suggestionId: String
+    public var scope: AnalysisScopeLevel
+    public var action: String
+    public var summary: String
+    public var priority: Int
+    public var expectedImpact: String?
+    public var context: HealthContext
+
+    enum CodingKeys: String, CodingKey {
+        case suggestionId = "suggestion_id"
+        case scope, action, summary, priority
+        case expectedImpact = "expected_impact"
+        case context
+    }
+
+    public static func from(json: [String: Any]) -> OptimizationSuggestion? {
+        guard let suggestionId = json["suggestion_id"] as? String,
+              let scopeStr = json["scope"] as? String,
+              let scope = AnalysisScopeLevel(rawValue: scopeStr),
+              let action = json["action"] as? String,
+              let summary = json["summary"] as? String,
+              let priority = json["priority"] as? Int else { return nil }
+        return OptimizationSuggestion(
+            suggestionId: suggestionId,
+            scope: scope,
+            action: action,
+            summary: summary,
+            priority: priority,
+            expectedImpact: json["expected_impact"] as? String,
+            context: .from(json: json["context"] as? [String: Any])
+        )
+    }
+}
+
+/// 瓶颈分析条目
+public struct BottleneckEntry: Codable, Equatable {
+    public var bottleneckId: String
+    public var kind: BottleneckKind
+    public var reasonCode: String
+    public var riskScore: Double
+    public var evidenceSummary: String
+    public var context: HealthContext
+    public var relatedIds: [String]
+    public var detectedAt: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case bottleneckId = "bottleneck_id"
+        case kind
+        case reasonCode = "reason_code"
+        case riskScore = "risk_score"
+        case evidenceSummary = "evidence_summary"
+        case context
+        case relatedIds = "related_ids"
+        case detectedAt = "detected_at"
+    }
+
+    public static func from(json: [String: Any]) -> BottleneckEntry? {
+        guard let bottleneckId = json["bottleneck_id"] as? String,
+              let kindStr = json["kind"] as? String,
+              let kind = BottleneckKind(rawValue: kindStr),
+              let reasonCode = json["reason_code"] as? String,
+              let riskScore = json["risk_score"] as? Double,
+              let evidenceSummary = json["evidence_summary"] as? String else { return nil }
+        return BottleneckEntry(
+            bottleneckId: bottleneckId,
+            kind: kind,
+            reasonCode: reasonCode,
+            riskScore: riskScore,
+            evidenceSummary: evidenceSummary,
+            context: .from(json: json["context"] as? [String: Any]),
+            relatedIds: (json["related_ids"] as? [String]) ?? [],
+            detectedAt: (json["detected_at"] as? UInt64) ?? 0
+        )
+    }
+}
+
+/// 智能演化分析摘要
+///
+/// 统一的可机读结构，聚合质量门禁结论、瓶颈识别、风险评分、
+/// 证据摘要和优化建议。按 `(project, workspace, cycle_id)` 隔离。
+public struct EvolutionAnalysisSummary: Codable, Equatable {
+    public var project: String
+    public var workspace: String
+    public var cycleId: String
+    public var gateDecision: GateDecision?
+    public var bottlenecks: [BottleneckEntry]
+    public var overallRiskScore: Double
+    public var healthScore: Double
+    public var pressureLevel: ResourcePressureLevel
+    public var predictiveAnomalyIds: [String]
+    public var suggestions: [OptimizationSuggestion]
+    public var analyzedAt: UInt64
+    public var expiresAt: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case project, workspace
+        case cycleId = "cycle_id"
+        case gateDecision = "gate_decision"
+        case bottlenecks
+        case overallRiskScore = "overall_risk_score"
+        case healthScore = "health_score"
+        case pressureLevel = "pressure_level"
+        case predictiveAnomalyIds = "predictive_anomaly_ids"
+        case suggestions
+        case analyzedAt = "analyzed_at"
+        case expiresAt = "expires_at"
+    }
+
+    public static func from(json: [String: Any]) -> EvolutionAnalysisSummary? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleId = json["cycle_id"] as? String else { return nil }
+        let gateDecision: GateDecision? = (json["gate_decision"] as? [String: Any]).flatMap { GateDecision.from(json: $0) }
+        let bottlenecks = (json["bottlenecks"] as? [[String: Any]])?.compactMap { BottleneckEntry.from(json: $0) } ?? []
+        let suggestions = (json["suggestions"] as? [[String: Any]])?.compactMap { OptimizationSuggestion.from(json: $0) } ?? []
+        return EvolutionAnalysisSummary(
+            project: project,
+            workspace: workspace,
+            cycleId: cycleId,
+            gateDecision: gateDecision,
+            bottlenecks: bottlenecks,
+            overallRiskScore: (json["overall_risk_score"] as? Double) ?? 0.0,
+            healthScore: (json["health_score"] as? Double) ?? 1.0,
+            pressureLevel: ResourcePressureLevel(rawValue: (json["pressure_level"] as? String) ?? "low") ?? .low,
+            predictiveAnomalyIds: (json["predictive_anomaly_ids"] as? [String]) ?? [],
+            suggestions: suggestions,
+            analyzedAt: (json["analyzed_at"] as? UInt64) ?? 0,
+            expiresAt: (json["expires_at"] as? UInt64) ?? 0
+        )
+    }
+}

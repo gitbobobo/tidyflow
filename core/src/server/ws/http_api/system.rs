@@ -42,6 +42,9 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     /// 预测异常摘要列表（v1.44，Core 权威输出）
     #[serde(skip_serializing_if = "Vec::is_empty")]
     predictive_anomalies: Vec<crate::server::protocol::health::PredictiveAnomaly>,
+    /// 智能演化分析摘要列表（v1.45，Core 权威输出，按 (project, workspace, cycle_id) 隔离）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    analysis_summaries: Vec<crate::server::protocol::health::EvolutionAnalysisSummary>,
 }
 
 /// 结构化日志关联上下文摘要（供调试面板快速关联日志与快照）
@@ -172,6 +175,7 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         log_context,
         scheduling_recommendations: health_snapshot.scheduling_recommendations,
         predictive_anomalies: health_snapshot.predictive_anomalies,
+        analysis_summaries: Vec::new(), // WI-002 将实现实际生成逻辑
     }))
 }
 

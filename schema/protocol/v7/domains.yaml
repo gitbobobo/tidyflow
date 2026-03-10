@@ -173,6 +173,34 @@ domains:
   #     - pressure_level: 资源压力级别（Core 综合判定）
   #     - health_score: 综合健康评分（0.0-1.0）
   #     - aggregated_at: 聚合时间（Unix ms）
+  # v1.45: 智能演化分析摘要（向后兼容，旧客户端忽略新字段）
+  # EvolutionAnalysisSummary: 统一分析契约，聚合门禁裁决、瓶颈、风险和建议
+  #   project, workspace, cycle_id: 隔离维度
+  #   gate_decision: 质量门禁裁决（可选）
+  #   bottlenecks[]: 瓶颈条目列表
+  #     - bottleneck_id: 唯一 ID
+  #     - kind: resource | rate_limit | recurring_failure | performance_degradation | configuration | protocol_inconsistency
+  #     - reason_code: 机器可读原因编码
+  #     - risk_score: 风险等级（0.0-1.0）
+  #     - evidence_summary: 人类可读证据摘要
+  #     - context: HealthContext
+  #     - related_ids: 关联 ID 列表
+  #     - detected_at: 识别时间（Unix ms）
+  #   overall_risk_score: 综合风险评分（0.0-1.0）
+  #   health_score: 综合健康评分（0.0-1.0）
+  #   pressure_level: 资源压力级别
+  #   predictive_anomaly_ids: 关联预测异常 ID
+  #   suggestions[]: 优化建议列表
+  #     - suggestion_id: 唯一 ID
+  #     - scope: system | workspace
+  #     - action: 机器可读动作标识
+  #     - summary: 人类可读摘要
+  #     - priority: 建议优先级（1 = 最高）
+  #     - expected_impact: 预期改善（可选）
+  #     - context: HealthContext
+  #   analyzed_at: 分析时间（Unix ms）
+  #   expires_at: 有效期截止（Unix ms）
+  # HTTP 端点：GET /api/v1/system/snapshot 响应新增 analysis_summaries 可选字段
   - id: health
     action_rule: prefix("health_")
   # v1.40: 冲突向导（Git conflict wizard）

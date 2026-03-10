@@ -481,3 +481,120 @@ pub struct GateDecision {
     /// 裁决时间（Unix ms）
     pub decided_at: u64,
 }
+
+// ============================================================================
+// 智能演化分析摘要（v1.45: 统一分析契约）
+// ============================================================================
+
+/// 瓶颈类型分类（Core 权威判定，客户端不得重新推导）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum BottleneckKind {
+    /// 资源瓶颈（CPU / 内存 / 终端预算等）
+    Resource,
+    /// 速率限制瓶颈（API 调用频率受限）
+    RateLimit,
+    /// 重复失败瓶颈（同一工作区多次连续失败）
+    RecurringFailure,
+    /// 性能退化瓶颈（延迟持续上升）
+    PerformanceDegradation,
+    /// 配置瓶颈（Profile / 参数选择不当）
+    Configuration,
+    /// 协议一致性瓶颈（Schema / 版本不匹配）
+    ProtocolInconsistency,
+}
+
+/// 分析建议的归属范围
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisScopeLevel {
+    /// 系统级建议（影响全局调度或资源分配）
+    System,
+    /// 工作区级建议（仅影响特定 project/workspace）
+    Workspace,
+}
+
+/// 优化建议条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationSuggestion {
+    /// 建议唯一 ID
+    pub suggestion_id: String,
+    /// 归属范围
+    pub scope: AnalysisScopeLevel,
+    /// 机器可读动作标识（例如 `reduce_concurrency`、`switch_ai_tool`、`defer_workspace`）
+    pub action: String,
+    /// 人类可读建议摘要
+    pub summary: String,
+    /// 建议优先级（1 = 最高）
+    pub priority: u32,
+    /// 预期改善描述（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_impact: Option<String>,
+    /// 归属上下文
+    pub context: HealthContext,
+}
+
+/// 瓶颈分析条目
+///
+/// Core 根据门禁裁决、观测聚合、预测异常和调度建议综合判定，
+/// 输出按 `(project, workspace, cycle_id)` 隔离的瓶颈识别结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BottleneckEntry {
+    /// 瓶颈唯一 ID
+    pub bottleneck_id: String,
+    /// 瓶颈类型
+    pub kind: BottleneckKind,
+    /// 机器可读原因编码
+    pub reason_code: String,
+    /// 风险等级（0.0-1.0，越高风险越大）
+    pub risk_score: f64,
+    /// 人类可读证据摘要
+    pub evidence_summary: String,
+    /// 归属上下文
+    pub context: HealthContext,
+    /// 关联的 incident / anomaly / recommendation ID
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_ids: Vec<String>,
+    /// 识别时间（Unix ms）
+    pub detected_at: u64,
+}
+
+/// 智能演化分析摘要
+///
+/// 统一的可机读结构，聚合质量门禁结论、瓶颈识别、风险评分、
+/// 证据摘要和优化建议。所有字段语义同时适用于 Core 协议模型、
+/// HTTP/WS 输出和 Apple 共享模型。
+///
+/// 数据默认按 `(project, workspace, cycle_id)` 隔离；
+/// 系统级建议和工作区级建议通过 `scope` 字段区分归属。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionAnalysisSummary {
+    /// 所属项目
+    pub project: String,
+    /// 所属工作区
+    pub workspace: String,
+    /// Evolution 循环 ID
+    pub cycle_id: String,
+    /// 质量门禁裁决（可选，门禁未执行时为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_decision: Option<GateDecision>,
+    /// 识别的瓶颈列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bottlenecks: Vec<BottleneckEntry>,
+    /// 综合风险评分（0.0-1.0，Core 权威判定）
+    pub overall_risk_score: f64,
+    /// 综合健康评分（0.0-1.0，来自 ObservationAggregate）
+    pub health_score: f64,
+    /// 资源压力级别
+    pub pressure_level: ResourcePressureLevel,
+    /// 关联的预测异常 ID 列表（详情通过 SystemHealthSnapshot 查询）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predictive_anomaly_ids: Vec<String>,
+    /// 优化建议列表（系统级和工作区级混合，通过 scope 区分）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<OptimizationSuggestion>,
+    /// 分析生成时间（Unix ms）
+    pub analyzed_at: u64,
+    /// 分析有效期截止时间（Unix ms）
+    pub expires_at: u64,
+}

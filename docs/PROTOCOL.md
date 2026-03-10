@@ -99,6 +99,27 @@
   - `recovery_state`（可选，崩溃/中断后的恢复状态：`interrupted` | `recovering` | `recovered`；正常运行时省略）
   - `recovery_cursor`（可选，恢复游标，上次已知执行位置；省略时表示无法定位游标）
 
+### 智能演化分析摘要（v1.45）
+
+- 系统快照响应新增可选字段 `analysis_summaries`：按 `(project, workspace, cycle_id)` 隔离的分析摘要列表
+- 每个 `EvolutionAnalysisSummary` 包含：
+  - `project`, `workspace`, `cycle_id`：隔离维度
+  - `gate_decision`：质量门禁裁决（可选）
+  - `bottlenecks`：瓶颈条目列表，每个包含 `kind`、`reason_code`、`risk_score`、`evidence_summary`
+  - `overall_risk_score`：综合风险评分（0.0-1.0）
+  - `health_score`：综合健康评分（0.0-1.0）
+  - `pressure_level`：资源压力级别
+  - `suggestions`：优化建议列表，通过 `scope`（`system` / `workspace`）区分归属
+- 瓶颈类型（`BottleneckKind`）：
+  - `resource`：资源瓶颈
+  - `rate_limit`：速率限制瓶颈
+  - `recurring_failure`：重复失败瓶颈
+  - `performance_degradation`：性能退化瓶颈
+  - `configuration`：配置瓶颈
+  - `protocol_inconsistency`：协议一致性瓶颈
+- 系统级建议的 `context` 中 `project` / `workspace` 为 null；工作区级建议携带具体隔离维度
+- 客户端只消费 Core 权威输出，不得根据零散指标重新推导瓶颈或建议
+
 ## 项目与工作区生命周期
 
 ### 工作区列表（`list_workspaces`）
