@@ -84,6 +84,7 @@ impl OpenCodeManager {
             ])
             .current_dir(&self.working_dir)
             .envs(Self::build_extended_env())
+            .kill_on_drop(true)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -251,11 +252,18 @@ impl OpenCodeManager {
 
         let mut process_lock = self.process.lock().await;
         if let Some(mut child) = process_lock.take() {
-            info!("Sending SIGTERM to OpenCode server (PID: {:?})", child.id());
+            info!(
+                "Sending shutdown signal to OpenCode server (PID: {:?})",
+                child.id()
+            );
 
-            child
-                .start_kill()
-                .map_err(|e| format!("Failed to send SIGTERM: {}", e))?;
+            if let Some(pid) = child.id() {
+                Self::signal_process(pid, libc::SIGTERM, "SIGTERM");
+            } else {
+                child
+                    .start_kill()
+                    .map_err(|e| format!("Failed to send shutdown signal: {}", e))?;
+            }
 
             match timeout(
                 Duration::from_millis(GRACEFUL_SHUTDOWN_TIMEOUT_MS),
@@ -274,6 +282,9 @@ impl OpenCodeManager {
                         "Graceful shutdown timed out, sending SIGKILL to PID: {:?}",
                         child.id()
                     );
+                    if let Some(pid) = child.id() {
+                        Self::signal_process(pid, libc::SIGKILL, "SIGKILL");
+                    }
                     let _ = child.kill().await;
                 }
             }
@@ -346,10 +357,66 @@ impl OpenCodeManager {
         env.insert("PATH".to_string(), parts.join(":"));
         env
     }
+
+    #[cfg(unix)]
+    fn signal_process(pid: u32, signal: i32, label: &str) {
+        let result = unsafe { libc::kill(pid as i32, signal) };
+        if result == 0 {
+            return;
+        }
+
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) {
+            return;
+        }
+        warn!(
+            "Failed to send {} to OpenCode server PID {}: {}",
+            label, pid, err
+        );
+    }
+
+    #[cfg(not(unix))]
+    fn signal_process(_pid: u32, _signal: i32, _label: &str) {}
+
+    #[cfg(unix)]
+    fn is_pid_alive(pid: u32) -> bool {
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        if result == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        err.raw_os_error() != Some(libc::ESRCH)
+    }
+
+    #[cfg(not(unix))]
+    fn is_pid_alive(_pid: u32) -> bool {
+        false
+    }
 }
 
 impl Drop for OpenCodeManager {
     fn drop(&mut self) {
+        if let Ok(mut process) = self.process.try_lock() {
+            if let Some(child) = process.take() {
+                if let Some(pid) = child.id() {
+                    info!(
+                        "OpenCodeManager dropped with live child PID {}, attempting best-effort cleanup",
+                        pid
+                    );
+                    Self::signal_process(pid, libc::SIGTERM, "SIGTERM");
+                    std::thread::sleep(Duration::from_millis(100));
+                    if Self::is_pid_alive(pid) {
+                        Self::signal_process(pid, libc::SIGKILL, "SIGKILL");
+                    }
+                }
+                drop(child);
+            }
+        } else {
+            warn!(
+                "OpenCodeManager dropped while process lock was busy, relying on kill_on_drop cleanup"
+            );
+        }
+
         info!(
             "OpenCodeManager dropped, port {} will be released",
             self.port

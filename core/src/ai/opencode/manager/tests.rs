@@ -150,3 +150,39 @@ async fn test_concurrent_ensure_server_running_is_serialized() {
     manager.stop_server().await.expect("stop server");
     assert!(!manager.is_running().await);
 }
+
+#[tokio::test]
+async fn test_drop_cleans_up_spawned_server() {
+    if OpenCodeManager::resolve_opencode_path().is_none() {
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = OpenCodeManager::new(temp_dir.path().to_path_buf());
+    manager
+        .ensure_server_running()
+        .await
+        .expect("ensure server");
+
+    let pid = {
+        let process = manager.process.lock().await;
+        process
+            .as_ref()
+            .and_then(|child| child.id())
+            .expect("spawned pid")
+    };
+
+    drop(manager);
+
+    for _ in 0..40 {
+        if !OpenCodeManager::is_pid_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    panic!(
+        "OpenCode child process should exit after manager drop, pid={}",
+        pid
+    );
+}

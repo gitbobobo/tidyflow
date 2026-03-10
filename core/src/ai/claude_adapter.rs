@@ -453,6 +453,7 @@ impl ClaudeCodeAgent {
             .args(&args)
             .current_dir(directory)
             .envs(Self::build_extended_env())
+            .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -853,6 +854,7 @@ impl ClaudeCodeAgent {
             ])
             .current_dir(directory)
             .envs(Self::build_extended_env())
+            .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
@@ -896,6 +898,25 @@ impl ClaudeCodeAgent {
 impl Default for ClaudeCodeAgent {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for ClaudeCodeAgent {
+    fn drop(&mut self) {
+        if let Ok(mut processes) = self.processes.try_lock() {
+            for (_, handle) in processes.iter() {
+                if let Ok(mut kill_tx) = handle.kill_tx.try_lock() {
+                    if let Some(tx) = kill_tx.take() {
+                        let _ = tx.try_send(());
+                    }
+                }
+            }
+            processes.clear();
+        }
+
+        if let Ok(mut active_turns) = self.active_turns.try_lock() {
+            active_turns.clear();
+        }
     }
 }
 
@@ -2017,5 +2038,58 @@ mod tests {
             Some("read(README.md)")
         );
         assert!(state.get("output").is_none());
+    }
+
+    #[tokio::test]
+    async fn drop_should_signal_active_claude_processes() {
+        let agent = ClaudeCodeAgent::new();
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sleep");
+        let stdin = child.stdin.take().expect("stdin");
+        let pid = child.id().expect("pid");
+
+        let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
+        tokio::spawn(async move {
+            let _ = kill_rx.recv().await;
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        });
+
+        let (stdout_tx, _) = broadcast::channel::<String>(1);
+        let (init_watch, _) = watch::channel(false);
+        let handle = Arc::new(ClaudeProcessHandle {
+            stdin: Mutex::new(stdin),
+            stdout_tx,
+            init_data: Mutex::new(None),
+            init_watch,
+            alive: AtomicBool::new(true),
+            startup_error: Mutex::new(None),
+            kill_tx: Mutex::new(Some(kill_tx)),
+        });
+
+        agent
+            .processes
+            .lock()
+            .await
+            .insert("dir::session".to_string(), handle);
+
+        drop(agent);
+
+        for _ in 0..40 {
+            let result = unsafe { libc::kill(pid as i32, 0) };
+            if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        panic!(
+            "ClaudeCodeAgent child process should exit after drop, pid={}",
+            pid
+        );
     }
 }

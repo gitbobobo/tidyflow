@@ -14,6 +14,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 
 const REQUEST_TIMEOUT_SECS: u64 = 120;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS: u64 = 5000;
 const VSCODE_COPILOT_CLI_SHIM_SEGMENT: &str = "/github.copilot-chat/copilotcli/";
 const VSCODE_COPILOT_DEBUG_SHIM_SEGMENT: &str = "/github.copilot-chat/debugcommand/";
 
@@ -224,6 +225,7 @@ impl CodexAppServerManager {
             .args(&launch_args)
             .current_dir(&self.working_dir)
             .envs(Self::build_extended_env())
+            .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -275,14 +277,31 @@ impl CodexAppServerManager {
         *self.started.lock().await = false;
         self.reject_all_pending(&format!("{} stopped", self.display_name))
             .await;
+        *self.stdin.lock().await = None;
 
         if let Some(mut child) = self.process.lock().await.take() {
-            if let Err(e) = child.start_kill() {
+            if let Some(pid) = child.id() {
+                Self::signal_process(pid, libc::SIGTERM, &self.display_name, "SIGTERM");
+            } else if let Err(e) = child.start_kill() {
                 warn!("Failed to kill {}: {}", self.display_name, e);
             }
-            let _ = child.wait().await;
+
+            match timeout(
+                Duration::from_millis(GRACEFUL_SHUTDOWN_TIMEOUT_MS),
+                child.wait(),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => warn!("Failed waiting for {} exit: {}", self.display_name, e),
+                Err(_) => {
+                    if let Some(pid) = child.id() {
+                        Self::signal_process(pid, libc::SIGKILL, &self.display_name, "SIGKILL");
+                    }
+                    let _ = child.kill().await;
+                }
+            }
         }
-        *self.stdin.lock().await = None;
         self.reset_acp_initialization_state().await;
         Ok(())
     }
@@ -1140,6 +1159,71 @@ impl CodexAppServerManager {
         extra.dedup();
         env.insert("PATH".to_string(), extra.join(":"));
         env
+    }
+
+    #[cfg(unix)]
+    fn signal_process(pid: u32, signal: i32, display_name: &str, label: &str) {
+        let result = unsafe { libc::kill(pid as i32, signal) };
+        if result == 0 {
+            return;
+        }
+
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) {
+            return;
+        }
+        warn!(
+            "Failed to send {} to {} PID {}: {}",
+            label, display_name, pid, err
+        );
+    }
+
+    #[cfg(not(unix))]
+    fn signal_process(_pid: u32, _signal: i32, _display_name: &str, _label: &str) {}
+
+    #[cfg(unix)]
+    fn is_pid_alive(pid: u32) -> bool {
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        if result == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        err.raw_os_error() != Some(libc::ESRCH)
+    }
+
+    #[cfg(not(unix))]
+    fn is_pid_alive(_pid: u32) -> bool {
+        false
+    }
+}
+
+impl Drop for CodexAppServerManager {
+    fn drop(&mut self) {
+        if let Ok(mut stdin) = self.stdin.try_lock() {
+            *stdin = None;
+        }
+
+        if let Ok(mut process) = self.process.try_lock() {
+            if let Some(child) = process.take() {
+                if let Some(pid) = child.id() {
+                    info!(
+                        "{} dropped with live child PID {}, attempting best-effort cleanup",
+                        self.display_name, pid
+                    );
+                    Self::signal_process(pid, libc::SIGTERM, &self.display_name, "SIGTERM");
+                    std::thread::sleep(Duration::from_millis(100));
+                    if Self::is_pid_alive(pid) {
+                        Self::signal_process(pid, libc::SIGKILL, &self.display_name, "SIGKILL");
+                    }
+                }
+                drop(child);
+            }
+        } else {
+            warn!(
+                "{} dropped while process lock was busy, relying on kill_on_drop cleanup",
+                self.display_name
+            );
+        }
     }
 }
 

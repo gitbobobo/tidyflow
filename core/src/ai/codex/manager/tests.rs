@@ -239,3 +239,33 @@ fn resolve_command_from_override_should_return_none_for_invalid_path() {
         std::env::remove_var(key);
     }
 }
+
+#[tokio::test]
+async fn drop_should_cleanup_spawned_child_process() {
+    let manager = CodexAppServerManager::new(std::env::temp_dir());
+    let child = tokio::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 30"])
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn sleep");
+    let pid = child.id().expect("sleep pid");
+
+    {
+        let mut process = manager.process.lock().await;
+        *process = Some(child);
+    }
+
+    drop(manager);
+
+    for _ in 0..40 {
+        if !CodexAppServerManager::is_pid_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    panic!(
+        "CodexAppServerManager child process should exit after drop, pid={}",
+        pid
+    );
+}
