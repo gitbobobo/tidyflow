@@ -455,7 +455,10 @@ struct MessageListView: View {
                 .modifier(AIChatFloatingButtonStyle())
         }
         .buttonStyle(.plain)
-        .padding(.bottom, bottomOverlayInset + 4)
+        .padding(
+            .bottom,
+            bottomOverlayInset + AIChatComposerLayoutSemantics.jumpToBottomClearance
+        )
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animation: ChatScrollAnimation = .none) {
