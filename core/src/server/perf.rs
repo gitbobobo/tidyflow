@@ -332,3 +332,108 @@ pub fn snapshot_terminal_perf() -> TerminalPerfSnapshot {
         scrollback_trim_total: TERMINAL_SCROLLBACK_TRIM_TOTAL.load(Ordering::Relaxed),
     }
 }
+
+// ============================================================================
+// 统一性能指标快照（供 system_snapshot 可观测性输出）
+// ============================================================================
+
+use serde::Serialize;
+
+/// WS 管线阶段的延迟与吞吐指标
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct WsPipelineMetrics {
+    pub last_ms: u64,
+    pub max_ms: u64,
+    pub count: u64,
+}
+
+/// 统一性能指标快照——将分散的 AtomicU64 计数器收敛为单一可序列化结构，
+/// 供 `system_snapshot` 在协议 v8 下输出，避免多个 handler 各自拼装相似字段。
+#[derive(Debug, Clone, Serialize)]
+pub struct PerfMetricsSnapshot {
+    // -- 广播相关 --
+    pub ws_task_broadcast_lag_total: u64,
+    pub ws_task_broadcast_queue_depth: u64,
+    pub ws_task_broadcast_skipped_single_receiver_total: u64,
+    pub ws_task_broadcast_skipped_empty_target_total: u64,
+    pub ws_task_broadcast_filtered_target_total: u64,
+    // -- 终端相关 --
+    pub terminal_unacked_timeout_total: u64,
+    pub terminal_reclaimed_total: u64,
+    pub terminal_scrollback_trim_total: u64,
+    // -- 项目命令输出 --
+    pub project_command_output_throttled_total: u64,
+    pub project_command_output_emitted_total: u64,
+    // -- WS 管线延迟 --
+    pub ws_outbound_loop_tick: WsPipelineMetrics,
+    pub ws_outbound_select_wait: WsPipelineMetrics,
+    pub ws_outbound_handle: WsPipelineMetrics,
+    pub ws_decode: WsPipelineMetrics,
+    pub ws_dispatch: WsPipelineMetrics,
+    pub ws_encode: WsPipelineMetrics,
+    // -- WS 队列 --
+    pub ws_outbound_queue_depth: u64,
+    pub ws_batch_flush_size: u64,
+    pub ws_batch_flush_count: u64,
+    // -- AI --
+    pub ai_subscriber_fanout: u64,
+    pub ai_subscriber_fanout_max: u64,
+    // -- Evolution --
+    pub evolution_cycle_update_emitted_total: u64,
+    pub evolution_cycle_update_debounced_total: u64,
+    pub evolution_snapshot_fallback_total: u64,
+}
+
+/// 读取所有性能计数器的统一快照
+pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
+    PerfMetricsSnapshot {
+        ws_task_broadcast_lag_total: WS_TASK_BROADCAST_LAG_TOTAL.load(Ordering::Relaxed),
+        ws_task_broadcast_queue_depth: WS_TASK_BROADCAST_QUEUE_DEPTH.load(Ordering::Relaxed),
+        ws_task_broadcast_skipped_single_receiver_total: WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL.load(Ordering::Relaxed),
+        ws_task_broadcast_skipped_empty_target_total: WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL.load(Ordering::Relaxed),
+        ws_task_broadcast_filtered_target_total: WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL.load(Ordering::Relaxed),
+        terminal_unacked_timeout_total: TERMINAL_UNACKED_TIMEOUT_TOTAL.load(Ordering::Relaxed),
+        terminal_reclaimed_total: TERMINAL_RECLAIMED_TOTAL.load(Ordering::Relaxed),
+        terminal_scrollback_trim_total: TERMINAL_SCROLLBACK_TRIM_TOTAL.load(Ordering::Relaxed),
+        project_command_output_throttled_total: PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL.load(Ordering::Relaxed),
+        project_command_output_emitted_total: PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL.load(Ordering::Relaxed),
+        ws_outbound_loop_tick: WsPipelineMetrics {
+            last_ms: WS_OUTBOUND_LOOP_TICK_MS.load(Ordering::Relaxed),
+            max_ms: WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed),
+            count: WS_OUTBOUND_LOOP_TICK_COUNT.load(Ordering::Relaxed),
+        },
+        ws_outbound_select_wait: WsPipelineMetrics {
+            last_ms: WS_OUTBOUND_SELECT_WAIT_MS.load(Ordering::Relaxed),
+            max_ms: WS_OUTBOUND_SELECT_WAIT_MAX_MS.load(Ordering::Relaxed),
+            count: WS_OUTBOUND_SELECT_WAIT_COUNT.load(Ordering::Relaxed),
+        },
+        ws_outbound_handle: WsPipelineMetrics {
+            last_ms: WS_OUTBOUND_HANDLE_MS.load(Ordering::Relaxed),
+            max_ms: WS_OUTBOUND_HANDLE_MAX_MS.load(Ordering::Relaxed),
+            count: WS_OUTBOUND_HANDLE_COUNT.load(Ordering::Relaxed),
+        },
+        ws_decode: WsPipelineMetrics {
+            last_ms: WS_DECODE_MS.load(Ordering::Relaxed),
+            max_ms: WS_DECODE_MAX_MS.load(Ordering::Relaxed),
+            count: WS_DECODE_COUNT.load(Ordering::Relaxed),
+        },
+        ws_dispatch: WsPipelineMetrics {
+            last_ms: WS_DISPATCH_MS.load(Ordering::Relaxed),
+            max_ms: WS_DISPATCH_MAX_MS.load(Ordering::Relaxed),
+            count: WS_DISPATCH_COUNT.load(Ordering::Relaxed),
+        },
+        ws_encode: WsPipelineMetrics {
+            last_ms: WS_ENCODE_MS.load(Ordering::Relaxed),
+            max_ms: WS_ENCODE_MAX_MS.load(Ordering::Relaxed),
+            count: WS_ENCODE_COUNT.load(Ordering::Relaxed),
+        },
+        ws_outbound_queue_depth: WS_OUTBOUND_QUEUE_DEPTH.load(Ordering::Relaxed),
+        ws_batch_flush_size: WS_BATCH_FLUSH_SIZE.load(Ordering::Relaxed),
+        ws_batch_flush_count: WS_BATCH_FLUSH_COUNT.load(Ordering::Relaxed),
+        ai_subscriber_fanout: AI_SUBSCRIBER_FANOUT.load(Ordering::Relaxed),
+        ai_subscriber_fanout_max: AI_SUBSCRIBER_FANOUT_MAX.load(Ordering::Relaxed),
+        evolution_cycle_update_emitted_total: EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL.load(Ordering::Relaxed),
+        evolution_cycle_update_debounced_total: EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL.load(Ordering::Relaxed),
+        evolution_snapshot_fallback_total: EVOLUTION_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed),
+    }
+}

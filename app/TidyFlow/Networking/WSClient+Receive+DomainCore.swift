@@ -9,9 +9,17 @@ extension WSClient {
         case "hello", "pong":
             return true
         case "system_snapshot":
-            // 工作区缓存可观测性快照（/api/v1/system/snapshot 的 HTTP 响应）
-            let metrics = SystemSnapshotCacheMetrics.from(json: json["cache_metrics"])
-            onSystemSnapshot?(metrics)
+            // 统一可观测性快照解析（v1.42）：一次性解析所有观测字段，双端共享
+            let cacheMetrics = SystemSnapshotCacheMetrics.from(json: json["cache_metrics"])
+            let perfMetrics = PerfMetricsSnapshot.from(json: json["perf_metrics"] as? [String: Any])
+            let logContext = LogContextSummary.from(json: json["log_context"] as? [String: Any])
+            let observability = ObservabilitySnapshot(
+                cacheMetrics: cacheMetrics,
+                perfMetrics: perfMetrics,
+                logContext: logContext
+            )
+            onSystemSnapshot?(cacheMetrics)
+            onObservabilitySnapshot?(observability)
             // 工作区恢复状态摘要：从 workspace_items 提取，按 (project, workspace) 隔离
             if let workspaceItems = json["workspace_items"] as? [[String: Any]] {
                 let recoverySummaries = workspaceItems.compactMap { item -> WorkspaceRecoverySummary? in

@@ -74,6 +74,16 @@ struct DebugPanelView: View {
 
                         Divider()
 
+                        // Performance Metrics Section (v1.42 可观测性收敛)
+                        perfMetricsSection
+
+                        Divider()
+
+                        // Log Context Section (v1.42 日志关联)
+                        logContextSection
+
+                        Divider()
+
                         // Log Viewer Section
                         logViewerSection
                     }
@@ -113,6 +123,89 @@ struct DebugPanelView: View {
                     Text(appState.wsClient.currentURLString ?? "-")
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Performance Metrics Section (v1.42)
+
+    private var perfMetricsSection: some View {
+        let perf = appState.observabilitySnapshot.perfMetrics
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Performance Metrics")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
+                GridRow {
+                    Text("WS Decode:").foregroundColor(.secondary)
+                    Text("last=\(perf.wsDecode.lastMs)ms max=\(perf.wsDecode.maxMs)ms n=\(perf.wsDecode.count)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("WS Dispatch:").foregroundColor(.secondary)
+                    Text("last=\(perf.wsDispatch.lastMs)ms max=\(perf.wsDispatch.maxMs)ms n=\(perf.wsDispatch.count)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("WS Encode:").foregroundColor(.secondary)
+                    Text("last=\(perf.wsEncode.lastMs)ms max=\(perf.wsEncode.maxMs)ms n=\(perf.wsEncode.count)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Broadcast Lag:").foregroundColor(.secondary)
+                    Text("\(perf.wsTaskBroadcastLagTotal) (queue: \(perf.wsTaskBroadcastQueueDepth))")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Terminal:").foregroundColor(.secondary)
+                    Text("reclaimed=\(perf.terminalReclaimedTotal) trimmed=\(perf.terminalScrollbackTrimTotal)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("AI Fanout:").foregroundColor(.secondary)
+                    Text("current=\(perf.aiSubscriberFanout) max=\(perf.aiSubscriberFanoutMax)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Evolution:").foregroundColor(.secondary)
+                    Text("emitted=\(perf.evolutionCycleUpdateEmittedTotal) debounced=\(perf.evolutionCycleUpdateDebouncedTotal)")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+            }
+        }
+    }
+
+    // MARK: - Log Context Section (v1.42)
+
+    private var logContextSection: some View {
+        let ctx = appState.observabilitySnapshot.logContext
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Log Context")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
+                GridRow {
+                    Text("Log File:").foregroundColor(.secondary)
+                    Text(ctx.logFile.isEmpty ? "-" : ctx.logFile)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                GridRow {
+                    Text("Retention:").foregroundColor(.secondary)
+                    Text("\(ctx.retentionDays) days")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Perf Log:").foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(ctx.perfLoggingEnabled ? Color.green : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(ctx.perfLoggingEnabled ? "Enabled" : "Disabled")
+                            .font(.system(size: 11, design: .monospaced))
+                    }
                 }
             }
         }

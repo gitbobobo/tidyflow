@@ -203,6 +203,36 @@ struct WorkspaceDetailView: View {
                     }
                 }
             }
+
+            // v1.42: 可观测性诊断入口（消费与 macOS 同一套共享观测状态）
+            Section("系统诊断") {
+                let perf = appState.observabilitySnapshot.perfMetrics
+                let logCtx = appState.observabilitySnapshot.logContext
+                HStack {
+                    Text("WS 延迟")
+                        .font(.subheadline)
+                    Spacer()
+                    Text("decode \(perf.wsDecode.lastMs)ms · dispatch \(perf.wsDispatch.lastMs)ms")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("终端回收")
+                        .font(.subheadline)
+                    Spacer()
+                    Text("reclaimed \(perf.terminalReclaimedTotal) · trimmed \(perf.terminalScrollbackTrimTotal)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("Perf 日志")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(logCtx.perfLoggingEnabled ? "已启用" : "未启用")
+                        .font(.caption)
+                        .foregroundColor(logCtx.perfLoggingEnabled ? .green : .secondary)
+                }
+            }
         }
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)

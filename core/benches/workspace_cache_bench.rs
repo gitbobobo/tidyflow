@@ -13,6 +13,8 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::time::Duration;
+use tidyflow_core::server::perf::{self as perf_counters, snapshot_perf_metrics};
 use tidyflow_core::workspace::cache_metrics::{self, WorkspaceCacheSnapshot};
 
 // ============================================================================
@@ -222,14 +224,78 @@ fn bench_same_workspace_name_isolation(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_file_cache_rebuild,
-    bench_file_cache_incremental,
-    bench_file_cache_hit_miss,
-    bench_git_cache_hit_miss,
-    bench_snapshot_multi_project,
-    bench_eviction_scan,
-    bench_same_workspace_name_isolation,
-);
+// ============================================================================
+// Benchmark 8: 统一性能指标快照聚合（可观测性热路径）
+// ============================================================================
+fn bench_perf_metrics_snapshot(c: &mut Criterion) {
+    // 先灌入一些计数器数据，模拟运行态
+    for _ in 0..100 {
+        perf_counters::record_ws_decode_ms(2);
+        perf_counters::record_ws_dispatch_ms(1);
+        perf_counters::record_ws_encode_ms(1);
+        perf_counters::record_task_broadcast_lag(0);
+        perf_counters::record_terminal_reclaimed(1);
+    }
+
+    c.bench_function("perf_metrics/snapshot_aggregate", |b| {
+        b.iter(|| {
+            let snap = snapshot_perf_metrics();
+            black_box(snap);
+        })
+    });
+}
+
+// ============================================================================
+// Benchmark 9: 性能快照在多项目多工作区场景的联合聚合路径
+// ============================================================================
+fn bench_combined_observability_snapshot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("observability/combined_snapshot");
+
+    for (projects, ws_per_project) in [(1, 3), (3, 5), (5, 10)] {
+        let scenario = BenchScenario::new_multi_project(projects, ws_per_project);
+        scenario.reset_metrics();
+        scenario.prime_file_cache_hits(50);
+        scenario.prime_git_cache_hits(100);
+        scenario.prime_rebuilds(3);
+
+        let label = format!("{}proj_{}ws", projects, ws_per_project);
+        group.bench_with_input(
+            BenchmarkId::new("cache_plus_perf", &label),
+            &label,
+            |b, _| {
+                b.iter(|| {
+                    // 模拟 system_snapshot handler：先聚合全局 perf，再遍历各工作区 cache
+                    let _perf = snapshot_perf_metrics();
+                    for (project, workspace, root) in &scenario.entries {
+                        let _ = WorkspaceCacheSnapshot::from_counters(
+                            black_box(project),
+                            black_box(workspace),
+                            black_box(root),
+                        );
+                    }
+                    black_box(());
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
+// 缩短 criterion 测量/预热时间，确保全量基准（~15 个点）在 300 秒内完成冒烟验证
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .measurement_time(Duration::from_secs(2))
+        .warm_up_time(Duration::from_secs(1));
+    targets =
+        bench_file_cache_rebuild,
+        bench_file_cache_incremental,
+        bench_file_cache_hit_miss,
+        bench_git_cache_hit_miss,
+        bench_snapshot_multi_project,
+        bench_eviction_scan,
+        bench_same_workspace_name_isolation,
+        bench_perf_metrics_snapshot,
+        bench_combined_observability_snapshot,
+}
 criterion_main!(benches);

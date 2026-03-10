@@ -318,6 +318,9 @@ final class MobileAppState: ObservableObject {
     /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）
     @Published var workspaceRecoverySummaries: [String: WorkspaceRecoverySummary] = [:]
 
+    // v1.42: 统一可观测性快照（与 macOS 共享同一模型，Core 权威真源）
+    @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
+
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
     let aiSessionListStore = AISessionListStore()
@@ -4067,6 +4070,13 @@ final class MobileAppState: ObservableObject {
         // 工作区缓存可观测性快照：更新 Core 权威指标（语义与 macOS 对齐）
         wsClient.onSystemSnapshot = { [weak self] metrics in
             self?.workspaceCacheMetrics = metrics
+        }
+
+        // v1.42: 统一可观测性快照 — 与 macOS 使用同一套共享模型
+        wsClient.onObservabilitySnapshot = { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.observabilitySnapshot = snapshot
+            }
         }
 
         // HTTP 读取失败回调：多工作区安全，与 macOS 语义对齐

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{build_http_handler_context, map_query_error, ApiError};
 use crate::server::context::SharedAppState;
-use crate::server::perf::TerminalPerfSnapshot;
+use crate::server::perf::{PerfMetricsSnapshot, TerminalPerfSnapshot};
 use crate::server::protocol::health::{
     HealthIncident, RepairActionRequest, RepairAuditEntry, SystemHealthSnapshot,
 };
@@ -32,6 +32,21 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     recent_repairs: Vec<RepairAuditEntry>,
     /// 终端注册表资源压力快照
     terminal_resource: TerminalResourceSnapshot,
+    /// 统一性能指标快照（v1.42 可观测性收敛）
+    perf_metrics: PerfMetricsSnapshot,
+    /// 结构化日志关联上下文摘要
+    log_context: LogContextSummary,
+}
+
+/// 结构化日志关联上下文摘要（供调试面板快速关联日志与快照）
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::server::ws) struct LogContextSummary {
+    /// 日志文件路径（当天）
+    pub log_file: String,
+    /// 日志保留天数
+    pub retention_days: u64,
+    /// 是否启用了 perf 日志（TIDYFLOW_PERF_LOG）
+    pub perf_logging_enabled: bool,
 }
 
 /// 终端资源压力快照（用于 system_snapshot）
@@ -112,6 +127,12 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         build_terminal_resource_snapshot(info, perf)
     };
 
+    // 统一性能指标快照
+    let perf_metrics = crate::server::perf::snapshot_perf_metrics();
+
+    // 结构化日志关联上下文
+    let log_context = build_log_context_summary();
+
     Ok(Json(SystemSnapshotResponse {
         msg_type: "system_snapshot",
         core_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -121,6 +142,8 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         health_incidents: health_snapshot.incidents,
         recent_repairs: health_snapshot.recent_repairs,
         terminal_resource,
+        perf_metrics,
+        log_context,
     }))
 }
 
@@ -385,6 +408,32 @@ fn build_terminal_resource_snapshot(
         reclaimed_total: perf.reclaimed_total,
         scrollback_trim_total: perf.scrollback_trim_total,
         per_workspace,
+    }
+}
+
+fn build_log_context_summary() -> LogContextSummary {
+    let log_dir = dirs::home_dir()
+        .map(|h| h.join(".tidyflow").join("logs"))
+        .unwrap_or_default();
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let suffix = std::env::var("TIDYFLOW_LOG_SUFFIX").ok().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    });
+    let filename = match suffix {
+        Some(s) => format!("{today}-{s}.log"),
+        None => format!("{today}.log"),
+    };
+    let log_file = log_dir.join(&filename).to_string_lossy().to_string();
+    let perf_logging_enabled = std::env::var("TIDYFLOW_PERF_LOG")
+        .ok()
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .map_or(false, |v| matches!(v.as_str(), "1" | "true" | "yes" | "on"));
+    LogContextSummary {
+        log_file,
+        retention_days: 7,
+        perf_logging_enabled,
     }
 }
 
@@ -744,5 +793,54 @@ mod tests {
             item_b.recovery_cursor.is_none(),
             "project-b/feature should have no recovery_cursor"
         );
+    }
+
+    /// 定向测试：system_snapshot 应包含 perf_metrics 和 log_context 可观测性字段
+    #[tokio::test]
+    async fn system_snapshot_should_include_perf_metrics_and_log_context() {
+        // 递增一个全局计数器，确保快照能捕获到
+        crate::server::perf::record_ws_decode_ms(42);
+
+        let ctx = make_test_context(make_test_state()).await;
+        let response = system_snapshot_handler(State(ctx))
+            .await
+            .expect("handler should return response")
+            .0;
+
+        // perf_metrics 应捕获到至少一条 ws_decode 记录
+        assert!(
+            response.perf_metrics.ws_decode.count >= 1,
+            "ws_decode.count should reflect at least the record we just wrote"
+        );
+        assert!(
+            response.perf_metrics.ws_decode.last_ms > 0,
+            "ws_decode.last_ms should be nonzero"
+        );
+
+        // log_context 应包含有效日志路径和保留天数
+        assert!(
+            response.log_context.log_file.contains(".tidyflow/logs/"),
+            "log_file should point to tidyflow logs directory"
+        );
+        assert_eq!(response.log_context.retention_days, 7);
+    }
+
+    /// 定向测试：perf_metrics 可正确序列化为 JSON（协议 v8 稳定输出）
+    #[test]
+    fn perf_metrics_snapshot_should_serialize_to_stable_json() {
+        let snapshot = crate::server::perf::snapshot_perf_metrics();
+        let json = serde_json::to_value(&snapshot).expect("should serialize");
+        // 确认所有顶层字段存在
+        assert!(json.get("ws_task_broadcast_lag_total").is_some());
+        assert!(json.get("terminal_reclaimed_total").is_some());
+        assert!(json.get("ws_outbound_loop_tick").is_some());
+        assert!(json.get("ws_decode").is_some());
+        assert!(json.get("ai_subscriber_fanout").is_some());
+        assert!(json.get("evolution_cycle_update_emitted_total").is_some());
+        // WsPipelineMetrics 嵌套结构应含 last_ms/max_ms/count
+        let tick = json.get("ws_outbound_loop_tick").unwrap();
+        assert!(tick.get("last_ms").is_some());
+        assert!(tick.get("max_ms").is_some());
+        assert!(tick.get("count").is_some());
     }
 }

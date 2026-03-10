@@ -710,6 +710,77 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 2. 多项目同名工作区的 `cache_metrics` 条目各自独立，不得以 workspace 名称作为唯一聚合键。
 3. macOS 与 iOS 对相同字段的处理语义必须一致（允许 UI 呈现不同）。
 
+### HTTP `GET /system_snapshot` 新增 `perf_metrics` 字段（v1.42）
+
+`system_snapshot` 响应新增 `perf_metrics` 对象，包含 Core 运行时的统一性能指标快照。
+该字段为**全局计数器**（不按工作区隔离），由 Core 权威输出，客户端只消费，不允许本地派生。
+
+**字段结构**：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `ws_task_broadcast_lag_total` | u64 | WS 任务广播累计滞后数 |
+| `ws_task_broadcast_queue_depth` | u64 | 最近一次广播队列深度 |
+| `ws_task_broadcast_skipped_single_receiver_total` | u64 | 单接收者跳过优化累计次数 |
+| `ws_task_broadcast_skipped_empty_target_total` | u64 | 空目标跳过累计次数 |
+| `ws_task_broadcast_filtered_target_total` | u64 | 过滤目标累计次数 |
+| `terminal_unacked_timeout_total` | u64 | 终端未确认超时累计次数 |
+| `terminal_reclaimed_total` | u64 | 终端自动回收累计次数 |
+| `terminal_scrollback_trim_total` | u64 | 终端 scrollback 裁剪累计次数 |
+| `project_command_output_throttled_total` | u64 | 项目命令输出限流累计丢弃数 |
+| `project_command_output_emitted_total` | u64 | 项目命令输出累计发送数 |
+| `ws_outbound_loop_tick` | WsPipelineMetrics | WS 出站循环 tick 延迟 |
+| `ws_outbound_select_wait` | WsPipelineMetrics | WS 出站 select 等待延迟 |
+| `ws_outbound_handle` | WsPipelineMetrics | WS 出站 handle 延迟 |
+| `ws_decode` | WsPipelineMetrics | WS 消息解码延迟 |
+| `ws_dispatch` | WsPipelineMetrics | WS 消息分派延迟 |
+| `ws_encode` | WsPipelineMetrics | WS 消息编码延迟 |
+| `ws_outbound_queue_depth` | u64 | WS 出站队列当前深度 |
+| `ws_batch_flush_size` | u64 | 最近一次批量刷新大小 |
+| `ws_batch_flush_count` | u64 | 批量刷新累计次数 |
+| `ai_subscriber_fanout` | u64 | 最近 AI 订阅者扇出数 |
+| `ai_subscriber_fanout_max` | u64 | AI 订阅者扇出峰值 |
+| `evolution_cycle_update_emitted_total` | u64 | Evolution 循环更新累计发送数 |
+| `evolution_cycle_update_debounced_total` | u64 | Evolution 循环更新累计去抖数 |
+| `evolution_snapshot_fallback_total` | u64 | Evolution 快照回退累计次数 |
+
+**`WsPipelineMetrics` 子结构**：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `last_ms` | u64 | 最近一次采样值（毫秒） |
+| `max_ms` | u64 | 历史峰值（毫秒） |
+| `count` | u64 | 采样总次数 |
+
+### HTTP `GET /system_snapshot` 新增 `log_context` 字段（v1.42）
+
+`system_snapshot` 响应新增 `log_context` 对象，提供结构化日志关联上下文，
+供调试面板快速定位当天日志文件、了解日志保留策略和 perf 日志开关状态。
+
+**字段结构**：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `log_file` | string | 当天日志文件完整路径 |
+| `retention_days` | u64 | 日志保留天数（当前为 7） |
+| `perf_logging_enabled` | bool | `TIDYFLOW_PERF_LOG` 环境变量是否开启 |
+
+### 可观测性职责边界
+
+| 数据类别 | 字段名 | 传输方式 | 隔离维度 |
+|----------|--------|----------|----------|
+| 性能指标 | `perf_metrics` | HTTP 一次性快照 | 全局 |
+| 缓存指标 | `cache_metrics` | HTTP 一次性快照 | `(project, workspace)` |
+| 终端资源 | `terminal_resource` | HTTP 一次性快照 | 全局 + `per_workspace` |
+| 日志上下文 | `log_context` | HTTP 一次性快照 | 全局 |
+| 健康异常 | `health_incidents` | HTTP 快照 + WS 推送 | 按 context 归属 |
+| 修复审计 | `recent_repairs` | HTTP 快照 + WS 推送 | 按 context 归属 |
+
+**约束**：
+1. 客户端不允许混用流式事件字段和一次性快照字段来推导同一状态。
+2. 全局指标（`perf_metrics`、`log_context`）不携带 `project`/`workspace`，与工作区隔离的指标在语义上互不依赖。
+3. 客户端调试面板可同时展示 `perf_metrics` 和 `log_context`，通过 `log_file` 路径关联到日志文件查看器。
+
 ---
 
 ## v1.40: Git 冲突向导（Conflict Wizard）

@@ -29,6 +29,16 @@
 - [ ] 执行：`./scripts/tidyflow check`
 - [ ] 协议一致性、schema 同步、代码生成、版本一致性全部通过
 
+## 3.5. 可观测性与诊断证据（v1.42 新增）
+
+- [ ] 执行 `./scripts/tidyflow test` 确认 Core 观测快照测试通过
+- [ ] 确认 `system_snapshot` 输出包含 `perf_metrics` 和 `log_context` 字段
+- [ ] 确认结构化日志文件存在于 `~/.tidyflow/logs/`，格式为 `YYYY-MM-DD[-dev].log`
+- [ ] 确认 macOS 调试面板（DebugPanelView）能正常展示性能指标与日志上下文
+- [ ] 确认 iOS 工作区详情页（WorkspaceDetailView）能显示系统诊断条目
+- [ ] 若开启了 `TIDYFLOW_PERF_LOG`，确认 perf 日志路径可访问且不为空
+- [ ] 日志、指标与构建证据能共同支撑问题排查，而不是只保留单一日志文件
+
 ## 4. 发布预演（无副作用）
 
 - [ ] 执行：`./scripts/tidyflow release --dry-run`

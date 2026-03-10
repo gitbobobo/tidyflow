@@ -10,6 +10,7 @@ enum TFLog {
     static let port = Logger(subsystem: "cn.tidyflow", category: "port")
     static let logWriter = Logger(subsystem: "cn.tidyflow", category: "logWriter")
     static let perf = Logger(subsystem: "cn.tidyflow", category: "perf")
+    static let observability = Logger(subsystem: "cn.tidyflow", category: "observability")
 
     /// 用于向 Rust Core 发送日志的 WSClient 引用（App 启动后由 AppState 设置）
     static weak var wsClient: WSClient?

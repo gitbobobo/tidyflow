@@ -373,6 +373,9 @@ class AppState: ObservableObject {
     /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）
     @Published var workspaceRecoverySummaries: [String: WorkspaceRecoverySummary] = [:]
 
+    // v1.42: 统一可观测性快照（聚合 perf_metrics + log_context + cache_metrics，Core 权威真源）
+    @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
+
     // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
     var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]
     var pendingProjectCommandExecutionIdsByKey: [String: [UUID]] = [:]

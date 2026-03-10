@@ -72,10 +72,10 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
     func testSessionCacheRevisionRejectsRollback() {
         let store = AIChatStore()
 
-        XCTAssertTrue(store.shouldApplySessionCacheRevision(1, sessionId: "s1"))
-        XCTAssertTrue(store.shouldApplySessionCacheRevision(2, sessionId: "s1"))
-        XCTAssertFalse(store.shouldApplySessionCacheRevision(1, sessionId: "s1"))
-        XCTAssertTrue(store.shouldApplySessionCacheRevision(2, sessionId: "s1"))
+        XCTAssertTrue(store.shouldApplySessionCacheRevision(fromRevision: 0, toRevision: 1, sessionId: "s1"))
+        XCTAssertTrue(store.shouldApplySessionCacheRevision(fromRevision: 1, toRevision: 2, sessionId: "s1"))
+        XCTAssertFalse(store.shouldApplySessionCacheRevision(fromRevision: 2, toRevision: 1, sessionId: "s1"))
+        XCTAssertTrue(store.shouldApplySessionCacheRevision(fromRevision: 2, toRevision: 2, sessionId: "s1"))
     }
 
     func testRenderRevisionIncrementsOnPartUpdateAndDelta() {

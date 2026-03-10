@@ -25,6 +25,27 @@
 6. `app/TidyFlow/Networking/WSClient+Send.swift` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 7. `app/TidyFlow/Web/main/protocol-rules.js` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 
+## 可观测性字段职责边界（v1.42）
+
+`system_snapshot` HTTP 响应携带的可观测性数据分为三类，职责互不重叠：
+
+| 类别 | 字段 | 隔离维度 | 说明 |
+|------|------|----------|------|
+| **性能指标** | `perf_metrics` | 全局（不按工作区隔离） | WS 管线延迟、广播计数器、终端回收/裁剪等运行时性能计数器的一次性快照 |
+| **缓存指标** | `cache_metrics` | `(project, workspace)` | 文件/Git 缓存的 hit/miss/rebuild/eviction 等指标 |
+| **终端资源** | `terminal_resource` | `(project, workspace)` 按 `per_workspace` 隔离 | 终端注册表的全局预算与每工作区占用快照 |
+| **日志上下文** | `log_context` | 全局 | 当天日志文件路径、保留策略、perf 日志开关 |
+| **健康 incidents** | `health_incidents` | 按 incident.context 归属 | 健康异常条目列表 |
+| **修复审计** | `recent_repairs` | 按 audit.context 归属 | 最近修复执行记录 |
+
+**职责边界约束：**
+
+1. `perf_metrics` 是全局计数器的**一次性快照**，不是流式事件。客户端只在请求 `system_snapshot` 时获取，不通过 WS 推送。
+2. `cache_metrics` 和 `terminal_resource` 按 `(project, workspace)` 隔离，客户端按该复合键路由到对应缓存桶。
+3. `log_context` 用于调试面板关联日志文件与快照，不携带日志内容本身。
+4. 流式推送的健康事件（`health_snapshot`）与一次性读取的 `health_incidents` 字段共享模型但传输路径不同。
+5. 客户端**不允许**本地派生 `perf_metrics` 中的计数器值，Core 是唯一权威源。
+
 ## HTTP/WS 传输边界契约（v7）
 
 本节定义哪些能力必须通过 HTTP 读取、哪些通过 WebSocket 流式推送，以及消息必须携带的多工作区边界字段。

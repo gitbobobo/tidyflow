@@ -16,6 +16,50 @@ protocol_version: 8
 domains:
   - id: system
     action_rule: exact("ping")
+    # HTTP 只读端点
+    http_read_endpoints:
+      - GET /api/v1/system/snapshot
+    # v1.42: system_snapshot 可观测性字段扩展
+    # perf_metrics   - 统一性能指标快照（WS 管线延迟、广播计数、终端回收等）
+    # log_context    - 结构化日志关联上下文摘要（日志路径、保留天数、perf 日志开关）
+    # 字段由 Core 权威输出，客户端只消费；perf_metrics 不按工作区隔离（全局计数器），
+    # cache_metrics / terminal_resource 继续按 (project, workspace) 隔离。
+    observability_fields:
+      perf_metrics:
+        description: "统一性能指标快照"
+        scope: global
+        fields:
+          - ws_task_broadcast_lag_total
+          - ws_task_broadcast_queue_depth
+          - ws_task_broadcast_skipped_single_receiver_total
+          - ws_task_broadcast_skipped_empty_target_total
+          - ws_task_broadcast_filtered_target_total
+          - terminal_unacked_timeout_total
+          - terminal_reclaimed_total
+          - terminal_scrollback_trim_total
+          - project_command_output_throttled_total
+          - project_command_output_emitted_total
+          - ws_outbound_loop_tick    # {last_ms, max_ms, count}
+          - ws_outbound_select_wait  # {last_ms, max_ms, count}
+          - ws_outbound_handle       # {last_ms, max_ms, count}
+          - ws_decode                # {last_ms, max_ms, count}
+          - ws_dispatch              # {last_ms, max_ms, count}
+          - ws_encode                # {last_ms, max_ms, count}
+          - ws_outbound_queue_depth
+          - ws_batch_flush_size
+          - ws_batch_flush_count
+          - ai_subscriber_fanout
+          - ai_subscriber_fanout_max
+          - evolution_cycle_update_emitted_total
+          - evolution_cycle_update_debounced_total
+          - evolution_snapshot_fallback_total
+      log_context:
+        description: "结构化日志关联上下文摘要"
+        scope: global
+        fields:
+          - log_file           # 当天日志文件路径
+          - retention_days     # 日志保留天数
+          - perf_logging_enabled  # TIDYFLOW_PERF_LOG 是否启用
   - id: terminal
     action_rule: prefix("term_") | one_of("spawn_terminal","kill_terminal","input","resize")
   - id: file

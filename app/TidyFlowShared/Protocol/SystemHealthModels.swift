@@ -483,3 +483,201 @@ public struct WorkspaceRecoverySummary: Equatable {
         )
     }
 }
+
+// MARK: - 统一性能指标快照（v1.42 可观测性收敛）
+
+/// WS 管线阶段延迟与吞吐指标（共享模型，Core 权威输出）
+public struct WsPipelineMetrics: Codable, Equatable {
+    /// 最近一次采样（毫秒）
+    public let lastMs: UInt64
+    /// 历史峰值（毫秒）
+    public let maxMs: UInt64
+    /// 采样总次数
+    public let count: UInt64
+
+    public init(lastMs: UInt64 = 0, maxMs: UInt64 = 0, count: UInt64 = 0) {
+        self.lastMs = lastMs
+        self.maxMs = maxMs
+        self.count = count
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case lastMs = "last_ms"
+        case maxMs = "max_ms"
+        case count
+    }
+
+    public static func from(json: [String: Any]?) -> WsPipelineMetrics {
+        guard let json else { return WsPipelineMetrics() }
+        return WsPipelineMetrics(
+            lastMs: json["last_ms"] as? UInt64 ?? 0,
+            maxMs: json["max_ms"] as? UInt64 ?? 0,
+            count: json["count"] as? UInt64 ?? 0
+        )
+    }
+}
+
+/// 统一性能指标快照（全局计数器，不按工作区隔离）
+///
+/// 由 Core `system_snapshot` 输出，客户端只消费，不允许本地派生。
+/// macOS 与 iOS 共享同一模型，不在各端各自定义。
+public struct PerfMetricsSnapshot: Codable, Equatable {
+    public var wsTaskBroadcastLagTotal: UInt64
+    public var wsTaskBroadcastQueueDepth: UInt64
+    public var wsTaskBroadcastSkippedSingleReceiverTotal: UInt64
+    public var wsTaskBroadcastSkippedEmptyTargetTotal: UInt64
+    public var wsTaskBroadcastFilteredTargetTotal: UInt64
+    public var terminalUnackedTimeoutTotal: UInt64
+    public var terminalReclaimedTotal: UInt64
+    public var terminalScrollbackTrimTotal: UInt64
+    public var projectCommandOutputThrottledTotal: UInt64
+    public var projectCommandOutputEmittedTotal: UInt64
+    public var wsOutboundLoopTick: WsPipelineMetrics
+    public var wsOutboundSelectWait: WsPipelineMetrics
+    public var wsOutboundHandle: WsPipelineMetrics
+    public var wsDecode: WsPipelineMetrics
+    public var wsDispatch: WsPipelineMetrics
+    public var wsEncode: WsPipelineMetrics
+    public var wsOutboundQueueDepth: UInt64
+    public var wsBatchFlushSize: UInt64
+    public var wsBatchFlushCount: UInt64
+    public var aiSubscriberFanout: UInt64
+    public var aiSubscriberFanoutMax: UInt64
+    public var evolutionCycleUpdateEmittedTotal: UInt64
+    public var evolutionCycleUpdateDebouncedTotal: UInt64
+    public var evolutionSnapshotFallbackTotal: UInt64
+
+    public static let empty = PerfMetricsSnapshot(
+        wsTaskBroadcastLagTotal: 0, wsTaskBroadcastQueueDepth: 0,
+        wsTaskBroadcastSkippedSingleReceiverTotal: 0,
+        wsTaskBroadcastSkippedEmptyTargetTotal: 0,
+        wsTaskBroadcastFilteredTargetTotal: 0,
+        terminalUnackedTimeoutTotal: 0, terminalReclaimedTotal: 0,
+        terminalScrollbackTrimTotal: 0,
+        projectCommandOutputThrottledTotal: 0, projectCommandOutputEmittedTotal: 0,
+        wsOutboundLoopTick: .init(), wsOutboundSelectWait: .init(),
+        wsOutboundHandle: .init(), wsDecode: .init(),
+        wsDispatch: .init(), wsEncode: .init(),
+        wsOutboundQueueDepth: 0, wsBatchFlushSize: 0, wsBatchFlushCount: 0,
+        aiSubscriberFanout: 0, aiSubscriberFanoutMax: 0,
+        evolutionCycleUpdateEmittedTotal: 0, evolutionCycleUpdateDebouncedTotal: 0,
+        evolutionSnapshotFallbackTotal: 0
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case wsTaskBroadcastLagTotal = "ws_task_broadcast_lag_total"
+        case wsTaskBroadcastQueueDepth = "ws_task_broadcast_queue_depth"
+        case wsTaskBroadcastSkippedSingleReceiverTotal = "ws_task_broadcast_skipped_single_receiver_total"
+        case wsTaskBroadcastSkippedEmptyTargetTotal = "ws_task_broadcast_skipped_empty_target_total"
+        case wsTaskBroadcastFilteredTargetTotal = "ws_task_broadcast_filtered_target_total"
+        case terminalUnackedTimeoutTotal = "terminal_unacked_timeout_total"
+        case terminalReclaimedTotal = "terminal_reclaimed_total"
+        case terminalScrollbackTrimTotal = "terminal_scrollback_trim_total"
+        case projectCommandOutputThrottledTotal = "project_command_output_throttled_total"
+        case projectCommandOutputEmittedTotal = "project_command_output_emitted_total"
+        case wsOutboundLoopTick = "ws_outbound_loop_tick"
+        case wsOutboundSelectWait = "ws_outbound_select_wait"
+        case wsOutboundHandle = "ws_outbound_handle"
+        case wsDecode = "ws_decode"
+        case wsDispatch = "ws_dispatch"
+        case wsEncode = "ws_encode"
+        case wsOutboundQueueDepth = "ws_outbound_queue_depth"
+        case wsBatchFlushSize = "ws_batch_flush_size"
+        case wsBatchFlushCount = "ws_batch_flush_count"
+        case aiSubscriberFanout = "ai_subscriber_fanout"
+        case aiSubscriberFanoutMax = "ai_subscriber_fanout_max"
+        case evolutionCycleUpdateEmittedTotal = "evolution_cycle_update_emitted_total"
+        case evolutionCycleUpdateDebouncedTotal = "evolution_cycle_update_debounced_total"
+        case evolutionSnapshotFallbackTotal = "evolution_snapshot_fallback_total"
+    }
+
+    public static func from(json: [String: Any]?) -> PerfMetricsSnapshot {
+        guard let json else { return .empty }
+        return PerfMetricsSnapshot(
+            wsTaskBroadcastLagTotal: json["ws_task_broadcast_lag_total"] as? UInt64 ?? 0,
+            wsTaskBroadcastQueueDepth: json["ws_task_broadcast_queue_depth"] as? UInt64 ?? 0,
+            wsTaskBroadcastSkippedSingleReceiverTotal: json["ws_task_broadcast_skipped_single_receiver_total"] as? UInt64 ?? 0,
+            wsTaskBroadcastSkippedEmptyTargetTotal: json["ws_task_broadcast_skipped_empty_target_total"] as? UInt64 ?? 0,
+            wsTaskBroadcastFilteredTargetTotal: json["ws_task_broadcast_filtered_target_total"] as? UInt64 ?? 0,
+            terminalUnackedTimeoutTotal: json["terminal_unacked_timeout_total"] as? UInt64 ?? 0,
+            terminalReclaimedTotal: json["terminal_reclaimed_total"] as? UInt64 ?? 0,
+            terminalScrollbackTrimTotal: json["terminal_scrollback_trim_total"] as? UInt64 ?? 0,
+            projectCommandOutputThrottledTotal: json["project_command_output_throttled_total"] as? UInt64 ?? 0,
+            projectCommandOutputEmittedTotal: json["project_command_output_emitted_total"] as? UInt64 ?? 0,
+            wsOutboundLoopTick: .from(json: json["ws_outbound_loop_tick"] as? [String: Any]),
+            wsOutboundSelectWait: .from(json: json["ws_outbound_select_wait"] as? [String: Any]),
+            wsOutboundHandle: .from(json: json["ws_outbound_handle"] as? [String: Any]),
+            wsDecode: .from(json: json["ws_decode"] as? [String: Any]),
+            wsDispatch: .from(json: json["ws_dispatch"] as? [String: Any]),
+            wsEncode: .from(json: json["ws_encode"] as? [String: Any]),
+            wsOutboundQueueDepth: json["ws_outbound_queue_depth"] as? UInt64 ?? 0,
+            wsBatchFlushSize: json["ws_batch_flush_size"] as? UInt64 ?? 0,
+            wsBatchFlushCount: json["ws_batch_flush_count"] as? UInt64 ?? 0,
+            aiSubscriberFanout: json["ai_subscriber_fanout"] as? UInt64 ?? 0,
+            aiSubscriberFanoutMax: json["ai_subscriber_fanout_max"] as? UInt64 ?? 0,
+            evolutionCycleUpdateEmittedTotal: json["evolution_cycle_update_emitted_total"] as? UInt64 ?? 0,
+            evolutionCycleUpdateDebouncedTotal: json["evolution_cycle_update_debounced_total"] as? UInt64 ?? 0,
+            evolutionSnapshotFallbackTotal: json["evolution_snapshot_fallback_total"] as? UInt64 ?? 0
+        )
+    }
+}
+
+/// 结构化日志关联上下文摘要（全局，不按工作区隔离）
+///
+/// 由 Core `system_snapshot` 输出，供调试面板快速关联日志文件与快照。
+public struct LogContextSummary: Codable, Equatable {
+    /// 当天日志文件完整路径
+    public let logFile: String
+    /// 日志保留天数
+    public let retentionDays: UInt64
+    /// TIDYFLOW_PERF_LOG 是否启用
+    public let perfLoggingEnabled: Bool
+
+    public static let empty = LogContextSummary(logFile: "", retentionDays: 7, perfLoggingEnabled: false)
+
+    public init(logFile: String, retentionDays: UInt64, perfLoggingEnabled: Bool) {
+        self.logFile = logFile
+        self.retentionDays = retentionDays
+        self.perfLoggingEnabled = perfLoggingEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case logFile = "log_file"
+        case retentionDays = "retention_days"
+        case perfLoggingEnabled = "perf_logging_enabled"
+    }
+
+    public static func from(json: [String: Any]?) -> LogContextSummary {
+        guard let json else { return .empty }
+        return LogContextSummary(
+            logFile: json["log_file"] as? String ?? "",
+            retentionDays: json["retention_days"] as? UInt64 ?? 7,
+            perfLoggingEnabled: json["perf_logging_enabled"] as? Bool ?? false
+        )
+    }
+}
+
+/// 统一可观测性快照（聚合 system_snapshot 中的所有观测字段）
+///
+/// 由 WSClient 在收到 system_snapshot 时一次性解析，macOS 和 iOS 共享同一模型。
+/// 各子字段由 Core 权威输出，客户端不在本地推导任何计算值。
+public struct ObservabilitySnapshot {
+    /// 工作区缓存指标（按 (project, workspace) 隔离）
+    public let cacheMetrics: SystemSnapshotCacheMetrics
+    /// 统一性能指标（全局）
+    public let perfMetrics: PerfMetricsSnapshot
+    /// 结构化日志上下文（全局）
+    public let logContext: LogContextSummary
+
+    public static let empty = ObservabilitySnapshot(
+        cacheMetrics: SystemSnapshotCacheMetrics(index: [:]),
+        perfMetrics: .empty,
+        logContext: .empty
+    )
+
+    public init(cacheMetrics: SystemSnapshotCacheMetrics, perfMetrics: PerfMetricsSnapshot, logContext: LogContextSummary) {
+        self.cacheMetrics = cacheMetrics
+        self.perfMetrics = perfMetrics
+        self.logContext = logContext
+    }
+}

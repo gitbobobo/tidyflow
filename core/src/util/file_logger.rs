@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// 日志文件保留天数
-const LOG_RETENTION_DAYS: i64 = 7;
+pub const LOG_RETENTION_DAYS: i64 = 7;
 
 /// 全局日志写入器单例
 static FILE_LOGGER: std::sync::OnceLock<FileLogger> = std::sync::OnceLock::new();

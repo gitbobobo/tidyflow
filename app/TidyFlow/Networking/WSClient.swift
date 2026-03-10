@@ -183,6 +183,8 @@ class WSClient: NSObject, ObservableObject {
     var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?
     /// 工作区缓存可观测性快照（由 /api/v1/system/snapshot HTTP 响应驱动，按 (project, workspace) 隔离）
     var onSystemSnapshot: ((SystemSnapshotCacheMetrics) -> Void)?
+    /// v1.42: 统一可观测性快照（聚合 perf_metrics + log_context + cache_metrics）
+    var onObservabilitySnapshot: ((ObservabilitySnapshot) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     /// 结构化 Core 错误回调（含错误码与上下文）
