@@ -288,9 +288,8 @@ impl StageExecutionStats {
             let total_count = self.success_count + self.failure_count;
             if let Some(prev_avg) = self.avg_duration_ms {
                 // 滑动平均
-                self.avg_duration_ms = Some(
-                    (prev_avg * (total_count as u64 - 1) + dur) / total_count as u64,
-                );
+                self.avg_duration_ms =
+                    Some((prev_avg * (total_count as u64 - 1) + dur) / total_count as u64);
             } else {
                 self.avg_duration_ms = Some(dur);
             }

@@ -1034,10 +1034,7 @@ pub fn validate_evidence_for_run_id(
         if !has_device {
             issues.push(issue_warning(
                 "device_missing_for_run",
-                format!(
-                    "设备 {} 在 run_id={} 中无证据条目",
-                    device, run_id
-                ),
+                format!("设备 {} 在 run_id={} 中无证据条目", device, run_id),
             ));
         }
     }
@@ -1047,10 +1044,7 @@ pub fn validate_evidence_for_run_id(
         if !item.full_path.exists() {
             issues.push(issue_warning(
                 "artifact_missing_for_run",
-                format!(
-                    "run_id={} 的证据产物不存在: {}",
-                    run_id, item.path
-                ),
+                format!("run_id={} 的证据产物不存在: {}", run_id, item.path),
             ));
         }
     }
@@ -1219,12 +1213,12 @@ mod tests {
         )
         .expect("write index");
 
-        let (count, issues) =
-            validate_evidence_for_run_id(dir.path(), "run1", &["iphone", "mac"]);
+        let (count, issues) = validate_evidence_for_run_id(dir.path(), "run1", &["iphone", "mac"]);
         assert_eq!(count, 1);
         // mac 设备应该报缺失
-        assert!(issues.iter().any(|i| i.code == "device_missing_for_run"
-            && i.message.contains("mac")));
+        assert!(issues
+            .iter()
+            .any(|i| i.code == "device_missing_for_run" && i.message.contains("mac")));
     }
 
     #[test]
@@ -1250,13 +1244,8 @@ mod tests {
         )
         .expect("write index");
 
-        let (count, issues) =
-            validate_evidence_for_run_id(dir.path(), "run2", &["iphone", "mac"]);
+        let (count, issues) = validate_evidence_for_run_id(dir.path(), "run2", &["iphone", "mac"]);
         assert_eq!(count, 2);
-        assert!(
-            issues.is_empty(),
-            "expected no issues, got: {:?}",
-            issues
-        );
+        assert!(issues.is_empty(), "expected no issues, got: {:?}", issues);
     }
 }

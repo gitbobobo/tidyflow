@@ -28,7 +28,11 @@ fn compute_evo_duration_ms(created_at: &str) -> Option<u64> {
     let start = DateTime::parse_from_rfc3339(created_at).ok()?;
     let now = Utc::now();
     let d = now.signed_duration_since(start).num_milliseconds();
-    if d >= 0 { Some(d as u64) } else { None }
+    if d >= 0 {
+        Some(d as u64)
+    } else {
+        None
+    }
 }
 
 /// 从两个 RFC3339 时间戳间计算耗时（毫秒），用于历史循环
@@ -36,7 +40,11 @@ fn compute_evo_duration_between(created_at: &str, updated_at: &str) -> Option<u6
     let start = DateTime::parse_from_rfc3339(created_at).ok()?;
     let end = DateTime::parse_from_rfc3339(updated_at).ok()?;
     let d = end.signed_duration_since(start).num_milliseconds();
-    if d >= 0 { Some(d as u64) } else { None }
+    if d >= 0 {
+        Some(d as u64)
+    } else {
+        None
+    }
 }
 
 /// 从历史循环状态判定是否可重试
@@ -664,9 +672,9 @@ impl EvolutionManager {
         recommendations: &[crate::server::protocol::health::SchedulingRecommendation],
         aggregates: &[crate::server::protocol::health::ObservationAggregate],
     ) {
-        use crate::server::protocol::health::SchedulingRecommendationKind;
         use super::consts::*;
         use super::types::{AdaptiveDecision, AdaptiveDecisionKind};
+        use crate::server::protocol::health::SchedulingRecommendationKind;
 
         let mut state = self.state.lock().await;
         let now_str = chrono::Utc::now().to_rfc3339();
@@ -675,7 +683,10 @@ impl EvolutionManager {
             match rec.kind {
                 SchedulingRecommendationKind::ReduceConcurrency => {
                     let suggested = rec.suggested_value.unwrap_or(1) as u32;
-                    let current = state.adaptive.effective_max_parallel.unwrap_or(state.max_parallel_workspaces);
+                    let current = state
+                        .adaptive
+                        .effective_max_parallel
+                        .unwrap_or(state.max_parallel_workspaces);
                     let new_val = suggested.clamp(ADAPTIVE_MIN_PARALLEL, ADAPTIVE_MAX_PARALLEL);
                     if new_val < current {
                         let decision = AdaptiveDecision {
@@ -691,13 +702,18 @@ impl EvolutionManager {
                         state.adaptive.record_decision(decision);
                         tracing::info!(
                             "adaptive scheduling: 降低并发上限 {} → {}，原因: {}",
-                            current, new_val, rec.reason
+                            current,
+                            new_val,
+                            rec.reason
                         );
                     }
                 }
                 SchedulingRecommendationKind::IncreaseConcurrency => {
                     let suggested = rec.suggested_value.unwrap_or(4) as u32;
-                    let current = state.adaptive.effective_max_parallel.unwrap_or(state.max_parallel_workspaces);
+                    let current = state
+                        .adaptive
+                        .effective_max_parallel
+                        .unwrap_or(state.max_parallel_workspaces);
                     let new_val = suggested.clamp(ADAPTIVE_MIN_PARALLEL, ADAPTIVE_MAX_PARALLEL);
                     if new_val > current {
                         let decision = AdaptiveDecision {
@@ -713,14 +729,19 @@ impl EvolutionManager {
                         state.adaptive.record_decision(decision);
                         tracing::info!(
                             "adaptive scheduling: 提高并发上限 {} → {}，原因: {}",
-                            current, new_val, rec.reason
+                            current,
+                            new_val,
+                            rec.reason
                         );
                     }
                 }
                 SchedulingRecommendationKind::EnableDegradation => {
-                    if let (Some(project), Some(workspace)) = (&rec.context.project, &rec.context.workspace) {
+                    if let (Some(project), Some(workspace)) =
+                        (&rec.context.project, &rec.context.workspace)
+                    {
                         let key = format!("{}:{}", project, workspace);
-                        if state.adaptive.degraded_workspaces.len() < ADAPTIVE_MAX_DEGRADED_WORKSPACES
+                        if state.adaptive.degraded_workspaces.len()
+                            < ADAPTIVE_MAX_DEGRADED_WORKSPACES
                             && !state.adaptive.degraded_workspaces.contains(&key)
                         {
                             state.adaptive.degraded_workspaces.insert(key.clone());
@@ -736,17 +757,25 @@ impl EvolutionManager {
                             state.adaptive.record_decision(decision);
                             tracing::info!(
                                 "adaptive scheduling: 降级工作区 {}，原因: {}",
-                                key, rec.reason
+                                key,
+                                rec.reason
                             );
                         }
                     }
                 }
                 SchedulingRecommendationKind::DeferQueuing => {
-                    if let (Some(project), Some(workspace)) = (&rec.context.project, &rec.context.workspace) {
+                    if let (Some(project), Some(workspace)) =
+                        (&rec.context.project, &rec.context.workspace)
+                    {
                         let key = format!("{}:{}", project, workspace);
                         let defer_secs = ADAPTIVE_MAX_DEFER_SECS.min(60);
-                        let resume_at = (chrono::Utc::now() + chrono::Duration::seconds(defer_secs as i64)).to_rfc3339();
-                        state.adaptive.deferred_workspaces.insert(key.clone(), resume_at);
+                        let resume_at = (chrono::Utc::now()
+                            + chrono::Duration::seconds(defer_secs as i64))
+                        .to_rfc3339();
+                        state
+                            .adaptive
+                            .deferred_workspaces
+                            .insert(key.clone(), resume_at);
                         let decision = AdaptiveDecision {
                             kind: AdaptiveDecisionKind::QueueDeferred,
                             reason: rec.reason.clone(),
@@ -759,7 +788,9 @@ impl EvolutionManager {
                         state.adaptive.record_decision(decision);
                         tracing::info!(
                             "adaptive scheduling: 延迟排队 {} {}秒，原因: {}",
-                            key, defer_secs, rec.reason
+                            key,
+                            defer_secs,
+                            rec.reason
                         );
                     }
                 }
@@ -783,10 +814,7 @@ impl EvolutionManager {
             if agg.health_score >= 0.8 && agg.consecutive_failures == 0 {
                 let key = format!("{}:{}", agg.project, agg.workspace);
                 if state.adaptive.degraded_workspaces.remove(&key) {
-                    tracing::info!(
-                        "adaptive scheduling: 工作区 {} 健康恢复，解除降级",
-                        key
-                    );
+                    tracing::info!("adaptive scheduling: 工作区 {} 健康恢复，解除降级", key);
                 }
             }
         }
@@ -829,7 +857,9 @@ impl EvolutionManager {
             // failed_exhausted 可安全重试，failed_system 不可重试
             let retryable = w.status == "failed_exhausted";
             let error_code = if is_terminal && w.status != "completed" {
-                w.terminal_reason_code.clone().or_else(|| Some(w.status.clone()))
+                w.terminal_reason_code
+                    .clone()
+                    .or_else(|| Some(w.status.clone()))
             } else {
                 None
             };
@@ -878,9 +908,8 @@ impl EvolutionManager {
         });
 
         // 获取观测聚合以填充调度器压力信息
-        let aggregates = crate::server::perf::build_observation_aggregates(
-            &std::collections::HashMap::new(),
-        );
+        let aggregates =
+            crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
         let recommendations = crate::server::perf::build_scheduling_recommendations(
             &aggregates,
             state.max_parallel_workspaces,
@@ -898,7 +927,10 @@ impl EvolutionManager {
         };
 
         // 使用自适应调度的有效并发上限
-        let effective_max_parallel = state.adaptive.effective_max_parallel.unwrap_or(state.max_parallel_workspaces);
+        let effective_max_parallel = state
+            .adaptive
+            .effective_max_parallel
+            .unwrap_or(state.max_parallel_workspaces);
 
         SnapshotResult {
             scheduler: crate::server::protocol::EvolutionSchedulerInfo {
@@ -1312,8 +1344,8 @@ mod tests {
 
     #[tokio::test]
     async fn adaptive_scheduling_applies_reduce_concurrency() {
-        use crate::server::protocol::health::*;
         use super::super::EvolutionManager;
+        use crate::server::protocol::health::*;
 
         let manager = EvolutionManager::new();
         let recommendations = vec![SchedulingRecommendation {
@@ -1327,7 +1359,9 @@ mod tests {
             generated_at: 1000,
             expires_at: 2000,
         }];
-        manager.apply_scheduling_recommendations(&recommendations, &[]).await;
+        manager
+            .apply_scheduling_recommendations(&recommendations, &[])
+            .await;
         let state = manager.state.lock().await;
         assert_eq!(state.adaptive.effective_max_parallel, Some(2));
         assert_eq!(state.adaptive.recent_decisions.len(), 1);
@@ -1335,8 +1369,8 @@ mod tests {
 
     #[tokio::test]
     async fn adaptive_scheduling_respects_safety_bounds() {
-        use crate::server::protocol::health::*;
         use super::super::EvolutionManager;
+        use crate::server::protocol::health::*;
 
         let manager = EvolutionManager::new();
         // 尝试设置超出安全边界的值
@@ -1351,7 +1385,9 @@ mod tests {
             generated_at: 1000,
             expires_at: 2000,
         }];
-        manager.apply_scheduling_recommendations(&recommendations, &[]).await;
+        manager
+            .apply_scheduling_recommendations(&recommendations, &[])
+            .await;
         let state = manager.state.lock().await;
         // 应被 clamp 到最小值 1
         assert_eq!(state.adaptive.effective_max_parallel, Some(1));
@@ -1359,8 +1395,8 @@ mod tests {
 
     #[tokio::test]
     async fn adaptive_scheduling_degraded_workspace_limit() {
-        use crate::server::protocol::health::*;
         use super::super::EvolutionManager;
+        use crate::server::protocol::health::*;
 
         let manager = EvolutionManager::new();
         let mut recommendations = Vec::new();
@@ -1378,7 +1414,9 @@ mod tests {
                 expires_at: 2000,
             });
         }
-        manager.apply_scheduling_recommendations(&recommendations, &[]).await;
+        manager
+            .apply_scheduling_recommendations(&recommendations, &[])
+            .await;
         let state = manager.state.lock().await;
         // 应不超过 ADAPTIVE_MAX_DEGRADED_WORKSPACES (3)
         assert!(state.adaptive.degraded_workspaces.len() <= 3);

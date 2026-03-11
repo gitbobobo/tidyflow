@@ -76,8 +76,7 @@ pub fn query_analysis_summary(
     let aggregates =
         crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
     let anomalies = crate::server::perf::build_predictive_anomalies(&aggregates);
-    let recommendations =
-        crate::server::perf::build_scheduling_recommendations(&aggregates, 4, 0);
+    let recommendations = crate::server::perf::build_scheduling_recommendations(&aggregates, 4, 0);
     crate::server::perf::build_analysis_summary(
         project,
         workspace,

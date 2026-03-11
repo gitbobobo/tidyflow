@@ -180,10 +180,7 @@ impl EvolutionManager {
         if let Ok(mut store) = learning_store().lock() {
             let state = store.entry(key).or_default();
             state.record_safe_baseline(profiles);
-            info!(
-                "profile learning: 记录安全基线 {}/{}",
-                project, workspace
-            );
+            info!("profile learning: 记录安全基线 {}/{}", project, workspace);
         }
     }
 

@@ -258,9 +258,7 @@ async fn apply_snapshot_ops_and_emit(
     }
 
     if let Some(snapshot) = latest_snapshot {
-        let from_revision = snapshot
-            .cache_revision()
-            .saturating_sub(ops.len() as u64);
+        let from_revision = snapshot.cache_revision().saturating_sub(ops.len() as u64);
         emit_ai_session_messages_update_with_ops(
             output_tx,
             task_broadcast_tx,

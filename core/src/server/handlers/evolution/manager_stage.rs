@@ -5394,9 +5394,8 @@ impl EvolutionManager {
                                 // 门禁失败：如果还有重试次数则重试，否则标记失败
                                 if entry.verify_iteration + 1 < entry.verify_iteration_limit {
                                     entry.terminal_reason_code = None;
-                                    entry.terminal_error_message = Some(
-                                        format!("质量门禁阻断: {:?}", gate.failure_reasons),
-                                    );
+                                    entry.terminal_error_message =
+                                        Some(format!("质量门禁阻断: {:?}", gate.failure_reasons));
                                     entry.verify_iteration += 1;
                                     let reimplement_stage =
                                         reimplement_stage_name(entry.verify_iteration);
@@ -5405,10 +5404,9 @@ impl EvolutionManager {
                                         &mut entry.stage_tool_call_counts,
                                         &reimplement_stage,
                                     );
-                                    entry.stage_statuses.insert(
-                                        reimplement_stage.clone(),
-                                        "pending".to_string(),
-                                    );
+                                    entry
+                                        .stage_statuses
+                                        .insert(reimplement_stage.clone(), "pending".to_string());
                                     entry
                                         .stage_tool_call_counts
                                         .insert(reimplement_stage.clone(), 0);
@@ -5419,9 +5417,8 @@ impl EvolutionManager {
                                     entry.status = "failed_exhausted".to_string();
                                     entry.terminal_reason_code =
                                         Some("evo_gate_decision_blocked".to_string());
-                                    entry.terminal_error_message = Some(
-                                        format!("质量门禁阻断: {:?}", gate.failure_reasons),
-                                    );
+                                    entry.terminal_error_message =
+                                        Some(format!("质量门禁阻断: {:?}", gate.failure_reasons));
                                     next_stage = previous.clone();
                                 }
                             }

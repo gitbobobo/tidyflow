@@ -230,12 +230,11 @@ impl HealthRegistry {
             crate::server::perf::build_observation_aggregates(cache_hit_ratios);
         let predictive_anomalies =
             crate::server::perf::build_predictive_anomalies(&observation_aggregates);
-        let scheduling_recommendations =
-            crate::server::perf::build_scheduling_recommendations(
-                &observation_aggregates,
-                current_max_parallel,
-                running_count,
-            );
+        let scheduling_recommendations = crate::server::perf::build_scheduling_recommendations(
+            &observation_aggregates,
+            current_max_parallel,
+            running_count,
+        );
 
         SystemHealthSnapshot {
             snapshot_at: now,
@@ -884,9 +883,7 @@ mod tests {
         // projB/wsB 不应受 projA/wsA 的 critical incident 影响
         let decision_b = evaluate_gate_decision("projB", "wsB", "cycle-3", 0);
         use crate::server::protocol::health::GateVerdict;
-        assert!(
-            decision_b.verdict == GateVerdict::Pass || decision_b.verdict == GateVerdict::Skip
-        );
+        assert!(decision_b.verdict == GateVerdict::Pass || decision_b.verdict == GateVerdict::Skip);
 
         // projA/wsA 应受影响
         let decision_a = evaluate_gate_decision("projA", "wsA", "cycle-3", 0);

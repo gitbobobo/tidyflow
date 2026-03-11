@@ -13,7 +13,11 @@ fn is_retryable(task_type: &str, status: &str) -> bool {
 fn compute_duration_ms(started_at: i64, completed_at: Option<i64>) -> Option<u64> {
     completed_at.and_then(|end| {
         let d = end - started_at;
-        if d >= 0 { Some(d as u64) } else { None }
+        if d >= 0 {
+            Some(d as u64)
+        } else {
+            None
+        }
     })
 }
 
@@ -142,7 +146,10 @@ mod tests {
         assert_eq!(fail_task.task_id, "fail");
         assert_eq!(fail_task.duration_ms, Some(1000));
         assert_eq!(fail_task.error_code.as_deref(), Some("command_failed"));
-        assert_eq!(fail_task.error_detail.as_deref(), Some("lint error on line 42"));
+        assert_eq!(
+            fail_task.error_detail.as_deref(),
+            Some("lint error on line 42")
+        );
         assert!(fail_task.retryable);
 
         let ok_task = &tasks[1];
@@ -342,7 +349,11 @@ mod tests {
 
         let t = &tasks[0];
         assert_eq!(t.error_code.as_deref(), Some("command_not_found"));
-        assert!(t.error_detail.as_ref().unwrap().contains("command not found"));
+        assert!(t
+            .error_detail
+            .as_ref()
+            .unwrap()
+            .contains("command not found"));
         assert_eq!(t.duration_ms, Some(1000));
         assert!(t.retryable);
     }

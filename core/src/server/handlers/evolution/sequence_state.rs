@@ -176,7 +176,14 @@ impl EvolutionManager {
         let workspace = entry.workspace.clone();
         drop(state);
 
-        self.record_learning_result(&project, &workspace, stage, success, duration_ms, tool_calls);
+        self.record_learning_result(
+            &project,
+            &workspace,
+            stage,
+            success,
+            duration_ms,
+            tool_calls,
+        );
     }
 
     pub(super) async fn stage_tool_call_count(&self, key: &str, stage: &str) -> u32 {

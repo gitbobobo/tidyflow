@@ -389,14 +389,19 @@ pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
     PerfMetricsSnapshot {
         ws_task_broadcast_lag_total: WS_TASK_BROADCAST_LAG_TOTAL.load(Ordering::Relaxed),
         ws_task_broadcast_queue_depth: WS_TASK_BROADCAST_QUEUE_DEPTH.load(Ordering::Relaxed),
-        ws_task_broadcast_skipped_single_receiver_total: WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL.load(Ordering::Relaxed),
-        ws_task_broadcast_skipped_empty_target_total: WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL.load(Ordering::Relaxed),
-        ws_task_broadcast_filtered_target_total: WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL.load(Ordering::Relaxed),
+        ws_task_broadcast_skipped_single_receiver_total:
+            WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL.load(Ordering::Relaxed),
+        ws_task_broadcast_skipped_empty_target_total: WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL
+            .load(Ordering::Relaxed),
+        ws_task_broadcast_filtered_target_total: WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL
+            .load(Ordering::Relaxed),
         terminal_unacked_timeout_total: TERMINAL_UNACKED_TIMEOUT_TOTAL.load(Ordering::Relaxed),
         terminal_reclaimed_total: TERMINAL_RECLAIMED_TOTAL.load(Ordering::Relaxed),
         terminal_scrollback_trim_total: TERMINAL_SCROLLBACK_TRIM_TOTAL.load(Ordering::Relaxed),
-        project_command_output_throttled_total: PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL.load(Ordering::Relaxed),
-        project_command_output_emitted_total: PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL.load(Ordering::Relaxed),
+        project_command_output_throttled_total: PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL
+            .load(Ordering::Relaxed),
+        project_command_output_emitted_total: PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL
+            .load(Ordering::Relaxed),
         ws_outbound_loop_tick: WsPipelineMetrics {
             last_ms: WS_OUTBOUND_LOOP_TICK_MS.load(Ordering::Relaxed),
             max_ms: WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed),
@@ -432,9 +437,12 @@ pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
         ws_batch_flush_count: WS_BATCH_FLUSH_COUNT.load(Ordering::Relaxed),
         ai_subscriber_fanout: AI_SUBSCRIBER_FANOUT.load(Ordering::Relaxed),
         ai_subscriber_fanout_max: AI_SUBSCRIBER_FANOUT_MAX.load(Ordering::Relaxed),
-        evolution_cycle_update_emitted_total: EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL.load(Ordering::Relaxed),
-        evolution_cycle_update_debounced_total: EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL.load(Ordering::Relaxed),
-        evolution_snapshot_fallback_total: EVOLUTION_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed),
+        evolution_cycle_update_emitted_total: EVOLUTION_CYCLE_UPDATE_EMITTED_TOTAL
+            .load(Ordering::Relaxed),
+        evolution_cycle_update_debounced_total: EVOLUTION_CYCLE_UPDATE_DEBOUNCED_TOTAL
+            .load(Ordering::Relaxed),
+        evolution_snapshot_fallback_total: EVOLUTION_SNAPSHOT_FALLBACK_TOTAL
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -442,13 +450,13 @@ pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
 // 历史观测聚合与预测评分（v1.44: 按 (project, workspace) 隔离）
 // ============================================================================
 
+use crate::server::protocol::health::HealthContext;
 use crate::server::protocol::health::{
-    AnalysisScopeLevel, BottleneckEntry, BottleneckKind, EvolutionAnalysisSummary,
-    GateDecision, GateFailureReason, GateVerdict, ObservationAggregate, OptimizationSuggestion,
-    PredictiveAnomaly, PredictiveAnomalyKind, PredictionConfidence, PredictionTimeWindow,
+    AnalysisScopeLevel, BottleneckEntry, BottleneckKind, EvolutionAnalysisSummary, GateDecision,
+    GateFailureReason, GateVerdict, ObservationAggregate, OptimizationSuggestion,
+    PredictionConfidence, PredictionTimeWindow, PredictiveAnomaly, PredictiveAnomalyKind,
     ResourcePressureLevel, SchedulingRecommendation, SchedulingRecommendationKind,
 };
-use crate::server::protocol::health::HealthContext;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -488,7 +496,13 @@ pub struct WorkspaceObservationAccumulator {
 
 impl WorkspaceObservationAccumulator {
     /// 记录一次循环结果
-    pub fn record_cycle(&mut self, success: bool, duration_ms: Option<u64>, rate_limit_hit: bool, timestamp: u64) {
+    pub fn record_cycle(
+        &mut self,
+        success: bool,
+        duration_ms: Option<u64>,
+        rate_limit_hit: bool,
+        timestamp: u64,
+    ) {
         if success {
             self.cycle_success_count += 1;
             self.consecutive_failures = 0;
@@ -528,7 +542,8 @@ static OBSERVATION_STORE: std::sync::OnceLock<
     std::sync::Mutex<HashMap<(String, String), WorkspaceObservationAccumulator>>,
 > = std::sync::OnceLock::new();
 
-fn observation_store() -> &'static std::sync::Mutex<HashMap<(String, String), WorkspaceObservationAccumulator>> {
+fn observation_store(
+) -> &'static std::sync::Mutex<HashMap<(String, String), WorkspaceObservationAccumulator>> {
     OBSERVATION_STORE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
@@ -537,7 +552,12 @@ pub fn record_workspace_cycle(record: WorkspaceCycleRecord) {
     if let Ok(mut store) = observation_store().lock() {
         let key = (record.project.clone(), record.workspace.clone());
         let acc = store.entry(key).or_default();
-        acc.record_cycle(record.success, record.duration_ms, record.rate_limit_hit, record.timestamp);
+        acc.record_cycle(
+            record.success,
+            record.duration_ms,
+            record.rate_limit_hit,
+            record.timestamp,
+        );
     }
 }
 
@@ -554,7 +574,9 @@ pub fn build_observation_aggregates(
     store
         .iter()
         .map(|((project, workspace), acc)| {
-            let cache_hit_ratio = cache_hit_ratios.get(&(project.clone(), workspace.clone())).copied();
+            let cache_hit_ratio = cache_hit_ratios
+                .get(&(project.clone(), workspace.clone()))
+                .copied();
             let pressure_level = compute_pressure_level(acc, cache_hit_ratio);
             let health_score = compute_health_score(acc, cache_hit_ratio);
 
@@ -579,9 +601,7 @@ pub fn build_observation_aggregates(
 }
 
 /// 根据历史聚合生成预测异常
-pub fn build_predictive_anomalies(
-    aggregates: &[ObservationAggregate],
-) -> Vec<PredictiveAnomaly> {
+pub fn build_predictive_anomalies(aggregates: &[ObservationAggregate]) -> Vec<PredictiveAnomaly> {
     let now = unix_ms_now();
     let one_hour_ms = 3_600_000u64;
     let mut anomalies = Vec::new();
@@ -648,7 +668,10 @@ pub fn build_predictive_anomalies(
         if let Some(ratio) = agg.cache_hit_ratio {
             if ratio < 0.5 && (agg.cycle_success_count + agg.cycle_failure_count) > 2 {
                 anomalies.push(PredictiveAnomaly {
-                    anomaly_id: format!("pred:cache_efficiency_drop:{}:{}", agg.project, agg.workspace),
+                    anomaly_id: format!(
+                        "pred:cache_efficiency_drop:{}:{}",
+                        agg.project, agg.workspace
+                    ),
                     kind: PredictiveAnomalyKind::CacheEfficiencyDrop,
                     confidence: if ratio < 0.3 {
                         PredictionConfidence::High
@@ -658,7 +681,9 @@ pub fn build_predictive_anomalies(
                     root_cause: "low_cache_hit_ratio".to_string(),
                     summary: Some(format!(
                         "工作区 {}/{} 缓存命中率仅 {:.0}%",
-                        agg.project, agg.workspace, ratio * 100.0
+                        agg.project,
+                        agg.workspace,
+                        ratio * 100.0
                     )),
                     time_window: PredictionTimeWindow {
                         start_at: now,
@@ -772,7 +797,10 @@ pub fn build_scheduling_recommendations(
     }
 
     // 低压且有排队时建议提高并发
-    if global_pressure == ResourcePressureLevel::Low && running_count >= current_max_parallel && current_max_parallel < 8 {
+    if global_pressure == ResourcePressureLevel::Low
+        && running_count >= current_max_parallel
+        && current_max_parallel < 8
+    {
         recommendations.push(SchedulingRecommendation {
             recommendation_id: format!("sched:increase_concurrency:system:{}", now),
             kind: SchedulingRecommendationKind::IncreaseConcurrency,
@@ -780,7 +808,8 @@ pub fn build_scheduling_recommendations(
             reason: "resources_available_with_queue".to_string(),
             summary: Some(format!(
                 "资源充裕，当前并发 {} 已满，建议提高至 {}",
-                current_max_parallel, current_max_parallel + 1
+                current_max_parallel,
+                current_max_parallel + 1
             )),
             suggested_value: Some((current_max_parallel + 1) as i64),
             context: HealthContext::system(),
@@ -793,7 +822,10 @@ pub fn build_scheduling_recommendations(
     for agg in aggregates {
         if agg.consecutive_failures >= 3 {
             recommendations.push(SchedulingRecommendation {
-                recommendation_id: format!("sched:enable_degradation:{}:{}:{}", agg.project, agg.workspace, now),
+                recommendation_id: format!(
+                    "sched:enable_degradation:{}:{}:{}",
+                    agg.project, agg.workspace, now
+                ),
                 kind: SchedulingRecommendationKind::EnableDegradation,
                 pressure_level: ResourcePressureLevel::High,
                 reason: "consecutive_failures_threshold".to_string(),
@@ -811,7 +843,10 @@ pub fn build_scheduling_recommendations(
         // 速率限制频繁时建议延迟排队
         if agg.rate_limit_hit_count >= 3 {
             recommendations.push(SchedulingRecommendation {
-                recommendation_id: format!("sched:defer_queuing:{}:{}:{}", agg.project, agg.workspace, now),
+                recommendation_id: format!(
+                    "sched:defer_queuing:{}:{}:{}",
+                    agg.project, agg.workspace, now
+                ),
                 kind: SchedulingRecommendationKind::DeferQueuing,
                 pressure_level: ResourcePressureLevel::Moderate,
                 reason: "rate_limit_frequency".to_string(),
@@ -876,12 +911,11 @@ pub fn build_analysis_summary(
             && a.context.workspace.as_deref() == Some(workspace)
     }) {
         let (kind, reason_code) = match anomaly.kind {
-            PredictiveAnomalyKind::RecurringFailure => {
-                (BottleneckKind::RecurringFailure, "recurring_failure_detected")
-            }
-            PredictiveAnomalyKind::RateLimitRisk => {
-                (BottleneckKind::RateLimit, "rate_limit_risk")
-            }
+            PredictiveAnomalyKind::RecurringFailure => (
+                BottleneckKind::RecurringFailure,
+                "recurring_failure_detected",
+            ),
+            PredictiveAnomalyKind::RateLimitRisk => (BottleneckKind::RateLimit, "rate_limit_risk"),
             PredictiveAnomalyKind::PerformanceDegradation => (
                 BottleneckKind::PerformanceDegradation,
                 "performance_degradation_trend",
@@ -957,10 +991,7 @@ pub fn build_analysis_summary(
                     ),
                 };
                 bottlenecks.push(BottleneckEntry {
-                    bottleneck_id: format!(
-                        "bn:gate:{}:{}:{}",
-                        reason_code, project, workspace
-                    ),
+                    bottleneck_id: format!("bn:gate:{}:{}:{}", reason_code, project, workspace),
                     kind,
                     reason_code: reason_code.to_string(),
                     risk_score: 0.9,
@@ -1107,8 +1138,7 @@ fn compute_health_score(
     let rate_limit_penalty = (acc.rate_limit_hit_count as f64 * 0.05).min(0.2);
     let cache_bonus = cache_hit_ratio.unwrap_or(0.5) * 0.1;
 
-    (success_ratio - failure_penalty - rate_limit_penalty + cache_bonus)
-        .clamp(0.0, 1.0)
+    (success_ratio - failure_penalty - rate_limit_penalty + cache_bonus).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -1163,7 +1193,10 @@ mod tests {
     #[test]
     fn test_pressure_level_low() {
         let acc = WorkspaceObservationAccumulator::default();
-        assert_eq!(compute_pressure_level(&acc, Some(0.9)), ResourcePressureLevel::Low);
+        assert_eq!(
+            compute_pressure_level(&acc, Some(0.9)),
+            ResourcePressureLevel::Low
+        );
     }
 
     #[test]
@@ -1171,7 +1204,10 @@ mod tests {
         let mut acc = WorkspaceObservationAccumulator::default();
         acc.consecutive_failures = 5;
         acc.rate_limit_hit_count = 10;
-        assert_eq!(compute_pressure_level(&acc, Some(0.1)), ResourcePressureLevel::Critical);
+        assert_eq!(
+            compute_pressure_level(&acc, Some(0.1)),
+            ResourcePressureLevel::Critical
+        );
     }
 
     #[test]
@@ -1194,7 +1230,9 @@ mod tests {
         };
         let anomalies = build_predictive_anomalies(&[agg]);
         assert!(
-            anomalies.iter().any(|a| a.kind == PredictiveAnomalyKind::RecurringFailure),
+            anomalies
+                .iter()
+                .any(|a| a.kind == PredictiveAnomalyKind::RecurringFailure),
             "should detect recurring failure"
         );
     }
@@ -1232,8 +1270,7 @@ mod analysis_tests {
             bypass_reason: None,
             decided_at: 1000,
         };
-        let summary =
-            build_analysis_summary("proj", "ws", "cycle-1", Some(&gate), &[], &[], &[]);
+        let summary = build_analysis_summary("proj", "ws", "cycle-1", Some(&gate), &[], &[], &[]);
         assert!(!summary.bottlenecks.is_empty());
         assert!(summary.overall_risk_score > 0.0);
         assert!(summary.gate_decision.is_some());
@@ -1261,8 +1298,7 @@ mod analysis_tests {
             score: 0.75,
             predicted_at: 1000,
         }];
-        let summary =
-            build_analysis_summary("proj", "ws", "cycle-1", None, &[], &anomalies, &[]);
+        let summary = build_analysis_summary("proj", "ws", "cycle-1", None, &[], &anomalies, &[]);
         assert_eq!(summary.bottlenecks.len(), 1);
         assert_eq!(
             summary.bottlenecks[0].kind,
@@ -1310,9 +1346,6 @@ mod analysis_tests {
             build_analysis_summary("projA", "wsA", "cycle-1", None, &[], &anomalies, &[]);
         assert_eq!(summary_a.bottlenecks.len(), 1);
         assert_eq!(summary_a.bottlenecks[0].kind, BottleneckKind::RateLimit);
-        assert_eq!(
-            summary_a.predictive_anomaly_ids,
-            vec!["pred:a:projA:wsA"]
-        );
+        assert_eq!(summary_a.predictive_anomaly_ids, vec!["pred:a:projA:wsA"]);
     }
 }

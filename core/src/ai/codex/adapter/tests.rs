@@ -47,7 +47,10 @@ fn map_turn_items_to_messages_groups_user_and_assistant_parts_by_turn() {
     assert_eq!(messages[0].id, "codex-user-session-1-turn-1");
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].parts.len(), 1);
-    assert_eq!(messages[0].parts[0].text.as_deref(), Some("请修复会话详情渲染。"));
+    assert_eq!(
+        messages[0].parts[0].text.as_deref(),
+        Some("请修复会话详情渲染。")
+    );
 
     assert_eq!(messages[1].id, "codex-assistant-session-1-turn-1");
     assert_eq!(messages[1].role, "assistant");

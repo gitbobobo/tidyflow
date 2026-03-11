@@ -66,8 +66,15 @@ fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
 
     if matches!(
         normalized.as_str(),
-        "edit" | "editing" | "editfile" | "replace" | "strreplace" | "stringreplace"
-            | "applypatch" | "multiedit" | "patch"
+        "edit"
+            | "editing"
+            | "editfile"
+            | "replace"
+            | "strreplace"
+            | "stringreplace"
+            | "applypatch"
+            | "multiedit"
+            | "patch"
     ) || normalized.starts_with("edit")
         || normalized.starts_with("replace")
         || normalized.starts_with("patch")
@@ -139,8 +146,8 @@ fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
         "shellCommand",
         "shell_command",
     ]
-        .iter()
-        .any(|key| input.get(*key).is_some());
+    .iter()
+    .any(|key| input.get(*key).is_some());
     let has_query = ["query", "pattern"]
         .iter()
         .any(|key| input.get(*key).is_some());
@@ -368,8 +375,8 @@ fn parse_tool_call_locations_from_value(value: &Value) -> Option<Vec<AiToolCallL
         return None;
     };
 
-    let mut location = parse_tool_call_location(&Value::Object(obj.clone())).unwrap_or(
-        AiToolCallLocation {
+    let mut location =
+        parse_tool_call_location(&Value::Object(obj.clone())).unwrap_or(AiToolCallLocation {
             uri: None,
             path: None,
             line: None,
@@ -377,8 +384,7 @@ fn parse_tool_call_locations_from_value(value: &Value) -> Option<Vec<AiToolCallL
             end_line: None,
             end_column: None,
             label: None,
-        },
-    );
+        });
     if location.path.is_none() {
         location.path = obj
             .get("path")
@@ -601,7 +607,11 @@ pub(crate) fn parse_tool_call_update_content(
     });
 
     let locations = parse_tool_call_locations(content)
-        .or_else(|| raw_input.as_ref().and_then(parse_tool_call_locations_from_value))
+        .or_else(|| {
+            raw_input
+                .as_ref()
+                .and_then(parse_tool_call_locations_from_value)
+        })
         .or_else(|| {
             raw_output
                 .as_ref()
@@ -1182,7 +1192,10 @@ mod tests {
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
         assert_eq!(parsed.tool_name, "bash");
-        assert_eq!(parsed.tool_title.as_deref(), Some("验证 event_bus_concurrent_test"));
+        assert_eq!(
+            parsed.tool_title.as_deref(),
+            Some("验证 event_bus_concurrent_test")
+        );
         assert_eq!(
             parsed
                 .raw_input

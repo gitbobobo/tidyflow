@@ -86,7 +86,10 @@ pub(super) async fn run_writer_loop(
 ) -> bool {
     loop {
         let Some(msg) = outbound_rx.recv().await else {
-            debug!("Outbound queue closed, writer exiting (conn_id={})", conn_id);
+            debug!(
+                "Outbound queue closed, writer exiting (conn_id={})",
+                conn_id
+            );
             return true;
         };
         if let Err(e) = write_server_message(&mut socket_tx, &msg).await {

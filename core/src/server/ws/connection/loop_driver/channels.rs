@@ -1,10 +1,10 @@
 use crate::server::context::{ConnectionMeta, HandlerContext, SharedAppState};
 use crate::server::protocol::ServerMessage;
 use crate::server::watcher::WatchEvent;
-use crate::server::ws::OutboundTx as WebSocket;
 use crate::server::ws::connection::shared_types::{
     RemoteTermRecvResult, RemoteTermRx, TaskBroadcastRecvResult,
 };
+use crate::server::ws::OutboundTx as WebSocket;
 
 pub(super) async fn handle_watch_channel_event(
     watch_event: WatchEvent,
