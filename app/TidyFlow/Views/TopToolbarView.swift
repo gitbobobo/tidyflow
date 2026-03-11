@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Shows Core process status (Starting/Running/Restarting/Failed) with port info
 struct CoreStatusView: View {
@@ -374,14 +377,14 @@ struct AddProjectButtonView: View {
 }
 
 // MARK: - 固定尺寸的工具栏/菜单图标（macOS 会提取底层图片按 intrinsic size 显示，需在绘制时缩放到目标尺寸）
-struct FixedSizeAssetImage: View {
-    let name: String
+struct FixedSizeImage: View {
+    let image: Image
+    let label: String
     let targetSize: CGFloat
 
     var body: some View {
         let size = CGSize(width: targetSize, height: targetSize)
-        let image = Image(name)
-        return Image(size: size, label: Text(name)) { ctx in
+        return Image(size: size, label: Text(label)) { ctx in
             let resolved = ctx.resolve(image)
             let imageSize = resolved.size
             let maxDim = max(imageSize.width, imageSize.height, 1)
@@ -391,6 +394,19 @@ struct FixedSizeAssetImage: View {
             let y = (targetSize - h) / 2
             ctx.draw(resolved, in: CGRect(x: x, y: y, width: w, height: h))
         }
+    }
+}
+
+struct FixedSizeAssetImage: View {
+    let name: String
+    let targetSize: CGFloat
+
+    var body: some View {
+        FixedSizeImage(
+            image: Image(name),
+            label: name,
+            targetSize: targetSize
+        )
     }
 }
 
@@ -428,8 +444,40 @@ struct OpenInEditorButtonView: View {
         FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
     }
 
+    @ViewBuilder
+    private var finderMenuIcon: some View {
+        #if canImport(AppKit)
+        if let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+            FixedSizeImage(
+                image: Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path)),
+                label: "Finder",
+                targetSize: menuIconSize
+            )
+        } else {
+            Image(systemName: "folder")
+        }
+        #else
+        Image(systemName: "folder")
+        #endif
+    }
+
     var body: some View {
         Menu {
+            Button(action: {
+                if let path = appState.selectedWorkspacePath, !appState.openPathInFinder(path) {
+                    alertMessage = "toolbar.openFailed".localized
+                    showingAlert = true
+                }
+            }) {
+                Label {
+                    Text("Finder")
+                } icon: {
+                    finderMenuIcon
+                }
+            }
+
+            Divider()
+
             ForEach(ExternalEditor.allCases, id: \.self) { editor in
                 Button(action: {
                     if let path = appState.selectedWorkspacePath, !appState.openPathInEditor(path, editor: editor) {

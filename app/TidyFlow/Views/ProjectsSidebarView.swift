@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Project Tree Sidebar - Shows Projects > Workspaces hierarchy
 /// UX-1: Replaces flat workspace list with collapsible project tree
@@ -165,6 +168,65 @@ struct ProjectsSidebarView: View {
     }
 }
 
+struct ExternalApplicationsMenu: View {
+    let path: String
+    @EnvironmentObject var appState: AppState
+
+    private let menuIconSize: CGFloat = 16
+
+    private func editorMenuIcon(_ editor: ExternalEditor) -> some View {
+        FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
+    }
+
+    @ViewBuilder
+    private var finderMenuIcon: some View {
+        #if canImport(AppKit)
+        if let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+            FixedSizeImage(
+                image: Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path)),
+                label: "Finder",
+                targetSize: menuIconSize
+            )
+        } else {
+            Image(systemName: "folder")
+        }
+        #else
+        Image(systemName: "folder")
+        #endif
+    }
+
+    var body: some View {
+        Menu {
+            Button {
+                _ = appState.openPathInFinder(path)
+            } label: {
+                Label {
+                    Text("Finder")
+                } icon: {
+                    finderMenuIcon
+                }
+            }
+
+            Divider()
+
+            ForEach(ExternalEditor.allCases, id: \.self) { editor in
+                Button {
+                    _ = appState.openPathInEditor(path, editor: editor)
+                } label: {
+                    Label {
+                        Text(editor.rawValue)
+                    } icon: {
+                        editorMenuIcon(editor)
+                    }
+                }
+                .disabled(!editor.isInstalled)
+            }
+        } label: {
+            Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
+        }
+    }
+}
+
 // MARK: - Project Row (Collapsible)
 
 struct ProjectRowView: View {
@@ -174,7 +236,7 @@ struct ProjectRowView: View {
     @State private var showDeleteConfirmation = false
     @State private var showEndWorkConfirmation = false
 
-    /// 项目路径（项目根目录），用于复制与在编辑器中打开
+    /// 项目路径（项目根目录），用于外部应用打开
     private var projectPath: String? { projection.projectPath }
     private var defaultWorkspacePath: String? { projection.defaultWorkspacePath }
     private var defaultGlobalWorkspaceKey: String? { projection.defaultGlobalWorkspaceKey }
@@ -186,14 +248,6 @@ struct ProjectRowView: View {
     private var defaultWorkspaceActivityIndicators: [TreeRowActivityIndicator] {
         projection.activityIndicators.map { TreeRowActivityIndicator(id: $0.id, iconName: $0.iconName) }
     }
-
-    /// 菜单项图标尺寸
-    private let menuIconSize: CGFloat = 16
-
-    private func editorMenuIcon(_ editor: ExternalEditor) -> some View {
-        FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
-    }
-
     @ViewBuilder
     private var terminalCountBadge: some View {
         ZStack {
@@ -252,22 +306,7 @@ struct ProjectRowView: View {
         .contextMenu {
             if !isDeleting {
                 if let path = defaultWorkspacePath ?? projectPath {
-                    Menu {
-                        ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                            Button {
-                                _ = appState.openPathInEditor(path, editor: editor)
-                            } label: {
-                                Label {
-                                    Text(editor.rawValue)
-                                } icon: {
-                                    editorMenuIcon(editor)
-                                }
-                            }
-                            .disabled(!editor.isInstalled)
-                        }
-                    } label: {
-                        Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
-                    }
+                    ExternalApplicationsMenu(path: path)
                     Divider()
                 }
 
@@ -351,15 +390,8 @@ struct WorkspaceRowView: View {
     @State private var showEndWorkConfirmation = false
     @State private var showNoAgentAlert = false
 
-    /// 工作空间路径，用于复制与在编辑器中打开
+    /// 工作空间路径，用于外部应用打开
     private var workspacePath: String? { projection.workspacePath }
-
-    /// 菜单项图标尺寸
-    private let menuIconSize: CGFloat = 16
-
-    private func editorMenuIcon(_ editor: ExternalEditor) -> some View {
-        FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
-    }
 
     /// 工作空间全局键，用于获取终端数量
     private var globalWorkspaceKey: String {
@@ -453,22 +485,7 @@ struct WorkspaceRowView: View {
             if !isDeleting {
                 // ── 路径 / 打开 ──
                 if let path = workspacePath {
-                    Menu {
-                        ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                            Button {
-                                _ = appState.openPathInEditor(path, editor: editor)
-                            } label: {
-                                Label {
-                                    Text(editor.rawValue)
-                                } icon: {
-                                    editorMenuIcon(editor)
-                                }
-                            }
-                            .disabled(!editor.isInstalled)
-                        }
-                    } label: {
-                        Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
-                    }
+                    ExternalApplicationsMenu(path: path)
                 }
 
                 Divider()

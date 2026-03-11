@@ -121,7 +121,7 @@
 "toolbar.showInspector" = "显示检查器 (⌘⌃I)";
 "toolbar.hideInspector" = "隐藏检查器 (⌘⌃I)";
 "toolbar.open" = "打开";
-"toolbar.openInEditor" = "在外部编辑器中打开";
+"toolbar.openInEditor" = "打开外部应用";
 "toolbar.openFailed" = "打开失败";
 "toolbar.openEditorFailed" = "打开编辑器失败";
 "toolbar.diagnostics.help" = "诊断状态：%@ · %d 条问题 · %@";
@@ -163,7 +163,7 @@
 "sidebar.noProjects.button" = "添加项目";
 "sidebar.copyPath" = "复制路径";
 "sidebar.openInFinder" = "在 Finder 中打开";
-"sidebar.openInEditor" = "在编辑器中打开";
+"sidebar.openInEditor" = "打开外部应用";
 "sidebar.newWorkspace" = "新建工作空间";
 "sidebar.removeProject" = "移除项目";
 "sidebar.removeProject.title" = "移除项目";

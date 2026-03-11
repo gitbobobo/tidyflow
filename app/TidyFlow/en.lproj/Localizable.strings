@@ -121,7 +121,7 @@
 "toolbar.showInspector" = "Show Inspector (⌘⌃I)";
 "toolbar.hideInspector" = "Hide Inspector (⌘⌃I)";
 "toolbar.open" = "Open";
-"toolbar.openInEditor" = "Open in External Editor";
+"toolbar.openInEditor" = "Open in External App";
 "toolbar.openFailed" = "Open Failed";
 "toolbar.openEditorFailed" = "Failed to Open Editor";
 "toolbar.diagnostics.help" = "Diagnostics: %@ · %d issue(s) · %@";
@@ -161,7 +161,7 @@
 "sidebar.noProjects.button" = "Add Project";
 "sidebar.copyPath" = "Copy Path";
 "sidebar.openInFinder" = "Open in Finder";
-"sidebar.openInEditor" = "Open in Editor";
+"sidebar.openInEditor" = "Open External App";
 "sidebar.newWorkspace" = "New Workspace";
 "sidebar.removeProject" = "Remove Project";
 "sidebar.removeProject.title" = "Remove Project";

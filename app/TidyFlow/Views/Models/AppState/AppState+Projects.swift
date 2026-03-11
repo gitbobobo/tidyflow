@@ -211,15 +211,15 @@ extension AppState {
         wsClient.requestRemoveWorkspace(project: projectName, workspace: workspaceName)
     }
 
-    /// 在指定编辑器中打开路径（项目根或工作空间根）
-    func openPathInEditor(_ path: String, editor: ExternalEditor) -> Bool {
+    private func openPathInExternalApplication(
+        _ path: String,
+        arguments: [String],
+        applicationName: String
+    ) -> Bool {
         #if canImport(AppKit)
-        guard editor.isInstalled else {
-            return false
-        }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-b", editor.bundleId, path]
+        task.arguments = arguments + [path]
         do {
             try task.run()
             task.waitUntilExit()
@@ -228,12 +228,33 @@ extension AppState {
             }
             return true
         } catch {
-            TFLog.app.error("启动 \(editor.rawValue, privacy: .public) 失败: \(error.localizedDescription, privacy: .public)")
+            TFLog.app.error("启动 \(applicationName, privacy: .public) 失败: \(error.localizedDescription, privacy: .public)")
             return false
         }
         #else
         return false
         #endif
+    }
+
+    /// 在 Finder 中打开路径（项目根或工作空间根）
+    func openPathInFinder(_ path: String) -> Bool {
+        openPathInExternalApplication(
+            path,
+            arguments: ["-a", "Finder"],
+            applicationName: "Finder"
+        )
+    }
+
+    /// 在指定编辑器中打开路径（项目根或工作空间根）
+    func openPathInEditor(_ path: String, editor: ExternalEditor) -> Bool {
+        guard editor.isInstalled else {
+            return false
+        }
+        return openPathInExternalApplication(
+            path,
+            arguments: ["-b", editor.bundleId],
+            applicationName: editor.rawValue
+        )
     }
 
     func setupCommands() {
