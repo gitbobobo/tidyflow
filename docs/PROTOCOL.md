@@ -560,7 +560,8 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `PartInfo.source` 仅作为来源信息透传，不承担工具卡片渲染职责。
 - 历史与实时统一：
   - `ai_session_messages` 返回完整 `tool_view`。
-  - `ai_session_messages_update` 中，tool part 的对外更新统一以 `PartUpdated` 发送当前完整 `tool_view` 快照；文本/推理 part 仍可使用 `PartDelta`。
+  - `ai_session_messages_update` 中，文本/推理 part 继续使用 `PartDelta`；tool part 的 `output/progress` 也允许使用 `PartDelta` 追加，`PartUpdated` 仅用于建立骨架、同步结构变化与终态收敛。
+  - `tool_view.sections` 默认仅传结构化展示区块；`raw` 只在没有任何结构化区块可展示时作为兜底保留。
 - 大 payload 策略：
   - `ai_session_messages` 通过 HTTP `GET .../messages` 读取，默认依赖分页控制返回规模，不因旧的 WebSocket 单帧限制裁剪消息内容。
   - `truncated` 字段仅为兼容保留；当前历史读取通常不返回该字段。

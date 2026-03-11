@@ -219,7 +219,7 @@ Core `upsert_tool_part_in_history_messages` 在加载历史时原地更新已存
 `ai_session_messages_update` 中：
 
 1. 文本/推理 part 仍可使用 `PartDelta`。
-2. tool part 的对外更新统一发送 `PartUpdated`，其中包含当前完整 `tool_view` 快照。
+2. tool part 的 `output/progress` 可使用 `PartDelta` 追加；`PartUpdated` 用于首帧骨架、结构性字段变化和终态收敛。
 3. 每次更新必须携带 `from_revision` 与 `to_revision`，客户端按 revision 单调应用或触发重同步。
 4. 客户端不得再根据原始 provider JSON 或 metadata 拼装工具卡片。
 

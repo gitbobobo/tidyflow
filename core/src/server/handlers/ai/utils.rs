@@ -305,11 +305,6 @@ impl AiStreamSnapshot {
                     question: None,
                     linked_session: None,
                 });
-        let section_id = if field == "progress" {
-            "generic-progress"
-        } else {
-            "generic-output"
-        };
         let section_title = if field == "progress" {
             "progress"
         } else {
@@ -324,7 +319,7 @@ impl AiStreamSnapshot {
         if let Some(section) = tool_view
             .sections
             .iter_mut()
-            .find(|section| section.id == section_id)
+            .find(|section| section.title.eq_ignore_ascii_case(section_title))
         {
             if field == "progress" && !section.content.is_empty() {
                 section.content.push('\n');
@@ -336,7 +331,11 @@ impl AiStreamSnapshot {
         tool_view
             .sections
             .push(crate::server::protocol::ai::ToolViewSection {
-                id: section_id.to_string(),
+                id: if field == "progress" {
+                    "generic-progress".to_string()
+                } else {
+                    "generic-output".to_string()
+                },
                 title: section_title.to_string(),
                 content: delta.to_string(),
                 style,
@@ -535,8 +534,9 @@ pub(crate) fn emit_ops_for_cache_op(
             message_id,
             part_id,
             part_type,
+            field,
             ..
-        } if part_type == "tool" => snapshot
+        } if part_type == "tool" && field != "output" && field != "progress" => snapshot
             .part_clone(message_id, part_id)
             .map(|part| {
                 vec![
@@ -1985,15 +1985,6 @@ fn build_tool_sections(
                     Some("text"),
                 ));
             }
-            if let Some(raw) = raw {
-                sections.push(tool_section(
-                    "terminal-raw",
-                    "raw",
-                    raw,
-                    crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
-                    Some("text"),
-                ));
-            }
         }
         "markdown" | "md" => {
             if let Some(output) = output {
@@ -2003,14 +1994,6 @@ fn build_tool_sections(
                     output,
                     crate::server::protocol::ai::ToolViewSectionStyle::Markdown,
                     None,
-                ));
-            } else if let Some(raw) = raw {
-                sections.push(tool_section(
-                    "markdown-raw",
-                    "raw",
-                    raw,
-                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
-                    Some("text"),
                 ));
             }
         }
@@ -2022,14 +2005,6 @@ fn build_tool_sections(
                     output,
                     crate::server::protocol::ai::ToolViewSectionStyle::Diff,
                     Some("diff"),
-                ));
-            } else if let Some(raw) = raw {
-                sections.push(tool_section(
-                    "diff-raw",
-                    "raw",
-                    raw,
-                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
-                    Some("text"),
                 ));
             }
         }
@@ -2093,15 +2068,6 @@ fn build_tool_sections(
             if !input.is_empty() {
                 add_json_section(&mut sections, "generic-input", "input", input);
             }
-            if let Some(raw) = raw {
-                sections.push(tool_section(
-                    "generic-raw",
-                    "raw",
-                    raw,
-                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
-                    Some("text"),
-                ));
-            }
             if let Some(progress) = progress_section(metadata, "generic") {
                 sections.push(progress);
             }
@@ -2125,6 +2091,18 @@ fn build_tool_sections(
             crate::server::protocol::ai::ToolViewSectionStyle::Text,
             None,
         ));
+    }
+
+    if sections.is_empty() {
+        if let Some(raw) = raw {
+            sections.push(tool_section(
+                "generic-raw",
+                "raw",
+                raw,
+                crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                Some("text"),
+            ));
+        }
     }
 
     (sections, summary)
@@ -2707,7 +2685,26 @@ mod tests {
     }
 
     #[test]
-    fn emit_ops_for_cache_op_upgrades_tool_delta_to_part_updated_snapshot() {
+    fn normalize_part_for_wire_uses_raw_only_as_last_fallback() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-raw".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("terminal".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "running",
+                "raw": "stderr only"
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.sections.len(), 1);
+        assert_eq!(tool_view.sections[0].id, "generic-raw");
+        assert_eq!(tool_view.sections[0].content, "stderr only");
+    }
+
+    #[test]
+    fn emit_ops_for_cache_op_keeps_tool_output_delta_incremental() {
         let mut snapshot = AiStreamSnapshot::seeded(
             vec![crate::server::protocol::ai::MessageInfo {
                 id: "m1".to_string(),
@@ -2734,17 +2731,89 @@ mod tests {
 
         assert_eq!(emitted.len(), 1);
         match &emitted[0] {
-            crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part } => {
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id,
+                part_id,
+                field,
+                delta,
+                ..
+            } => {
                 assert_eq!(message_id, "m1");
-                let tool_view = part.tool_view.as_ref().expect("tool_view should exist");
-                assert_eq!(tool_view.status, "running");
-                assert!(tool_view
-                    .sections
-                    .iter()
-                    .any(|section| section.id == "generic-output" && section.content == "hello"));
+                assert_eq!(part_id, "tool-1");
+                assert_eq!(field, "output");
+                assert_eq!(delta, "hello");
             }
             other => panic!("unexpected emitted op: {:?}", other),
         }
+    }
+
+    #[test]
+    fn append_tool_delta_reuses_existing_output_section_by_title() {
+        let mut snapshot = AiStreamSnapshot::seeded(
+            vec![crate::server::protocol::ai::MessageInfo {
+                id: "m1".to_string(),
+                role: "assistant".to_string(),
+                created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![crate::server::protocol::ai::PartInfo {
+                    id: "tool-1".to_string(),
+                    part_type: "tool".to_string(),
+                    text: None,
+                    mime: None,
+                    filename: None,
+                    url: None,
+                    synthetic: None,
+                    ignored: None,
+                    source: None,
+                    tool_name: Some("terminal".to_string()),
+                    tool_call_id: None,
+                    tool_kind: Some("terminal".to_string()),
+                    tool_view: Some(crate::server::protocol::ai::ToolView {
+                        status: "running".to_string(),
+                        display_title: "terminal".to_string(),
+                        status_text: "running".to_string(),
+                        summary: None,
+                        header_command_summary: Some("ls".to_string()),
+                        duration_ms: None,
+                        sections: vec![crate::server::protocol::ai::ToolViewSection {
+                            id: "terminal-output".to_string(),
+                            title: "output".to_string(),
+                            content: "hello".to_string(),
+                            style: crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
+                            language: Some("text".to_string()),
+                            copyable: true,
+                            collapsed_by_default: false,
+                        }],
+                        locations: Vec::new(),
+                        question: None,
+                        linked_session: None,
+                    }),
+                }],
+            }],
+            None,
+            true,
+        );
+
+        snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id: "m1".to_string(),
+                part_id: "tool-1".to_string(),
+                part_type: "tool".to_string(),
+                field: "output".to_string(),
+                delta: " world".to_string(),
+            },
+            None,
+        );
+
+        let part = snapshot
+            .part_clone("m1", "tool-1")
+            .expect("tool part should exist");
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.sections.len(), 1);
+        assert_eq!(tool_view.sections[0].id, "terminal-output");
+        assert_eq!(tool_view.sections[0].content, "hello world");
     }
 }
 

@@ -69,6 +69,130 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertFalse(store.isStreaming)
     }
 
+    func testToolOutputDeltaReusesExistingOutputSectionByTitle() {
+        let store = AIChatStore()
+
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m-tool", role: "assistant"),
+                .partUpdated(
+                    messageId: "m-tool",
+                    part: makeToolPart(
+                        id: "tp1",
+                        status: "running",
+                        sections: [
+                            AIToolViewSection(
+                                id: "terminal-output",
+                                title: "output",
+                                content: "hello",
+                                style: .terminal,
+                                language: "text",
+                                copyable: true,
+                                collapsedByDefault: false
+                            ),
+                        ]
+                    )
+                ),
+                .partDelta(
+                    messageId: "m-tool",
+                    partId: "tp1",
+                    partType: "tool",
+                    field: "output",
+                    delta: " world"
+                ),
+            ],
+            isStreaming: false
+        )
+
+        let sections = store.messages[0].parts[0].toolView?.sections ?? []
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections[0].id, "terminal-output")
+        XCTAssertEqual(sections[0].content, "hello world")
+    }
+
+    func testToolProgressDeltaReusesExistingProgressSectionByTitle() {
+        let store = AIChatStore()
+
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m-tool", role: "assistant"),
+                .partUpdated(
+                    messageId: "m-tool",
+                    part: makeToolPart(
+                        id: "tp1",
+                        status: "running",
+                        sections: [
+                            AIToolViewSection(
+                                id: "terminal-progress",
+                                title: "progress",
+                                content: "10%",
+                                style: .text,
+                                language: nil,
+                                copyable: true,
+                                collapsedByDefault: false
+                            ),
+                        ]
+                    )
+                ),
+                .partDelta(
+                    messageId: "m-tool",
+                    partId: "tp1",
+                    partType: "tool",
+                    field: "progress",
+                    delta: "50%"
+                ),
+            ],
+            isStreaming: false
+        )
+
+        let sections = store.messages[0].parts[0].toolView?.sections ?? []
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections[0].id, "terminal-progress")
+        XCTAssertEqual(sections[0].content, "10%\n50%")
+    }
+
+    func testToolFullPartUpdateReplacesEarlierDeltaPlaceholder() {
+        let store = AIChatStore()
+
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m-tool", role: "assistant"),
+                .partDelta(
+                    messageId: "m-tool",
+                    partId: "tp1",
+                    partType: "tool",
+                    field: "output",
+                    delta: "streaming"
+                ),
+                .partUpdated(
+                    messageId: "m-tool",
+                    part: makeToolPart(
+                        id: "tp1",
+                        status: "completed",
+                        sections: [
+                            AIToolViewSection(
+                                id: "terminal-output",
+                                title: "output",
+                                content: "final output",
+                                style: .terminal,
+                                language: "text",
+                                copyable: true,
+                                collapsedByDefault: false
+                            ),
+                        ]
+                    )
+                ),
+            ],
+            isStreaming: false
+        )
+
+        let sections = store.messages[0].parts[0].toolView?.sections ?? []
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections[0].id, "terminal-output")
+        XCTAssertEqual(sections[0].content, "final output")
+        XCTAssertEqual(store.messages[0].parts[0].toolView?.status, .completed)
+    }
+
     func testSessionCacheRevisionRejectsRollback() {
         let store = AIChatStore()
 
@@ -525,7 +649,11 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
                        "工作区切换后旧会话 ID 不应在订阅集合中")
     }
 
-    private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
+    private func makeToolPart(
+        id: String,
+        status: String,
+        sections: [AIToolViewSection] = []
+    ) -> AIProtocolPartInfo {
         let toolStatus: AIToolStatus
         switch status {
         case "success", "completed":
@@ -559,7 +687,7 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
                 summary: nil,
                 headerCommandSummary: nil,
                 durationMs: nil,
-                sections: [],
+                sections: sections,
                 locations: [],
                 question: nil,
                 linkedSession: nil

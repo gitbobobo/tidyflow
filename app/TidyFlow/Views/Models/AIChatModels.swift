@@ -1762,6 +1762,56 @@ final class AIChatStore {
         }
     }
 
+    private func toolDeltaSectionIndex(in sections: [AIToolViewSection], field: String) -> Int? {
+        let normalizedTitle = field == "progress" ? "progress" : "output"
+        if let exactTitle = sections.firstIndex(where: { $0.title.caseInsensitiveCompare(normalizedTitle) == .orderedSame }) {
+            return exactTitle
+        }
+        let fallbackID = field == "progress" ? "generic-progress" : "generic-output"
+        return sections.firstIndex(where: { $0.id == fallbackID })
+    }
+
+    private func makeToolDeltaSection(field: String, content: String) -> AIToolViewSection {
+        if field == "progress" {
+            return AIToolViewSection(
+                id: "generic-progress",
+                title: "progress",
+                content: content,
+                style: .text,
+                language: nil,
+                copyable: true,
+                collapsedByDefault: false
+            )
+        }
+        return AIToolViewSection(
+            id: "generic-output",
+            title: "output",
+            content: content,
+            style: .code,
+            language: "text",
+            copyable: true,
+            collapsedByDefault: false
+        )
+    }
+
+    private func updatedToolView(
+        from current: AIToolView?,
+        sections: [AIToolViewSection]
+    ) -> AIToolView {
+        AIToolView(
+            status: .running,
+            displayTitle: current?.displayTitle ?? "unknown",
+            statusText: current?.statusText ?? "running",
+            summary: current?.summary,
+            headerCommandSummary: current?.headerCommandSummary,
+            durationMs: current?.durationMs,
+            sections: sections,
+            locations: current?.locations ?? [],
+            question: current?.question,
+            linkedSession: current?.linkedSession
+        )
+    }
+
     private func appendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         let oldMessage = messages[msgIdx]
@@ -1778,7 +1828,7 @@ final class AIChatStore {
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
                 var sections = part.toolView?.sections ?? []
-                if let index = sections.firstIndex(where: { $0.id == "generic-progress" }) {
+                if let index = toolDeltaSectionIndex(in: sections, field: field) {
                     if sections[index].content.isEmpty {
                         sections[index].content = delta
                     } else {
@@ -1786,29 +1836,22 @@ final class AIChatStore {
                         sections[index].content.append(contentsOf: delta)
                     }
                 } else {
-                    sections.append(
-                        AIToolViewSection(
-                            id: "generic-progress",
-                            title: "progress",
-                            content: delta,
-                            style: .text,
-                            language: nil,
-                            copyable: true,
-                            collapsedByDefault: false
-                        )
-                    )
+                    sections.append(makeToolDeltaSection(field: field, content: delta))
                 }
-                part.toolView = AIToolView(
-                    status: .running,
-                    displayTitle: part.toolView?.displayTitle ?? (part.toolName ?? "unknown"),
-                    statusText: part.toolView?.statusText ?? "running",
-                    summary: part.toolView?.summary,
-                    headerCommandSummary: part.toolView?.headerCommandSummary,
-                    durationMs: part.toolView?.durationMs,
-                    sections: sections,
-                    locations: part.toolView?.locations ?? [],
-                    question: part.toolView?.question,
-                    linkedSession: part.toolView?.linkedSession
+                part.toolView = updatedToolView(
+                    from: part.toolView ?? AIToolView(
+                        status: .running,
+                        displayTitle: part.toolName ?? "unknown",
+                        statusText: "running",
+                        summary: nil,
+                        headerCommandSummary: nil,
+                        durationMs: nil,
+                        sections: [],
+                        locations: [],
+                        question: nil,
+                        linkedSession: nil
+                    ),
+                    sections: sections
                 )
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
@@ -1836,17 +1879,7 @@ final class AIChatStore {
                     summary: nil,
                     headerCommandSummary: nil,
                     durationMs: nil,
-                    sections: [
-                        AIToolViewSection(
-                            id: "generic-progress",
-                            title: "progress",
-                            content: delta,
-                            style: .text,
-                            language: nil,
-                            copyable: true,
-                            collapsedByDefault: false
-                        ),
-                    ],
+                    sections: [makeToolDeltaSection(field: field, content: delta)],
                     locations: [],
                     question: nil,
                     linkedSession: nil
@@ -1865,32 +1898,25 @@ final class AIChatStore {
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
                 var sections = part.toolView?.sections ?? []
-                if let index = sections.firstIndex(where: { $0.id == "generic-output" }) {
+                if let index = toolDeltaSectionIndex(in: sections, field: field) {
                     sections[index].content.append(contentsOf: delta)
                 } else {
-                    sections.append(
-                        AIToolViewSection(
-                            id: "generic-output",
-                            title: "output",
-                            content: delta,
-                            style: .code,
-                            language: "text",
-                            copyable: true,
-                            collapsedByDefault: false
-                        )
-                    )
+                    sections.append(makeToolDeltaSection(field: field, content: delta))
                 }
-                part.toolView = AIToolView(
-                    status: .running,
-                    displayTitle: part.toolView?.displayTitle ?? (part.toolName ?? "unknown"),
-                    statusText: part.toolView?.statusText ?? "running",
-                    summary: part.toolView?.summary,
-                    headerCommandSummary: part.toolView?.headerCommandSummary,
-                    durationMs: part.toolView?.durationMs,
-                    sections: sections,
-                    locations: part.toolView?.locations ?? [],
-                    question: part.toolView?.question,
-                    linkedSession: part.toolView?.linkedSession
+                part.toolView = updatedToolView(
+                    from: part.toolView ?? AIToolView(
+                        status: .running,
+                        displayTitle: part.toolName ?? "unknown",
+                        statusText: "running",
+                        summary: nil,
+                        headerCommandSummary: nil,
+                        durationMs: nil,
+                        sections: [],
+                        locations: [],
+                        question: nil,
+                        linkedSession: nil
+                    ),
+                    sections: sections
                 )
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
@@ -1918,17 +1944,7 @@ final class AIChatStore {
                     summary: nil,
                     headerCommandSummary: nil,
                     durationMs: nil,
-                    sections: [
-                        AIToolViewSection(
-                            id: "generic-output",
-                            title: "output",
-                            content: delta,
-                            style: .code,
-                            language: "text",
-                            copyable: true,
-                            collapsedByDefault: false
-                        ),
-                    ],
+                    sections: [makeToolDeltaSection(field: field, content: delta)],
                     locations: [],
                     question: nil,
                     linkedSession: nil
