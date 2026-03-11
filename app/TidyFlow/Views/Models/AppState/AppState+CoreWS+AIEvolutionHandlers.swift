@@ -638,7 +638,8 @@ extension AppState {
                         id: m.id,
                         name: m.name,
                         providerID: m.providerID.isEmpty ? p.id : m.providerID,
-                        supportsImageInput: m.supportsImageInput
+                        supportsImageInput: m.supportsImageInput,
+                        variants: m.variants
                     )
                 }
             )

@@ -791,6 +791,7 @@ pub(crate) async fn query_ai_provider_list(
                     name: m.name,
                     provider_id: m.provider_id,
                     supports_image_input: m.supports_image_input,
+                    variants: m.variants,
                 })
                 .collect(),
         })

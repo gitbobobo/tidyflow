@@ -513,7 +513,7 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `ai_chat_send`、`ai_chat_command` 新增可选 `config_overrides`（`option_id -> value`），用于“仅本次发送”覆盖。
   - `ai_chat_send`、`ai_chat_command` 新增可选 `audio_parts`（`[{ filename, mime, data(bytes) }]`）。
 - 会话选择提示字段：
-  - `selection_hint` 新增 `config_options`，用于恢复 `mode/model/thought_level` 等配置状态。
+  - `selection_hint` 新增 `config_options`，用于恢复 `mode/model/model_variant` 等配置状态。
 
 ## ACP Slash Commands（`slash-commands`）
 
@@ -663,7 +663,7 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 - 首版界面只展示三类 category：
   - `mode`
   - `model`
-  - `thought_level`
+  - `model_variant`
 - 其他 category 不直接展示，但会在 Core/App 里保存并透传。
 
 ## 错误契约

@@ -244,7 +244,7 @@ async fn session_set_config_option_should_send_option_id_and_value() {
     client
         .session_set_config_option(
             "session-1",
-            "thought_level",
+            "model_variant",
             json!({
                 "id": "high"
             }),
@@ -262,7 +262,7 @@ async fn session_set_config_option_should_send_option_id_and_value() {
     );
     assert_eq!(
         params.get("optionId").and_then(|v| v.as_str()),
-        Some("thought_level")
+        Some("model_variant")
     );
     assert_eq!(
         params

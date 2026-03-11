@@ -1530,25 +1530,31 @@ public struct AIProtocolModelInfo {
     public let name: String
     public let providerID: String
     public let supportsImageInput: Bool
+    public let variants: [String]
 
     public static func from(json: [String: Any]) -> AIProtocolModelInfo? {
         guard let id = json["id"] as? String else { return nil }
         let name = json["name"] as? String ?? id
         let providerID = json["provider_id"] as? String ?? ""
         let supportsImageInput = json["supports_image_input"] as? Bool ?? false
+        let variants = (json["variants"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         return AIProtocolModelInfo(
             id: id,
             name: name,
             providerID: providerID,
-            supportsImageInput: supportsImageInput
+            supportsImageInput: supportsImageInput,
+            variants: variants
         )
     }
 
-    public init(id: String, name: String, providerID: String, supportsImageInput: Bool) {
+    public init(id: String, name: String, providerID: String, supportsImageInput: Bool, variants: [String] = []) {
         self.id = id
         self.name = name
         self.providerID = providerID
         self.supportsImageInput = supportsImageInput
+        self.variants = variants
     }
 }
 

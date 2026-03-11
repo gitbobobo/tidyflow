@@ -192,15 +192,16 @@ final class EvolutionProfileOptionsProjectionStoreTests: XCTestCase {
                                 id: "m-1",
                                 name: "GPT-5",
                                 providerID: "p-1",
-                                supportsImageInput: true
+                                supportsImageInput: true,
+                                variants: ["low", "medium", "high"]
                             )
                         ]
                     ),
                     AIProviderInfo(id: "empty", name: "Empty", models: [])
                 ]
             },
-            thoughtLevelOptionIDByTool: { $0 == .codex ? "thought_level" : nil },
-            thoughtLevelOptionsByTool: { $0 == .codex ? ["low", "medium", "high"] : [] }
+            modelVariantOptionIDByTool: { $0 == .codex ? "model_variant" : nil },
+            modelVariantOptionsByTool: { $0 == .codex ? ["low", "medium", "high"] : [] }
         )
 
         let codex = projection.options(for: .codex)
@@ -231,14 +232,15 @@ final class EvolutionProfileOptionsProjectionStoreTests: XCTestCase {
                                 id: "m-1",
                                 name: "GPT-5",
                                 providerID: "p-1",
-                                supportsImageInput: true
+                                supportsImageInput: true,
+                                variants: ["low", "medium", "high"]
                             )
                         )
                     ]
                 )
             ],
-            thoughtLevelOptionID: "thought_level",
-            thoughtLevelOptions: ["low", "medium", "high"]
+            modelVariantOptionID: "model_variant",
+            fallbackModelVariantOptions: ["low", "medium", "high"]
         )
 
         XCTAssertEqual(
@@ -251,11 +253,21 @@ final class EvolutionProfileOptionsProjectionStoreTests: XCTestCase {
             "GPT-5"
         )
         XCTAssertEqual(
-            EvolutionProfileOptionsProjectionSemantics.selectedThoughtLevel(
-                configOptions: ["thought_level": NSNumber(value: 2)],
+            EvolutionProfileOptionsProjectionSemantics.selectedModelVariant(
+                configOptions: ["model_variant": "medium"],
+                providerID: "p-1",
+                modelID: "m-1",
                 options: options
             ),
-            "2"
+            "medium"
+        )
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.modelVariantOptions(
+                providerID: "p-1",
+                modelID: "m-1",
+                options: options
+            ),
+            ["low", "medium", "high"]
         )
         XCTAssertEqual(
             EvolutionProfileOptionsProjectionSemantics.stageDisplayName("implement"),

@@ -77,7 +77,7 @@ pub(super) fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSess
             .or_else(|| find_scalar_by_keys(value, &["model_id", "modelID", "model"])),
     );
 
-    // 从线程载荷提取 reasoning_effort，回填为 thought_level config option
+    // 从线程载荷提取 reasoning_effort，回填为 model_variant config option
     let reasoning_effort = normalize_optional_token(
         value
             .pointer("/thread/reasoningEffort")
@@ -105,13 +105,13 @@ pub(super) fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSess
     );
     let config_options: Option<HashMap<String, serde_json::Value>> =
         reasoning_effort.and_then(|effort| {
-            let normalized = effort.trim().to_lowercase();
-            if matches!(normalized.as_str(), "low" | "medium" | "high") {
-                let mut map = HashMap::new();
-                map.insert("thought_level".to_string(), json!(normalized));
-                Some(map)
-            } else {
-                None
+                let normalized = effort.trim().to_lowercase();
+                if matches!(normalized.as_str(), "low" | "medium" | "high") {
+                    let mut map = HashMap::new();
+                    map.insert("model_variant".to_string(), json!(normalized));
+                    Some(map)
+                } else {
+                    None
             }
         });
 

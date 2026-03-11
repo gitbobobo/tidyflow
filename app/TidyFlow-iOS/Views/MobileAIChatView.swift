@@ -51,12 +51,12 @@ struct MobileAIChatView: View {
         )
     }
 
-    private var aiSelectedThoughtLevelBinding: Binding<String?> {
+    private var aiSelectedModelVariantBinding: Binding<String?> {
         Binding(
-            get: { appState.aiSelectedThoughtLevel },
+            get: { appState.aiSelectedModelVariant },
             set: { newValue in
-                guard appState.aiSelectedThoughtLevel != newValue else { return }
-                appState.aiSelectedThoughtLevel = newValue
+                guard appState.aiSelectedModelVariant != newValue else { return }
+                appState.aiSelectedModelVariant = newValue
             }
         )
     }
@@ -353,8 +353,11 @@ struct MobileAIChatView: View {
                 contextRemainingPercent: shellProjection.contextRemainingPercent,
                 agents: appState.aiAgents,
                 selectedAgent: aiSelectedAgentBinding,
-                thoughtLevelOptions: appState.thoughtLevelOptions(),
-                selectedThoughtLevel: aiSelectedThoughtLevelBinding,
+                modelVariantOptions: appState.modelVariantOptions(
+                    for: appState.aiChatTool,
+                    model: appState.aiSelectedModel
+                ),
+                selectedModelVariant: aiSelectedModelVariantBinding,
                 isLoadingModels: appState.isAILoadingModels,
                 isLoadingAgents: appState.isAILoadingAgents,
                 autocomplete: nil,

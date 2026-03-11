@@ -1893,6 +1893,7 @@ impl AiAgent for ClaudeCodeAgent {
             name: "Default".to_string(),
             provider_id: "anthropic".to_string(),
             supports_image_input: true,
+            variants: vec![],
         }];
         // 如果从 init 事件获取到了当前模型名，将其作为额外选项展示
         if let Some(current_model) = self.model_by_directory.lock().await.get(&dir_key).cloned() {
@@ -1902,6 +1903,7 @@ impl AiAgent for ClaudeCodeAgent {
                     name: current_model,
                     provider_id: "anthropic".to_string(),
                     supports_image_input: true,
+                    variants: vec![],
                 });
             }
         }
@@ -1913,6 +1915,7 @@ impl AiAgent for ClaudeCodeAgent {
                     name: name.to_string(),
                     provider_id: "anthropic".to_string(),
                     supports_image_input: true,
+                    variants: vec![],
                 });
             }
         }

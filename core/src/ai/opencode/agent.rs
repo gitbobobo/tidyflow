@@ -15,6 +15,7 @@ use crate::ai::{
     AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSlashCommand, OpenCodeManager,
 };
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// OpenCode 后端的 AiAgent 实现
@@ -123,6 +124,49 @@ impl AiAgent for OpenCodeAgent {
                 audio_parts,
                 model,
                 agent,
+                None,
+            )
+            .await
+            .map_err(|e| format!("Failed to send message: {}", e))?;
+
+        Ok(map_opencode_hub_stream(rx, directory, session_id))
+    }
+
+    async fn send_message_with_config(
+        &self,
+        directory: &str,
+        session_id: &str,
+        message: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
+        config_overrides: Option<HashMap<String, crate::ai::AiSessionConfigValue>>,
+    ) -> Result<AiEventStream, String> {
+        self.verify_session_directory(directory, session_id).await?;
+
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let rx = self.hub.subscribe();
+
+        let model_variant = config_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.get("model_variant"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        client
+            .send_message_async(
+                directory,
+                session_id,
+                message,
+                file_refs,
+                image_parts,
+                audio_parts,
+                model,
+                agent,
+                model_variant,
             )
             .await
             .map_err(|e| format!("Failed to send message: {}", e))?;
@@ -435,13 +479,14 @@ impl AiAgent for OpenCodeAgent {
                             name: if m.name.is_empty() {
                                 m.id.clone()
                             } else {
-                                m.name
+                                m.name.clone()
                             },
                             provider_id: if m.provider_id.is_empty() {
                                 pid.clone()
                             } else {
-                                m.provider_id
+                                m.provider_id.clone()
                             },
+                            variants: m.variants_vec(),
                         })
                         .collect(),
                 }

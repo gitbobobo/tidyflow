@@ -2,7 +2,7 @@ import XCTest
 @testable import TidyFlow
 
 /// 覆盖 Codex 聊天配置持久化闭环的核心路径：
-/// - selection hint 中 config_options 的解析（包括 thought_level）
+/// - selection hint 中 config_options 的解析（包括 model_variant）
 /// - config_options 键名别名（config_options / configOptions / session_config_options）
 /// - AISessionSelectionHint.isEmpty 语义
 /// - 多工作区 provider/model 信息的独立性
@@ -10,8 +10,8 @@ final class CodexChatConfigurationTests: XCTestCase {
 
     // MARK: - AISessionSelectionHint 解析
 
-    /// 验证 AIChatDoneV2 中 selection_hint 携带 thought_level=low/medium/high 时均能正确解析
-    func testSelectionHintThoughtLevelAllValidValues() {
+    /// 验证 AIChatDoneV2 中 selection_hint 携带 model_variant=low/medium/high 时均能正确解析
+    func testSelectionHintModelVariantAllValidValues() {
         for level in ["low", "medium", "high"] {
             let json: [String: Any] = [
                 "project_name": "tidyflow",
@@ -20,14 +20,14 @@ final class CodexChatConfigurationTests: XCTestCase {
                 "session_id": "s-\(level)",
                 "selection_hint": [
                     "agent": "code",
-                    "config_options": ["thought_level": level]
+                    "config_options": ["model_variant": level]
                 ]
             ]
             let result = AIChatDoneV2.from(json: json)
-            XCTAssertNotNil(result, "thought_level=\(level) 应能解析")
+            XCTAssertNotNil(result, "model_variant=\(level) 应能解析")
             let cfg = result?.selectionHint?.configOptions
-            XCTAssertEqual(cfg?["thought_level"] as? String, level,
-                           "thought_level=\(level) 应回填到 configOptions")
+            XCTAssertEqual(cfg?["model_variant"] as? String, level,
+                           "model_variant=\(level) 应回填到 configOptions")
         }
     }
 
@@ -42,14 +42,14 @@ final class CodexChatConfigurationTests: XCTestCase {
                 "session_id": "s1",
                 "selection_hint": [
                     "agent": "code",
-                    key: ["thought_level": "medium"]
+                    key: ["model_variant": "medium"]
                 ]
             ]
             let result = AIChatDoneV2.from(json: json)
             XCTAssertNotNil(result, "键名 \(key) 应能被解析")
             let cfg = result?.selectionHint?.configOptions
-            XCTAssertEqual(cfg?["thought_level"] as? String, "medium",
-                           "键名 \(key) 解析后 thought_level 应为 medium")
+            XCTAssertEqual(cfg?["model_variant"] as? String, "medium",
+                           "键名 \(key) 解析后 model_variant 应为 medium")
         }
     }
 
@@ -59,7 +59,7 @@ final class CodexChatConfigurationTests: XCTestCase {
             agent: nil,
             modelProviderID: nil,
             modelID: nil,
-            configOptions: ["thought_level": "high"]
+            configOptions: ["model_variant": "high"]
         )
         XCTAssertFalse(hint.isEmpty, "只含 config_options 的 hint 不应被视为空")
     }
@@ -97,7 +97,7 @@ final class CodexChatConfigurationTests: XCTestCase {
                 "agent": "code",
                 "model_provider_id": "openai",
                 "model_id": "gpt-5",
-                "config_options": ["thought_level": "high"]
+                "config_options": ["model_variant": "high"]
             ]
         ]
         let result = AIChatDoneV2.from(json: json)
@@ -106,32 +106,32 @@ final class CodexChatConfigurationTests: XCTestCase {
         XCTAssertEqual(hint?.agent, "code")
         XCTAssertEqual(hint?.modelProviderID, "openai")
         XCTAssertEqual(hint?.modelID, "gpt-5")
-        XCTAssertEqual(hint?.configOptions?["thought_level"] as? String, "high")
+        XCTAssertEqual(hint?.configOptions?["model_variant"] as? String, "high")
     }
 
-    /// 验证 thought_level 不在枚举范围内时，configOptions 中该字段仍会透传（协议层不过滤）
-    func testSelectionHintUnknownThoughtLevelPassesThrough() {
+    /// 验证 model_variant 不在枚举范围内时，configOptions 中该字段仍会透传（协议层不过滤）
+    func testSelectionHintUnknownModelVariantPassesThrough() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
             "workspace_name": "default",
             "ai_tool": "codex",
             "session_id": "s-unknown",
-            "selection_hint": [
-                "agent": "code",
-                "config_options": ["thought_level": "ultra"]
+                "selection_hint": [
+                    "agent": "code",
+                    "config_options": ["model_variant": "ultra"]
+                ]
             ]
-        ]
         let result = AIChatDoneV2.from(json: json)
         XCTAssertNotNil(result)
         // 协议层透传原始值，不做枚举过滤
         let cfg = result?.selectionHint?.configOptions
-        XCTAssertEqual(cfg?["thought_level"] as? String, "ultra")
+        XCTAssertEqual(cfg?["model_variant"] as? String, "ultra")
     }
 
     // MARK: - AISessionCreatedV2 / AISessionResumedV2 中的 selection_hint
 
-    /// 验证 AISessionStartedV2 中的 selection_hint 解析 thought_level
-    func testSessionStartedParsesSelectionHintThoughtLevel() {
+    /// 验证 AISessionStartedV2 中的 selection_hint 解析 model_variant
+    func testSessionStartedParsesSelectionHintModelVariant() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
             "workspace_name": "default",
@@ -140,17 +140,17 @@ final class CodexChatConfigurationTests: XCTestCase {
             "title": "新会话",
             "updated_at": Int64(0),
             "selection_hint": [
-                "config_options": ["thought_level": "low"]
+                "config_options": ["model_variant": "low"]
             ]
         ]
         let result = AISessionStartedV2.from(json: json)
         XCTAssertNotNil(result)
         let cfg = result?.selectionHint?.configOptions
-        XCTAssertEqual(cfg?["thought_level"] as? String, "low")
+        XCTAssertEqual(cfg?["model_variant"] as? String, "low")
     }
 
-    /// 验证 AISessionMessagesV2 中的 selection_hint 解析 thought_level
-    func testSessionMessagesParsesSelectionHintThoughtLevel() {
+    /// 验证 AISessionMessagesV2 中的 selection_hint 解析 model_variant
+    func testSessionMessagesParsesSelectionHintModelVariant() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
             "workspace_name": "default",
@@ -158,14 +158,14 @@ final class CodexChatConfigurationTests: XCTestCase {
             "session_id": "messages-session",
             "selection_hint": [
                 "agent": "code",
-                "config_options": ["thought_level": "medium"]
+                "config_options": ["model_variant": "medium"]
             ]
         ]
         let result = AISessionMessagesV2.from(json: json)
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.selectionHint?.agent, "code")
         let cfg = result?.selectionHint?.configOptions
-        XCTAssertEqual(cfg?["thought_level"] as? String, "medium")
+        XCTAssertEqual(cfg?["model_variant"] as? String, "medium")
     }
 
     // MARK: - Provider/Model 多工作区隔离
@@ -183,7 +183,8 @@ final class CodexChatConfigurationTests: XCTestCase {
                     "id": "gpt-4o",
                     "name": "GPT-4o",
                     "provider_id": "openai",
-                    "supports_image_input": false
+                    "supports_image_input": false,
+                    "variants": ["low", "medium", "high"]
                 ]]
             ]]
         ]
@@ -210,6 +211,7 @@ final class CodexChatConfigurationTests: XCTestCase {
         XCTAssertEqual(ws2?.workspaceName, "ws2")
         XCTAssertEqual(ws1?.providers.first?.id, "openai")
         XCTAssertEqual(ws2?.providers.first?.id, "anthropic")
+        XCTAssertEqual(ws1?.providers.first?.models.first?.variants, ["low", "medium", "high"])
         // 两个工作区的数据对象独立
         XCTAssertNotEqual(ws1?.workspaceName, ws2?.workspaceName)
         XCTAssertNotEqual(ws1?.providers.first?.id, ws2?.providers.first?.id)
@@ -264,8 +266,8 @@ final class CodexChatConfigurationTests: XCTestCase {
                 id: "openai",
                 name: "OpenAI",
                 models: [
-                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false),
-                    AIModelInfo(id: "gpt-5", name: "GPT-5", providerID: "openai", supportsImageInput: true)
+                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false, variants: []),
+                    AIModelInfo(id: "gpt-5", name: "GPT-5", providerID: "openai", supportsImageInput: true, variants: [])
                 ]
             )
         ]
@@ -284,7 +286,7 @@ final class CodexChatConfigurationTests: XCTestCase {
                 id: "openai",
                 name: "OpenAI",
                 models: [
-                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false)
+                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false, variants: [])
                 ]
             )
         ]
@@ -304,7 +306,7 @@ final class CodexChatConfigurationTests: XCTestCase {
                 id: "openai",
                 name: "OpenAI",
                 models: [
-                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false)
+                    AIModelInfo(id: "gpt-4o", name: "GPT-4o", providerID: "openai", supportsImageInput: false, variants: [])
                 ]
             )
         ]

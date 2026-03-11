@@ -67,6 +67,31 @@ fn test_opencode_model_payload_shape() {
 }
 
 #[test]
+fn test_build_prompt_async_body_includes_variant() {
+    let model = crate::ai::AiModelSelection {
+        provider_id: "openai".to_string(),
+        model_id: "gpt-5".to_string(),
+    };
+    let file_refs = vec!["src/main.rs".to_string()];
+    let body = OpenCodeClient::build_prompt_async_body(
+        "/tmp/project",
+        "Hello",
+        Some(file_refs.as_slice()),
+        None,
+        None,
+        Some(&model),
+        Some("code"),
+        Some("high"),
+    );
+
+    assert_eq!(body["agent"], "code");
+    assert_eq!(body["variant"], "high");
+    assert_eq!(body["model"]["providerID"], "openai");
+    assert_eq!(body["model"]["modelID"], "gpt-5");
+    assert_eq!(body["parts"][1]["url"], "file:///tmp/project/src/main.rs");
+}
+
+#[test]
 fn test_bus_event_message_part_updated() {
     let json = r#"{"type":"message.part.updated","properties":{"part":{"id":"p1","sessionID":"s1","messageID":"m1","type":"text","text":"Hello World"},"delta":"Hello World"}}"#;
     let event: BusEvent = serde_json::from_str(json).unwrap();

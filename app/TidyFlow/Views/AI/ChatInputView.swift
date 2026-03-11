@@ -25,8 +25,8 @@ struct ChatInputView: View {
     var contextRemainingPercent: Double?
     var agents: [AIAgentInfo]
     @Binding var selectedAgent: String?
-    var thoughtLevelOptions: [String] = []
-    @Binding var selectedThoughtLevel: String?
+    var modelVariantOptions: [String] = []
+    @Binding var selectedModelVariant: String?
     var isLoadingModels: Bool = false
     var isLoadingAgents: Bool = false
 
@@ -164,7 +164,7 @@ struct ChatInputView: View {
                     iOSInputModeToggleButton
                     agentButton
                     modelButton
-                    thoughtLevelButton
+                    modelVariantButton
                     contextRemainingRing
                 }
                 .padding(.vertical, 2)
@@ -478,7 +478,7 @@ struct ChatInputView: View {
             imageUploadButton
             agentButton
             modelButton
-            thoughtLevelButton
+                    modelVariantButton
             contextRemainingRing
 
             Spacer()
@@ -556,20 +556,20 @@ struct ChatInputView: View {
         }
     }
 
-    private var thoughtLevelButton: some View {
+    private var modelVariantButton: some View {
         Group {
-            if !normalizedThoughtLevelOptions.isEmpty {
+            if !normalizedModelVariantOptions.isEmpty {
                 Menu {
                     Button("默认") {
-                        selectedThoughtLevel = nil
+                        selectedModelVariant = nil
                     }
-                    ForEach(normalizedThoughtLevelOptions, id: \.self) { option in
+                    ForEach(normalizedModelVariantOptions, id: \.self) { option in
                         Button(option) {
-                            selectedThoughtLevel = option
+                            selectedModelVariant = option
                         }
                     }
                 } label: {
-                    toolbarMenuLabel(title: selectedThoughtLevelDisplayName)
+                    toolbarMenuLabel(title: selectedModelVariantDisplayName)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize(horizontal: true, vertical: false)
@@ -591,10 +591,10 @@ struct ChatInputView: View {
         return sel.modelID
     }
 
-    private var normalizedThoughtLevelOptions: [String] {
+    private var normalizedModelVariantOptions: [String] {
         var seen: Set<String> = []
         var values: [String] = []
-        for item in thoughtLevelOptions {
+        for item in modelVariantOptions {
             let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             guard seen.insert(trimmed).inserted else { continue }
@@ -603,9 +603,17 @@ struct ChatInputView: View {
         return values
     }
 
-    private var selectedThoughtLevelDisplayName: String {
-        let trimmed = selectedThoughtLevel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "思考" : trimmed
+    private var selectedModelVariantDisplayName: String {
+        let trimmed = selectedModelVariant?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? defaultModelVariantLabel : trimmed
+    }
+
+    private var defaultModelVariantLabel: String {
+        let normalized = normalizedModelVariantOptions.map { $0.lowercased() }
+        if Set(normalized) == Set(["low", "medium", "high"]) {
+            return "思考"
+        }
+        return "模型变体"
     }
 
     private var loadingPlaceholder: some View {
@@ -1277,8 +1285,8 @@ private extension ImageAttachment {
             contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
-            thoughtLevelOptions: [],
-            selectedThoughtLevel: .constant(nil),
+            modelVariantOptions: [],
+            selectedModelVariant: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
             onInputContextChange: nil
@@ -1295,8 +1303,8 @@ private extension ImageAttachment {
             contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
-            thoughtLevelOptions: [],
-            selectedThoughtLevel: .constant(nil),
+            modelVariantOptions: [],
+            selectedModelVariant: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
             onInputContextChange: nil

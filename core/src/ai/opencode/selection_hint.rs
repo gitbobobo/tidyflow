@@ -1,6 +1,8 @@
 use super::protocol::{MessageInfo, SessionResponse};
 pub(crate) use crate::ai::shared::json_search::normalize_optional_token;
 use crate::ai::shared::json_search::{canonical_meta_key, find_scalar_by_keys};
+use serde_json::json;
+use std::collections::HashMap;
 
 fn normalize_agent_hint(raw: &str) -> Option<String> {
     let normalized = raw.trim().to_lowercase();
@@ -74,15 +76,32 @@ pub(crate) fn selection_hint_from_value(
             "model",
         ],
     ));
+    let config_options = normalize_optional_token(find_scalar_by_keys(
+        value,
+        &[
+            "variant",
+            "model_variant",
+            "modelVariant",
+            "selected_variant",
+            "selectedVariant",
+            "current_variant",
+            "currentVariant",
+        ],
+    ))
+    .map(|variant| {
+        let mut map = HashMap::new();
+        map.insert("model_variant".to_string(), json!(variant));
+        map
+    });
 
-    if agent.is_none() && model_id.is_none() {
+    if agent.is_none() && model_id.is_none() && config_options.is_none() {
         None
     } else {
         Some(crate::ai::AiSessionSelectionHint {
             agent,
             model_provider_id,
             model_id,
-            config_options: None,
+            config_options,
         })
     }
 }
@@ -143,6 +162,10 @@ pub(crate) fn message_info_selection_source(info: &MessageInfo) -> Option<serde_
                 | "currentmodeid"
                 | "selectedmodel"
                 | "selectedagent"
+                | "variant"
+                | "selectedvariant"
+                | "currentvariant"
+                | "modelvariant"
         ) {
             root.insert(k.clone(), v.clone());
         }
@@ -184,5 +207,32 @@ pub(crate) fn merge_part_source_with_message_info(
             Some(serde_json::Value::Object(wrapped))
         }
         None => Some(message_info_source.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selection_hint_from_value;
+
+    #[test]
+    fn selection_hint_maps_variant_to_model_variant_config_option() {
+        let hint = selection_hint_from_value(&serde_json::json!({
+            "agent": "code",
+            "providerID": "openai",
+            "modelID": "gpt-5",
+            "variant": "high"
+        }))
+        .expect("selection hint should exist");
+
+        assert_eq!(hint.agent.as_deref(), Some("code"));
+        assert_eq!(hint.model_provider_id.as_deref(), Some("openai"));
+        assert_eq!(hint.model_id.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            hint.config_options
+                .as_ref()
+                .and_then(|it| it.get("model_variant"))
+                .and_then(|it| it.as_str()),
+            Some("high")
+        );
     }
 }

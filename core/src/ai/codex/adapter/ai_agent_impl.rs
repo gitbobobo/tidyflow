@@ -512,16 +512,16 @@ impl AiAgent for CodexAppServerAgent {
             .await
     }
 
-    /// Codex 静态思考强度配置项，用于在未接收到动态配置时提供 reasoning_effort 选项。
+    /// Codex 静态模型变体配置项，用于在未接收到动态配置时提供 reasoning_effort 选项。
     async fn list_session_config_options(
         &self,
         _directory: &str,
         _session_id: Option<&str>,
     ) -> Result<Vec<AiSessionConfigOption>, String> {
         Ok(vec![AiSessionConfigOption {
-            option_id: "thought_level".to_string(),
-            category: Some("thought_level".to_string()),
-            name: "思考强度".to_string(),
+            option_id: "model_variant".to_string(),
+            category: Some("model_variant".to_string()),
+            name: "模型变体".to_string(),
             description: Some("控制 Codex 推理深度：low 快速，medium 均衡，high 深入".to_string()),
             current_value: None,
             options: vec![
@@ -546,7 +546,7 @@ impl AiAgent for CodexAppServerAgent {
         }])
     }
 
-    /// 支持 config_overrides 的发送消息，提取 thought_level 并写入 reasoning_effort。
+    /// 支持 config_overrides 的发送消息，提取 model_variant 并写入 reasoning_effort。
     async fn send_message_with_config(
         &self,
         directory: &str,
@@ -593,10 +593,10 @@ impl AiAgent for CodexAppServerAgent {
             }
         }
 
-        // 从 config_overrides 中提取 thought_level 作为 reasoning_effort
+        // 从 config_overrides 中提取 model_variant 作为 reasoning_effort
         let reasoning_effort = config_overrides.as_ref().and_then(|overrides| {
             overrides
-                .get("thought_level")
+                .get("model_variant")
                 .and_then(|v| v.as_str())
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| matches!(s.as_str(), "low" | "medium" | "high"))
@@ -604,10 +604,10 @@ impl AiAgent for CodexAppServerAgent {
 
         let (model_id, model_provider) = Self::parse_model_selection(model);
         let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
-        // 将 config_overrides 中的 thought_level 回写到 outbound_hint，保证会话恢复后能复现
+        // 将 config_overrides 中的 model_variant 回写到 outbound_hint，保证会话恢复后能复现
         let outbound_config_options = reasoning_effort.as_ref().map(|effort| {
             let mut map = HashMap::new();
-            map.insert("thought_level".to_string(), serde_json::json!(effort));
+            map.insert("model_variant".to_string(), serde_json::json!(effort));
             map
         });
         let outbound_hint = AiSessionSelectionHint {

@@ -112,6 +112,74 @@ impl OpenCodeClient {
         })
     }
 
+    fn build_prompt_async_body(
+        directory: &str,
+        message: &str,
+        file_refs: Option<&[String]>,
+        image_parts: Option<&[crate::ai::AiImagePart]>,
+        audio_parts: Option<&[crate::ai::AiAudioPart]>,
+        model: Option<&crate::ai::AiModelSelection>,
+        agent: Option<&str>,
+        model_variant: Option<&str>,
+    ) -> serde_json::Value {
+        let effective_message = append_audio_fallback_text(message, audio_parts);
+
+        let mut parts = vec![serde_json::json!({
+            "type": "text",
+            "text": effective_message,
+        })];
+
+        if let Some(refs) = file_refs {
+            for r in refs {
+                let abs = if r.starts_with('/') {
+                    r.to_string()
+                } else {
+                    format!("{}/{}", directory.trim_end_matches('/'), r)
+                };
+                parts.push(serde_json::json!({
+                    "type": "file",
+                    "url": format!("file://{}", abs),
+                    "filename": r,
+                    "mime": "text/plain",
+                }));
+            }
+        }
+
+        if let Some(images) = image_parts {
+            for img in images {
+                let url = image_part_url_for_opencode(img);
+                parts.push(serde_json::json!({
+                    "type": "file",
+                    "url": url,
+                    "filename": img.filename,
+                    "mime": img.mime,
+                }));
+            }
+        }
+
+        let mut body = serde_json::json!({ "parts": parts });
+
+        if let Some(m) = model {
+            body["model"] = Self::opencode_model_payload(m);
+        }
+
+        if let Some(a) = agent
+            .map(|it| it.trim())
+            .filter(|it| !it.is_empty())
+        {
+            body["agent"] = serde_json::json!(a);
+        }
+
+        if let Some(variant) = model_variant
+            .map(|it| it.trim())
+            .filter(|it| !it.is_empty())
+        {
+            body["variant"] = serde_json::json!(variant);
+        }
+
+        body
+    }
+
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -172,56 +240,19 @@ impl OpenCodeClient {
         audio_parts: Option<Vec<crate::ai::AiAudioPart>>,
         model: Option<crate::ai::AiModelSelection>,
         agent: Option<String>,
+        model_variant: Option<String>,
     ) -> Result<(), OpenCodeError> {
         let url = format!("{}/session/{}/prompt_async", self.base_url, session_id);
-        let effective_message = append_audio_fallback_text(message, audio_parts.as_deref());
-
-        let mut parts = vec![serde_json::json!({
-            "type": "text",
-            "text": effective_message,
-        })];
-
-        if let Some(ref refs) = file_refs {
-            for r in refs {
-                // 尽量使用绝对路径，避免后端对相对路径的解释不一致。
-                let abs = if r.starts_with('/') {
-                    r.to_string()
-                } else {
-                    format!("{}/{}", directory.trim_end_matches('/'), r)
-                };
-                parts.push(serde_json::json!({
-                    "type": "file",
-                    "url": format!("file://{}", abs),
-                    "filename": r,
-                    "mime": "text/plain",
-                }));
-            }
-        }
-
-        // 图片附件优先落临时文件走 file://，失败时回退 data URL。
-        if let Some(ref images) = image_parts {
-            for img in images {
-                let url = image_part_url_for_opencode(img);
-                parts.push(serde_json::json!({
-                    "type": "file",
-                    "url": url,
-                    "filename": img.filename,
-                    "mime": img.mime,
-                }));
-            }
-        }
-
-        let mut body = serde_json::json!({ "parts": parts });
-
-        // OpenCode v2: model 需要对象 { providerID, modelID }。
-        if let Some(ref m) = model {
-            body["model"] = Self::opencode_model_payload(m);
-        }
-
-        // Agent 选择
-        if let Some(ref a) = agent {
-            body["agent"] = serde_json::json!(a);
-        }
+        let body = Self::build_prompt_async_body(
+            directory,
+            message,
+            file_refs.as_deref(),
+            image_parts.as_deref(),
+            audio_parts.as_deref(),
+            model.as_ref(),
+            agent.as_deref(),
+            model_variant.as_deref(),
+        );
 
         let response = self
             .with_directory(self.client.post(&url), directory)

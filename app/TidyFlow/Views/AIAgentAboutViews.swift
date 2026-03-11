@@ -93,7 +93,7 @@ struct AIAgentSection: View {
             evolutionToolRow(profile: profile)
             evolutionModeRow(profile: profile)
             evolutionModelRow(profile: profile)
-            evolutionThoughtLevelRow(profile: profile)
+            evolutionModelVariantRow(profile: profile)
         } header: {
             Text(stageDisplayName(profile.wrappedValue.stage))
         } footer: {
@@ -162,8 +162,11 @@ struct AIAgentSection: View {
         return LabeledContent("settings.evolution.model".localized) {
             Menu {
                 Button("settings.evolution.defaultModel".localized) {
-                    profile.wrappedValue.providerID = ""
-                    profile.wrappedValue.modelID = ""
+                    var next = profile.wrappedValue
+                    next.providerID = ""
+                    next.modelID = ""
+                    sanitizeModelVariantSelection(profile: &next)
+                    profile.wrappedValue = next
                     persistEvolutionProfiles()
                 }
                 if providers.isEmpty {
@@ -171,8 +174,11 @@ struct AIAgentSection: View {
                 } else if providers.count == 1, let onlyProvider = providers.first {
                     ForEach(onlyProvider.models) { model in
                         Button(model.name) {
-                            profile.wrappedValue.providerID = onlyProvider.id
-                            profile.wrappedValue.modelID = model.id
+                            var next = profile.wrappedValue
+                            next.providerID = onlyProvider.id
+                            next.modelID = model.id
+                            sanitizeModelVariantSelection(profile: &next)
+                            profile.wrappedValue = next
                             persistEvolutionProfiles()
                         }
                     }
@@ -181,8 +187,11 @@ struct AIAgentSection: View {
                         Menu(provider.name) {
                             ForEach(provider.models) { model in
                                 Button(model.name) {
-                                    profile.wrappedValue.providerID = provider.id
-                                    profile.wrappedValue.modelID = model.id
+                                    var next = profile.wrappedValue
+                                    next.providerID = provider.id
+                                    next.modelID = model.id
+                                    sanitizeModelVariantSelection(profile: &next)
+                                    profile.wrappedValue = next
                                     persistEvolutionProfiles()
                                 }
                             }
@@ -198,24 +207,24 @@ struct AIAgentSection: View {
         }
     }
 
-    private func evolutionThoughtLevelRow(profile: Binding<EvolutionEditableProfile>) -> some View {
-        let options = thoughtLevelOptions(for: profile.wrappedValue.aiTool)
-        let selected = selectedThoughtLevel(for: profile.wrappedValue)
+    private func evolutionModelVariantRow(profile: Binding<EvolutionEditableProfile>) -> some View {
+        let options = modelVariantOptions(for: profile.wrappedValue)
+        let selected = selectedModelVariant(for: profile.wrappedValue)
 
-        return LabeledContent("思考强度") {
+        return LabeledContent("模型变体") {
             Menu {
                 Button("默认") {
-                    if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                    if let optionID = modelVariantOptionID(for: profile.wrappedValue.aiTool) {
                         profile.wrappedValue.configOptions.removeValue(forKey: optionID)
                         persistEvolutionProfiles()
                     }
                 }
                 if options.isEmpty {
-                    Text("未提供 thought_level 选项")
+                    Text("当前模型未提供可用变体")
                 } else {
                     ForEach(options, id: \.self) { option in
                         Button(option) {
-                            if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                            if let optionID = modelVariantOptionID(for: profile.wrappedValue.aiTool) {
                                 profile.wrappedValue.configOptions[optionID] = option
                                 persistEvolutionProfiles()
                             }
@@ -252,16 +261,35 @@ struct AIAgentSection: View {
         )
     }
 
-    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        optionsStore.options(for: tool).thoughtLevelOptionID
+    private func modelVariantOptionID(for tool: AIChatTool) -> String? {
+        optionsStore.modelVariantOptionID(for: tool)
     }
 
-    private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
-        optionsStore.options(for: tool).thoughtLevelOptions
+    private func modelVariantOptions(for profile: EvolutionEditableProfile) -> [String] {
+        optionsStore.modelVariantOptions(
+            for: profile.aiTool,
+            providerID: profile.providerID,
+            modelID: profile.modelID
+        )
     }
 
-    private func selectedThoughtLevel(for profile: EvolutionEditableProfile) -> String? {
-        optionsStore.selectedThoughtLevel(configOptions: profile.configOptions, for: profile.aiTool)
+    private func selectedModelVariant(for profile: EvolutionEditableProfile) -> String? {
+        optionsStore.selectedModelVariant(
+            configOptions: profile.configOptions,
+            providerID: profile.providerID,
+            modelID: profile.modelID,
+            for: profile.aiTool
+        )
+    }
+
+    private func sanitizeModelVariantSelection(profile: inout EvolutionEditableProfile) {
+        guard let optionID = modelVariantOptionID(for: profile.aiTool) else { return }
+        guard let raw = profile.configOptions[optionID] else { return }
+        let value = String(describing: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = modelVariantOptions(for: profile)
+        if value.isEmpty || (!options.isEmpty && !options.contains(value)) {
+            profile.configOptions.removeValue(forKey: optionID)
+        }
     }
 
     private func persistEvolutionProfiles() {

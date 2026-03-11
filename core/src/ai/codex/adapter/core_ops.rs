@@ -681,6 +681,7 @@ impl CodexAppServerAgent {
                     .input_modalities
                     .iter()
                     .any(|modality| modality.eq_ignore_ascii_case("image")),
+                variants: vec![],
             })
             .collect::<Vec<_>>();
         vec![AiProviderInfo {

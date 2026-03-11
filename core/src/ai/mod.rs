@@ -290,6 +290,7 @@ pub struct AiModelInfo {
     pub name: String,
     pub provider_id: String,
     pub supports_image_input: bool,
+    pub variants: Vec<String>,
 }
 
 /// AI Agent 信息（通用模型）

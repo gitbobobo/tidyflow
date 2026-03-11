@@ -1060,6 +1060,7 @@ impl AiAgent for AcpAgent {
                 name: m.name,
                 provider_id: provider_id.clone(),
                 supports_image_input: m.supports_image_input,
+                variants: vec![],
             })
             .collect::<Vec<_>>();
         if models.is_empty() {
@@ -1068,6 +1069,7 @@ impl AiAgent for AcpAgent {
                 name: "Default".to_string(),
                 provider_id: provider_id.clone(),
                 supports_image_input: true,
+                variants: vec![],
             });
         }
         Ok(vec![AiProviderInfo {

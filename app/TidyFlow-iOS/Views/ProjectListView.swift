@@ -240,6 +240,7 @@ struct MobileSettingsView: View {
                             Button("默认") {
                                 draft.providerID = ""
                                 draft.modelID = ""
+                                sanitizeModelVariantSelection(draft: &draft)
                                 persistDrafts()
                             }
                             let providers = modelProviders(for: draft.aiTool)
@@ -250,6 +251,7 @@ struct MobileSettingsView: View {
                                     Button(model.name) {
                                         draft.providerID = only.id
                                         draft.modelID = model.id
+                                        sanitizeModelVariantSelection(draft: &draft)
                                         persistDrafts()
                                     }
                                 }
@@ -260,6 +262,7 @@ struct MobileSettingsView: View {
                                             Button(model.name) {
                                                 draft.providerID = provider.id
                                                 draft.modelID = model.id
+                                                sanitizeModelVariantSelection(draft: &draft)
                                                 persistDrafts()
                                             }
                                         }
@@ -273,21 +276,21 @@ struct MobileSettingsView: View {
                         }
                     }
 
-                    LabeledContent("思考强度") {
+                    LabeledContent("模型变体") {
                         Menu {
                             Button("默认") {
-                                if let optionID = thoughtLevelOptionID(for: draft.aiTool) {
+                                if let optionID = modelVariantOptionID(for: draft.aiTool) {
                                     draft.configOptions.removeValue(forKey: optionID)
                                     persistDrafts()
                                 }
                             }
-                            let options = optionsStore.options(for: draft.aiTool).thoughtLevelOptions
+                            let options = modelVariantOptions(for: draft)
                             if options.isEmpty {
-                                Text("暂无选项")
+                                Text("当前模型未提供可用变体")
                             } else {
                                 ForEach(options, id: \.self) { option in
                                     Button(option) {
-                                        if let optionID = thoughtLevelOptionID(for: draft.aiTool) {
+                                        if let optionID = modelVariantOptionID(for: draft.aiTool) {
                                             draft.configOptions[optionID] = option
                                             persistDrafts()
                                         }
@@ -295,7 +298,7 @@ struct MobileSettingsView: View {
                                 }
                             }
                         } label: {
-                            Text(selectedThoughtLevel(for: draft) ?? "默认")
+                            Text(selectedModelVariant(for: draft) ?? "默认")
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -343,12 +346,35 @@ struct MobileSettingsView: View {
         )
     }
 
-    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        optionsStore.options(for: tool).thoughtLevelOptionID
+    private func modelVariantOptionID(for tool: AIChatTool) -> String? {
+        optionsStore.modelVariantOptionID(for: tool)
     }
 
-    private func selectedThoughtLevel(for draft: MobileEvolutionDefaultDraft) -> String? {
-        optionsStore.selectedThoughtLevel(configOptions: draft.configOptions, for: draft.aiTool)
+    private func modelVariantOptions(for draft: MobileEvolutionDefaultDraft) -> [String] {
+        optionsStore.modelVariantOptions(
+            for: draft.aiTool,
+            providerID: draft.providerID,
+            modelID: draft.modelID
+        )
+    }
+
+    private func selectedModelVariant(for draft: MobileEvolutionDefaultDraft) -> String? {
+        optionsStore.selectedModelVariant(
+            configOptions: draft.configOptions,
+            providerID: draft.providerID,
+            modelID: draft.modelID,
+            for: draft.aiTool
+        )
+    }
+
+    private func sanitizeModelVariantSelection(draft: inout MobileEvolutionDefaultDraft) {
+        guard let optionID = modelVariantOptionID(for: draft.aiTool) else { return }
+        guard let raw = draft.configOptions[optionID] else { return }
+        let value = String(describing: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = modelVariantOptions(for: draft)
+        if value.isEmpty || (!options.isEmpty && !options.contains(value)) {
+            draft.configOptions.removeValue(forKey: optionID)
+        }
     }
 
     private func buildDrafts() -> [MobileEvolutionDefaultDraft] {

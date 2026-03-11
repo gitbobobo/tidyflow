@@ -44,12 +44,14 @@ struct EvolutionModelOptionProjection: Identifiable, Equatable {
     let modelID: String
     let providerID: String
     let name: String
+    let variants: [String]
 
     init(_ model: AIModelInfo) {
         id = model.id
         modelID = model.id
         providerID = model.providerID
         name = model.name
+        variants = model.variants
     }
 }
 
@@ -64,8 +66,8 @@ struct EvolutionToolOptionsProjection: Equatable {
     let agents: [EvolutionAgentOptionProjection]
     let modeOptions: [String]
     let providers: [EvolutionProviderOptionProjection]
-    let thoughtLevelOptionID: String?
-    let thoughtLevelOptions: [String]
+    let modelVariantOptionID: String?
+    let fallbackModelVariantOptions: [String]
 
     static func empty(tool: AIChatTool) -> EvolutionToolOptionsProjection {
         EvolutionToolOptionsProjection(
@@ -73,8 +75,8 @@ struct EvolutionToolOptionsProjection: Equatable {
             agents: [],
             modeOptions: [],
             providers: [],
-            thoughtLevelOptionID: nil,
-            thoughtLevelOptions: []
+            modelVariantOptionID: nil,
+            fallbackModelVariantOptions: []
         )
     }
 }
@@ -100,8 +102,8 @@ enum EvolutionProfileOptionsProjectionSemantics {
         contextKey: String,
         agentsByTool: (AIChatTool) -> [AIAgentInfo],
         providersByTool: (AIChatTool) -> [AIProviderInfo],
-        thoughtLevelOptionIDByTool: (AIChatTool) -> String?,
-        thoughtLevelOptionsByTool: (AIChatTool) -> [String]
+        modelVariantOptionIDByTool: (AIChatTool) -> String?,
+        modelVariantOptionsByTool: (AIChatTool) -> [String]
     ) -> EvolutionProfileOptionsProjection {
         let toolOptionsByTool = Dictionary(
             uniqueKeysWithValues: AIChatTool.allCases.map { tool in
@@ -113,8 +115,8 @@ enum EvolutionProfileOptionsProjectionSemantics {
                         agents: agents,
                         modeOptions: agents.map(\.name),
                         providers: makeProviders(from: providersByTool(tool)),
-                        thoughtLevelOptionID: thoughtLevelOptionIDByTool(tool),
-                        thoughtLevelOptions: thoughtLevelOptionsByTool(tool)
+                        modelVariantOptionID: modelVariantOptionIDByTool(tool),
+                        fallbackModelVariantOptions: modelVariantOptionsByTool(tool)
                     )
                 )
             }
@@ -155,19 +157,47 @@ enum EvolutionProfileOptionsProjectionSemantics {
         return modelID
     }
 
-    static func selectedThoughtLevel(
+    static func modelVariantOptions(
+        providerID: String,
+        modelID: String,
+        options: EvolutionToolOptionsProjection
+    ) -> [String] {
+        guard !providerID.isEmpty, !modelID.isEmpty else {
+            return options.fallbackModelVariantOptions
+        }
+        for provider in options.providers where provider.id == providerID {
+            if let model = provider.models.first(where: { $0.modelID == modelID }),
+               !model.variants.isEmpty {
+                return model.variants
+            }
+        }
+        return options.fallbackModelVariantOptions
+    }
+
+    static func selectedModelVariant(
         configOptions: [String: Any],
+        providerID: String,
+        modelID: String,
         options: EvolutionToolOptionsProjection
     ) -> String? {
-        guard let optionID = options.thoughtLevelOptionID else { return nil }
+        guard let optionID = options.modelVariantOptionID else { return nil }
         let raw = configOptions[optionID]
+        let allowed = Set(modelVariantOptions(providerID: providerID, modelID: modelID, options: options))
         if let text = raw as? String {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            guard !trimmed.isEmpty else { return nil }
+            if allowed.isEmpty || allowed.contains(trimmed) {
+                return trimmed
+            }
+            return nil
         }
         if let number = raw as? NSNumber {
             let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            guard !trimmed.isEmpty else { return nil }
+            if allowed.isEmpty || allowed.contains(trimmed) {
+                return trimmed
+            }
+            return nil
         }
         return nil
     }
@@ -242,9 +272,32 @@ final class EvolutionProfileOptionsProjectionStore {
         )
     }
 
-    func selectedThoughtLevel(configOptions: [String: Any], for tool: AIChatTool) -> String? {
-        EvolutionProfileOptionsProjectionSemantics.selectedThoughtLevel(
+    func modelVariantOptionID(for tool: AIChatTool) -> String? {
+        options(for: tool).modelVariantOptionID
+    }
+
+    func modelVariantOptions(
+        for tool: AIChatTool,
+        providerID: String,
+        modelID: String
+    ) -> [String] {
+        EvolutionProfileOptionsProjectionSemantics.modelVariantOptions(
+            providerID: providerID,
+            modelID: modelID,
+            options: options(for: tool)
+        )
+    }
+
+    func selectedModelVariant(
+        configOptions: [String: Any],
+        providerID: String,
+        modelID: String,
+        for tool: AIChatTool
+    ) -> String? {
+        EvolutionProfileOptionsProjectionSemantics.selectedModelVariant(
             configOptions: configOptions,
+            providerID: providerID,
+            modelID: modelID,
             options: options(for: tool)
         )
     }
@@ -274,8 +327,8 @@ final class EvolutionProfileOptionsProjectionStore {
             contextKey: "mac-settings",
             agentsByTool: appState.aiAgents(for:),
             providersByTool: appState.aiProviders(for:),
-            thoughtLevelOptionIDByTool: appState.thoughtLevelOptionID(for:),
-            thoughtLevelOptionsByTool: appState.thoughtLevelOptions(for:)
+            modelVariantOptionIDByTool: appState.modelVariantOptionID(for:),
+            modelVariantOptionsByTool: { appState.modelVariantOptions(for: $0) }
         )
         _ = updateProjection(next)
     }
@@ -299,8 +352,8 @@ final class EvolutionProfileOptionsProjectionStore {
             contextKey: "ios-settings",
             agentsByTool: appState.settingsAgents(aiTool:),
             providersByTool: appState.settingsProviders(aiTool:),
-            thoughtLevelOptionIDByTool: appState.thoughtLevelOptionID(for:),
-            thoughtLevelOptionsByTool: appState.thoughtLevelOptions(for:)
+            modelVariantOptionIDByTool: appState.modelVariantOptionID(for:),
+            modelVariantOptionsByTool: { appState.modelVariantOptions(for: $0) }
         )
         _ = updateProjection(next)
     }
@@ -321,8 +374,8 @@ final class EvolutionProfileOptionsProjectionStore {
             contextKey: "ios-evolution:\(project):\(workspace)",
             agentsByTool: { appState.evolutionAgents(project: project, workspace: workspace, aiTool: $0) },
             providersByTool: { appState.evolutionProviders(project: project, workspace: workspace, aiTool: $0) },
-            thoughtLevelOptionIDByTool: appState.thoughtLevelOptionID(for:),
-            thoughtLevelOptionsByTool: appState.thoughtLevelOptions(for:)
+            modelVariantOptionIDByTool: appState.modelVariantOptionID(for:),
+            modelVariantOptionsByTool: { appState.modelVariantOptions(for: $0) }
         )
         _ = updateProjection(next)
     }

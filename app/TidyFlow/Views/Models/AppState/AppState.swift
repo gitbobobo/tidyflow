@@ -544,10 +544,10 @@ class AppState: ObservableObject {
     @Published var aiSessionConfigOptions: [AIProtocolSessionConfigOptionInfo] = [] {
         didSet { aiSessionConfigOptionsByTool[aiChatTool] = aiSessionConfigOptions }
     }
-    @Published var aiSelectedThoughtLevel: String? {
+    @Published var aiSelectedModelVariant: String? {
         didSet {
-            aiSelectedThoughtLevelByTool[aiChatTool] = aiSelectedThoughtLevel
-            syncThoughtLevelConfigOptionForCurrentTool()
+            aiSelectedModelVariantByTool[aiChatTool] = aiSelectedModelVariant
+            syncModelVariantConfigOptionForCurrentTool()
         }
     }
     @Published var isAILoadingModels: Bool = false
@@ -608,7 +608,7 @@ class AppState: ObservableObject {
     private var lastActiveBySessionKey: [String: Bool] = [:]
     /// 当前工具已选择的配置项值（option_id -> value），用于 send 时透传 config_overrides。
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
-    private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
+    private var aiSelectedModelVariantByTool: [AIChatTool: String?] = [:]
     enum AISelectorResourceKind {
         case providerList
         case agentList
@@ -867,7 +867,7 @@ class AppState: ObservableObject {
             aiSlashCommandsBySessionByTool[tool] = [:]
             aiSessionConfigOptionsByTool[tool] = []
             aiSelectedConfigOptionsByTool[tool] = [:]
-            aiSelectedThoughtLevelByTool[tool] = nil
+            aiSelectedModelVariantByTool[tool] = nil
             aiPendingSessionSelectionHintsByTool[tool] = [:]
             aiToolBadges[tool] = AIToolBadgeState()
             aiSessionStatusesByTool[tool] = [:]
@@ -947,7 +947,7 @@ class AppState: ObservableObject {
             sessionId: aiStore(for: tool).currentSessionId
         )
         aiSessionConfigOptions = aiSessionConfigOptionsByTool[tool] ?? []
-        aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[tool] ?? nil
+        aiSelectedModelVariant = aiSelectedModelVariantByTool[tool] ?? nil
 
         clearUnreadBadge(for: tool)
     }
@@ -1235,6 +1235,7 @@ class AppState: ObservableObject {
                 setAISelectedModel(nil, for: tool)
             }
         }
+        refreshModelVariantFromConfig(for: tool)
     }
 
     func setAIAgents(_ agents: [AIAgentInfo], for tool: AIChatTool) {
@@ -1287,46 +1288,38 @@ class AppState: ObservableObject {
                 updateConfigOptionValue(optionID: optionID, value: nil, for: tool)
             }
         }
+        refreshModelVariantFromConfig(for: tool)
     }
 
     func aiSessionConfigOptions(for tool: AIChatTool) -> [AIProtocolSessionConfigOptionInfo] {
         aiSessionConfigOptionsByTool[tool] ?? []
     }
 
-    func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
+    func modelVariantOptions(for tool: AIChatTool, model: AIModelSelection? = nil) -> [String] {
+        if let model = model ?? selectedModel(for: tool),
+           let resolved = resolveModelVariantOptions(for: tool, model: model),
+           !resolved.isEmpty {
+            return resolved
+        }
         if let option = aiSessionConfigOptions(for: tool).first(where: {
-            normalizedConfigCategory($0.category, optionID: $0.optionID) == "thought_level"
+            normalizedConfigCategory($0.category, optionID: $0.optionID) == "model_variant"
         }) {
-            var seen: Set<String> = []
-            var values: [String] = []
-            for choice in option.options {
-                if let value = configValueAsString(choice.value), seen.insert(value).inserted {
-                    values.append(value)
-                }
-            }
-            for group in option.optionGroups {
-                for choice in group.options {
-                    if let value = configValueAsString(choice.value), seen.insert(value).inserted {
-                        values.append(value)
-                    }
-                }
-            }
+            let values = configOptionValues(option)
             if !values.isEmpty { return values }
         }
-        // Codex 静态兜底：无动态配置时提供 reasoning_effort 三档选项
         if tool == .codex {
             return ["low", "medium", "high"]
         }
         return []
     }
 
-    /// 返回当前工具的 thought_level 配置项 option_id；Codex 使用静态兜底。
-    func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        if let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: tool)) {
+    /// 返回当前工具的 model_variant 配置项 option_id；静态变体工具使用固定键名。
+    func modelVariantOptionID(for tool: AIChatTool) -> String? {
+        if let optionID = optionIDForCategory("model_variant", in: aiSessionConfigOptions(for: tool)) {
             return optionID
         }
-        if tool == .codex {
-            return "thought_level"
+        if tool == .codex || tool == .opencode {
+            return "model_variant"
         }
         return nil
     }
@@ -1357,36 +1350,44 @@ class AppState: ObservableObject {
            let selectedModel = selectedModel(for: tool) {
             selected[modelOptionID] = modelConfigValue(from: selectedModel)
         }
-        if let thoughtOptionID = optionIDForCategory("thought_level", in: options),
-           let thoughtLevel = selectedThoughtLevel(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !thoughtLevel.isEmpty {
-            selected[thoughtOptionID] = thoughtLevel
+        if let variantOptionID = modelVariantOptionID(for: tool),
+           let modelVariant = selectedModelVariant(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !modelVariant.isEmpty,
+           modelVariantOptions(for: tool).contains(modelVariant) {
+            selected[variantOptionID] = modelVariant
         }
         selected = selected.filter { validOptionIDs.contains($0.key) }
         aiSelectedConfigOptionsByTool[tool] = selected
-        refreshThoughtLevelFromConfig(for: tool)
+        refreshModelVariantFromConfig(for: tool)
         if aiChatTool == tool {
             aiSessionConfigOptions = options
         }
     }
 
-    func selectedThoughtLevel(for tool: AIChatTool) -> String? {
-        aiSelectedThoughtLevelByTool[tool] ?? nil
+    func selectedModelVariant(for tool: AIChatTool) -> String? {
+        aiSelectedModelVariantByTool[tool] ?? nil
     }
 
-    func setAISelectedThoughtLevel(
+    func setAISelectedModelVariant(
         _ value: String?,
         for tool: AIChatTool,
         syncConfigOption: Bool = true
     ) {
         let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalValue = (normalized?.isEmpty == true) ? nil : normalized
-        aiSelectedThoughtLevelByTool[tool] = finalValue
+        let allowed = Set(modelVariantOptions(for: tool))
+        let finalValue: String?
+        if let normalized, !normalized.isEmpty,
+           allowed.isEmpty || allowed.contains(normalized) {
+            finalValue = normalized
+        } else {
+            finalValue = nil
+        }
+        aiSelectedModelVariantByTool[tool] = finalValue
         if aiChatTool == tool {
-            aiSelectedThoughtLevel = finalValue
+            aiSelectedModelVariant = finalValue
         }
         guard syncConfigOption,
-              let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: tool)) else {
+              let optionID = modelVariantOptionID(for: tool) else {
             return
         }
         if let finalValue {
@@ -1398,7 +1399,6 @@ class AppState: ObservableObject {
 
     func aiConfigOverrides(for tool: AIChatTool) -> [String: Any]? {
         let options = aiSessionConfigOptions(for: tool)
-        guard !options.isEmpty else { return nil }
         var overrides = aiSelectedConfigOptionsByTool[tool] ?? [:]
 
         if let modeOptionID = optionIDForCategory("mode", in: options),
@@ -1410,10 +1410,11 @@ class AppState: ObservableObject {
            let selectedModel = selectedModel(for: tool) {
             overrides[modelOptionID] = modelConfigValue(from: selectedModel)
         }
-        if let thoughtOptionID = optionIDForCategory("thought_level", in: options),
-           let thoughtLevel = selectedThoughtLevel(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !thoughtLevel.isEmpty {
-            overrides[thoughtOptionID] = thoughtLevel
+        if let variantOptionID = modelVariantOptionID(for: tool),
+           let modelVariant = selectedModelVariant(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !modelVariant.isEmpty,
+           modelVariantOptions(for: tool).contains(modelVariant) {
+            overrides[variantOptionID] = modelVariant
         }
         return overrides.isEmpty ? nil : overrides
     }
@@ -1444,11 +1445,11 @@ class AppState: ObservableObject {
                    ) {
                     setAISelectedModel(resolvedModel, for: tool)
                 }
-            } else if category == "thought_level" {
-                setAISelectedThoughtLevel(configValueAsString(rawValue), for: tool, syncConfigOption: false)
+            } else if category == "model_variant" {
+                setAISelectedModelVariant(configValueAsString(rawValue), for: tool, syncConfigOption: false)
             }
         }
-        refreshThoughtLevelFromConfig(for: tool)
+        refreshModelVariantFromConfig(for: tool)
     }
 
     private func updateConfigOptionValue(optionID: String, value: Any?, for tool: AIChatTool) {
@@ -1461,17 +1462,17 @@ class AppState: ObservableObject {
         aiSelectedConfigOptionsByTool[tool] = selected
     }
 
-    private func refreshThoughtLevelFromConfig(for tool: AIChatTool) {
+    private func refreshModelVariantFromConfig(for tool: AIChatTool) {
         let options = aiSessionConfigOptions(for: tool)
         guard let option = options.first(where: {
-            normalizedConfigCategory($0.category, optionID: $0.optionID) == "thought_level"
+            normalizedConfigCategory($0.category, optionID: $0.optionID) == "model_variant"
         }) else {
-            setAISelectedThoughtLevel(nil, for: tool, syncConfigOption: false)
+            setAISelectedModelVariant(nil, for: tool, syncConfigOption: false)
             return
         }
         let selected = aiSelectedConfigOptionsByTool[tool] ?? [:]
         let value = selected[option.optionID] ?? option.currentValue
-        setAISelectedThoughtLevel(configValueAsString(value), for: tool, syncConfigOption: false)
+        setAISelectedModelVariant(configValueAsString(value), for: tool, syncConfigOption: false)
     }
 
     private func optionIDForCategory(_ category: String, in options: [AIProtocolSessionConfigOptionInfo]) -> String? {
@@ -1552,14 +1553,46 @@ class AppState: ObservableObject {
         }
     }
 
-    private func syncThoughtLevelConfigOptionForCurrentTool() {
-        guard let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: aiChatTool)) else { return }
-        let normalized = aiSelectedThoughtLevel?.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func syncModelVariantConfigOptionForCurrentTool() {
+        guard let optionID = modelVariantOptionID(for: aiChatTool) else { return }
+        let normalized = aiSelectedModelVariant?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let normalized, !normalized.isEmpty {
             updateConfigOptionValue(optionID: optionID, value: normalized, for: aiChatTool)
         } else {
             updateConfigOptionValue(optionID: optionID, value: nil, for: aiChatTool)
         }
+    }
+
+    private func configOptionValues(_ option: AIProtocolSessionConfigOptionInfo) -> [String] {
+        var seen: Set<String> = []
+        var values: [String] = []
+        for choice in option.options {
+            if let value = configValueAsString(choice.value), seen.insert(value).inserted {
+                values.append(value)
+            }
+        }
+        for group in option.optionGroups {
+            for choice in group.options {
+                if let value = configValueAsString(choice.value), seen.insert(value).inserted {
+                    values.append(value)
+                }
+            }
+        }
+        return values
+    }
+
+    private func resolveModelVariantOptions(for tool: AIChatTool, model: AIModelSelection) -> [String]? {
+        let providers = aiProviders(for: tool)
+        guard let provider = providers.first(where: { $0.id == model.providerID }),
+              let resolvedModel = provider.models.first(where: { $0.id == model.modelID }) else {
+            return nil
+        }
+        var seen: Set<String> = []
+        let values = resolvedModel.variants
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
+        return values.isEmpty ? nil : values
     }
 
     private func aiSelectionHintDict(_ hint: AISessionSelectionHint?) -> [String: Any]? {
@@ -1974,8 +2007,13 @@ class AppState: ObservableObject {
                     }
                     continue
                 }
-                if category == "thought_level" {
-                    setAISelectedThoughtLevel(configValueAsString(value), for: tool, syncConfigOption: false)
+                if category == "model_variant" {
+                    if let rawVariant = configValueAsString(value),
+                       modelVariantOptions(for: tool).contains(rawVariant) {
+                        setAISelectedModelVariant(rawVariant, for: tool, syncConfigOption: false)
+                    } else if configValueAsString(value) != nil {
+                        unresolvedConfigOptions[optionID] = value
+                    }
                 }
             }
         }

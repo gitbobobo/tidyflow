@@ -205,7 +205,7 @@ struct AITabView: View {
         .onReceive(appState.$aiSessionConfigOptions) { _ in
             invalidateInputSelectorView()
         }
-        .onReceive(appState.$aiSelectedThoughtLevel) { _ in
+        .onReceive(appState.$aiSelectedModelVariant) { _ in
             invalidateInputSelectorView()
         }
         .onReceive(appState.$isAILoadingModels) { _ in
@@ -633,8 +633,11 @@ struct AITabView: View {
                 contextRemainingPercent: shellProjection.contextRemainingPercent,
                 agents: appState.aiAgents,
                 selectedAgent: aiSelectedAgentBinding,
-                thoughtLevelOptions: appState.thoughtLevelOptions(for: appState.aiChatTool),
-                selectedThoughtLevel: aiSelectedThoughtLevelBinding,
+                modelVariantOptions: appState.modelVariantOptions(
+                    for: appState.aiChatTool,
+                    model: appState.aiSelectedModel
+                ),
+                selectedModelVariant: aiSelectedModelVariantBinding,
                 isLoadingModels: appState.isAILoadingModels,
                 isLoadingAgents: appState.isAILoadingAgents,
                 autocomplete: autocomplete,
@@ -728,12 +731,12 @@ struct AITabView: View {
         )
     }
 
-    private var aiSelectedThoughtLevelBinding: Binding<String?> {
+    private var aiSelectedModelVariantBinding: Binding<String?> {
         Binding(
-            get: { appState.aiSelectedThoughtLevel },
+            get: { appState.aiSelectedModelVariant },
             set: { newValue in
-                guard appState.aiSelectedThoughtLevel != newValue else { return }
-                appState.aiSelectedThoughtLevel = newValue
+                guard appState.aiSelectedModelVariant != newValue else { return }
+                appState.aiSelectedModelVariant = newValue
             }
         )
     }

@@ -334,7 +334,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
                 "agent": "code",
                 "config_options": [
                     "mode": "code",
-                    "thought_level": "high",
+                    "model_variant": "high",
                     "model": [
                         "provider_id": "openai",
                         "model_id": "gpt-5"
@@ -349,7 +349,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(result?.selectionHint?.agent, "code")
         let configOptions = result?.selectionHint?.configOptions
         XCTAssertEqual(configOptions?["mode"] as? String, "code")
-        XCTAssertEqual(configOptions?["thought_level"] as? String, "high")
+        XCTAssertEqual(configOptions?["model_variant"] as? String, "high")
         let model = configOptions?["model"] as? [String: Any]
         XCTAssertEqual(model?["provider_id"] as? String, "openai")
         XCTAssertEqual(model?["model_id"] as? String, "gpt-5")
@@ -367,7 +367,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
                 "model_id": "gpt-5"
             ],
             "config_options": [
-                "thought_level": "high",
+                "model_variant": "high",
                 "custom_group": [
                     "id": "advanced",
                     "enabled": true
@@ -378,14 +378,14 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let profile = EvolutionStageProfileInfoV2.from(json: json)
         XCTAssertNotNil(profile)
         XCTAssertEqual(profile?.stage, "direction")
-        XCTAssertEqual(profile?.configOptions["thought_level"] as? String, "high")
+        XCTAssertEqual(profile?.configOptions["model_variant"] as? String, "high")
         let nested = profile?.configOptions["custom_group"] as? [String: Any]
         XCTAssertEqual(nested?["id"] as? String, "advanced")
         XCTAssertEqual(nested?["enabled"] as? Bool, true)
 
         let encoded = profile?.toJSON()
         let encodedConfig = encoded?["config_options"] as? [String: Any]
-        XCTAssertEqual(encodedConfig?["thought_level"] as? String, "high")
+        XCTAssertEqual(encodedConfig?["model_variant"] as? String, "high")
         let encodedNested = encodedConfig?["custom_group"] as? [String: Any]
         XCTAssertEqual(encodedNested?["id"] as? String, "advanced")
     }
@@ -1646,10 +1646,10 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertTrue(hasNonToolNonReasoningPart)
     }
 
-    // MARK: - Codex thought_level / reasoning_effort 相关测试
+    // MARK: - Codex model_variant / reasoning_effort 相关测试
 
-    /// 验证 AISessionConfigOptionsResult 能正确解析 Codex 静态 thought_level 选项（含 low/medium/high 三档）
-    func testCodexThoughtLevelSessionConfigOptionParsesThreeChoices() {
+    /// 验证 AISessionConfigOptionsResult 能正确解析 Codex 静态 model_variant 选项（含 low/medium/high 三档）
+    func testCodexModelVariantSessionConfigOptionParsesThreeChoices() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
             "workspace_name": "default",
@@ -1657,9 +1657,9 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "session_id": "s-codex-1",
             "options": [
                 [
-                    "option_id": "thought_level",
-                    "category": "thought_level",
-                    "name": "思考强度",
+                    "option_id": "model_variant",
+                    "category": "model_variant",
+                    "name": "模型变体",
                     "description": "控制 Codex 推理深度：low 快速，medium 均衡，high 深入",
                     "options": [
                         ["value": "low",    "label": "low"],
@@ -1678,9 +1678,9 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(result?.options.count, 1)
 
         let option = result?.options.first
-        XCTAssertEqual(option?.optionID, "thought_level")
-        XCTAssertEqual(option?.category, "thought_level")
-        XCTAssertEqual(option?.name, "思考强度")
+        XCTAssertEqual(option?.optionID, "model_variant")
+        XCTAssertEqual(option?.category, "model_variant")
+        XCTAssertEqual(option?.name, "模型变体")
         XCTAssertEqual(option?.options.count, 3)
         XCTAssertEqual(option?.optionGroups.count, 0)
 
@@ -1693,12 +1693,12 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(values, ["low", "medium", "high"])
     }
 
-    /// 验证 thought_level 选项在 category 缺失时 optionID 可用作 category 兜底（协议松散解析）
-    func testCodexThoughtLevelCategoryFallsBackToOptionID() {
+    /// 验证 model_variant 选项在 category 缺失时 optionID 可用作 category 兜底（协议松散解析）
+    func testCodexModelVariantCategoryFallsBackToOptionID() {
         // category 缺失 —— 协议允许 nil，客户端以 optionID 推导
         let json: [String: Any] = [
-            "option_id": "thought_level",
-            "name": "思考强度",
+            "option_id": "model_variant",
+            "name": "模型变体",
             "options": [
                 ["value": "medium", "label": "medium"]
             ],
@@ -1706,22 +1706,22 @@ final class AIChatProtocolModelsTests: XCTestCase {
         ]
         let option = AIProtocolSessionConfigOptionInfo.from(json: json)
         XCTAssertNotNil(option)
-        XCTAssertEqual(option?.optionID, "thought_level")
+        XCTAssertEqual(option?.optionID, "model_variant")
         // category 为 nil 时，AppState 通过 normalizedConfigCategory 将 optionID 作为 category
         XCTAssertNil(option?.category, "category 未提供时应为 nil，由调用方兜底")
     }
 
-    /// 验证 AISessionConfigOptionsResult 解析时 thought_level currentValue 能正确传递
-    func testCodexThoughtLevelCurrentValueRoundTrip() {
+    /// 验证 AISessionConfigOptionsResult 解析时 model_variant currentValue 能正确传递
+    func testCodexModelVariantCurrentValueRoundTrip() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
             "workspace_name": "default",
             "ai_tool": "codex",
             "options": [
                 [
-                    "option_id": "thought_level",
-                    "category": "thought_level",
-                    "name": "思考强度",
+                    "option_id": "model_variant",
+                    "category": "model_variant",
+                    "name": "模型变体",
                     "current_value": "high",
                     "options": [
                         ["value": "low",    "label": "low"],
@@ -1739,52 +1739,52 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(option?.currentValue as? String, "high")
     }
 
-    /// 验证 EvolutionStageProfileInfoV2 在 Codex 工具下对 low/medium/high 三档 thought_level 均可正确往返序列化
-    func testEvolutionStageProfileInfoCodexThoughtLevelAllValues() {
+    /// 验证 EvolutionStageProfileInfoV2 在 Codex 工具下对 low/medium/high 三档 model_variant 均可正确往返序列化
+    func testEvolutionStageProfileInfoCodexModelVariantAllValues() {
         for level in ["low", "medium", "high"] {
             let json: [String: Any] = [
                 "stage": "implement_general",
                 "ai_tool": "codex",
                 "mode": "code",
                 "config_options": [
-                    "thought_level": level
+                    "model_variant": level
                 ]
             ]
             let profile = EvolutionStageProfileInfoV2.from(json: json)
-            XCTAssertNotNil(profile, "thought_level=\(level) 应能解析")
-            XCTAssertEqual(profile?.configOptions["thought_level"] as? String, level)
+            XCTAssertNotNil(profile, "model_variant=\(level) 应能解析")
+            XCTAssertEqual(profile?.configOptions["model_variant"] as? String, level)
 
             // 往返序列化
             let encoded = profile?.toJSON()
             let configOptions = encoded?["config_options"] as? [String: Any]
-            XCTAssertEqual(configOptions?["thought_level"] as? String, level,
-                           "thought_level=\(level) 序列化后应保持一致")
+            XCTAssertEqual(configOptions?["model_variant"] as? String, level,
+                           "model_variant=\(level) 序列化后应保持一致")
         }
     }
 
-    /// 验证多工作区场景下不同工作区各自的 thought_level 配置不互相污染
-    func testCodexThoughtLevelMultiWorkspaceIsolation() {
+    /// 验证多工作区场景下不同工作区各自的 model_variant 配置不互相污染
+    func testCodexModelVariantMultiWorkspaceIsolation() {
         // 模拟两个独立工作区的 EvolutionStageProfileInfo，配置值不同
         let jsonWs1: [String: Any] = [
             "stage": "direction",
             "ai_tool": "codex",
-            "config_options": ["thought_level": "low"]
+            "config_options": ["model_variant": "low"]
         ]
         let jsonWs2: [String: Any] = [
             "stage": "direction",
             "ai_tool": "codex",
-            "config_options": ["thought_level": "high"]
+            "config_options": ["model_variant": "high"]
         ]
 
         let profileWs1 = EvolutionStageProfileInfoV2.from(json: jsonWs1)
         let profileWs2 = EvolutionStageProfileInfoV2.from(json: jsonWs2)
 
-        XCTAssertEqual(profileWs1?.configOptions["thought_level"] as? String, "low")
-        XCTAssertEqual(profileWs2?.configOptions["thought_level"] as? String, "high")
+        XCTAssertEqual(profileWs1?.configOptions["model_variant"] as? String, "low")
+        XCTAssertEqual(profileWs2?.configOptions["model_variant"] as? String, "high")
         // 两个工作区配置对象独立，不应相互影响
         XCTAssertNotEqual(
-            profileWs1?.configOptions["thought_level"] as? String,
-            profileWs2?.configOptions["thought_level"] as? String
+            profileWs1?.configOptions["model_variant"] as? String,
+            profileWs2?.configOptions["model_variant"] as? String
         )
     }
 
@@ -1815,10 +1815,10 @@ final class AIChatProtocolModelsTests: XCTestCase {
     }
 
     func testMergedSelectionHintConfigOptionsMerged() {
-        let primary = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["thought_level": "high"])
-        let fallback = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["thought_level": "low", "other": "value"])
+        let primary = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["model_variant": "high"])
+        let fallback = AISessionSelectionHint(agent: nil, modelProviderID: nil, modelID: nil, configOptions: ["model_variant": "low", "other": "value"])
         let merged = AISessionSemantics.mergedSelectionHint(primary: primary, fallback: fallback)
-        XCTAssertEqual(merged?.configOptions?["thought_level"] as? String, "high", "primary configOptions 应覆盖 fallback")
+        XCTAssertEqual(merged?.configOptions?["model_variant"] as? String, "high", "primary configOptions 应覆盖 fallback")
         XCTAssertEqual(merged?.configOptions?["other"] as? String, "value", "fallback 独有字段应保留")
     }
 

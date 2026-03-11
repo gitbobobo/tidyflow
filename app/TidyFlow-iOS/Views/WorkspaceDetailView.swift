@@ -1863,6 +1863,7 @@ struct MobileEvolutionView: View {
                                     hasPendingUserProfileEdit = true
                                     profile.providerID = ""
                                     profile.modelID = ""
+                                    sanitizeModelVariantSelection(profile: &profile)
                                     autoSaveProfilesIfNeeded()
                                 }
                                 let providers = modelProviders(for: profile.aiTool)
@@ -1875,6 +1876,7 @@ struct MobileEvolutionView: View {
                                                 hasPendingUserProfileEdit = true
                                                 profile.providerID = onlyProvider.id
                                                 profile.modelID = model.id
+                                                sanitizeModelVariantSelection(profile: &profile)
                                                 autoSaveProfilesIfNeeded()
                                             }
                                         }
@@ -1887,6 +1889,7 @@ struct MobileEvolutionView: View {
                                                     hasPendingUserProfileEdit = true
                                                     profile.providerID = provider.id
                                                     profile.modelID = model.id
+                                                    sanitizeModelVariantSelection(profile: &profile)
                                                     autoSaveProfilesIfNeeded()
                                                 }
                                             }
@@ -1900,23 +1903,23 @@ struct MobileEvolutionView: View {
                             }
                         }
 
-                        LabeledContent("思考强度") {
+                        LabeledContent("模型变体") {
                             Menu {
                                 Button("默认") {
                                     hasPendingUserProfileEdit = true
-                                    if let optionID = thoughtLevelOptionID(for: profile.aiTool) {
+                                    if let optionID = modelVariantOptionID(for: profile.aiTool) {
                                         profile.configOptions.removeValue(forKey: optionID)
                                     }
                                     autoSaveProfilesIfNeeded()
                                 }
-                                let options = thoughtLevelOptions(for: profile.aiTool)
+                                let options = modelVariantOptions(for: profile)
                                 if options.isEmpty {
-                                    Text("未提供 thought_level 选项")
+                                    Text("当前模型未提供可用变体")
                                 } else {
                                     ForEach(options, id: \.self) { option in
                                         Button(option) {
                                             hasPendingUserProfileEdit = true
-                                            if let optionID = thoughtLevelOptionID(for: profile.aiTool) {
+                                            if let optionID = modelVariantOptionID(for: profile.aiTool) {
                                                 profile.configOptions[optionID] = option
                                             }
                                             autoSaveProfilesIfNeeded()
@@ -1924,7 +1927,7 @@ struct MobileEvolutionView: View {
                                     }
                                 }
                             } label: {
-                                Text(selectedThoughtLevel(for: profile) ?? "默认")
+                                Text(selectedModelVariant(for: profile) ?? "默认")
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
@@ -2232,6 +2235,7 @@ struct MobileEvolutionView: View {
 
         profile.providerID = selection.providerID
         profile.modelID = selection.modelID
+        sanitizeModelVariantSelection(profile: &profile)
         profiles[index] = profile
     }
 
@@ -2248,16 +2252,25 @@ struct MobileEvolutionView: View {
         )
     }
 
-    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
-        optionsStore.options(for: tool).thoughtLevelOptionID
+    private func modelVariantOptionID(for tool: AIChatTool) -> String? {
+        optionsStore.modelVariantOptionID(for: tool)
     }
 
-    private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
-        optionsStore.options(for: tool).thoughtLevelOptions
+    private func modelVariantOptions(for profile: EvolutionProfileDraft) -> [String] {
+        optionsStore.modelVariantOptions(
+            for: profile.aiTool,
+            providerID: profile.providerID,
+            modelID: profile.modelID
+        )
     }
 
-    private func selectedThoughtLevel(for profile: EvolutionProfileDraft) -> String? {
-        optionsStore.selectedThoughtLevel(configOptions: profile.configOptions, for: profile.aiTool)
+    private func selectedModelVariant(for profile: EvolutionProfileDraft) -> String? {
+        optionsStore.selectedModelVariant(
+            configOptions: profile.configOptions,
+            providerID: profile.providerID,
+            modelID: profile.modelID,
+            for: profile.aiTool
+        )
     }
 
     private func sanitizeProfileSelection(profileID: String) {
@@ -2283,7 +2296,19 @@ struct MobileEvolutionView: View {
             }
         }
 
+        sanitizeModelVariantSelection(profile: &profile)
+
         profiles[index] = profile
+    }
+
+    private func sanitizeModelVariantSelection(profile: inout EvolutionProfileDraft) {
+        guard let optionID = modelVariantOptionID(for: profile.aiTool) else { return }
+        guard let raw = profile.configOptions[optionID] else { return }
+        let value = String(describing: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        let variants = modelVariantOptions(for: profile)
+        if value.isEmpty || (!variants.isEmpty && !variants.contains(value)) {
+            profile.configOptions.removeValue(forKey: optionID)
+        }
     }
 
     private func buildStageProfilesForSubmit() -> [EvolutionStageProfileInfoV2] {

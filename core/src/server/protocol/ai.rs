@@ -310,6 +310,8 @@ pub struct ModelInfo {
     pub provider_id: String,
     #[serde(default)]
     pub supports_image_input: bool,
+    #[serde(default)]
+    pub variants: Vec<String>,
 }
 
 /// AI Agent 信息（动态获取的 agent 列表）

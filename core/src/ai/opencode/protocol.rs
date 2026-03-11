@@ -130,6 +130,9 @@ pub struct ProviderModelResponse {
     /// 模型限制信息（例如 limit.context）
     #[serde(default)]
     pub limit: Option<serde_json::Value>,
+    /// 模型变体配置（OpenCode 使用变体表达 reasoning effort 等能力）
+    #[serde(default)]
+    pub variants: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl ProviderModelResponse {
@@ -146,6 +149,33 @@ impl ProviderModelResponse {
                 .any(|m| m.eq_ignore_ascii_case("image"));
         }
         false
+    }
+
+    pub fn variants_vec(&self) -> Vec<String> {
+        let Some(variants) = &self.variants else {
+            return Vec::new();
+        };
+
+        let mut values = variants
+            .iter()
+            .filter_map(|(key, value)| {
+                let trimmed = key.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let disabled = value
+                    .as_object()
+                    .and_then(|obj| obj.get("disabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if disabled {
+                    return None;
+                }
+                Some(trimmed.to_string())
+            })
+            .collect::<Vec<_>>();
+        values.sort();
+        values
     }
 }
 
@@ -269,4 +299,27 @@ pub struct PartEnvelope {
     pub state: Option<serde_json::Value>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderModelResponse;
+
+    #[test]
+    fn variants_vec_filters_disabled_and_empty_keys() {
+        let model: ProviderModelResponse = serde_json::from_value(serde_json::json!({
+            "id": "gpt-5",
+            "name": "GPT-5",
+            "providerID": "openai",
+            "variants": {
+                "high": {},
+                "low": { "disabled": false },
+                "": {},
+                "legacy": { "disabled": true }
+            }
+        }))
+        .expect("model response should parse");
+
+        assert_eq!(model.variants_vec(), vec!["high".to_string(), "low".to_string()]);
+    }
 }
