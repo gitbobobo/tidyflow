@@ -145,7 +145,7 @@ struct AITabView: View {
             }
             pendingSendRequest = nil
             aiChatStore.setAbortPendingSessionId(nil)
-            previousSnapshotKey = currentSnapshotKey
+            syncToolSnapshotContext(oldTool: oldTool, newTool: newTool)
             loadSessions(refreshSessionList: false)
             let currentSessionId = appState.aiStore(for: newTool).currentSessionId
             if let skip = skipNextAutoReload,
@@ -744,12 +744,87 @@ struct AITabView: View {
     /// 生成当前工作空间的快照 key
     private var currentSnapshotKey: String? {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return nil }
-        return "\(appState.selectedProjectName)/\(ws)/\(appState.aiChatTool.rawValue)"
+        return snapshotKey(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            tool: appState.aiChatTool
+        )
+    }
+
+    /// `project/workspace/tool` 是聊天上下文快照的硬隔离边界。
+    private func snapshotKey(
+        projectName: String,
+        workspaceName: String,
+        tool: AIChatTool
+    ) -> String {
+        "\(projectName)/\(workspaceName)/\(tool.rawValue)"
     }
 
     /// 保存当前 AI 聊天状态到快照缓存
     private func saveSnapshot(forKey key: String) {
         aiChatStore.saveSnapshot(forKey: key, sessions: appState.aiSessions)
+    }
+
+    /// 保存指定工具在指定工作区下的聊天快照。
+    private func saveSnapshot(
+        projectName: String,
+        workspaceName: String,
+        tool: AIChatTool
+    ) {
+        let key = snapshotKey(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            tool: tool
+        )
+        let store = appState.aiStore(for: tool)
+        store.saveSnapshot(forKey: key, sessions: appState.aiSessionsForTool(tool))
+    }
+
+    /// 恢复指定工具在当前工作区下的聊天快照；若不存在则清空，防止跨工作区串台。
+    private func restoreSnapshot(
+        projectName: String,
+        workspaceName: String,
+        tool: AIChatTool
+    ) {
+        let key = snapshotKey(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            tool: tool
+        )
+        let store = appState.aiStore(for: tool)
+        if let snapshot = store.snapshot(forKey: key) {
+            store.applySnapshot(snapshot)
+            appState.setAISessions(snapshot.sessions, for: tool)
+        } else {
+            store.clearAll()
+            appState.setAISessions([], for: tool)
+        }
+    }
+
+    /// 切换工具时同步快照边界，避免其他工作区残留在隐藏工具 store 中的流式状态泄漏。
+    private func syncToolSnapshotContext(oldTool: AIChatTool, newTool: AIChatTool) {
+        guard let workspace = appState.selectedWorkspaceKey, !workspace.isEmpty else {
+            appState.aiStore(for: newTool).clearAll()
+            appState.setAISessions([], for: newTool)
+            previousSnapshotKey = nil
+            return
+        }
+        let project = appState.selectedProjectName
+        saveSnapshot(
+            projectName: project,
+            workspaceName: workspace,
+            tool: oldTool
+        )
+        restoreSnapshot(
+            projectName: project,
+            workspaceName: workspace,
+            tool: newTool
+        )
+        previousSnapshotKey = snapshotKey(
+            projectName: project,
+            workspaceName: workspace,
+            tool: newTool
+        )
     }
 
     /// 视图出现时，确保 AI 状态与当前工作空间一致
@@ -778,12 +853,15 @@ struct AITabView: View {
         }
         appState.clearAISessionListPageStates()
         appState.clearAISessionStatuses()
-        if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
-            aiChatStore.applySnapshot(snapshot)
-            appState.aiSessions = snapshot.sessions
+        if let workspace = appState.selectedWorkspaceKey,
+           !workspace.isEmpty {
+            restoreSnapshot(
+                projectName: appState.selectedProjectName,
+                workspaceName: workspace,
+                tool: appState.aiChatTool
+            )
         } else {
             aiChatStore.clearAll()
-            appState.aiSessions = []
         }
         appState.aiProviders = []
         appState.aiSelectedModel = nil
@@ -814,14 +892,16 @@ struct AITabView: View {
         }
         appState.clearAISessionListPageStates()
         appState.clearAISessionStatuses()
-        if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
-            // 恢复缓存的快照
-            aiChatStore.applySnapshot(snapshot)
-            appState.aiSessions = snapshot.sessions
+        if let workspace = appState.selectedWorkspaceKey,
+           !workspace.isEmpty {
+            restoreSnapshot(
+                projectName: appState.selectedProjectName,
+                workspaceName: workspace,
+                tool: appState.aiChatTool
+            )
         } else {
             // 无缓存，清空并从服务端加载
             aiChatStore.clearAll()
-            appState.aiSessions = []
         }
         appState.aiProviders = []
         appState.aiSelectedModel = nil
