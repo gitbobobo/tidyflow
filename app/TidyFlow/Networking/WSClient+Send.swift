@@ -43,12 +43,12 @@ private struct CoreHTTPClient {
         return components.url
     }
 
-    static func fetchJSON(
+    static func fetchData(
         baseURL: URL,
         path: String,
         queryItems: [URLQueryItem],
         token: String?
-    ) async throws -> [String: Any] {
+    ) async throws -> Data {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw CoreHTTPClientError.invalidRequestURL
         }
@@ -82,11 +82,16 @@ private struct CoreHTTPClient {
             throw CoreHTTPClientError.httpStatus(code: httpResponse.statusCode, message: message)
         }
 
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw CoreHTTPClientError.invalidPayload
-        }
-        return object
+        _ = try decodeHTTPResponseObject(from: data)
+        return data
     }
+}
+
+private func decodeHTTPResponseObject(from data: Data) throws -> [String: Any] {
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw CoreHTTPClientError.invalidPayload
+    }
+    return object
 }
 
 private func encodePathComponent(_ raw: String) -> String {
@@ -972,12 +977,54 @@ extension WSClient {
         emitClientError(message)
     }
 
+    private func executeHTTPRead(
+        key: HTTPQueryKey,
+        policy: HTTPQueryPolicy,
+        domain: String,
+        path: String,
+        queryItems: [URLQueryItem],
+        fallbackAction: String,
+        context: HTTPReadRequestContext?,
+        baseURL: URL,
+        token: String?,
+        cacheMode: HTTPQueryCacheMode
+    ) async {
+        do {
+            let data = try await httpQueryClient.fetch(
+                key: key,
+                policy: policy,
+                force: cacheMode == .forceRefresh
+            ) { [self] in
+                onHTTPRequestScheduled?(domain, path, queryItems)
+                if let httpReadFetcherOverride {
+                    return try await httpReadFetcherOverride(baseURL, path, queryItems, token)
+                }
+                return try await CoreHTTPClient.fetchData(
+                    baseURL: baseURL,
+                    path: path,
+                    queryItems: queryItems,
+                    token: token
+                )
+            }
+            let json = try decodeHTTPResponseObject(from: data)
+            await handleHTTPReadResult(
+                domain: domain,
+                fallbackAction: fallbackAction,
+                json: json,
+                context: context
+            )
+        } catch {
+            await handleHTTPReadError(error, context: context)
+        }
+    }
+
     private func requestReadViaHTTP(
         domain: String,
         path: String,
         queryItems: [URLQueryItem] = [],
         fallbackAction: String,
-        context: HTTPReadRequestContext? = nil
+        context: HTTPReadRequestContext? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         guard let baseURL = CoreHTTPClient.baseURL(from: currentURL) else {
             let message = CoreHTTPClientError.invalidBaseURL.localizedDescription
@@ -985,63 +1032,199 @@ extension WSClient {
             emitClientError(message)
             return
         }
+        let key = HTTPQueryKey(
+            baseURL: baseURL,
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: fallbackAction
+        )
+        let policy = HTTPQueryClient.policy(forFallbackAction: fallbackAction)
         let token = wsAuthToken
-        onHTTPRequestScheduled?(domain, path, queryItems)
 
         Task { [weak self] in
-            do {
-                let json = try await CoreHTTPClient.fetchJSON(
-                    baseURL: baseURL,
-                    path: path,
-                    queryItems: queryItems,
-                    token: token
-                )
-                await self?.handleHTTPReadResult(
-                    domain: domain,
-                    fallbackAction: fallbackAction,
-                    json: json,
-                    context: context
-                )
-            } catch {
-                await self?.handleHTTPReadError(error, context: context)
+            guard let self else { return }
+            if cacheMode == .default,
+               let cached = await self.httpQueryClient.cachedValue(
+                    for: key,
+                    policy: policy,
+                    mode: cacheMode
+               ) {
+                switch cached {
+                case let .fresh(data):
+                    do {
+                        let json = try decodeHTTPResponseObject(from: data)
+                        await self.handleHTTPReadResult(
+                            domain: domain,
+                            fallbackAction: fallbackAction,
+                            json: json,
+                            context: context
+                        )
+                    } catch {
+                        await self.httpQueryClient.invalidate(key: key)
+                        await self.handleHTTPReadError(error, context: context)
+                    }
+                    return
+                case let .stale(data):
+                    do {
+                        let json = try decodeHTTPResponseObject(from: data)
+                        await self.handleHTTPReadResult(
+                            domain: domain,
+                            fallbackAction: fallbackAction,
+                            json: json,
+                            context: context
+                        )
+                    } catch {
+                        await self.httpQueryClient.invalidate(key: key)
+                    }
+
+                    await self.executeHTTPRead(
+                        key: key,
+                        policy: policy,
+                        domain: domain,
+                        path: path,
+                        queryItems: queryItems,
+                        fallbackAction: fallbackAction,
+                        context: context,
+                        baseURL: baseURL,
+                        token: token,
+                        cacheMode: .forceRefresh
+                    )
+                    return
+                }
+            }
+
+            await self.executeHTTPRead(
+                key: key,
+                policy: policy,
+                domain: domain,
+                path: path,
+                queryItems: queryItems,
+                fallbackAction: fallbackAction,
+                context: context,
+                baseURL: baseURL,
+                token: token,
+                cacheMode: cacheMode
+            )
+        }
+    }
+
+    enum HTTPQueryInvalidationScope {
+        case fileWorkspace(project: String, workspace: String)
+        case fileRead(project: String, workspace: String, path: String)
+        case gitWorkspace(project: String, workspace: String)
+        case gitProject(project: String)
+        case aiWorkspace(project: String, workspace: String, aiTool: String? = nil)
+        case evolutionWorkspace(project: String, workspace: String)
+        case evidenceWorkspace(project: String, workspace: String)
+    }
+
+    func invalidateHTTPQueries(_ scope: HTTPQueryInvalidationScope) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.httpQueryClient.invalidate { key in
+                switch scope {
+                case let .fileWorkspace(project, workspace):
+                    let prefix = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
+                    return key.path.hasPrefix(prefix) && (
+                        key.fallbackAction == "file_index_result" ||
+                        key.fallbackAction == "file_list_result"
+                    )
+                case let .fileRead(project, workspace, path):
+                    let targetPath = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/content"
+                    return key.path == targetPath &&
+                        key.fallbackAction == "file_read_result" &&
+                        key.queryItems.contains { $0.name == "path" && $0.value == path }
+                case let .gitWorkspace(project, workspace):
+                    let prefix = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/"
+                    return key.path.hasPrefix(prefix)
+                case let .gitProject(project):
+                    let workspacePrefix = "/api/v1/projects/\(encodePathComponent(project))/workspaces/"
+                    let integrationPrefix = "/api/v1/projects/\(encodePathComponent(project))/git/"
+                    return (key.path.hasPrefix(workspacePrefix) && key.path.contains("/git/")) ||
+                        key.path.hasPrefix(integrationPrefix)
+                case let .aiWorkspace(project, workspace, aiTool):
+                    let prefix = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/ai/"
+                    guard key.path.hasPrefix(prefix) else { return false }
+                    guard let aiTool else { return true }
+                    let encodedAITool = encodePathComponent(aiTool)
+                    if key.path.contains("/ai/\(encodedAITool)/") {
+                        return true
+                    }
+                    if key.fallbackAction == "ai_session_list" {
+                        let listFilter = key.queryItems.first { $0.name == "ai_tool" }?.value
+                        return listFilter == nil || listFilter == aiTool
+                    }
+                    return false
+                case let .evolutionWorkspace(project, workspace):
+                    let snapshotPath = "/api/v1/evolution/snapshot"
+                    let workspacePrefix = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
+                    return key.path == snapshotPath || key.path.hasPrefix(workspacePrefix)
+                case let .evidenceWorkspace(project, workspace):
+                    let prefix = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
+                    return key.path.hasPrefix(prefix)
+                }
             }
         }
     }
 
-    func requestFileIndex(project: String, workspace: String, query: String? = nil) {
+    func requestFileIndex(
+        project: String,
+        workspace: String,
+        query: String? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/index"
         let queryItems = query.map { [URLQueryItem(name: "query", value: $0)] } ?? []
         requestReadViaHTTP(
             domain: "file",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "file_index_result"
+            fallbackAction: "file_index_result",
+            cacheMode: cacheMode
         )
     }
 
     /// 请求文件列表（目录浏览）
-    func requestFileList(project: String, workspace: String, path: String = ".") {
+    func requestFileList(
+        project: String,
+        workspace: String,
+        path: String = ".",
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "file",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files",
             queryItems: [URLQueryItem(name: "path", value: path)],
-            fallbackAction: "file_list_result"
+            fallbackAction: "file_list_result",
+            cacheMode: cacheMode
         )
     }
 
     /// 请求读取文件内容（文本/二进制）
-    func requestFileRead(project: String, workspace: String, path: String) {
+    func requestFileRead(
+        project: String,
+        workspace: String,
+        path: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "file",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/content",
             queryItems: [URLQueryItem(name: "path", value: path)],
             fallbackAction: "file_read_result",
-            context: .fileRead(project: project, workspace: workspace, path: path)
+            context: .fileRead(project: project, workspace: workspace, path: path),
+            cacheMode: cacheMode
         )
     }
 
     // Phase C2-2a: Request git diff
-    func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
+    func requestGitDiff(
+        project: String,
+        workspace: String,
+        path: String,
+        mode: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/diff",
@@ -1049,35 +1232,53 @@ extension WSClient {
                 URLQueryItem(name: "path", value: path),
                 URLQueryItem(name: "mode", value: mode)
             ],
-            fallbackAction: "git_diff_result"
+            fallbackAction: "git_diff_result",
+            cacheMode: cacheMode
         )
     }
 
     // Phase C3-1: Request git status
-    func requestGitStatus(project: String, workspace: String) {
+    func requestGitStatus(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/status",
-            fallbackAction: "git_status_result"
+            fallbackAction: "git_status_result",
+            cacheMode: cacheMode
         )
     }
 
     // Git Log: Request commit history
-    func requestGitLog(project: String, workspace: String, limit: Int = 50) {
+    func requestGitLog(
+        project: String,
+        workspace: String,
+        limit: Int = 50,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/log",
             queryItems: [URLQueryItem(name: "limit", value: "\(limit)")],
-            fallbackAction: "git_log_result"
+            fallbackAction: "git_log_result",
+            cacheMode: cacheMode
         )
     }
 
     // Git Show: Request single commit details
-    func requestGitShow(project: String, workspace: String, sha: String) {
+    func requestGitShow(
+        project: String,
+        workspace: String,
+        sha: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/commits/\(encodePathComponent(sha))",
-            fallbackAction: "git_show_result"
+            fallbackAction: "git_show_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1105,11 +1306,16 @@ extension WSClient {
     }
 
     // Phase C3-3a: Request git branches
-    func requestGitBranches(project: String, workspace: String) {
+    func requestGitBranches(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/branches",
-            fallbackAction: "git_branches_result"
+            fallbackAction: "git_branches_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1159,11 +1365,16 @@ extension WSClient {
     }
 
     // Phase UX-3a: Request git operation status
-    func requestGitOpStatus(project: String, workspace: String) {
+    func requestGitOpStatus(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/op-status",
-            fallbackAction: "git_op_status_result"
+            fallbackAction: "git_op_status_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1183,11 +1394,12 @@ extension WSClient {
     }
 
     // Phase UX-3b: Request git integration status
-    func requestGitIntegrationStatus(project: String) {
+    func requestGitIntegrationStatus(project: String, cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/git/integration-status",
-            fallbackAction: "git_integration_status_result"
+            fallbackAction: "git_integration_status_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1212,18 +1424,29 @@ extension WSClient {
     }
 
     // Phase UX-6: Request git check branch up to date
-    func requestGitCheckBranchUpToDate(project: String, workspace: String) {
+    func requestGitCheckBranchUpToDate(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/up-to-date",
-            fallbackAction: "git_integration_status_result"
+            fallbackAction: "git_integration_status_result",
+            cacheMode: cacheMode
         )
     }
 
     // v1.40: 冲突向导请求方法
 
     /// 读取单文件四路对比内容
-    func requestGitConflictDetail(project: String, workspace: String, path: String, context: String) {
+    func requestGitConflictDetail(
+        project: String,
+        workspace: String,
+        path: String,
+        context: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         requestReadViaHTTP(
             domain: "git",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/conflicts/detail",
@@ -1231,7 +1454,8 @@ extension WSClient {
                 URLQueryItem(name: "path", value: path),
                 URLQueryItem(name: "context", value: context)
             ],
-            fallbackAction: "git_conflict_detail_result"
+            fallbackAction: "git_conflict_detail_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1261,20 +1485,22 @@ extension WSClient {
     }
 
     // UX-2: Request list projects
-    func requestListProjects() {
+    func requestListProjects(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "project",
             path: "/api/v1/projects",
-            fallbackAction: "projects"
+            fallbackAction: "projects",
+            cacheMode: cacheMode
         )
     }
 
     // Request list workspaces
-    func requestListWorkspaces(project: String) {
+    func requestListWorkspaces(project: String, cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "project",
             path: "/api/v1/projects/\(encodePathComponent(project))/workspaces",
-            fallbackAction: "workspaces"
+            fallbackAction: "workspaces",
+            cacheMode: cacheMode
         )
     }
 
@@ -1295,11 +1521,12 @@ extension WSClient {
     }
 
     /// 获取终端会话列表
-    func requestTermList() {
+    func requestTermList(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "terminal",
             path: "/api/v1/terminals",
-            fallbackAction: "term_list"
+            fallbackAction: "term_list",
+            cacheMode: cacheMode
         )
     }
 
@@ -1356,11 +1583,12 @@ extension WSClient {
     // MARK: - 客户端设置
 
     /// 请求获取客户端设置
-    func requestGetClientSettings() {
+    func requestGetClientSettings(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "settings",
             path: "/api/v1/client-settings",
-            fallbackAction: "client_settings_result"
+            fallbackAction: "client_settings_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1539,11 +1767,12 @@ extension WSClient {
     // MARK: - v1.40: 工作流模板管理
 
     /// 获取所有工作流模板列表
-    func requestListTemplates() {
+    func requestListTemplates(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "project",
             path: "/api/v1/templates",
-            fallbackAction: "templates"
+            fallbackAction: "templates",
+            cacheMode: cacheMode
         )
     }
 
@@ -1561,11 +1790,12 @@ extension WSClient {
     }
 
     /// 导出工作流模板（服务端返回完整模板数据）
-    func requestExportTemplate(templateId: String) {
+    func requestExportTemplate(templateId: String, cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "project",
             path: "/api/v1/templates/\(encodePathComponent(templateId))/export",
-            fallbackAction: "template_exported"
+            fallbackAction: "template_exported",
+            cacheMode: cacheMode
         )
     }
 
@@ -1624,11 +1854,12 @@ extension WSClient {
     // MARK: - 任务历史
 
     /// 请求任务快照（用于移动端重连后恢复后台任务状态）
-    func requestListTasks() {
+    func requestListTasks(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "project",
             path: "/api/v1/tasks",
-            fallbackAction: "tasks_snapshot"
+            fallbackAction: "tasks_snapshot",
+            cacheMode: cacheMode
         )
     }
 
@@ -1696,6 +1927,11 @@ extension WSClient {
             msg["project_mentions"] = projectMentions
         }
         send(msg)
+        invalidateHTTPQueries(.aiWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool.rawValue
+        ))
     }
 
     /// 发送 AI 斜杠命令（OpenCode session.command）
@@ -1777,6 +2013,11 @@ extension WSClient {
             "request_id": requestId,
             "answers": answers
         ])
+        invalidateHTTPQueries(.aiWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool.rawValue
+        ))
     }
 
     /// 拒绝 AI question 请求
@@ -1795,6 +2036,11 @@ extension WSClient {
             "session_id": sessionId,
             "request_id": requestId
         ])
+        invalidateHTTPQueries(.aiWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool.rawValue
+        ))
     }
 
     /// 获取 AI 会话列表
@@ -1803,7 +2049,8 @@ extension WSClient {
         workspaceName: String,
         filter: AIChatTool? = nil,
         cursor: String? = nil,
-        limit: Int? = 50
+        limit: Int? = 50,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/sessions"
         var queryItems: [URLQueryItem] = []
@@ -1821,7 +2068,8 @@ extension WSClient {
             domain: "ai",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "ai_session_list"
+            fallbackAction: "ai_session_list",
+            cacheMode: cacheMode
         )
     }
 
@@ -1832,32 +2080,10 @@ extension WSClient {
         aiTool: AIChatTool,
         sessionId: String,
         limit: Int? = nil,
-        beforeMessageId: String? = nil
+        beforeMessageId: String? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let normalizedBefore = beforeMessageId?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedBefore == nil || normalizedBefore?.isEmpty == true {
-            let dedupKey = aiRecentSessionMessagesKey(
-                projectName: projectName,
-                workspaceName: workspaceName,
-                aiTool: aiTool,
-                sessionId: sessionId
-            )
-            let now = Date()
-            if let startedAt = aiRecentSessionMessagesInFlightAt[dedupKey],
-               now.timeIntervalSince(startedAt) < 5 {
-                aiRecentSessionMessagesDedupDropTotal += 1
-                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiRecentSessionMessagesDedupDropTotal, privacy: .public) scope=messages")
-                return
-            }
-            if let lastSuccessAt = aiRecentSessionMessagesLastSuccessAt[dedupKey],
-               now.timeIntervalSince(lastSuccessAt) < 1 {
-                aiRecentSessionMessagesDedupDropTotal += 1
-                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.aiRecentSessionMessagesDedupDropTotal, privacy: .public) scope=messages")
-                return
-            }
-            aiRecentSessionMessagesInFlightAt[dedupKey] = now
-        }
-
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions/\(encodePathComponent(sessionId))/messages"
         var queryItems: [URLQueryItem] = []
         if let limit {
@@ -1871,17 +2097,9 @@ extension WSClient {
             domain: "ai",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "ai_session_messages"
+            fallbackAction: "ai_session_messages",
+            cacheMode: cacheMode
         )
-    }
-
-    func aiRecentSessionMessagesKey(
-        projectName: String,
-        workspaceName: String,
-        aiTool: AIChatTool,
-        sessionId: String
-    ) -> String {
-        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
     }
 
     /// 查询 AI 会话状态（idle/busy/error）
@@ -1889,13 +2107,15 @@ extension WSClient {
         projectName: String,
         workspaceName: String,
         aiTool: AIChatTool,
-        sessionId: String
+        sessionId: String,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions/\(encodePathComponent(sessionId))/status"
         requestReadViaHTTP(
             domain: "ai",
             path: path,
-            fallbackAction: "ai_session_status_result"
+            fallbackAction: "ai_session_status_result",
+            cacheMode: cacheMode
         )
     }
 
@@ -1913,6 +2133,11 @@ extension WSClient {
             "ai_tool": aiTool.rawValue,
             "session_id": sessionId
         ])
+        invalidateHTTPQueries(.aiWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool.rawValue
+        ))
     }
 
     func requestAISessionRename(project: String, workspace: String, aiTool: String, sessionId: String, newTitle: String) {
@@ -1924,6 +2149,7 @@ extension WSClient {
             "session_id": sessionId,
             "new_title": newTitle
         ])
+        invalidateHTTPQueries(.aiWorkspace(project: project, workspace: workspace, aiTool: aiTool))
     }
 
     func requestAISessionSearch(project: String, workspace: String, aiTool: String, query: String, limit: Int? = nil) {
@@ -1956,24 +2182,36 @@ extension WSClient {
     }
 
     /// 获取 AI Provider/模型列表
-    func requestAIProviderList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
+    func requestAIProviderList(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/providers"
         requestReadViaHTTP(
             domain: "ai",
             path: path,
             fallbackAction: "ai_provider_list",
-            context: .aiProviderList(project: projectName, workspace: workspaceName, aiTool: aiTool)
+            context: .aiProviderList(project: projectName, workspace: workspaceName, aiTool: aiTool),
+            cacheMode: cacheMode
         )
     }
 
     /// 获取 AI Agent 列表
-    func requestAIAgentList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
+    func requestAIAgentList(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/agents"
         requestReadViaHTTP(
             domain: "ai",
             path: path,
             fallbackAction: "ai_agent_list",
-            context: .aiAgentList(project: projectName, workspace: workspaceName, aiTool: aiTool)
+            context: .aiAgentList(project: projectName, workspace: workspaceName, aiTool: aiTool),
+            cacheMode: cacheMode
         )
     }
 
@@ -1982,7 +2220,8 @@ extension WSClient {
         projectName: String,
         workspaceName: String,
         aiTool: AIChatTool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/slash-commands"
         var queryItems: [URLQueryItem] = []
@@ -1993,7 +2232,8 @@ extension WSClient {
             domain: "ai",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "ai_slash_commands"
+            fallbackAction: "ai_slash_commands",
+            cacheMode: cacheMode
         )
     }
 
@@ -2002,7 +2242,8 @@ extension WSClient {
         projectName: String,
         workspaceName: String,
         aiTool: AIChatTool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/session-config-options"
         var queryItems: [URLQueryItem] = []
@@ -2013,7 +2254,8 @@ extension WSClient {
             domain: "ai",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "ai_session_config_options"
+            fallbackAction: "ai_session_config_options",
+            cacheMode: cacheMode
         )
     }
 
@@ -2035,6 +2277,11 @@ extension WSClient {
             "option_id": optionID,
             "value": value
         ])
+        invalidateHTTPQueries(.aiWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            aiTool: aiTool.rawValue
+        ))
     }
 
     // MARK: - Evolution
@@ -2069,6 +2316,7 @@ extension WSClient {
             msg["stage_profiles"] = stageProfiles.map { $0.toJSON() }
         }
         send(msg)
+        invalidateHTTPQueries(.evolutionWorkspace(project: normalizedProject, workspace: normalizedWorkspace))
     }
 
     func requestEvoStopWorkspace(project: String, workspace: String, reason: String? = nil) {
@@ -2081,6 +2329,7 @@ extension WSClient {
             msg["reason"] = reason
         }
         send(msg)
+        invalidateHTTPQueries(.evolutionWorkspace(project: project, workspace: workspace))
     }
 
     func requestEvoStopAll(reason: String? = nil) {
@@ -2097,6 +2346,7 @@ extension WSClient {
             "project": project,
             "workspace": workspace
         ])
+        invalidateHTTPQueries(.evolutionWorkspace(project: project, workspace: workspace))
     }
 
     func requestEvoAdjustLoopRound(project: String, workspace: String, loopRoundLimit: Int) {
@@ -2119,9 +2369,14 @@ extension WSClient {
             "workspace": workspace,
             "resolutions": resolutions.map { $0.toJSON() }
         ])
+        invalidateHTTPQueries(.evolutionWorkspace(project: project, workspace: workspace))
     }
 
-    func requestEvoSnapshot(project: String? = nil, workspace: String? = nil) {
+    func requestEvoSnapshot(
+        project: String? = nil,
+        workspace: String? = nil,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         var queryItems: [URLQueryItem] = []
         if let project, !project.isEmpty {
             queryItems.append(URLQueryItem(name: "project", value: project))
@@ -2133,7 +2388,8 @@ extension WSClient {
             domain: "evolution",
             path: "/api/v1/evolution/snapshot",
             queryItems: queryItems,
-            fallbackAction: "evo_snapshot"
+            fallbackAction: "evo_snapshot",
+            cacheMode: cacheMode
         )
     }
 
@@ -2144,41 +2400,62 @@ extension WSClient {
             "workspace": workspace,
             "stage_profiles": stageProfiles.map { $0.toJSON() }
         ])
+        invalidateHTTPQueries(.evolutionWorkspace(project: project, workspace: workspace))
     }
 
-    func requestEvoGetAgentProfile(project: String, workspace: String) {
+    func requestEvoGetAgentProfile(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/agent-profile"
         requestReadViaHTTP(
             domain: "evolution",
             path: path,
-            fallbackAction: "evo_agent_profile"
+            fallbackAction: "evo_agent_profile",
+            cacheMode: cacheMode
         )
     }
 
-    func requestEvoListCycleHistory(project: String, workspace: String) {
+    func requestEvoListCycleHistory(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/cycle-history"
         requestReadViaHTTP(
             domain: "evolution",
             path: path,
-            fallbackAction: "evo_cycle_history"
+            fallbackAction: "evo_cycle_history",
+            cacheMode: cacheMode
         )
     }
 
-    func requestEvidenceSnapshot(project: String, workspace: String) {
+    func requestEvidenceSnapshot(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/snapshot"
         requestReadViaHTTP(
             domain: "evidence",
             path: path,
-            fallbackAction: "evidence_snapshot"
+            fallbackAction: "evidence_snapshot",
+            cacheMode: cacheMode
         )
     }
 
-    func requestEvidenceRebuildPrompt(project: String, workspace: String) {
+    func requestEvidenceRebuildPrompt(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/rebuild-prompt"
         requestReadViaHTTP(
             domain: "evidence",
             path: path,
-            fallbackAction: "evidence_rebuild_prompt"
+            fallbackAction: "evidence_rebuild_prompt",
+            cacheMode: cacheMode
         )
     }
 
@@ -2187,7 +2464,8 @@ extension WSClient {
         workspace: String,
         itemID: String,
         offset: UInt64 = 0,
-        limit: UInt32? = 262_144
+        limit: UInt32? = 262_144,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/items/\(encodePathComponent(itemID))/chunk"
         var queryItems: [URLQueryItem] = [
@@ -2200,7 +2478,8 @@ extension WSClient {
             domain: "evidence",
             path: path,
             queryItems: queryItems,
-            fallbackAction: "evidence_item_chunk"
+            fallbackAction: "evidence_item_chunk",
+            cacheMode: cacheMode
         )
     }
 
@@ -2258,11 +2537,12 @@ extension WSClient {
 
     /// 请求工作区缓存可观测性快照（HTTP /api/v1/system/snapshot）
     /// 响应中的 `cache_metrics` 字段包含所有工作区的缓存指标，由 Core 权威计算。
-    func requestSystemSnapshot() {
+    func requestSystemSnapshot(cacheMode: HTTPQueryCacheMode = .default) {
         requestReadViaHTTP(
             domain: "system",
             path: "/api/v1/system/snapshot",
-            fallbackAction: "system_snapshot"
+            fallbackAction: "system_snapshot",
+            cacheMode: cacheMode
         )
     }
 

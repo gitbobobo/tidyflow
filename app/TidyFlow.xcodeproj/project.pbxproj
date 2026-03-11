@@ -21,6 +21,7 @@
 		SHR0200C /* WorkspaceViewStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100E /* WorkspaceViewStateMachine.swift */; };
 		SHR0200D /* SidebarProjectionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100F /* SidebarProjectionModels.swift */; };
 		SHR0200E /* WorkspaceOverviewProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01010 /* WorkspaceOverviewProjection.swift */; };
+		SHR0200F /* HTTPQueryCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01011 /* HTTPQueryCache.swift */; };
 		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
 		WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WPBT0011 /* WorkspaceProjectionBridgeTests.swift */; };
 		SHR03001 /* TidyFlowShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; };
@@ -234,6 +235,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */; };
 		AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */; };
 		EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
+		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
 /* End PBXBuildFile section */
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
@@ -313,6 +315,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR0100E /* WorkspaceViewStateMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceViewStateMachine.swift; sourceTree = "<group>"; };
 		SHR0100F /* SidebarProjectionModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SidebarProjectionModels.swift; sourceTree = "<group>"; };
 		SHR01010 /* WorkspaceOverviewProjection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjection.swift; sourceTree = "<group>"; };
+		SHR01011 /* HTTPQueryCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HTTPQueryCache.swift; sourceTree = "<group>"; };
 		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
 		WPBT0011 /* WorkspaceProjectionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceProjectionBridgeTests.swift; sourceTree = "<group>"; };
 
@@ -536,6 +539,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCacheMetricsSemanticsTests.swift; sourceTree = "<group>"; };
 		AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISelectorHTTPFailureHandlingTests.swift; sourceTree = "<group>"; };
 		EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
+		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -609,6 +613,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			children = (
 				SHR01008 /* CoreTransport.swift */,
 				SHR01009 /* CoreWSClient.swift */,
+				SHR01011 /* HTTPQueryCache.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -812,6 +817,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */,
 				AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
 				EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
+				HQTC0011 /* HTTPQueryClientTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				SHR0100A /* SharedProtocolModelsTests.swift */,
 				SHR0100B /* SharedNetworkAbstractionTests.swift */,
@@ -1352,6 +1358,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */,
 				AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
 				EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
+				HQTC0001 /* HTTPQueryClientTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				TST10040 /* AIChatTextRunGroupingTests.swift in Sources */,
 				TST10041 /* AIChatPendingInteractionProjectionTests.swift in Sources */,
@@ -1390,6 +1397,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR0200C /* WorkspaceViewStateMachine.swift in Sources */,
 				SHR0200D /* SidebarProjectionModels.swift in Sources */,
 				SHR0200E /* WorkspaceOverviewProjection.swift in Sources */,
+				SHR0200F /* HTTPQueryCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

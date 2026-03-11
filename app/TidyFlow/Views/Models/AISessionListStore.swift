@@ -3,10 +3,7 @@ import Foundation
 final class AISessionListStore: ObservableObject {
     @Published private(set) var pageStates: [String: AISessionListPageState] = [:]
 
-    private var requestInFlightAt: [String: Date] = [:]
-    private var requestLastSuccessAt: [String: Date] = [:]
     private(set) var bootstrapWorkspaceKey: String?
-    private var dedupDropTotal: Int = 0
 
     func pageState(project: String, workspace: String, filter: AISessionListFilter) -> AISessionListPageState {
         pageStates[AISessionListSemantics.pageKey(project: project, workspace: workspace, filter: filter)] ?? .empty()
@@ -24,6 +21,7 @@ final class AISessionListStore: ObservableObject {
         performanceTracer: TFPerformanceTracer,
         sendRequest: () -> Void
     ) -> Bool {
+        _ = force
         let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
         let perfTraceId = performanceTracer.begin(TFPerformanceContext(
             event: perfEvent,
@@ -34,29 +32,6 @@ final class AISessionListStore: ObservableObject {
         defer { performanceTracer.end(perfTraceId) }
 
         let pageKey = AISessionListSemantics.pageKey(project: project, workspace: workspace, filter: filter)
-        let requestKey = Self.requestDedupKey(
-            project: project,
-            workspace: workspace,
-            filter: filter,
-            cursor: cursor
-        )
-        let now = Date()
-        if let startedAt = requestInFlightAt[requestKey] {
-            if now.timeIntervalSince(startedAt) < 5 {
-                dedupDropTotal += 1
-                TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.dedupDropTotal, privacy: .public)")
-                return false
-            }
-            requestInFlightAt.removeValue(forKey: requestKey)
-        }
-        if !force,
-           let lastSuccessAt = requestLastSuccessAt[requestKey],
-           now.timeIntervalSince(lastSuccessAt) < 1 {
-            dedupDropTotal += 1
-            TFLog.perf.info("perf ai_session_list_dedup_drop_total=\(self.dedupDropTotal, privacy: .public)")
-            return false
-        }
-
         var pageState = pageStates[pageKey] ?? .empty()
         if append {
             guard !pageState.isLoadingNextPage else { return false }
@@ -70,7 +45,6 @@ final class AISessionListStore: ObservableObject {
             pageState.isLoadingNextPage = false
         }
         pageStates[pageKey] = pageState
-        requestInFlightAt[requestKey] = now
         sendRequest()
         return true
     }
@@ -131,7 +105,6 @@ final class AISessionListStore: ObservableObject {
         ))
         defer { performanceTracer.end(perfTraceId) }
 
-        markRequestCompleted(project: project, workspace: workspace, filter: filter)
         var pageState = pageState(project: project, workspace: workspace, filter: filter)
         let orderedMergedSessions: [AISessionInfo]
         if pageState.isLoadingNextPage {
@@ -158,8 +131,6 @@ final class AISessionListStore: ObservableObject {
 
     func clear() {
         pageStates = [:]
-        requestInFlightAt.removeAll()
-        requestLastSuccessAt.removeAll()
         bootstrapWorkspaceKey = nil
     }
 
@@ -170,7 +141,6 @@ final class AISessionListStore: ObservableObject {
             updated.isLoadingNextPage = false
             return updated
         }
-        requestInFlightAt.removeAll()
     }
 
     func upsertVisibleSession(_ session: AISessionInfo) {
@@ -222,24 +192,5 @@ final class AISessionListStore: ObservableObject {
             }
             return updated
         }
-    }
-
-    private func markRequestCompleted(project: String, workspace: String, filter: AISessionListFilter) {
-        let prefix = "\(project)::\(workspace)::\(filter.id)::"
-        let now = Date()
-        for key in requestInFlightAt.keys.filter({ $0.hasPrefix(prefix) }) {
-            requestInFlightAt.removeValue(forKey: key)
-            requestLastSuccessAt[key] = now
-        }
-    }
-
-    private static func requestDedupKey(
-        project: String,
-        workspace: String,
-        filter: AISessionListFilter,
-        cursor: String?
-    ) -> String {
-        let normalizedCursor = cursor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return "\(project)::\(workspace)::\(filter.id)::\(normalizedCursor)"
     }
 }

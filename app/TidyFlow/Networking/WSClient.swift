@@ -229,10 +229,10 @@ class WSClient: NSObject, ObservableObject {
     var onHTTPRequestScheduled: ((_ domain: String, _ path: String, _ queryItems: [URLQueryItem]) -> Void)?
     /// HTTP 读请求失败钩子（用于上层清理 loading / pending 状态）
     var onHTTPReadFailure: ((HTTPReadFailure) -> Void)?
-    /// AI 最近页消息请求防重（仅 before=nil 场景）
-    var aiRecentSessionMessagesInFlightAt: [String: Date] = [:]
-    var aiRecentSessionMessagesLastSuccessAt: [String: Date] = [:]
-    var aiRecentSessionMessagesDedupDropTotal: Int = 0
+    /// 统一 HTTP Query 缓存层（SWR + in-flight 去重）
+    let httpQueryClient = HTTPQueryClient()
+    /// 测试注入：允许单测替换真实 HTTP 读取实现
+    var httpReadFetcherOverride: ((URL, String, [URLQueryItem], String?) async throws -> Data)?
 
     /// 后台串行队列，用于 MessagePack 解码（避免阻塞主线程）
     private let decodeQueue: OperationQueue = {

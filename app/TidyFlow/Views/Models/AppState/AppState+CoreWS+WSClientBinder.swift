@@ -32,11 +32,11 @@ extension AppState {
                     return
                 }
                 self.initializedWSConnectionIdentity = connectionIdentity
-                self.wsClient.requestListProjects()
-                self.wsClient.requestGetClientSettings()
+                self.wsClient.requestListProjects(cacheMode: .forceRefresh)
+                self.wsClient.requestGetClientSettings(cacheMode: .forceRefresh)
                 self.reloadAISessionDataAfterReconnect()
-                self.wsClient.requestEvoSnapshot()
-                self.wsClient.requestSystemSnapshot()
+                self.wsClient.requestEvoSnapshot(cacheMode: .forceRefresh)
+                self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连后尝试附着已有终端会话
                 self.requestTerminalReattach()
             } else if let phase = ConnectionPhase.evaluateDisconnect(

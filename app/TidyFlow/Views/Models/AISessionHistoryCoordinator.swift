@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 // MARK: - AI 会话历史加载协调器
 //
@@ -46,7 +47,8 @@ struct AISessionHistoryCoordinator {
         context: Context,
         wsClient: WSClient,
         store: AIChatStore,
-        pageSize: Int = AISessionSemantics.defaultMessagesPageSize
+        pageSize: Int = AISessionSemantics.defaultMessagesPageSize,
+        cacheMode: HTTPQueryCacheMode = .default
     ) {
         store.setRecentHistoryLoading(true)
         ensureSubscribed(context: context, wsClient: wsClient, store: store)
@@ -55,7 +57,8 @@ struct AISessionHistoryCoordinator {
             workspaceName: context.workspace,
             aiTool: context.aiTool,
             sessionId: context.sessionId,
-            limit: pageSize
+            limit: pageSize,
+            cacheMode: cacheMode
         )
     }
 

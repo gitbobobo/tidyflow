@@ -243,6 +243,7 @@ extension WSClient {
              "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
             "evo_stage_changed":
             if let event = EvolutionWorkspaceStatusEventV2.from(action: action, json: json) {
+                invalidateHTTPQueries(.evolutionWorkspace(project: event.project, workspace: event.workspace))
                 if let handler = evolutionMessageHandler {
                     handler.handleEvolutionWorkspaceStatusEvent(event)
                 } else if let onEvoWorkspaceStatusEvent {
@@ -259,6 +260,7 @@ extension WSClient {
         case "evo_cycle_updated":
             // 优先尝试直接解析并更新工作空间状态，避免触发全量快照重新拉取
             if let ev = EvoCycleUpdatedV2.from(json: json) {
+                invalidateHTTPQueries(.evolutionWorkspace(project: ev.project, workspace: ev.workspace))
                 if let handler = evolutionMessageHandler {
                     handler.handleEvolutionCycleUpdated(ev)
                 } else {
@@ -300,6 +302,7 @@ extension WSClient {
             return true
         case "evo_blocking_required":
             if let ev = EvolutionBlockingRequiredV2.from(json: json) {
+                invalidateHTTPQueries(.evolutionWorkspace(project: ev.project, workspace: ev.workspace))
                 if let handler = evolutionMessageHandler {
                     handler.handleEvolutionBlockingRequired(ev)
                 } else {
@@ -309,6 +312,7 @@ extension WSClient {
             return true
         case "evo_blockers_updated":
             if let ev = EvolutionBlockersUpdatedV2.from(json: json) {
+                invalidateHTTPQueries(.evolutionWorkspace(project: ev.project, workspace: ev.workspace))
                 if let handler = evolutionMessageHandler {
                     handler.handleEvolutionBlockersUpdated(ev)
                 } else {
@@ -363,6 +367,7 @@ extension WSClient {
             return true
         case "evidence_rebuild_prompt":
             if let ev = EvidenceRebuildPromptV2.from(json: json) {
+                invalidateHTTPQueries(.evidenceWorkspace(project: ev.project, workspace: ev.workspace))
                 if let handler = evidenceMessageHandler {
                     handler.handleEvidenceRebuildPrompt(ev)
                 } else {

@@ -836,9 +836,9 @@ final class MobileAppState: ObservableObject {
             .filter { $0.key.hasPrefix(prefix) && $0.value }
             .map { String($0.key.dropFirst(prefix.count)) }
 
-        fetchExplorerFileList(project: project, workspace: workspace, path: ".")
+        fetchExplorerFileList(project: project, workspace: workspace, path: ".", cacheMode: .forceRefresh)
         for path in expandedPaths where path != "." {
-            fetchExplorerFileList(project: project, workspace: workspace, path: path)
+            fetchExplorerFileList(project: project, workspace: workspace, path: path, cacheMode: .forceRefresh)
         }
     }
 
@@ -854,7 +854,12 @@ final class MobileAppState: ObservableObject {
         return GitStatusIndex(fromItems: allItems)
     }
 
-    func fetchExplorerFileList(project: String, workspace: String, path: String = ".") {
+    func fetchExplorerFileList(
+        project: String,
+        workspace: String,
+        path: String = ".",
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         guard isConnected else {
             let key = explorerCacheKey(project: project, workspace: workspace, path: path)
             var cache = explorerFileListCache[key] ?? FileListCache.empty()
@@ -884,7 +889,7 @@ final class MobileAppState: ObservableObject {
         cache.error = nil
         explorerFileListCache[key] = cache
         explorerFileRequestLastSentAt[key] = now
-        wsClient.requestFileList(project: project, workspace: workspace, path: path)
+        wsClient.requestFileList(project: project, workspace: workspace, path: path, cacheMode: cacheMode)
         performanceTracer.end(perfTraceId)
     }
 
@@ -2296,7 +2301,8 @@ final class MobileAppState: ObservableObject {
         for filter: AISessionListFilter,
         limit: Int = 50,
         cursor: String? = nil,
-        append: Bool = false
+        append: Bool = false,
+        force: Bool = false
     ) -> Bool {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else {
             return false
@@ -2309,7 +2315,7 @@ final class MobileAppState: ObservableObject {
             limit: limit,
             cursor: cursor,
             append: append,
-            force: false,
+            force: force,
             performanceTracer: performanceTracer
         ) {
             wsClient.requestAISessionList(
@@ -2317,7 +2323,8 @@ final class MobileAppState: ObservableObject {
                 workspaceName: aiActiveWorkspace,
                 filter: filter.tool,
                 cursor: cursor,
-                limit: limit
+                limit: limit,
+                cacheMode: force ? .forceRefresh : .default
             )
         }
     }
@@ -2340,7 +2347,8 @@ final class MobileAppState: ObservableObject {
                 workspaceName: aiActiveWorkspace,
                 filter: filter.tool,
                 cursor: nextCursor,
-                limit: limit
+                limit: limit,
+                cacheMode: .default
             )
         }
     }
@@ -2796,7 +2804,7 @@ final class MobileAppState: ObservableObject {
     private func reloadAISessionDataAfterReconnect() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
 
-        _ = requestAISessionList(for: sessionListFilter)
+        _ = requestAISessionList(for: sessionListFilter, force: true)
 
         // 若有选中会话，通过共享协调器重新订阅并补拉以恢复流式状态
         for tool in AIChatTool.allCases {
@@ -2811,13 +2819,15 @@ final class MobileAppState: ObservableObject {
             AISessionHistoryCoordinator.subscribeAndLoadRecent(
                 context: context,
                 wsClient: wsClient,
-                store: aiChatStore
+                store: aiChatStore,
+                cacheMode: .forceRefresh
             )
             wsClient.requestAISessionConfigOptions(
                 projectName: aiActiveProject,
                 workspaceName: aiActiveWorkspace,
                 aiTool: tool,
-                sessionId: sessionId
+                sessionId: sessionId,
+                cacheMode: .forceRefresh
             )
             requestAISessionStatus(
                 projectName: aiActiveProject,
@@ -3704,7 +3714,8 @@ final class MobileAppState: ObservableObject {
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
-            sessionId: sessionId
+            sessionId: sessionId,
+            cacheMode: force ? .forceRefresh : .default
         )
     }
 
@@ -4022,8 +4033,8 @@ final class MobileAppState: ObservableObject {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
-                self.wsClient.requestEvoSnapshot()
-                self.wsClient.requestSystemSnapshot()
+                self.wsClient.requestEvoSnapshot(cacheMode: .forceRefresh)
+                self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
                 self.reattachTerminalIfNeeded()
                 // 重连后恢复 AI 会话数据（流式输出可能中断，需重新拉取）

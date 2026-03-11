@@ -473,7 +473,8 @@ class AppState: ObservableObject {
                 workspaceName: workspace,
                 filter: filter.tool,
                 cursor: cursor,
-                limit: limit
+                limit: limit,
+                cacheMode: force ? .forceRefresh : .default
             )
         }
     }
@@ -497,7 +498,8 @@ class AppState: ObservableObject {
                 workspaceName: workspace,
                 filter: filter.tool,
                 cursor: nextCursor,
-                limit: limit
+                limit: limit,
+                cacheMode: .default
             )
         }
     }

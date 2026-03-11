@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -21,7 +22,7 @@ extension AppState {
         fileIndexCache[globalKey] = cache
     }
 
-    func fetchFileIndex(workspaceKey: String) {
+    func fetchFileIndex(workspaceKey: String, cacheMode: HTTPQueryCacheMode = .default) {
         let globalKey = globalWorkspaceKey(
             projectName: selectedProjectName,
             workspaceName: workspaceKey
@@ -41,12 +42,12 @@ extension AppState {
         fileIndexCache[globalKey] = cache
 
         // Send request
-        wsClient.requestFileIndex(project: selectedProjectName, workspace: workspaceKey)
+        wsClient.requestFileIndex(project: selectedProjectName, workspace: workspaceKey, cacheMode: cacheMode)
     }
 
     func refreshFileIndex() {
         guard let ws = selectedWorkspaceKey else { return }
-        fetchFileIndex(workspaceKey: ws)
+        fetchFileIndex(workspaceKey: ws, cacheMode: .forceRefresh)
     }
 
     func reconnectAndRefresh() {
@@ -152,7 +153,12 @@ extension AppState {
 
         let key = editorRequestKey(project: project, workspace: workspace, path: path)
         pendingFileReadRequests.insert(key)
-        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+        wsClient.requestFileRead(
+            project: project,
+            workspace: workspace,
+            path: path,
+            cacheMode: force ? .forceRefresh : .default
+        )
     }
 
     func saveEditorDocument(project: String, workspace: String, path: String) {
@@ -254,7 +260,12 @@ extension AppState {
     ///              显式传入可避免异步回调中 `selectedProjectName` 已切换导致的缓存键错位。
     ///   - workspaceKey: 工作区名称
     ///   - path: 目录路径，默认为根目录 "."
-    func fetchFileList(project: String, workspaceKey: String, path: String = ".") {
+    func fetchFileList(
+        project: String,
+        workspaceKey: String,
+        path: String = ".",
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let key = fileListCacheKey(project: project, workspace: workspaceKey, path: path)
 
         // 性能追踪：文件树请求
@@ -291,15 +302,15 @@ extension AppState {
         fileListRequestLastSentAt[key] = now
 
         // 发送请求（追踪 ID 随请求上下文传递，handleFileListResult 中结束追踪）
-        wsClient.requestFileList(project: project, workspace: workspaceKey, path: path)
+        wsClient.requestFileList(project: project, workspace: workspaceKey, path: path, cacheMode: cacheMode)
         // 请求发出即视为本轮追踪结束（实际网络延迟在 Core 端日志体现）
         performanceTracer.end(perfTraceId)
     }
 
     /// 获取目录文件列表（便捷重载，隐式使用当前 `selectedProjectName`）。
     /// 调用方须保证 `selectedProjectName` 在调用前已设置为目标项目，否则请使用显式 `project:` 重载。
-    func fetchFileList(workspaceKey: String, path: String = ".") {
-        fetchFileList(project: selectedProjectName, workspaceKey: workspaceKey, path: path)
+    func fetchFileList(workspaceKey: String, path: String = ".", cacheMode: HTTPQueryCacheMode = .default) {
+        fetchFileList(project: selectedProjectName, workspaceKey: workspaceKey, path: path, cacheMode: cacheMode)
     }
 
     /// 获取缓存的文件列表
@@ -332,10 +343,10 @@ extension AppState {
             .map { String($0.key.dropFirst(prefix.count)) }
 
         // 根目录始终刷新
-        fetchFileList(project: project, workspaceKey: ws, path: ".")
+        fetchFileList(project: project, workspaceKey: ws, path: ".", cacheMode: .forceRefresh)
         // 展开的目录增量刷新（跳过根目录避免重复请求）
         for path in expandedPaths where path != "." {
-            fetchFileList(project: project, workspaceKey: ws, path: path)
+            fetchFileList(project: project, workspaceKey: ws, path: path, cacheMode: .forceRefresh)
         }
         performanceTracer.end(perfTraceId)
     }

@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 // MARK: - GitCacheState Stage/Unstage / Branch / Commit / Rebase / Merge / Integration API
 
@@ -122,7 +123,7 @@ extension GitCacheState {
         gitBranchCache[wsCacheKey] = cache
     }
 
-    func fetchGitBranches(workspaceKey: String) {
+    func fetchGitBranches(workspaceKey: String, cacheMode: HTTPQueryCacheMode = .default) {
         let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
         guard connectionState == .connected else {
             var cache = gitBranchCache[wsCacheKey] ?? GitBranchCache.empty()
@@ -134,19 +135,19 @@ extension GitCacheState {
         // 已经在加载中时跳过冗余的 @Published 写入
         let existing = gitBranchCache[wsCacheKey]
         if existing?.isLoading == true {
-            wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
+            wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey, cacheMode: cacheMode)
             return
         }
         var cache = existing ?? GitBranchCache.empty()
         cache.isLoading = true
         cache.error = nil
         gitBranchCache[wsCacheKey] = cache
-        wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
+        wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey, cacheMode: cacheMode)
     }
 
     func refreshGitBranches() {
         guard let ws = selectedWorkspaceKey else { return }
-        fetchGitBranches(workspaceKey: ws)
+        fetchGitBranches(workspaceKey: ws, cacheMode: .forceRefresh)
     }
 
     func getGitBranchCache(workspaceKey: String) -> GitBranchCache? {

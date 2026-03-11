@@ -34,16 +34,6 @@ extension WSClient {
             return true
         case "ai_session_messages":
             if let ev = AISessionMessagesV2.from(json: json) {
-                if ev.beforeMessageId == nil {
-                    let key = aiRecentSessionMessagesKey(
-                        projectName: ev.projectName,
-                        workspaceName: ev.workspaceName,
-                        aiTool: ev.aiTool,
-                        sessionId: ev.sessionId
-                    )
-                    aiRecentSessionMessagesInFlightAt.removeValue(forKey: key)
-                    aiRecentSessionMessagesLastSuccessAt[key] = Date()
-                }
                 if let handler = aiMessageHandler {
                     handler.handleAISessionMessages(ev)
                 } else {
@@ -53,6 +43,11 @@ extension WSClient {
             return true
         case "ai_session_messages_update":
             if let ev = AISessionMessagesUpdateV2.from(json: json) {
+                invalidateHTTPQueries(.aiWorkspace(
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    aiTool: ev.aiTool.rawValue
+                ))
                 if let handler = aiMessageHandler {
                     handler.handleAISessionMessagesUpdate(ev)
                 } else {
@@ -71,6 +66,11 @@ extension WSClient {
             return true
         case "ai_session_status_update":
             if let ev = AISessionStatusUpdateV2.from(json: json) {
+                invalidateHTTPQueries(.aiWorkspace(
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    aiTool: ev.aiTool.rawValue
+                ))
                 if let handler = aiMessageHandler {
                     handler.handleAISessionStatusUpdate(ev)
                 } else {
@@ -152,6 +152,11 @@ extension WSClient {
             return true
         case "ai_slash_commands_update":
             if let ev = AISlashCommandsUpdateResult.from(json: json) {
+                invalidateHTTPQueries(.aiWorkspace(
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    aiTool: ev.aiTool.rawValue
+                ))
                 if let handler = aiMessageHandler {
                     handler.handleAISlashCommandsUpdate(ev)
                 } else {
@@ -179,6 +184,11 @@ extension WSClient {
             return true
         case "ai_session_rename_result":
             if let ev = AISessionRenameResult.from(json: json) {
+                invalidateHTTPQueries(.aiWorkspace(
+                    project: ev.projectName,
+                    workspace: ev.workspaceName,
+                    aiTool: ev.aiTool
+                ))
                 if let handler = aiMessageHandler {
                     handler.handleAISessionRenameResult(ev)
                 } else {

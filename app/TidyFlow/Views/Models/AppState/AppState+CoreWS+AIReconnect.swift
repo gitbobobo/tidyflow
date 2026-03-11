@@ -59,7 +59,7 @@ extension AppState {
             return
         }
 
-        _ = requestAISessionList(for: sessionPanelFilter, limit: Self.aiSessionListLimit)
+        _ = requestAISessionList(for: sessionPanelFilter, limit: Self.aiSessionListLimit, force: true)
 
         // 若某工具已有选中会话，则补拉详情，避免断线窗口内响应丢失导致空白。
         for tool in AIChatTool.allCases {
@@ -77,7 +77,8 @@ extension AppState {
             AISessionHistoryCoordinator.subscribeAndLoadRecent(
                 context: context,
                 wsClient: wsClient,
-                store: store
+                store: store,
+                cacheMode: .forceRefresh
             )
         }
     }

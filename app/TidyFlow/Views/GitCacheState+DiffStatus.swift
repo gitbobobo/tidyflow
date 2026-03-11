@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 // MARK: - GitCacheState Diff / Status / Log / Show API
 
@@ -32,7 +33,12 @@ extension GitCacheState {
         }
     }
 
-    func fetchGitDiff(workspaceKey: String, path: String, mode: DiffMode) {
+    func fetchGitDiff(
+        workspaceKey: String,
+        path: String,
+        mode: DiffMode,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         guard connectionState == .connected else {
             let key = diffCacheKey(workspace: workspaceKey, path: path, mode: mode.rawValue)
             var cache = diffCache[key] ?? DiffCache.empty()
@@ -50,7 +56,8 @@ extension GitCacheState {
             project: selectedProjectName,
             workspace: workspaceKey,
             path: path,
-            mode: mode.rawValue
+            mode: mode.rawValue,
+            cacheMode: cacheMode
         )
     }
 
@@ -95,7 +102,7 @@ extension GitCacheState {
         gitStatusIndexCache.removeValue(forKey: key)
     }
 
-    func fetchGitStatus(workspaceKey: String) {
+    func fetchGitStatus(workspaceKey: String, cacheMode: HTTPQueryCacheMode = .default) {
         let projectName = selectedProjectName
         let key = gitStatusCacheKey(project: projectName, workspace: workspaceKey)
         guard connectionState == .connected else {
@@ -108,19 +115,19 @@ extension GitCacheState {
         let existing = gitStatusCache[key]
         // 已经在加载中时跳过冗余的 @Published 写入，避免不必要的 objectWillChange
         if existing?.isLoading == true {
-            wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey)
+            wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey, cacheMode: cacheMode)
             return
         }
         var cache = existing ?? GitStatusCache.empty()
         cache.isLoading = true
         cache.error = nil
         gitStatusCache[key] = cache
-        wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey)
+        wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey, cacheMode: cacheMode)
     }
 
     func refreshGitStatus() {
         guard let ws = selectedWorkspaceKey else { return }
-        fetchGitStatus(workspaceKey: ws)
+        fetchGitStatus(workspaceKey: ws, cacheMode: .forceRefresh)
     }
 
     func getGitStatusCache(workspaceKey: String) -> GitStatusCache? {
@@ -172,7 +179,11 @@ extension GitCacheState {
         gitLogCache[key] = cache
     }
 
-    func fetchGitLog(workspaceKey: String, limit: Int = 50) {
+    func fetchGitLog(
+        workspaceKey: String,
+        limit: Int = 50,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
         let projectName = selectedProjectName
         let key = gitLogCacheKey(project: projectName, workspace: workspaceKey)
         guard connectionState == .connected else {
@@ -186,12 +197,12 @@ extension GitCacheState {
         cache.isLoading = true
         cache.error = nil
         gitLogCache[key] = cache
-        wsClient?.requestGitLog(project: projectName, workspace: workspaceKey, limit: limit)
+        wsClient?.requestGitLog(project: projectName, workspace: workspaceKey, limit: limit, cacheMode: cacheMode)
     }
 
     func refreshGitLog() {
         guard let ws = selectedWorkspaceKey else { return }
-        fetchGitLog(workspaceKey: ws)
+        fetchGitLog(workspaceKey: ws, cacheMode: .forceRefresh)
     }
 
     func getGitLogCache(workspaceKey: String) -> GitLogCache? {
@@ -221,7 +232,7 @@ extension GitCacheState {
         gitShowCache[cacheKey] = cache
     }
 
-    func fetchGitShow(workspaceKey: String, sha: String) {
+    func fetchGitShow(workspaceKey: String, sha: String, cacheMode: HTTPQueryCacheMode = .default) {
         let cacheKey = gitShowCacheKey(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -243,7 +254,7 @@ extension GitCacheState {
             isLoading: true,
             error: nil
         )
-        wsClient?.requestGitShow(project: selectedProjectName, workspace: workspaceKey, sha: sha)
+        wsClient?.requestGitShow(project: selectedProjectName, workspace: workspaceKey, sha: sha, cacheMode: cacheMode)
     }
 
     func getGitShowCache(workspaceKey: String, sha: String) -> GitShowCache? {

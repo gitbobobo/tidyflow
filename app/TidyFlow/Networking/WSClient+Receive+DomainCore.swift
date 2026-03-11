@@ -153,6 +153,9 @@ extension WSClient {
             return true
         case "git_op_result":
             if let result = GitOpResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
                 if let handler = gitMessageHandler {
                     handler.handleGitOpResult(result)
                 } else {
@@ -171,6 +174,9 @@ extension WSClient {
             return true
         case "git_commit_result":
             if let result = GitCommitResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
                 if let handler = gitMessageHandler {
                     handler.handleGitCommitResult(result)
                 } else {
@@ -180,6 +186,9 @@ extension WSClient {
             return true
         case "git_ai_merge_result":
             if let result = GitAIMergeResult.from(json: json) {
+                if result.success {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
                 if let handler = gitMessageHandler {
                     handler.handleGitAIMergeResult(result)
                 } else {
@@ -189,6 +198,7 @@ extension WSClient {
             return true
         case "git_rebase_result":
             if let result = GitRebaseResult.from(json: json) {
+                invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
                 if let handler = gitMessageHandler {
                     handler.handleGitRebaseResult(result)
                 } else {
@@ -207,6 +217,7 @@ extension WSClient {
             return true
         case "git_merge_to_default_result":
             if let result = GitMergeToDefaultResult.from(json: json) {
+                invalidateHTTPQueries(.gitProject(project: result.project))
                 if let handler = gitMessageHandler {
                     handler.handleGitMergeToDefaultResult(result)
                 } else {
@@ -225,6 +236,7 @@ extension WSClient {
             return true
         case "git_rebase_onto_default_result":
             if let result = GitRebaseOntoDefaultResult.from(json: json) {
+                invalidateHTTPQueries(.gitProject(project: result.project))
                 if let handler = gitMessageHandler {
                     handler.handleGitRebaseOntoDefaultResult(result)
                 } else {
@@ -234,6 +246,9 @@ extension WSClient {
             return true
         case "git_reset_integration_worktree_result":
             if let result = GitResetIntegrationWorktreeResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitProject(project: result.project))
+                }
                 if let handler = gitMessageHandler {
                     handler.handleGitResetIntegrationWorktreeResult(result)
                 } else {
@@ -243,6 +258,7 @@ extension WSClient {
             return true
         case "git_status_changed":
             if let notification = GitStatusChangedNotification.from(json: json) {
+                invalidateHTTPQueries(.gitWorkspace(project: notification.project, workspace: notification.workspace))
                 if let handler = gitMessageHandler {
                     handler.handleGitStatusChanged(notification)
                 } else {
@@ -258,6 +274,9 @@ extension WSClient {
             return true
         case "git_conflict_action_result":
             if let result = GitConflictActionResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
                 gitMessageHandler?.handleGitConflictActionResult(result)
             }
             return true
@@ -286,6 +305,11 @@ extension WSClient {
             return true
         case "file_rename_result":
             if let result = FileRenameResult.from(json: json) {
+                if result.success {
+                    invalidateHTTPQueries(.fileWorkspace(project: result.project, workspace: result.workspace))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.oldPath))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.newPath))
+                }
                 if let handler = fileMessageHandler {
                     handler.handleFileRenameResult(result)
                 } else {
@@ -295,6 +319,10 @@ extension WSClient {
             return true
         case "file_delete_result":
             if let result = FileDeleteResult.from(json: json) {
+                if result.success {
+                    invalidateHTTPQueries(.fileWorkspace(project: result.project, workspace: result.workspace))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.path))
+                }
                 if let handler = fileMessageHandler {
                     handler.handleFileDeleteResult(result)
                 } else {
@@ -313,6 +341,11 @@ extension WSClient {
             return true
         case "file_move_result":
             if let result = FileMoveResult.from(json: json) {
+                if result.success {
+                    invalidateHTTPQueries(.fileWorkspace(project: result.project, workspace: result.workspace))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.oldPath))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.newPath))
+                }
                 if let handler = fileMessageHandler {
                     handler.handleFileMoveResult(result)
                 } else {
@@ -322,6 +355,10 @@ extension WSClient {
             return true
         case "file_write_result":
             if let result = FileWriteResult.from(json: json) {
+                if result.success {
+                    invalidateHTTPQueries(.fileWorkspace(project: result.project, workspace: result.workspace))
+                    invalidateHTTPQueries(.fileRead(project: result.project, workspace: result.workspace, path: result.path))
+                }
                 if let handler = fileMessageHandler {
                     handler.handleFileWriteResult(result)
                 } else {
@@ -340,6 +377,10 @@ extension WSClient {
             return true
         case "file_changed":
             if let notification = FileChangedNotification.from(json: json) {
+                invalidateHTTPQueries(.fileWorkspace(project: notification.project, workspace: notification.workspace))
+                notification.paths.forEach {
+                    invalidateHTTPQueries(.fileRead(project: notification.project, workspace: notification.workspace, path: $0))
+                }
                 if let handler = fileMessageHandler {
                     handler.handleFileChanged(notification)
                 } else {
