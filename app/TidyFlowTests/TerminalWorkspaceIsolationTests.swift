@@ -239,6 +239,71 @@ final class TerminalWorkspaceIsolationTests: XCTestCase {
         )
         XCTAssertEqual(result.map(\.termId), ["t1"], "应只返回 p1/w1 的终端")
     }
+
+    // MARK: - 工作区切换生命周期清理
+
+    func testForceResetAllLifecycles_clearsTerminalContext() {
+        store.beginCreate(project: "p1", workspace: "w1", termId: "t1")
+        store.beginCreate(project: "p2", workspace: "w2", termId: "t2")
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .entering)
+        XCTAssertEqual(store.lifecyclePhase(for: "t2"), .entering)
+
+        // 模拟工作区切换时的强制重置
+        store.forceResetAllLifecycles()
+
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .idle, "切换后旧终端应回到 idle")
+        XCTAssertEqual(store.lifecyclePhase(for: "t2"), .idle, "切换后旧终端应回到 idle")
+        XCTAssertTrue(store.lifecycleByTermId.isEmpty, "强制重置后生命周期字典应清空")
+    }
+
+    func testAcceptsTerminalEvent_rejectsWrongWorkspace() {
+        store.beginCreate(project: "p1", workspace: "w1", termId: "t1")
+        let created = TermCreatedResult(
+            termId: "t1", project: "p1", workspace: "w1",
+            cwd: "/", shell: "zsh", name: "Shell", icon: nil
+        )
+        store.handleTermCreated(
+            result: created,
+            pendingCommandIcon: nil,
+            pendingCommandName: nil,
+            pendingCommand: nil,
+            makeKey: { "\($0):\($1)" }
+        )
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .active)
+
+        // 正确工作区的事件应被接受
+        XCTAssertTrue(store.acceptsTerminalEvent(project: "p1", workspace: "w1", termId: "t1"))
+
+        // 错误工作区的事件应被拒绝
+        XCTAssertFalse(store.acceptsTerminalEvent(project: "p1", workspace: "w-wrong", termId: "t1"))
+        XCTAssertFalse(store.acceptsTerminalEvent(project: "p-wrong", workspace: "w1", termId: "t1"))
+    }
+
+    func testDisconnectThenResetPreventsLateEvents() {
+        store.beginCreate(project: "p1", workspace: "w1", termId: "t1")
+        let created = TermCreatedResult(
+            termId: "t1", project: "p1", workspace: "w1",
+            cwd: "/", shell: "zsh", name: "Shell", icon: nil
+        )
+        store.handleTermCreated(
+            result: created,
+            pendingCommandIcon: nil,
+            pendingCommandName: nil,
+            pendingCommand: nil,
+            makeKey: { "\($0):\($1)" }
+        )
+        // 断连
+        store.handleDisconnect()
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .resuming)
+
+        // 强制重置（模拟工作区切换）
+        store.forceResetAllLifecycles()
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .idle)
+
+        // 迟到的 attached 事件不应重新激活终端
+        XCTAssertFalse(store.acceptsTerminalEvent(project: "p1", workspace: "w1", termId: "t1"),
+                       "强制重置后不应接受迟到事件")
+    }
 }
 
 // MARK: - TerminalListDisplayPhase 展示阶段测试

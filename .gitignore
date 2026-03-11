@@ -154,6 +154,7 @@ app/TidyFlow/Web/main/
 # Auto-generated analysis files
 ANALYSIS.md
 CODE_INDEX.md
+*_EXPLORATION.md
 
 # Python cache
 **/__pycache__/

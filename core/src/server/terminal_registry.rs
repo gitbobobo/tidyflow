@@ -135,6 +135,41 @@ pub enum TerminalStatus {
     Exited(i32),
 }
 
+/// 终端生命周期相位
+///
+/// 与 `TerminalStatus`（Running/Exited）正交：
+/// - `TerminalStatus` 描述 PTY 进程状态
+/// - `TerminalLifecyclePhase` 描述客户端连接层的相位
+///
+/// 状态迁移：
+///   spawn → Entering → (首个订阅者) → Active
+///   detach/断连(最后订阅者) → Idle
+///   attach/重连 → Resuming → Active
+///   close/reclaim → 移除
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalLifecyclePhase {
+    /// 正在创建/初始化，尚未有活跃订阅者确认
+    Entering,
+    /// 有活跃订阅者，输出正常流转
+    Active,
+    /// 客户端正在重新附着（attach/重连），回放 scrollback 中
+    Resuming,
+    /// 无活跃订阅者，终端保持运行但处于空闲
+    Idle,
+}
+
+impl TerminalLifecyclePhase {
+    /// 转为协议字段字符串
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Entering => "entering",
+            Self::Active => "active",
+            Self::Resuming => "resuming",
+            Self::Idle => "idle",
+        }
+    }
+}
+
 /// 环形 scrollback 缓冲区，保留最近的终端输出用于重连回放
 pub struct ScrollbackBuffer {
     chunks: VecDeque<Vec<u8>>,
@@ -216,6 +251,8 @@ pub struct TerminalEntry {
     pub cwd: PathBuf,
     pub shell: String,
     pub status: TerminalStatus,
+    /// 客户端连接层生命周期相位
+    pub lifecycle_phase: TerminalLifecyclePhase,
     /// 客户端自定义展示名称（如命令名）
     pub name: Option<String>,
     /// 客户端自定义图标标识
@@ -353,6 +390,7 @@ impl TerminalRegistry {
             cwd: cwd_path,
             shell: shell_name.clone(),
             status: TerminalStatus::Running,
+            lifecycle_phase: TerminalLifecyclePhase::Entering,
             name,
             icon,
             output_tx,
@@ -462,6 +500,16 @@ impl TerminalRegistry {
     /// 返回被回收的 term_id 列表。
     pub fn reclaim_idle(&mut self, idle_timeout: Duration) -> Vec<String> {
         let now = Instant::now();
+
+        // 先把无订阅者的终端标记为 Idle（使协议输出一致）
+        for entry in self.terminals.values_mut() {
+            if entry.flow_gate.subscriber_count() == 0
+                && entry.lifecycle_phase != TerminalLifecyclePhase::Idle
+            {
+                entry.lifecycle_phase = TerminalLifecyclePhase::Idle;
+            }
+        }
+
         let to_reclaim: Vec<String> = self
             .terminals
             .iter()
@@ -573,6 +621,52 @@ impl TerminalRegistry {
         }
     }
 
+    // MARK: - 生命周期相位迁移
+
+    /// 将终端相位迁移到 Active（首个订阅者连接或 attach 完成后调用）
+    pub fn transition_to_active(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::Active;
+        }
+    }
+
+    /// 将终端相位迁移到 Resuming（客户端 attach 请求到达时调用）
+    pub fn transition_to_resuming(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::Resuming;
+        }
+    }
+
+    /// 将终端相位迁移到 Idle（最后一个订阅者断开时调用）
+    pub fn transition_to_idle(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::Idle;
+        }
+    }
+
+    /// 获取终端当前的生命周期相位
+    pub fn lifecycle_phase(&self, term_id: &str) -> Option<TerminalLifecyclePhase> {
+        self.terminals.get(term_id).map(|e| e.lifecycle_phase)
+    }
+
+    /// 检查 attach 请求的 (project, workspace) 是否与终端实际上下文匹配。
+    /// 返回 None 表示终端不存在，Some(true) 表示匹配，Some(false) 表示失配。
+    pub fn validate_workspace_context(
+        &self,
+        term_id: &str,
+        project: &str,
+        workspace: &str,
+    ) -> Option<bool> {
+        self.terminals.get(term_id).map(|e| {
+            e.project == project && e.workspace == workspace
+        })
+    }
+
+    /// 获取终端的当前订阅者数量
+    pub fn subscriber_count(&self, term_id: &str) -> Option<u32> {
+        self.terminals.get(term_id).map(|e| e.flow_gate.subscriber_count())
+    }
+
     /// 关闭指定终端
     pub fn close(&mut self, term_id: &str) -> bool {
         if let Some(mut entry) = self.terminals.remove(term_id) {
@@ -609,6 +703,7 @@ impl TerminalRegistry {
                         format!("exited({})", code)
                     }
                 },
+                lifecycle_phase: e.lifecycle_phase.as_str().to_string(),
                 shell: e.shell.clone(),
                 name: e.name.clone(),
                 icon: e.icon.clone(),

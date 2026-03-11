@@ -27,6 +27,12 @@ final class TerminalSessionStore: ObservableObject {
     /// 用于工作区终端活跃排序（如快捷键自动路由）
     @Published var workspaceOpenTime: [String: Date] = [:]
 
+    // MARK: - 终端生命周期状态机（按 termId 索引）
+
+    /// 每个终端的生命周期状态机实例（key: termId）
+    /// 用于跟踪 entering/active/resuming/idle 相位
+    private(set) var lifecycleByTermId: [String: TerminalLifecycleStateMachine] = [:]
+
     // MARK: - Attach/Detach 请求时间（perf 追踪）
 
     /// Attach 请求时间（key: termId）
@@ -101,11 +107,27 @@ final class TerminalSessionStore: ObservableObject {
         displayInfoById = displayInfoById.filter { liveIds.contains($0.key) }
         pinnedIds = pinnedIds.intersection(liveIds)
 
+        // 清理不在服务端列表中的生命周期状态机
+        lifecycleByTermId = lifecycleByTermId.filter { liveIds.contains($0.key) }
+
         // 从服务端恢复展示信息（重连场景：本地无缓存但 Core 有记录）
         for term in items {
             if displayInfoById[term.termId] == nil,
                let info = TerminalDisplayInfo.restoreFrom(session: term, isPinned: pinnedIds.contains(term.termId)) {
                 displayInfoById[term.termId] = info
+            }
+            // 确保每个存活终端都有生命周期状态机
+            if lifecycleByTermId[term.termId] == nil {
+                let machine = TerminalLifecycleStateMachine()
+                // 从服务端的 lifecyclePhase 恢复客户端状态机
+                let phase = TerminalLifecyclePhase.from(serverValue: term.lifecyclePhase)
+                machine.apply(.restoreFromServer(
+                    project: term.project,
+                    workspace: term.workspace,
+                    termId: term.termId,
+                    phase: phase
+                ))
+                lifecycleByTermId[term.termId] = machine
             }
         }
 
@@ -142,6 +164,9 @@ final class TerminalSessionStore: ObservableObject {
             isPinned: pinnedIds.contains(result.termId)
         )
         displayInfoById[result.termId] = info
+
+        // 驱动生命周期状态机：created → active
+        lifecycleFor(termId: result.termId).apply(.created(termId: result.termId))
     }
 
     // MARK: - 生命周期：term_attached
@@ -156,6 +181,10 @@ final class TerminalSessionStore: ObservableObject {
         if let info = TerminalDisplayInfo.restoreFrom(attached: result, isPinned: pinnedIds.contains(result.termId)) {
             restoreDisplayInfoIfAbsent(info)
         }
+
+        // 驱动生命周期状态机：attached → active
+        lifecycleFor(termId: result.termId).apply(.attached(termId: result.termId))
+
         return rtt
     }
 
@@ -168,15 +197,25 @@ final class TerminalSessionStore: ObservableObject {
         unackedBytesByTermId.removeValue(forKey: termId)
         attachRequestedAt.removeValue(forKey: termId)
         detachRequestedAt.removeValue(forKey: termId)
+
+        // 驱动生命周期状态机并清除
+        lifecycleByTermId[termId]?.apply(.close(termId: termId))
+        lifecycleByTermId.removeValue(forKey: termId)
     }
 
     // MARK: - 生命周期：断线 stale 标记
 
     /// 断线时清理 attach/detach/ACK 追踪状态（展示信息与置顶状态保留用于重连恢复）
+    /// 将所有活跃终端的生命周期迁移到 resuming，等待重连恢复。
     func handleDisconnect() {
         attachRequestedAt.removeAll()
         detachRequestedAt.removeAll()
         unackedBytesByTermId.removeAll()
+
+        // 断连时将所有非 idle 终端迁移到 resuming
+        for (_, lifecycle) in lifecycleByTermId {
+            lifecycle.apply(.disconnect)
+        }
     }
 
     // MARK: - ACK 追踪
@@ -211,5 +250,58 @@ final class TerminalSessionStore: ObservableObject {
     /// 记录 detach 请求时间（用于 RTT 追踪）
     func recordDetachRequest(termId: String) {
         detachRequestedAt[termId] = Date()
+    }
+
+    // MARK: - 终端生命周期状态机管理
+
+    /// 获取或创建指定 termId 的生命周期状态机
+    @discardableResult
+    func lifecycleFor(termId: String) -> TerminalLifecycleStateMachine {
+        if let existing = lifecycleByTermId[termId] {
+            return existing
+        }
+        let machine = TerminalLifecycleStateMachine()
+        lifecycleByTermId[termId] = machine
+        return machine
+    }
+
+    /// 获取终端当前的生命周期相位
+    func lifecyclePhase(for termId: String) -> TerminalLifecyclePhase {
+        lifecycleByTermId[termId]?.state.phase ?? .idle
+    }
+
+    /// 判断指定终端是否接受来自指定上下文的事件
+    func acceptsTerminalEvent(project: String, workspace: String, termId: String) -> Bool {
+        guard let lifecycle = lifecycleByTermId[termId] else { return false }
+        return lifecycle.acceptsEvent(project: project, workspace: workspace, termId: termId)
+    }
+
+    /// 开始创建终端（驱动 entering 相位）
+    func beginCreate(project: String, workspace: String, termId: String) {
+        lifecycleFor(termId: termId).apply(.create(project: project, workspace: workspace, termId: termId))
+    }
+
+    /// 开始 attach 终端（驱动 resuming 相位）
+    func beginAttach(project: String, workspace: String, termId: String) {
+        lifecycleFor(termId: termId).apply(.attach(project: project, workspace: workspace, termId: termId))
+    }
+
+    /// 强制重置所有终端生命周期（工作区切换时调用）
+    func forceResetAllLifecycles() {
+        for (_, lifecycle) in lifecycleByTermId {
+            lifecycle.apply(.forceReset)
+        }
+        lifecycleByTermId.removeAll()
+    }
+
+    /// 清理指定工作区的终端生命周期（工作区切换时清理旧上下文）
+    func cleanupLifecycles(forProject project: String, workspace: String) {
+        let toRemove = lifecycleByTermId.filter { _, lifecycle in
+            lifecycle.state.project == project && lifecycle.state.workspace == workspace
+        }.map(\.key)
+        for termId in toRemove {
+            lifecycleByTermId[termId]?.apply(.forceReset)
+            lifecycleByTermId.removeValue(forKey: termId)
+        }
     }
 }

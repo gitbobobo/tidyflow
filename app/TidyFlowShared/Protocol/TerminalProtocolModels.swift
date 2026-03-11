@@ -23,6 +23,8 @@ public struct TerminalSessionInfo {
     public let cwd: String
     public let shell: String
     public let status: String
+    /// Core 权威生命周期相位："entering"/"active"/"resuming"/"idle"
+    public let lifecyclePhase: String
     public let name: String?
     public let icon: String?
     public let remoteSubscribers: [RemoteSubscriberDetail]
@@ -38,6 +40,7 @@ public struct TerminalSessionInfo {
             return nil
         }
         let status = json["status"] as? String ?? "running"
+        let lifecyclePhase = json["lifecycle_phase"] as? String ?? "active"
         let name = json["name"] as? String
         let icon = json["icon"] as? String
         var subscribers: [RemoteSubscriberDetail] = []
@@ -51,19 +54,21 @@ public struct TerminalSessionInfo {
             cwd: cwd,
             shell: shell,
             status: status,
+            lifecyclePhase: lifecyclePhase,
             name: name,
             icon: icon,
             remoteSubscribers: subscribers
         )
     }
 
-    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, status: String, name: String?, icon: String?, remoteSubscribers: [RemoteSubscriberDetail]) {
+    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, status: String, lifecyclePhase: String = "active", name: String?, icon: String?, remoteSubscribers: [RemoteSubscriberDetail]) {
         self.termId = termId
         self.project = project
         self.workspace = workspace
         self.cwd = cwd
         self.shell = shell
         self.status = status
+        self.lifecyclePhase = lifecyclePhase
         self.name = name
         self.icon = icon
         self.remoteSubscribers = remoteSubscribers

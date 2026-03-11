@@ -142,6 +142,12 @@ pub async fn handle_lifecycle_message(
                     )
                     .await;
 
+                    // 首个订阅者连接后，迁移到 Active
+                    {
+                        let mut reg = ctx.terminal_registry.lock().await;
+                        reg.transition_to_active(&term_id);
+                    }
+
                     if ctx.conn_meta.is_remote {
                         let subscriber_id = ctx.conn_meta.remote_subscriber_id();
                         info!(
@@ -237,6 +243,12 @@ pub async fn handle_lifecycle_message(
         ClientMessage::TermAttach { term_id } => {
             info!(term_id = %term_id, "TermAttach request received");
 
+            // 标记为 Resuming（客户端正在重新附着）
+            {
+                let mut reg = ctx.terminal_registry.lock().await;
+                reg.transition_to_resuming(term_id);
+            }
+
             let reg = ctx.terminal_registry.lock().await;
             if let Some((project, workspace, cwd, shell, name, icon)) = reg.get_info(term_id) {
                 // 仅回放受限的最近输出，避免大体积 scrollback 整块复制
@@ -252,6 +264,12 @@ pub async fn handle_lifecycle_message(
                     &ctx.agg_tx,
                 )
                 .await;
+
+                // 订阅完成后迁移到 Active
+                {
+                    let mut reg = ctx.terminal_registry.lock().await;
+                    reg.transition_to_active(term_id);
+                }
 
                 if ctx.conn_meta.is_remote {
                     let mut rsub = ctx.remote_sub_registry.lock().await;
@@ -296,6 +314,14 @@ pub async fn handle_lifecycle_message(
         ClientMessage::TermDetach { term_id } => {
             info!(term_id = %term_id, "TermDetach request received");
             unsubscribe_terminal(term_id, &ctx.subscribed_terms).await;
+
+            // 如果无订阅者剩余，迁移到 Idle
+            {
+                let mut reg = ctx.terminal_registry.lock().await;
+                if let Some(0) = reg.subscriber_count(term_id) {
+                    reg.transition_to_idle(term_id);
+                }
+            }
             Ok(true)
         }
         _ => Ok(false),

@@ -307,6 +307,10 @@ extension AppState {
         }
         let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
         bindTermToTab(tabId: tabId, termId: result.termId, globalKey: globalKey)
+
+        // 驱动共享终端生命周期：entering → active
+        terminalSessionStore.beginCreate(project: result.project, workspace: result.workspace, termId: result.termId)
+
         // 通过共享终端存储记录 attach 请求时间
         terminalSessionStore.recordAttachRequest(termId: result.termId)
         wsClient.requestTermAttach(termId: result.termId)
@@ -337,6 +341,13 @@ extension AppState {
 
     func handleTerminalOutput(termId: String?, bytes: [UInt8]) {
         guard let termId else { return }
+        // 只接受处于 active 或 entering 相位的终端输出；
+        // 已关闭或处于 idle/resuming 的终端输出被忽略（防止迟到事件污染）
+        let phase = terminalSessionStore.lifecyclePhase(for: termId)
+        guard phase == .active || phase == .entering else {
+            TFLog.app.debug("忽略终端输出: term=\(termId, privacy: .public) phase=\(String(describing: phase), privacy: .public)")
+            return
+        }
         emitTerminalOutput(termId: termId, bytes: bytes)
     }
 
@@ -406,6 +417,11 @@ extension AppState {
             for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
                 if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
                     TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
+                    // 驱动共享终端生命周期到 resuming（断连后重连）
+                    if let project = terminalSessionStore.displayInfo(for: sessionId)?.project,
+                       let workspace = terminalSessionStore.displayInfo(for: sessionId)?.workspace {
+                        terminalSessionStore.beginAttach(project: project, workspace: workspace, termId: sessionId)
+                    }
                     // 通过共享终端存储记录重连 attach 请求时间
                     terminalSessionStore.recordAttachRequest(termId: sessionId)
                     wsClient.requestTermAttach(termId: sessionId)

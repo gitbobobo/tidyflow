@@ -9,6 +9,199 @@ import TidyFlowShared
 // macOS 与 iOS 通过此层共享规则，不再各自维护同义私有实现。
 // 所有键均显式带上 project/workspace/termId 边界，禁止将单项目假设编码进状态派生逻辑。
 
+// MARK: - 终端生命周期相位枚举
+//
+// 与 AIChatStagePhase 同构，描述终端连接层的生命周期阶段。
+// 对应 Core 的 TerminalLifecyclePhase（entering/active/resuming/idle）。
+
+/// 终端连接层生命周期相位。
+/// macOS 与 iOS 共用，双端必须通过 `TerminalLifecycleStateMachine.apply(_:)` 驱动迁移。
+enum TerminalLifecyclePhase: String, Equatable, Sendable {
+    /// 空闲态：无活跃终端上下文
+    case idle
+    /// 进入中：正在创建/spawn 终端，等待 term_created 或首次输出
+    case entering
+    /// 活跃态：终端已就绪，输出正常流转
+    case active
+    /// 恢复中：断线重连后正在重新 attach 与回放 scrollback
+    case resuming
+
+    /// 从 Core 协议字符串恢复相位，无法识别的值回退到 idle
+    static func from(serverValue: String) -> TerminalLifecyclePhase {
+        switch serverValue.lowercased() {
+        case "entering": return .entering
+        case "active": return .active
+        case "resuming": return .resuming
+        case "idle": return .idle
+        default: return .idle
+        }
+    }
+}
+
+/// 终端生命周期输入事件。
+/// 所有状态迁移必须通过此枚举触发，禁止直接写入 phase 字段。
+enum TerminalLifecycleInput: Equatable, Sendable {
+    /// 创建新终端（对应 Core TermCreate）
+    case create(project: String, workspace: String, termId: String)
+    /// 终端创建完成（收到 term_created 响应）
+    case created(termId: String)
+    /// 附着已有终端（对应 Core TermAttach）
+    case attach(project: String, workspace: String, termId: String)
+    /// 附着完成（收到 term_attached 响应，scrollback 回放就绪）
+    case attached(termId: String)
+    /// 恢复会话（断线重连后重新 attach）
+    case resume(termId: String)
+    /// 恢复完成
+    case resumeCompleted(termId: String)
+    /// 终端关闭（收到 term_closed 或用户主动关闭）
+    case close(termId: String)
+    /// 断连（WebSocket 断开）
+    case disconnect
+    /// 强制重置（工作区切换、项目删除等不可恢复场景）
+    case forceReset
+    /// 从服务端 term_list 恢复（重连后同步 Core 权威相位）
+    case restoreFromServer(project: String, workspace: String, termId: String, phase: TerminalLifecyclePhase)
+}
+
+/// 终端生命周期状态快照，包含当前相位和关联上下文。
+struct TerminalLifecycleState: Equatable, Sendable {
+    let phase: TerminalLifecyclePhase
+    let project: String
+    let workspace: String
+    let activeTermId: String?
+
+    /// 终端上下文三元组键，用于多工作区隔离校验
+    var contextKey: String {
+        "\(project)::\(workspace)::\(activeTermId ?? "")"
+    }
+
+    static let idle = TerminalLifecycleState(
+        phase: .idle, project: "", workspace: "", activeTermId: nil
+    )
+}
+
+/// 终端生命周期状态机。
+/// 与 `AIChatStageLifecycle` 同构的迁移语义：
+///   idle → entering → active ⇄ resuming
+///                   ↓         ↓
+///                (close) → idle
+///
+/// 设计约束：
+/// - 不持有任何平台类型（无 Color、View、NSObject 等）
+/// - 不直接触发网络请求或 UI 刷新，由调用方根据迁移结果执行副作用
+/// - 多工作区场景下通过 contextKey 隔离不同终端上下文
+final class TerminalLifecycleStateMachine: @unchecked Sendable {
+
+    /// 当前状态
+    private(set) var state: TerminalLifecycleState = .idle
+
+    /// 迁移结果
+    enum TransitionResult: Equatable {
+        /// 迁移成功
+        case transitioned(TerminalLifecycleState)
+        /// 迁移被忽略（当前阶段不允许该输入）
+        case ignored
+    }
+
+    /// 应用输入事件并更新状态。返回迁移结果。
+    @discardableResult
+    func apply(_ input: TerminalLifecycleInput) -> TransitionResult {
+        switch input {
+
+        case .create(let project, let workspace, let termId):
+            let next = TerminalLifecycleState(
+                phase: .entering, project: project, workspace: workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .created(let termId):
+            // 只有 entering 状态且 termId 匹配时才迁移到 active
+            guard state.phase == .entering, state.activeTermId == termId else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .active, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .attach(let project, let workspace, let termId):
+            let next = TerminalLifecycleState(
+                phase: .resuming, project: project, workspace: workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .attached(let termId):
+            // 从 resuming/entering 迁移到 active
+            guard state.phase == .resuming || state.phase == .entering,
+                  state.activeTermId == termId else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .active, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .resume(let termId):
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .resuming, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .resumeCompleted(let termId):
+            guard state.phase == .resuming, state.activeTermId == termId else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .active, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .close(let termId):
+            // 只关闭匹配的终端，不影响其它终端上下文
+            guard state.activeTermId == termId, state.phase != .idle else { return .ignored }
+            state = .idle
+            return .transitioned(.idle)
+
+        case .disconnect:
+            // 断连：active/entering → resuming（保留上下文等待恢复）
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .resuming, project: state.project, workspace: state.workspace,
+                activeTermId: state.activeTermId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .forceReset:
+            let wasIdle = state.phase == .idle
+            state = .idle
+            return wasIdle ? .ignored : .transitioned(.idle)
+
+        case .restoreFromServer(let project, let workspace, let termId, let phase):
+            // 从服务端 term_list 直接恢复到指定相位（无条件覆盖）
+            let next = TerminalLifecycleState(
+                phase: phase, project: project, workspace: workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+        }
+    }
+
+    /// 判断当前状态机是否接受来自指定上下文的终端事件。
+    /// 只有 active 或 resuming 阶段且上下文匹配时才接受。
+    func acceptsEvent(project: String, workspace: String, termId: String) -> Bool {
+        guard state.phase == .active || state.phase == .resuming else { return false }
+        return state.project == project && state.workspace == workspace && state.activeTermId == termId
+    }
+
+    /// 判断当前状态机是否接受指定 termId 的事件。
+    func acceptsTermEvent(termId: String) -> Bool {
+        guard state.phase == .active || state.phase == .resuming else { return false }
+        return state.activeTermId == termId || state.activeTermId == nil
+    }
+}
+
 // MARK: - 终端 AI 状态（六态枚举）
 
 /// 终端标签中 AI 代理的执行状态（六态）。

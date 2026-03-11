@@ -242,4 +242,179 @@ final class TerminalSessionSemanticLayerTests: XCTestCase {
             XCTFail("Expected .failure")
         }
     }
+
+    // MARK: - 终端生命周期状态机基础迁移
+
+    func testLifecycle_initialStateIsIdle() {
+        let machine = TerminalLifecycleStateMachine()
+        XCTAssertEqual(machine.state.phase, .idle)
+    }
+
+    func testLifecycle_createTransitionsToEntering() {
+        let machine = TerminalLifecycleStateMachine()
+        let result = machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .entering)
+        XCTAssertEqual(machine.state.activeTermId, "t1")
+        if case .transitioned(let state) = result {
+            XCTAssertEqual(state.phase, .entering)
+        } else {
+            XCTFail("Expected transitioned")
+        }
+    }
+
+    func testLifecycle_createdTransitionsToActive() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        let result = machine.apply(.created(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .active)
+        if case .transitioned = result {} else { XCTFail("Expected transitioned") }
+    }
+
+    func testLifecycle_createdIgnoredIfTermIdMismatch() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        let result = machine.apply(.created(termId: "t-wrong"))
+        XCTAssertEqual(machine.state.phase, .entering, "termId 不匹配时不应迁移")
+        XCTAssertEqual(result, .ignored)
+    }
+
+    func testLifecycle_attachTransitionsToResuming() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.attach(project: "p", workspace: "ws", termId: "t2"))
+        XCTAssertEqual(machine.state.phase, .resuming)
+        XCTAssertEqual(machine.state.activeTermId, "t2")
+    }
+
+    func testLifecycle_attachedTransitionsResumingToActive() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.attach(project: "p", workspace: "ws", termId: "t2"))
+        machine.apply(.attached(termId: "t2"))
+        XCTAssertEqual(machine.state.phase, .active)
+    }
+
+    func testLifecycle_disconnectTransitionsActiveToResuming() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .active)
+        machine.apply(.disconnect)
+        XCTAssertEqual(machine.state.phase, .resuming)
+        XCTAssertEqual(machine.state.activeTermId, "t1", "断连时应保留上下文")
+    }
+
+    func testLifecycle_disconnectIgnoredWhenIdle() {
+        let machine = TerminalLifecycleStateMachine()
+        let result = machine.apply(.disconnect)
+        XCTAssertEqual(machine.state.phase, .idle)
+        XCTAssertEqual(result, .ignored)
+    }
+
+    func testLifecycle_closeTransitionsToIdle() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        machine.apply(.close(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .idle)
+    }
+
+    func testLifecycle_closeIgnoredForMismatchedTermId() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        let result = machine.apply(.close(termId: "t-other"))
+        XCTAssertEqual(machine.state.phase, .active, "关闭不匹配的 termId 不应影响当前状态")
+        XCTAssertEqual(result, .ignored)
+    }
+
+    func testLifecycle_forceResetFromActive() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        machine.apply(.forceReset)
+        XCTAssertEqual(machine.state.phase, .idle)
+    }
+
+    func testLifecycle_forceResetFromIdleIsIgnored() {
+        let machine = TerminalLifecycleStateMachine()
+        let result = machine.apply(.forceReset)
+        XCTAssertEqual(result, .ignored)
+    }
+
+    // MARK: - 终端生命周期事件接受性
+
+    func testLifecycle_acceptsEvent_activeWithMatchingContext() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        XCTAssertTrue(machine.acceptsEvent(project: "p", workspace: "ws", termId: "t1"))
+    }
+
+    func testLifecycle_acceptsEvent_rejectsMismatchedWorkspace() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        XCTAssertFalse(machine.acceptsEvent(project: "p", workspace: "ws-other", termId: "t1"))
+    }
+
+    func testLifecycle_acceptsEvent_idleRejectsAll() {
+        let machine = TerminalLifecycleStateMachine()
+        XCTAssertFalse(machine.acceptsEvent(project: "p", workspace: "ws", termId: "t1"))
+    }
+
+    func testLifecycle_acceptsTermEvent_enteringRejectsAll() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        XCTAssertFalse(machine.acceptsTermEvent(termId: "t1"), "entering 阶段不应接受 term 事件")
+    }
+
+    // MARK: - 断线重连生命周期完整路径
+
+    func testLifecycle_fullDisconnectReconnectCycle() {
+        let machine = TerminalLifecycleStateMachine()
+        // 创建 → active
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .active)
+        // 断连 → resuming
+        machine.apply(.disconnect)
+        XCTAssertEqual(machine.state.phase, .resuming)
+        // 重新 attach → active
+        machine.apply(.attached(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .active)
+    }
+
+    // MARK: - 迟到 ACK 忽略
+
+    func testLifecycle_lateAttachedIgnoredAfterClose() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        machine.apply(.created(termId: "t1"))
+        machine.apply(.close(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .idle)
+        let result = machine.apply(.attached(termId: "t1"))
+        XCTAssertEqual(result, .ignored, "关闭后的迟到 attached 应被忽略")
+        XCTAssertEqual(machine.state.phase, .idle)
+    }
+
+    // MARK: - restoreFromServer
+
+    func testLifecycle_restoreFromServer() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.restoreFromServer(project: "p", workspace: "ws", termId: "t1", phase: .active))
+        XCTAssertEqual(machine.state.phase, .active)
+        XCTAssertEqual(machine.state.project, "p")
+        XCTAssertEqual(machine.state.workspace, "ws")
+        XCTAssertEqual(machine.state.activeTermId, "t1")
+    }
+
+    // MARK: - TerminalLifecyclePhase.from(serverValue:)
+
+    func testLifecyclePhaseFromServerValue() {
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "active"), .active)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "entering"), .entering)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "resuming"), .resuming)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "idle"), .idle)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "ACTIVE"), .active)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "unknown"), .idle, "未知值应回退到 idle")
+    }
 }

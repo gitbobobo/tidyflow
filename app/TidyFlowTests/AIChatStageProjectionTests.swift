@@ -316,4 +316,64 @@ final class AIChatStageProjectionTests: XCTestCase {
             isStreaming: false
         )
     }
+
+    // MARK: - 终端生命周期与 AI 聊天舞台对齐验证
+
+    /// 验证终端生命周期相位名称与 AI 聊天舞台相位语义对齐
+    func testTerminalLifecyclePhasesAlignWithAIChatStagePhases() {
+        // 两套状态机使用相同的四相位语义：idle/entering/active/resuming
+        let termPhases: [TerminalLifecyclePhase] = [.idle, .entering, .active, .resuming]
+        let chatPhases: [AIChatStagePhase] = [.idle, .entering, .active, .resuming]
+
+        XCTAssertEqual(termPhases.count, chatPhases.count,
+                       "终端生命周期与 AI 聊天舞台应有相同数量的相位")
+
+        // 验证相位名称一一对应
+        for (term, chat) in zip(termPhases, chatPhases) {
+            XCTAssertEqual(term.rawValue, chat.rawValue,
+                           "终端 \(term.rawValue) 应与 AI 聊天 \(chat.rawValue) 对齐")
+        }
+    }
+
+    /// 验证两套状态机在断连路径上的行为一致
+    func testDisconnectBehaviorAlignment() {
+        // 终端生命周期：active → disconnect → resuming
+        let termMachine = TerminalLifecycleStateMachine()
+        termMachine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        termMachine.apply(.created(termId: "t1"))
+        XCTAssertEqual(termMachine.state.phase, .active)
+        termMachine.apply(.disconnect)
+        XCTAssertEqual(termMachine.state.phase, .resuming,
+                       "终端断连后应进入 resuming，与 AI 聊天舞台行为对齐")
+
+        // AI 聊天舞台：entering → ready(active) → forceReset(idle)
+        // AI 使用 .forceReset 作为断连语义，终端使用 .disconnect
+        // 两者在「工作区切换」时都使用 forceReset → idle
+        let chatMachine = AIChatStageLifecycle()
+        chatMachine.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        XCTAssertEqual(chatMachine.state.phase, .entering)
+        chatMachine.apply(.ready)
+        XCTAssertEqual(chatMachine.state.phase, .active)
+        chatMachine.apply(.forceReset)
+        XCTAssertEqual(chatMachine.state.phase, .idle,
+                       "AI 聊天 forceReset 后应回到 idle")
+    }
+
+    /// 验证两套状态机在强制重置路径上的行为一致
+    func testForceResetBehaviorAlignment() {
+        // 终端：active → forceReset → idle
+        let termMachine = TerminalLifecycleStateMachine()
+        termMachine.apply(.create(project: "p", workspace: "ws", termId: "t1"))
+        termMachine.apply(.created(termId: "t1"))
+        termMachine.apply(.forceReset)
+        XCTAssertEqual(termMachine.state.phase, .idle)
+
+        // AI 聊天：active → forceReset → idle
+        let chatMachine = AIChatStageLifecycle()
+        chatMachine.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        chatMachine.apply(.ready)
+        XCTAssertEqual(chatMachine.state.phase, .active)
+        chatMachine.apply(.forceReset)
+        XCTAssertEqual(chatMachine.state.phase, .idle)
+    }
 }

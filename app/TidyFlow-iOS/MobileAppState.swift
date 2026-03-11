@@ -491,6 +491,8 @@ final class MobileAppState: ObservableObject {
         // 工作区切换时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
         if isSwitch {
             forceResetAIChatStage()
+            // 工作区切换时清理旧终端生命周期投影，防止旧终端事件污染新上下文
+            terminalSessionStore.forceResetAllLifecycles()
             // 清理旧工作区的 AI 上下文投影残留
             cleanupOldAIContextProjection()
         }
@@ -592,6 +594,10 @@ final class MobileAppState: ObservableObject {
     /// 重连成功后或 ping 存活时，重新附着当前终端的输出订阅
     private func reattachTerminalIfNeeded() {
         guard !currentTermId.isEmpty else { return }
+        // 驱动共享终端生命周期到 resuming（断连后重连重新 attach）
+        if let info = terminalSessionStore.displayInfo(for: currentTermId) {
+            terminalSessionStore.beginAttach(project: info.project, workspace: info.workspace, termId: currentTermId)
+        }
         terminalSessionStore.recordAttachRequest(termId: currentTermId)
         wsClient.requestTermAttach(termId: currentTermId)
     }

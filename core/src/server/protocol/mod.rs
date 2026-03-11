@@ -1974,6 +1974,9 @@ pub struct TerminalInfo {
     pub workspace: String,
     pub cwd: String,
     pub status: String, // "running" or "exited"
+    /// 客户端连接层生命周期相位："entering"/"active"/"resuming"/"idle"
+    #[serde(default = "default_lifecycle_phase")]
+    pub lifecycle_phase: String,
     #[serde(default)]
     pub shell: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1982,6 +1985,10 @@ pub struct TerminalInfo {
     pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remote_subscribers: Vec<RemoteSubscriberDetail>,
+}
+
+fn default_lifecycle_phase() -> String {
+    "active".to_string()
 }
 
 /// 远程订阅者详情（用于协议传输）

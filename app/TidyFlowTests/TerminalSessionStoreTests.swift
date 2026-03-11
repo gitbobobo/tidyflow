@@ -258,4 +258,108 @@ final class TerminalSessionStoreTests: XCTestCase {
         XCTAssertNotNil(store.displayInfo(for: "t1"), "多次断线后展示信息仍保留")
         XCTAssertEqual(store.unackedBytes(for: "t1"), 0)
     }
+
+    // MARK: - 终端生命周期状态机集成
+
+    func testLifecycleForTermId_createsNewMachineIfAbsent() {
+        let machine = store.lifecycleFor(termId: "t1")
+        XCTAssertEqual(machine.state.phase, .idle)
+    }
+
+    func testLifecycleForTermId_returnsSameInstance() {
+        let m1 = store.lifecycleFor(termId: "t1")
+        let m2 = store.lifecycleFor(termId: "t1")
+        XCTAssertTrue(m1 === m2, "相同 termId 应返回同一实例")
+    }
+
+    func testLifecyclePhase_returnsIdleForUnknownTermId() {
+        XCTAssertEqual(store.lifecyclePhase(for: "nonexistent"), .idle)
+    }
+
+    func testBeginCreate_drivesLifecycleToEntering() {
+        store.beginCreate(project: "p", workspace: "ws", termId: "t1")
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .entering)
+    }
+
+    func testBeginAttach_drivesLifecycleToResuming() {
+        store.beginAttach(project: "p", workspace: "ws", termId: "t1")
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .resuming)
+    }
+
+    func testFullCreateFlow_lifecycleTransitions() {
+        // 完整创建流程：beginCreate → handleTermCreated → handleTermAttached
+        store.beginCreate(project: "proj", workspace: "ws", termId: "t1")
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .entering)
+
+        let created = TermCreatedResult(
+            termId: "t1", project: "proj", workspace: "ws",
+            cwd: "/", shell: "zsh", name: "Shell", icon: nil
+        )
+        store.handleTermCreated(
+            result: created,
+            pendingCommandIcon: nil,
+            pendingCommandName: nil,
+            pendingCommand: nil,
+            makeKey: { "\($0):\($1)" }
+        )
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .active, "created 后应迁移到 active")
+
+        let attached = TermAttachedResult(
+            termId: "t1", project: "proj", workspace: "ws",
+            cwd: "/", shell: "zsh", scrollback: [],
+            name: "Shell", icon: nil
+        )
+        _ = store.handleTermAttached(result: attached)
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .active, "attached 后仍保持 active")
+    }
+
+    func testHandleTermClosed_clearsLifecycle() {
+        store.beginCreate(project: "proj", workspace: "ws", termId: "t1")
+        store.handleTermClosed(termId: "t1")
+        XCTAssertNil(store.lifecycleByTermId["t1"], "关闭后生命周期状态机应被移除")
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .idle)
+    }
+
+    func testHandleDisconnect_movesActiveToResuming() {
+        store.beginCreate(project: "proj", workspace: "ws", termId: "t1")
+        let created = TermCreatedResult(
+            termId: "t1", project: "proj", workspace: "ws",
+            cwd: "/", shell: "zsh", name: "Shell", icon: nil
+        )
+        store.handleTermCreated(
+            result: created,
+            pendingCommandIcon: nil,
+            pendingCommandName: nil,
+            pendingCommand: nil,
+            makeKey: { "\($0):\($1)" }
+        )
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .active)
+
+        store.handleDisconnect()
+        XCTAssertEqual(store.lifecyclePhase(for: "t1"), .resuming, "断连后应迁移到 resuming")
+    }
+
+    func testForceResetAllLifecycles_clearsAll() {
+        store.beginCreate(project: "proj", workspace: "ws", termId: "t1")
+        store.beginCreate(project: "proj", workspace: "ws2", termId: "t2")
+        XCTAssertEqual(store.lifecycleByTermId.count, 2)
+
+        store.forceResetAllLifecycles()
+        XCTAssertTrue(store.lifecycleByTermId.isEmpty, "强制重置后所有生命周期应清除")
+    }
+
+    func testReconcileTermList_clearsStaleLifecycles() {
+        store.beginCreate(project: "proj", workspace: "ws", termId: "stale")
+        let live = TerminalSessionInfo(
+            termId: "live", project: "proj", workspace: "ws",
+            cwd: "/", shell: "bash", status: "running",
+            name: "Live", icon: nil, remoteSubscribers: []
+        )
+        store.reconcileTermList(
+            items: [live],
+            makeKey: { "\($0):\($1)" }
+        )
+        XCTAssertNil(store.lifecycleByTermId["stale"], "不在服务端列表中的生命周期应被清除")
+        XCTAssertNotNil(store.lifecycleByTermId["live"], "存活终端应有生命周期状态机")
+    }
 }

@@ -340,6 +340,13 @@ extension MobileAppState {
             switchToTerminal(termId: termId)
         }
         guard let termId else { return }
+        // 只接受处于 active 或 entering 相位的终端输出；
+        // 已关闭或处于 idle/resuming 的终端输出被忽略（防止迟到事件污染）
+        let phase = terminalSessionStore.lifecyclePhase(for: termId)
+        guard phase == .active || phase == .entering else {
+            TFLog.app.debug("忽略终端输出: term=\(termId, privacy: .public) phase=\(String(describing: phase), privacy: .public)")
+            return
+        }
         emitTerminalOutput(bytes, termId: termId, shouldRender: termId == currentTermId)
     }
 
