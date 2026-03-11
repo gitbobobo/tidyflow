@@ -480,6 +480,7 @@ final class MobileAppState: ObservableObject {
     /// 设置当前工作区上下文（从 WorkspaceDetailView / 终端页进入时调用）。
     /// 集中管理选中态更新，同步驱动共享状态机，避免在视图层各自反推。
     func selectWorkspaceContext(project: String, workspace: String) {
+        let isSwitch = selectedProjectName != project || selectedWorkspaceName != workspace
         selectedProjectName = project
         selectedWorkspaceName = workspace
         workspaceViewStateMachine.apply(.select(
@@ -487,6 +488,10 @@ final class MobileAppState: ObservableObject {
             workspaceName: workspace,
             projectId: nil  // iOS 不携带 UUID
         ))
+        // 工作区切换时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
+        if isSwitch {
+            aiChatStageLifecycle.apply(.forceReset)
+        }
     }
     /// 资源管理器预览请求（用于过滤过期回调）
     var pendingExplorerPreviewRequest: (project: String, workspace: String, path: String)?
@@ -4147,6 +4152,9 @@ final class MobileAppState: ObservableObject {
                 // 恢复键盘焦点
                 self.terminalSink?.focusTerminal()
             } else {
+                // 断连时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影残留
+                self.aiChatStageLifecycle.apply(.forceReset)
+
                 self.connectionMessage = "连接断开"
                 if let phase = ConnectionPhase.evaluateDisconnect(
                     isIntentional: self.wsClient.isIntentionalDisconnect,

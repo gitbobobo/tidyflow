@@ -229,6 +229,8 @@ extension AppState {
             projectId: projectId
         ))
         if didChangeWorkspaceIdentity {
+            // 工作区真实切换时，强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
+            forceResetAIChatStage()
             // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
             clearAISelectorBootstrapContexts()
             // 仅在真实切换到其他项目/工作区时清理会话分页，避免重复点击当前项目把右侧列表清空。
