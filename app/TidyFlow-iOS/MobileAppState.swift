@@ -4858,7 +4858,17 @@ extension MobileAppState {
         guard aiCurrentSessionId == ev.sessionId else { return }
         guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
 
-        aiChatStore.replaceMessages(ev.toChatMessages())
+        let mapped = ev.toChatMessages()
+        if ev.beforeMessageId != nil {
+            aiChatStore.prependMessages(mapped)
+            aiChatStore.updateHistoryPagination(
+                hasMore: ev.hasMore,
+                nextBeforeMessageId: ev.nextBeforeMessageId
+            )
+            return
+        }
+
+        aiChatStore.replaceMessages(mapped)
         // 共享消息流归一化入口
         let normalized = AISessionSemantics.normalizeMessageStream(
             sessionId: ev.sessionId,
