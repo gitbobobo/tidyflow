@@ -727,13 +727,34 @@ impl AiAgent for AcpAgent {
                 self.metadata_for_directory(directory).await
             };
 
-        let (effective_model, effective_agent) = if let Some(overrides) = config_overrides.as_ref()
-        {
+        let mut merged_overrides = config_overrides.unwrap_or_default();
+        if let Some(option_id) = Self::option_id_for_category(&metadata.config_options, "mode") {
+            if let Some(selected_agent) = agent
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                merged_overrides.insert(option_id, serde_json::json!(selected_agent));
+            }
+        }
+        if let Some(option_id) = Self::option_id_for_category(&metadata.config_options, "model") {
+            if let Some(selected_model) = model.as_ref() {
+                merged_overrides.insert(
+                    option_id,
+                    serde_json::json!(format!(
+                        "{}/{}",
+                        selected_model.provider_id, selected_model.model_id
+                    )),
+                );
+            }
+        }
+
+        let (effective_model, effective_agent) = if !merged_overrides.is_empty() {
             self.apply_config_overrides_before_send(
                 directory,
                 session_id,
                 &mut metadata,
-                overrides,
+                &merged_overrides,
                 model,
                 agent,
             )
@@ -822,21 +843,12 @@ impl AiAgent for AcpAgent {
             .as_ref()
             .map(|option| Self::normalized_category(option.category.as_deref(), &option.option_id))
             .unwrap_or_else(|| option_id.trim().to_lowercase());
-        let mut value = value;
-        if category == "mode" {
-            if let Some(raw_mode_id) = option_meta
-                .as_ref()
-                .and_then(|option| Self::resolve_mode_id_from_option(option, &value))
-                .or_else(|| Self::value_to_string(&value))
-            {
-                if let Some(canonical_mode_id) = Self::canonicalize_mode_id(&metadata, &raw_mode_id)
-                {
-                    if canonical_mode_id != raw_mode_id {
-                        value = Self::rewrite_mode_config_value(value, &canonical_mode_id);
-                    }
-                }
-            }
-        }
+        let value = Self::normalize_config_override_value(
+            &metadata,
+            option_meta.as_ref(),
+            &category,
+            value,
+        );
 
         let set_result = if supports_set_config {
             match self
@@ -844,7 +856,7 @@ impl AiAgent for AcpAgent {
                 .session_set_config_option(session_id, option_id, value.clone())
                 .await
             {
-                Ok(()) => Ok(()),
+                Ok(metadata_delta) => Ok(metadata_delta),
                 Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
                     self.client.session_load(directory, session_id).await?;
                     self.client
@@ -858,7 +870,8 @@ impl AiAgent for AcpAgent {
         };
 
         match set_result {
-            Ok(()) => {
+            Ok(metadata_delta) => {
+                Self::merge_metadata_from_delta(&mut metadata, metadata_delta);
                 Self::apply_config_value_to_metadata(&mut metadata, option_id, value.clone());
             }
             Err(err) => return Err(err),
@@ -1052,6 +1065,16 @@ impl AiAgent for AcpAgent {
     async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {
         let metadata = self.metadata_for_directory(directory).await;
         let provider_id = self.profile.provider_id.clone();
+        let current_model_id = metadata.current_model_id.clone();
+        let current_model_variants = metadata
+            .config_options
+            .iter()
+            .find(|option| {
+                Self::normalized_category(option.category.as_deref(), &option.option_id)
+                    == "model_variant"
+            })
+            .map(Self::config_option_values)
+            .unwrap_or_default();
         let mut models = metadata
             .models
             .into_iter()
@@ -1060,7 +1083,14 @@ impl AiAgent for AcpAgent {
                 name: m.name,
                 provider_id: provider_id.clone(),
                 supports_image_input: m.supports_image_input,
-                variants: vec![],
+                variants: if current_model_id
+                    .as_ref()
+                    .is_some_and(|current| current.eq_ignore_ascii_case(&m.id))
+                {
+                    current_model_variants.clone()
+                } else {
+                    vec![]
+                },
             })
             .collect::<Vec<_>>();
         if models.is_empty() {

@@ -1,7 +1,7 @@
 use super::{AcpAgent, AcpBackendProfile, AcpPlanEntry};
 use crate::ai::acp::client::AcpSessionSummary;
 use crate::ai::codex::manager::{AcpContentEncodingMode, CodexAppServerManager};
-use crate::ai::{AiAudioPart, AiImagePart, AiSession, AiSlashCommand};
+use crate::ai::{AiAgent, AiAudioPart, AiImagePart, AiSession, AiSlashCommand};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -1825,5 +1825,217 @@ fn is_session_already_loaded_should_match_known_error_patterns() {
     assert!(
         !AcpAgent::is_session_already_loaded("already loaded"),
         "缺少 session 关键词时不应匹配（仅有 already + loaded）"
+    );
+}
+
+#[test]
+fn thought_level_category_should_map_to_model_variant_for_app_contract() {
+    let options = AcpAgent::map_config_options(&[crate::ai::acp_client::AcpConfigOptionInfo {
+        option_id: "thought_level".to_string(),
+        category: Some("thought_level".to_string()),
+        name: "推理档位".to_string(),
+        description: None,
+        current_value: Some(json!("high")),
+        options: vec![crate::ai::acp_client::AcpConfigOptionChoice {
+            value: json!("high"),
+            label: "高".to_string(),
+            description: None,
+        }],
+        option_groups: Vec::new(),
+        raw: None,
+    }]);
+
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].category.as_deref(), Some("model_variant"));
+}
+
+#[test]
+fn config_override_priority_should_apply_mode_model_then_variant() {
+    let mut categories = [
+        "model_variant".to_string(),
+        "other".to_string(),
+        "model".to_string(),
+        "mode".to_string(),
+    ];
+    categories.sort_by_key(|category| AcpAgent::config_option_priority(category));
+    assert_eq!(
+        categories,
+        [
+            "mode".to_string(),
+            "model".to_string(),
+            "model_variant".to_string(),
+            "other".to_string()
+        ]
+    );
+}
+
+#[test]
+fn merge_metadata_from_delta_should_refresh_model_and_variant_selection_hint() {
+    let mut metadata = crate::ai::acp_client::AcpSessionMetadata {
+        current_model_id: Some("model-old".to_string()),
+        config_options: vec![
+            crate::ai::acp_client::AcpConfigOptionInfo {
+                option_id: "model".to_string(),
+                category: Some("model".to_string()),
+                name: "模型".to_string(),
+                description: None,
+                current_value: Some(json!("model-old")),
+                options: vec![crate::ai::acp_client::AcpConfigOptionChoice {
+                    value: json!("model-old"),
+                    label: "旧模型".to_string(),
+                    description: None,
+                }],
+                option_groups: Vec::new(),
+                raw: None,
+            },
+            crate::ai::acp_client::AcpConfigOptionInfo {
+                option_id: "thought_level".to_string(),
+                category: Some("thought_level".to_string()),
+                name: "推理档位".to_string(),
+                description: None,
+                current_value: Some(json!("low")),
+                options: vec![crate::ai::acp_client::AcpConfigOptionChoice {
+                    value: json!("low"),
+                    label: "低".to_string(),
+                    description: None,
+                }],
+                option_groups: Vec::new(),
+                raw: None,
+            },
+        ],
+        config_values: HashMap::from([
+            ("model".to_string(), json!("model-old")),
+            ("thought_level".to_string(), json!("low")),
+        ]),
+        ..Default::default()
+    };
+    let delta = crate::ai::acp_client::AcpSessionMetadata {
+        current_model_id: Some("model-new".to_string()),
+        config_options: vec![
+            crate::ai::acp_client::AcpConfigOptionInfo {
+                option_id: "model".to_string(),
+                category: Some("model".to_string()),
+                name: "模型".to_string(),
+                description: None,
+                current_value: Some(json!("model-new")),
+                options: vec![crate::ai::acp_client::AcpConfigOptionChoice {
+                    value: json!("model-new"),
+                    label: "新模型".to_string(),
+                    description: None,
+                }],
+                option_groups: Vec::new(),
+                raw: None,
+            },
+            crate::ai::acp_client::AcpConfigOptionInfo {
+                option_id: "thought_level".to_string(),
+                category: Some("thought_level".to_string()),
+                name: "推理档位".to_string(),
+                description: None,
+                current_value: Some(json!("high")),
+                options: vec![
+                    crate::ai::acp_client::AcpConfigOptionChoice {
+                        value: json!("medium"),
+                        label: "中".to_string(),
+                        description: None,
+                    },
+                    crate::ai::acp_client::AcpConfigOptionChoice {
+                        value: json!("high"),
+                        label: "高".to_string(),
+                        description: None,
+                    },
+                ],
+                option_groups: Vec::new(),
+                raw: None,
+            },
+        ],
+        config_values: HashMap::from([
+            ("model".to_string(), json!("model-new")),
+            ("thought_level".to_string(), json!("high")),
+        ]),
+        ..Default::default()
+    };
+
+    AcpAgent::merge_metadata_from_delta(&mut metadata, delta);
+
+    assert_eq!(metadata.current_model_id.as_deref(), Some("model-new"));
+    assert_eq!(
+        metadata.config_values.get("thought_level"),
+        Some(&json!("high"))
+    );
+    let hint = AcpAgent::selection_hint_from_metadata(&metadata, "copilot")
+        .expect("selection hint should exist");
+    assert_eq!(hint.model_id.as_deref(), Some("model-new"));
+    assert_eq!(
+        hint.config_options
+            .as_ref()
+            .and_then(|values| values.get("thought_level")),
+        Some(&json!("high"))
+    );
+}
+
+#[tokio::test]
+async fn list_providers_should_attach_variants_only_to_current_model() {
+    let manager = Arc::new(CodexAppServerManager::new(std::env::temp_dir()));
+    let agent = AcpAgent::new_copilot(manager);
+    let directory = "/tmp/tidyflow-provider-variants";
+    let directory_key = AcpAgent::normalize_directory(directory);
+
+    {
+        let mut metadata_by_directory = agent.metadata_by_directory.lock().await;
+        metadata_by_directory.insert(
+            directory_key,
+            crate::ai::acp_client::AcpSessionMetadata {
+                models: vec![
+                    crate::ai::acp_client::AcpModelInfo {
+                        id: "model-a".to_string(),
+                        name: "Model A".to_string(),
+                        supports_image_input: true,
+                    },
+                    crate::ai::acp_client::AcpModelInfo {
+                        id: "model-b".to_string(),
+                        name: "Model B".to_string(),
+                        supports_image_input: true,
+                    },
+                ],
+                current_model_id: Some("model-b".to_string()),
+                config_options: vec![crate::ai::acp_client::AcpConfigOptionInfo {
+                    option_id: "thought_level".to_string(),
+                    category: Some("thought_level".to_string()),
+                    name: "推理档位".to_string(),
+                    description: None,
+                    current_value: Some(json!("high")),
+                    options: vec![
+                        crate::ai::acp_client::AcpConfigOptionChoice {
+                            value: json!("low"),
+                            label: "低".to_string(),
+                            description: None,
+                        },
+                        crate::ai::acp_client::AcpConfigOptionChoice {
+                            value: json!("high"),
+                            label: "高".to_string(),
+                            description: None,
+                        },
+                    ],
+                    option_groups: Vec::new(),
+                    raw: None,
+                }],
+                config_values: HashMap::from([("thought_level".to_string(), json!("high"))]),
+                ..Default::default()
+            },
+        );
+    }
+
+    let providers = agent
+        .list_providers(directory)
+        .await
+        .expect("list_providers should succeed");
+    assert_eq!(providers.len(), 1);
+    let models = &providers[0].models;
+    assert_eq!(models.len(), 2);
+    assert!(models[0].variants.is_empty());
+    assert_eq!(models[1].id, "model-b");
+    assert_eq!(
+        models[1].variants,
+        vec!["low".to_string(), "high".to_string()]
     );
 }

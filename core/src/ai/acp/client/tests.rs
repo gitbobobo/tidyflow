@@ -55,6 +55,16 @@ impl MockTransport {
             .find(|(m, _)| m == method)
             .and_then(|(_, params)| params.clone())
     }
+
+    async fn request_params_for_method(&self, method: &str) -> Vec<Value> {
+        self.requests
+            .lock()
+            .await
+            .iter()
+            .filter(|(m, _)| m == method)
+            .filter_map(|(_, params)| params.clone())
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -238,10 +248,27 @@ async fn session_set_mode_should_send_mode_id() {
 }
 
 #[tokio::test]
-async fn session_set_config_option_should_send_option_id_and_value() {
-    let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+async fn session_set_config_option_should_send_config_id_and_scalar_value() {
+    let transport = Arc::new(MockTransport::new(
+        vec![Ok(json!({
+            "configOptions": [
+                {
+                    "id": "thought_level",
+                    "category": "thought_level",
+                    "name": "推理档位",
+                    "type": "select",
+                    "currentValue": "high",
+                    "options": [
+                        { "value": "low", "name": "低" },
+                        { "value": "high", "name": "高" }
+                    ]
+                }
+            ]
+        }))],
+        None,
+    ));
     let client = AcpClient::new_with_transport(transport.clone());
-    client
+    let metadata = client
         .session_set_config_option(
             "session-1",
             "model_variant",
@@ -251,6 +278,10 @@ async fn session_set_config_option_should_send_option_id_and_value() {
         )
         .await
         .expect("session/set_config_option should succeed");
+    assert_eq!(
+        metadata.config_values.get("thought_level"),
+        Some(&json!("high"))
+    );
 
     let params = transport
         .first_request_params("session/set_config_option")
@@ -261,15 +292,69 @@ async fn session_set_config_option_should_send_option_id_and_value() {
         Some("session-1")
     );
     assert_eq!(
-        params.get("optionId").and_then(|v| v.as_str()),
+        params.get("configId").and_then(|v| v.as_str()),
+        Some("model_variant")
+    );
+    assert_eq!(params.get("value").and_then(|v| v.as_str()), Some("high"));
+}
+
+#[tokio::test]
+async fn session_set_config_option_should_retry_legacy_option_id_on_param_shape_error() {
+    let transport = Arc::new(MockTransport::new(
+        vec![
+            Err(AppServerRequestError::Rpc(JsonRpcError {
+                code: -32602,
+                message: "missing required field optionId; unknown field configId".to_string(),
+                data: None,
+            })),
+            Ok(json!({
+                "configOptions": [
+                    {
+                        "optionId": "model_variant",
+                        "category": "thought_level",
+                        "name": "推理档位",
+                        "currentValue": "high",
+                        "options": [
+                            { "value": "high", "label": "高" }
+                        ]
+                    }
+                ]
+            })),
+        ],
+        None,
+    ));
+    let client = AcpClient::new_with_transport(transport.clone());
+    let metadata = client
+        .session_set_config_option("session-1", "model_variant", json!({ "id": "high" }))
+        .await
+        .expect("legacy fallback should succeed");
+
+    let params = transport
+        .request_params_for_method("session/set_config_option")
+        .await;
+    assert_eq!(params.len(), 2);
+    assert_eq!(
+        params[0].get("configId").and_then(|v| v.as_str()),
         Some("model_variant")
     );
     assert_eq!(
-        params
+        params[0].get("value").and_then(|v| v.as_str()),
+        Some("high")
+    );
+    assert_eq!(
+        params[1].get("optionId").and_then(|v| v.as_str()),
+        Some("model_variant")
+    );
+    assert_eq!(
+        params[1]
             .get("value")
             .and_then(|v| v.get("id"))
             .and_then(|v| v.as_str()),
         Some("high")
+    );
+    assert_eq!(
+        metadata.config_values.get("model_variant"),
+        Some(&json!("high"))
     );
 }
 

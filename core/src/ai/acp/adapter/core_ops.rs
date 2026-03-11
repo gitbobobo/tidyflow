@@ -886,12 +886,33 @@ impl AcpAgent {
     }
 
     pub(super) fn normalized_category(category: Option<&str>, option_id: &str) -> String {
-        if let Some(category) = category.map(|it| it.trim().to_lowercase()) {
-            if !category.is_empty() {
-                return category;
-            }
+        if let Some(category) = category.and_then(Self::normalize_category_token) {
+            return category;
         }
         option_id.trim().to_lowercase()
+    }
+
+    fn normalize_category_token(category: &str) -> Option<String> {
+        let normalized = category.trim().to_lowercase();
+        if normalized.is_empty() {
+            return None;
+        }
+        if normalized == "thought_level" {
+            return Some("model_variant".to_string());
+        }
+        Some(normalized)
+    }
+
+    pub(super) fn option_id_for_category(
+        options: &[AcpConfigOptionInfo],
+        category: &str,
+    ) -> Option<String> {
+        options
+            .iter()
+            .find(|option| {
+                Self::normalized_category(option.category.as_deref(), &option.option_id) == category
+            })
+            .map(|option| option.option_id.clone())
     }
 
     pub(super) fn value_to_string(value: &Value) -> Option<String> {
@@ -949,6 +970,156 @@ impl AcpAgent {
             }
         }
         Some(candidate)
+    }
+
+    fn config_option_choice_iter(
+        option: &AcpConfigOptionInfo,
+    ) -> impl Iterator<Item = &crate::ai::acp::client::AcpConfigOptionChoice> {
+        option.options.iter().chain(
+            option
+                .option_groups
+                .iter()
+                .flat_map(|group| group.options.iter()),
+        )
+    }
+
+    fn config_value_matches_candidate(value: &str, candidate: &str) -> bool {
+        let normalize = |raw: &str| raw.trim().to_lowercase();
+        let normalized_value = normalize(value);
+        let normalized_candidate = normalize(candidate);
+        if normalized_value.is_empty() || normalized_candidate.is_empty() {
+            return false;
+        }
+        if normalized_value == normalized_candidate {
+            return true;
+        }
+
+        let value_suffix = normalized_value
+            .split_once('/')
+            .map(|(_, suffix)| suffix.trim())
+            .filter(|suffix| !suffix.is_empty());
+        let candidate_suffix = normalized_candidate
+            .split_once('/')
+            .map(|(_, suffix)| suffix.trim())
+            .filter(|suffix| !suffix.is_empty());
+
+        value_suffix == Some(normalized_candidate.as_str())
+            || candidate_suffix == Some(normalized_value.as_str())
+            || (value_suffix.is_some() && value_suffix == candidate_suffix)
+    }
+
+    fn find_matching_choice_value(option: &AcpConfigOptionInfo, candidate: &str) -> Option<Value> {
+        Self::config_option_choice_iter(option)
+            .find(|choice| {
+                Self::value_to_string(&choice.value)
+                    .map(|value| Self::config_value_matches_candidate(&value, candidate))
+                    .unwrap_or(false)
+            })
+            .map(|choice| choice.value.clone())
+    }
+
+    pub(super) fn normalize_config_override_value(
+        metadata: &AcpSessionMetadata,
+        option_meta: Option<&AcpConfigOptionInfo>,
+        category: &str,
+        value: Value,
+    ) -> Value {
+        match category {
+            "mode" => {
+                let Some(raw_mode_id) = option_meta
+                    .and_then(|option| Self::resolve_mode_id_from_option(option, &value))
+                    .or_else(|| Self::value_to_string(&value))
+                else {
+                    return value;
+                };
+                let canonical_mode_id = Self::canonicalize_mode_id(metadata, &raw_mode_id)
+                    .unwrap_or(raw_mode_id.clone());
+                if let Some(option) = option_meta {
+                    if let Some(choice_value) =
+                        Self::find_matching_choice_value(option, &canonical_mode_id)
+                    {
+                        return choice_value;
+                    }
+                }
+                Value::String(canonical_mode_id)
+            }
+            "model" => {
+                let Some(model_id) = option_meta
+                    .and_then(|option| Self::resolve_model_id_from_option(option, &value))
+                    .or_else(|| Self::value_to_string(&value))
+                else {
+                    return value;
+                };
+                if let Some(option) = option_meta {
+                    if let Some(choice_value) = Self::find_matching_choice_value(option, &model_id)
+                    {
+                        return choice_value;
+                    }
+                }
+                Value::String(model_id)
+            }
+            "model_variant" => {
+                let Some(variant) = Self::value_to_string(&value) else {
+                    return value;
+                };
+                if let Some(option) = option_meta {
+                    if let Some(choice_value) = Self::find_matching_choice_value(option, &variant) {
+                        return choice_value;
+                    }
+                }
+                Value::String(variant)
+            }
+            _ => value,
+        }
+    }
+
+    pub(super) fn merge_metadata_from_delta(
+        metadata: &mut AcpSessionMetadata,
+        delta: AcpSessionMetadata,
+    ) {
+        if !delta.models.is_empty() {
+            metadata.models = delta.models;
+        }
+        if let Some(current_model_id) = delta.current_model_id {
+            metadata.current_model_id = Some(current_model_id);
+        }
+        if !delta.modes.is_empty() {
+            metadata.modes = delta.modes;
+        }
+        if let Some(current_mode_id) = delta.current_mode_id {
+            metadata.current_mode_id = Some(current_mode_id);
+        }
+        if !delta.config_options.is_empty() {
+            metadata.config_options = delta.config_options;
+            metadata.config_values = delta.config_values;
+        } else if !delta.config_values.is_empty() {
+            for (option_id, value) in delta.config_values {
+                Self::apply_config_value_to_metadata(metadata, &option_id, value);
+            }
+        }
+    }
+
+    pub(super) fn config_option_priority(category: &str) -> u8 {
+        match category {
+            "mode" => 0,
+            "model" => 1,
+            "model_variant" => 2,
+            _ => 3,
+        }
+    }
+
+    pub(super) fn config_option_values(option: &AcpConfigOptionInfo) -> Vec<String> {
+        let mut values: Vec<String> = Vec::new();
+        for choice in Self::config_option_choice_iter(option) {
+            if let Some(value) = Self::value_to_string(&choice.value) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() && !values.iter().any(|it| it.eq_ignore_ascii_case(trimmed))
+                {
+                    values.push(trimmed.to_string());
+                }
+            }
+        }
+        values
     }
 
     pub(super) fn apply_config_value_to_metadata(
@@ -1145,7 +1316,10 @@ impl AcpAgent {
     pub(super) fn map_config_option(option: &AcpConfigOptionInfo) -> AiSessionConfigOption {
         AiSessionConfigOption {
             option_id: option.option_id.clone(),
-            category: option.category.clone(),
+            category: Some(Self::normalized_category(
+                option.category.as_deref(),
+                &option.option_id,
+            )),
             name: option.name.clone(),
             description: option.description.clone(),
             current_value: option.current_value.clone(),
@@ -1750,10 +1924,34 @@ impl AcpAgent {
         let supports_load_session = self.client.supports_load_session().await;
 
         let mut keys = overrides.keys().cloned().collect::<Vec<_>>();
-        keys.sort();
+        keys.sort_by(|left, right| {
+            let left_category = metadata
+                .config_options
+                .iter()
+                .find(|option| {
+                    option.option_id == *left || option.option_id.eq_ignore_ascii_case(left)
+                })
+                .map(|option| {
+                    Self::normalized_category(option.category.as_deref(), &option.option_id)
+                })
+                .unwrap_or_else(|| left.trim().to_lowercase());
+            let right_category = metadata
+                .config_options
+                .iter()
+                .find(|option| {
+                    option.option_id == *right || option.option_id.eq_ignore_ascii_case(right)
+                })
+                .map(|option| {
+                    Self::normalized_category(option.category.as_deref(), &option.option_id)
+                })
+                .unwrap_or_else(|| right.trim().to_lowercase());
+            Self::config_option_priority(&left_category)
+                .cmp(&Self::config_option_priority(&right_category))
+                .then_with(|| left.cmp(right))
+        });
 
         for option_id in keys {
-            let Some(mut option_value) = overrides.get(&option_id).cloned() else {
+            let Some(raw_option_value) = overrides.get(&option_id).cloned() else {
                 continue;
             };
             let option_meta = metadata
@@ -1770,22 +1968,12 @@ impl AcpAgent {
                     Self::normalized_category(option.category.as_deref(), &option.option_id)
                 })
                 .unwrap_or_else(|| option_id.trim().to_lowercase());
-            if category == "mode" {
-                if let Some(raw_mode_id) = option_meta
-                    .as_ref()
-                    .and_then(|option| Self::resolve_mode_id_from_option(option, &option_value))
-                    .or_else(|| Self::value_to_string(&option_value))
-                {
-                    if let Some(canonical_mode_id) =
-                        Self::canonicalize_mode_id(metadata, &raw_mode_id)
-                    {
-                        if canonical_mode_id != raw_mode_id {
-                            option_value =
-                                Self::rewrite_mode_config_value(option_value, &canonical_mode_id);
-                        }
-                    }
-                }
-            }
+            let mut option_value = Self::normalize_config_override_value(
+                metadata,
+                option_meta.as_ref(),
+                &category,
+                raw_option_value,
+            );
 
             if !supports_set_config_option {
                 warn!(
@@ -1805,12 +1993,12 @@ impl AcpAgent {
                 continue;
             }
 
-            let set_result: Result<(), String> = match self
+            let set_result: Result<AcpSessionMetadata, String> = match self
                 .client
                 .session_set_config_option(session_id, &option_id, option_value.clone())
                 .await
             {
-                Ok(()) => Ok(()),
+                Ok(metadata_delta) => Ok(metadata_delta),
                 Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
                     self.client.session_load(directory, session_id).await?;
                     self.client
@@ -1821,7 +2009,8 @@ impl AcpAgent {
             };
 
             match set_result {
-                Ok(()) => {
+                Ok(metadata_delta) => {
+                    Self::merge_metadata_from_delta(metadata, metadata_delta);
                     Self::apply_config_value_to_metadata(
                         metadata,
                         &option_id,

@@ -405,21 +405,40 @@ impl AcpClient {
         session_id: &str,
         option_id: &str,
         value: Value,
-    ) -> Result<(), String> {
+    ) -> Result<AcpSessionMetadata, String> {
         let option_id = option_id.trim();
         if option_id.is_empty() {
             return Err("session/set_config_option requires non-empty option_id".to_string());
         }
-        self.send_request_with_auth_retry(
-            "session/set_config_option",
-            Some(serde_json::json!({
-                "sessionId": session_id,
-                "optionId": option_id,
-                "value": value
-            })),
-        )
-        .await
-        .map(|_| ())
+        let request_value = Self::config_option_request_value(&value)?;
+        let stable_result = self
+            .send_request_with_auth_retry(
+                "session/set_config_option",
+                Some(serde_json::json!({
+                    "sessionId": session_id,
+                    "configId": option_id,
+                    "value": request_value
+                })),
+            )
+            .await;
+
+        match stable_result {
+            Ok(result) => Ok(Self::parse_session_metadata(&result)),
+            Err(err) if Self::should_retry_legacy_set_config_option(&err) => {
+                let legacy_result = self
+                    .send_request_with_auth_retry(
+                        "session/set_config_option",
+                        Some(serde_json::json!({
+                            "sessionId": session_id,
+                            "optionId": option_id,
+                            "value": value
+                        })),
+                    )
+                    .await?;
+                Ok(Self::parse_session_metadata(&legacy_result))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification> {
@@ -704,6 +723,45 @@ impl AcpClient {
         } else {
             raw
         }
+    }
+
+    fn config_option_request_value(value: &Value) -> Result<Value, String> {
+        match value {
+            Value::String(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    Err("session/set_config_option requires non-empty scalar value".to_string())
+                } else {
+                    Ok(Value::String(trimmed.to_string()))
+                }
+            }
+            Value::Bool(flag) => Ok(Value::Bool(*flag)),
+            Value::Number(number) => Ok(Value::String(number.to_string())),
+            Value::Object(map) => {
+                for key in ["id", "value", "modeId", "mode_id", "modelId", "model_id"] {
+                    if let Some(next) = map.get(key) {
+                        return Self::config_option_request_value(next);
+                    }
+                }
+                Err("session/set_config_option requires scalar-compatible value".to_string())
+            }
+            _ => Err("session/set_config_option requires scalar-compatible value".to_string()),
+        }
+    }
+
+    fn should_retry_legacy_set_config_option(error: &str) -> bool {
+        let normalized = error.trim().to_lowercase();
+        let mentions_config_id = normalized.contains("configid");
+        let mentions_option_id = normalized.contains("optionid");
+        let is_parameter_shape_error = normalized.contains("missing")
+            || normalized.contains("required")
+            || normalized.contains("unknown")
+            || normalized.contains("unexpected")
+            || normalized.contains("unrecognized")
+            || normalized.contains("not allowed")
+            || normalized.contains("invalid params")
+            || normalized.contains("invalid request");
+        (mentions_config_id || mentions_option_id) && is_parameter_shape_error
     }
 
     fn parse_rfc3339_millis(raw: &str) -> Option<i64> {
