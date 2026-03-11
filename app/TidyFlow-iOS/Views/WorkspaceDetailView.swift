@@ -672,6 +672,20 @@ private struct ExplorerFileRowView: View {
                 }
             }
             .contextMenu {
+                Button {
+                    appState.copyExplorerPath(project: project, workspace: workspace, path: item.path)
+                } label: {
+                    Label("rightPanel.copyPath".localized, systemImage: "doc.on.doc")
+                }
+
+                Button {
+                    appState.copyExplorerRelativePath(item.path)
+                } label: {
+                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
+                }
+
+                Divider()
+
                 if item.isDir {
                     Button {
                         newFileName = ""

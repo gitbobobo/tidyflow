@@ -51,6 +51,15 @@ struct ProjectListView: View {
                                     }
                                     .padding(.vertical, 2)
                                 }
+                                .contextMenu {
+                                    if let path = workspace.workspacePath, !path.isEmpty {
+                                        Button {
+                                            appState.copySidebarPath(path)
+                                        } label: {
+                                            Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
+                                        }
+                                    }
+                                }
                             }
                         }
                     } header: {
@@ -95,17 +104,38 @@ struct ProjectListView: View {
 
     @ViewBuilder
     private func projectHeader(project: SidebarProjectProjection) -> some View {
-        if let primaryWorkspaceName = project.primaryWorkspaceName {
-            Button {
-                appState.navigationPath.append(
-                    MobileRoute.workspaceDetail(project: project.projectName, workspace: primaryWorkspaceName)
-                )
-            } label: {
+        Group {
+            if let primaryWorkspaceName = project.primaryWorkspaceName {
+                Button {
+                    appState.navigationPath.append(
+                        MobileRoute.workspaceDetail(project: project.projectName, workspace: primaryWorkspaceName)
+                    )
+                } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(project.projectName)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            if let projectPath = project.projectPath, !projectPath.isEmpty {
+                                Text(projectPath)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        if !project.activityIndicators.isEmpty {
+                            MobileWorkspaceActivityIconsView(indicators: project.activityIndicators)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(project.projectName)
                             .font(.headline)
-                            .foregroundColor(.primary)
                         if let projectPath = project.projectPath, !projectPath.isEmpty {
                             Text(projectPath)
                                 .font(.caption2)
@@ -113,35 +143,28 @@ struct ProjectListView: View {
                         }
                     }
                     Spacer(minLength: 8)
-                    if !project.activityIndicators.isEmpty {
+                    if project.isLoadingWorkspaces {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                    } else if !project.activityIndicators.isEmpty {
                         MobileWorkspaceActivityIconsView(indicators: project.activityIndicators)
                     }
                 }
                 .padding(.vertical, 2)
                 .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(project.projectName)
-                        .font(.headline)
-                    if let projectPath = project.projectPath, !projectPath.isEmpty {
-                        Text(projectPath)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                .onAppear {
+                    if project.isLoadingWorkspaces {
+                        appState.requestWorkspacesIfNeeded(project: project.projectName)
                     }
                 }
-                Spacer(minLength: 8)
-                if project.isLoadingWorkspaces {
-                    ProgressView()
-                        .scaleEffect(0.75)
-                }
             }
-            .contentShape(Rectangle())
-            .onAppear {
-                if project.isLoadingWorkspaces {
-                    appState.requestWorkspacesIfNeeded(project: project.projectName)
+        }
+        .contextMenu {
+            if let projectPath = project.projectPath, !projectPath.isEmpty {
+                Button {
+                    appState.copySidebarPath(projectPath)
+                } label: {
+                    Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
                 }
             }
         }

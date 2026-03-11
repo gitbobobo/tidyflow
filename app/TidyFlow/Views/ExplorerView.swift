@@ -71,6 +71,24 @@ struct FileTreeView: View {
                 .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
             }
             .contextMenu {
+                Button {
+                    appState.copyExplorerPath(
+                        project: workspace.projectName,
+                        workspace: workspace.workspaceName,
+                        path: "."
+                    )
+                } label: {
+                    Label("rightPanel.copyPath".localized, systemImage: "doc.on.doc")
+                }
+
+                Button {
+                    appState.copyExplorerRelativePath(".")
+                } label: {
+                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
+                }
+
+                Divider()
+
                 // 新建文件（根目录）
                 Button {
                     newFileName = ""
@@ -297,6 +315,24 @@ struct FileRowView: View {
                 }
             }
             .contextMenu {
+                Button {
+                    appState.copyExplorerPath(
+                        project: workspace.projectName,
+                        workspace: workspace.workspaceName,
+                        path: item.path
+                    )
+                } label: {
+                    Label("rightPanel.copyPath".localized, systemImage: "doc.on.doc")
+                }
+
+                Button {
+                    appState.copyExplorerRelativePath(item.path)
+                } label: {
+                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
+                }
+
+                Divider()
+
                 // 新建文件
                 Button {
                     newFileName = ""

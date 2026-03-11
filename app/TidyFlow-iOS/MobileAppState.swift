@@ -4016,6 +4016,54 @@ final class MobileAppState: ObservableObject {
         // 3. 其他类型跳过
     }
 
+    /// 复制纯文本到系统剪贴板。
+    func copyTextToClipboard(_ text: String) {
+        UIPasteboard.general.string = text
+    }
+
+    /// 复制侧边栏实体路径（项目根目录或工作空间根目录）。
+    func copySidebarPath(_ path: String) {
+        copyTextToClipboard(path)
+    }
+
+    /// 获取指定工作区根目录路径。
+    func workspaceRootPath(project: String, workspace: String) -> String? {
+        workspacesForProject(project)
+            .first(where: { $0.name == workspace })?
+            .root
+    }
+
+    /// 将资源管理器相对路径规范化为用户可见文本。
+    func explorerRelativeDisplayPath(_ path: String) -> String {
+        let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "." : normalized
+    }
+
+    /// 将资源管理器路径解析为工作区内绝对路径。
+    func explorerAbsolutePath(project: String, workspace: String, path: String) -> String? {
+        guard let root = workspaceRootPath(project: project, workspace: workspace) else {
+            return nil
+        }
+        let relativePath = explorerRelativeDisplayPath(path)
+        if relativePath == "." {
+            return root
+        }
+        return (root as NSString).appendingPathComponent(relativePath)
+    }
+
+    /// 复制资源管理器条目的绝对路径。
+    func copyExplorerPath(project: String, workspace: String, path: String) {
+        guard let absolutePath = explorerAbsolutePath(project: project, workspace: workspace, path: path) else {
+            return
+        }
+        copyTextToClipboard(absolutePath)
+    }
+
+    /// 复制资源管理器条目的相对路径。
+    func copyExplorerRelativePath(_ path: String) {
+        copyTextToClipboard(explorerRelativeDisplayPath(path))
+    }
+
     /// 发送键盘输入到终端（原始字节）
     func sendTerminalInputBytes(_ data: [UInt8]) {
         guard !currentTermId.isEmpty else { return }

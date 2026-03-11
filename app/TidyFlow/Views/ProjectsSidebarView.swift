@@ -306,6 +306,12 @@ struct ProjectRowView: View {
         .contextMenu {
             if !isDeleting {
                 if let path = defaultWorkspacePath ?? projectPath {
+                    Button {
+                        appState.copySidebarPath(path)
+                    } label: {
+                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
+                    }
+
                     ExternalApplicationsMenu(path: path)
                     Divider()
                 }
@@ -485,6 +491,12 @@ struct WorkspaceRowView: View {
             if !isDeleting {
                 // ── 路径 / 打开 ──
                 if let path = workspacePath {
+                    Button {
+                        appState.copySidebarPath(path)
+                    } label: {
+                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
+                    }
+
                     ExternalApplicationsMenu(path: path)
                 }
 

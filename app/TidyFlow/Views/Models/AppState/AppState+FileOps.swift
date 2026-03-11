@@ -543,6 +543,60 @@ extension AppState {
 
     // MARK: - v1.24: 文件复制粘贴（使用系统剪贴板）
 
+    /// 复制纯文本到系统剪贴板。
+    func copyTextToClipboard(_ text: String) {
+        #if canImport(AppKit)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        #endif
+    }
+
+    /// 复制侧边栏实体路径（项目根目录或工作空间根目录）。
+    func copySidebarPath(_ path: String) {
+        copyTextToClipboard(path)
+    }
+
+    /// 解析工作空间根目录的绝对路径。
+    func workspaceRootPath(project: String, workspace: String) -> String? {
+        projects
+            .first(where: { $0.name == project })?
+            .workspaces
+            .first(where: { $0.name == workspace })?
+            .root
+    }
+
+    /// 将资源管理器相对路径规范化为用户可见文本。
+    func explorerRelativeDisplayPath(_ path: String) -> String {
+        let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "." : normalized
+    }
+
+    /// 将资源管理器路径解析为工作空间内绝对路径。
+    func explorerAbsolutePath(project: String, workspace: String, path: String) -> String? {
+        guard let root = workspaceRootPath(project: project, workspace: workspace) else {
+            return nil
+        }
+        let relativePath = explorerRelativeDisplayPath(path)
+        if relativePath == "." {
+            return root
+        }
+        return (root as NSString).appendingPathComponent(relativePath)
+    }
+
+    /// 复制资源管理器条目的绝对路径。
+    func copyExplorerPath(project: String, workspace: String, path: String) {
+        guard let absolutePath = explorerAbsolutePath(project: project, workspace: workspace, path: path) else {
+            return
+        }
+        copyTextToClipboard(absolutePath)
+    }
+
+    /// 复制资源管理器条目的相对路径。
+    func copyExplorerRelativePath(_ path: String) {
+        copyTextToClipboard(explorerRelativeDisplayPath(path))
+    }
+
     /// 复制文件到系统剪贴板（Finder 兼容格式）
     func copyFileToClipboard(workspaceKey: String, path: String, isDir: Bool, name: String) {
         #if canImport(AppKit)
