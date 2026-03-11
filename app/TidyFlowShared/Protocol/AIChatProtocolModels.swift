@@ -4,7 +4,7 @@ import AppIntents
 // MARK: - 基础 AI 工具类型（跨平台共享）
 
 /// AI 工具标识，与协议 ai_tool 字段对应
-public enum AIChatTool: String, CaseIterable, Identifiable {
+public enum AIChatTool: String, CaseIterable, Identifiable, Sendable {
     case opencode
     case codex
     case copilot

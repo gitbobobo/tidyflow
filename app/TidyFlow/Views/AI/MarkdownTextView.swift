@@ -6,16 +6,51 @@ enum AIChatMarkdownRole {
     case assistant
 }
 
+private enum StreamingMarkdownRenderPolicy {
+    struct Configuration {
+        let minInterval: CFAbsoluteTime
+        let maxInterval: CFAbsoluteTime
+        let minimumMeaningfulDelta: Int
+    }
+
+    static func configuration(for text: String) -> Configuration {
+        let length = text.utf16.count
+        switch length {
+        case 0..<1_200:
+            return Configuration(minInterval: 0.20, maxInterval: 0.45, minimumMeaningfulDelta: 24)
+        case 1_200..<4_000:
+            return Configuration(minInterval: 0.30, maxInterval: 0.75, minimumMeaningfulDelta: 64)
+        default:
+            return Configuration(minInterval: 0.50, maxInterval: 1.20, minimumMeaningfulDelta: 120)
+        }
+    }
+
+    static func hasMeaningfulIncrement(renderedText: String, newText: String) -> Bool {
+        guard renderedText != newText else { return false }
+        guard newText.count >= renderedText.count else { return true }
+
+        let config = configuration(for: newText)
+        let delta = newText.utf16.count - renderedText.utf16.count
+        if delta >= config.minimumMeaningfulDelta {
+            return true
+        }
+
+        return newText.last == "\n" ||
+            newText.hasSuffix("```") ||
+            newText.last == "." ||
+            newText.last == "。" ||
+            newText.last == ":" ||
+            newText.last == "："
+    }
+}
+
 /// 聊天消息 Markdown 渲染器：每个连续文本文档块对应一个 StructuredText。
-/// 流式输出期间自动降频（200ms / 5fps），减少全量 Markdown 解析开销。
+/// 流式输出期间按文本体积自适应降频，减少全量 Markdown 解析开销。
 struct MarkdownTextView: View {
     let text: String
     var role: AIChatMarkdownRole = .assistant
     var baseFontSize: CGFloat = 13
     var isStreaming: Bool = false
-
-    /// 流式期间 Markdown 全量解析最小间隔
-    private static let streamingRenderInterval: CFAbsoluteTime = 0.2
 
     /// 已提交给 StructuredText 的文本快照
     @State private var renderedText: String = ""
@@ -23,6 +58,7 @@ struct MarkdownTextView: View {
     @State private var latestPendingText: String = ""
     @State private var lastRenderTime: CFAbsoluteTime = 0
     @State private var deferredRenderTask: Task<Void, Never>?
+    @State private var streamingRenderCount: Int = 0
 
     private var accentColor: Color {
         role == .user ? .primary : .accentColor
@@ -46,6 +82,7 @@ struct MarkdownTextView: View {
             .onAppear {
                 renderedText = text
                 lastRenderTime = CFAbsoluteTimeGetCurrent()
+                streamingRenderCount = 0
             }
             .onChange(of: text) { _, newText in
                 throttledRender(newText)
@@ -56,47 +93,85 @@ struct MarkdownTextView: View {
                     deferredRenderTask?.cancel()
                     deferredRenderTask = nil
                     if renderedText != text {
-                        renderedText = text
+                        commitRender(text, reason: "stream_end")
                     }
+                    logStreamingSummary(finalLength: text.utf16.count)
+                } else {
+                    streamingRenderCount = 0
                 }
             }
             .onDisappear {
                 deferredRenderTask?.cancel()
                 deferredRenderTask = nil
+                if isStreaming {
+                    logStreamingSummary(finalLength: latestPendingText.utf16.count)
+                }
             }
     }
 
-    /// 流式期间节流 Markdown 渲染：每 200ms 最多一次全量解析。
+    /// 流式期间按文本体积自适应节流 Markdown 渲染。
     /// 非流式场景下直接更新，无额外开销。
     private func throttledRender(_ newText: String) {
         guard isStreaming else {
-            renderedText = newText
+            if renderedText != newText {
+                renderedText = newText
+            }
             return
         }
 
+        guard newText != latestPendingText || newText != renderedText else { return }
         latestPendingText = newText
 
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - lastRenderTime
+        let config = StreamingMarkdownRenderPolicy.configuration(for: newText)
+        let hasMeaningfulIncrement = StreamingMarkdownRenderPolicy.hasMeaningfulIncrement(
+            renderedText: renderedText,
+            newText: newText
+        )
 
-        if elapsed >= Self.streamingRenderInterval {
-            lastRenderTime = now
-            renderedText = newText
+        let shouldRenderNow =
+            elapsed >= config.maxInterval ||
+            (hasMeaningfulIncrement && elapsed >= config.minInterval)
+
+        if shouldRenderNow {
             deferredRenderTask?.cancel()
             deferredRenderTask = nil
+            commitRender(newText, reason: hasMeaningfulIncrement ? "meaningful_increment" : "max_interval")
             return
         }
 
-        // 已有延迟任务挂起，它完成时会读取 latestPendingText
-        guard deferredRenderTask == nil else { return }
-        let remaining = Self.streamingRenderInterval - elapsed
+        deferredRenderTask?.cancel()
+        let remaining = max(
+            0,
+            (hasMeaningfulIncrement ? config.minInterval : config.maxInterval) - elapsed
+        )
         deferredRenderTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled else { return }
-            lastRenderTime = CFAbsoluteTimeGetCurrent()
-            renderedText = latestPendingText
+            commitRender(latestPendingText, reason: hasMeaningfulIncrement ? "deferred_increment" : "deferred_max_interval")
             deferredRenderTask = nil
         }
+    }
+
+    private func commitRender(_ newText: String, reason: StaticString) {
+        guard renderedText != newText else { return }
+        lastRenderTime = CFAbsoluteTimeGetCurrent()
+        renderedText = newText
+        if isStreaming {
+            streamingRenderCount += 1
+            TFLog.perf.debug(
+                "perf ai_markdown_stream_render count=\(streamingRenderCount, privacy: .public) chars=\(newText.utf16.count, privacy: .public) reason=\(reason, privacy: .public)"
+            )
+        }
+    }
+
+    private func logStreamingSummary(finalLength: Int) {
+        guard streamingRenderCount > 0 else { return }
+        TFLog.perf.info(
+            "perf ai_markdown_stream_summary renders=\(streamingRenderCount, privacy: .public) final_chars=\(finalLength, privacy: .public)"
+        )
+        streamingRenderCount = 0
     }
 }
 
