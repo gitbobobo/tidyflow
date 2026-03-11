@@ -1275,7 +1275,7 @@ GET /api/v1/system/health
 | `idle` | 无活跃聊天上下文 | 进入聊天 |
 | `entering` | 正在加载会话列表、恢复快照 | 等待就绪 |
 | `active` | 聊天上下文就绪 | 发送消息、切换工具、切换会话、新建会话、关闭聊天 |
-| `resuming` | 断线重连后恢复消息流 | 等待恢复完成 |
+| `resuming` | 断线重连或流式中断后恢复消息流 | 等待恢复完成 |
 | `closing` | 保存快照、取消订阅 | 无（自动迁移到 idle） |
 
 ### 状态迁移图
@@ -1290,11 +1290,23 @@ idle → entering → active ⇄ resuming
 - `ready`：entering/resuming → active
 - `resume`：active/entering → resuming
 - `resumeCompleted`：resuming → active
+- `streamInterrupted`：active/entering → resuming（流式中断，语义与 resume 类似但表达意图不同）
 - `switchTool`：active/entering → entering（切换 aiTool）
 - `newSession`：active → active（清空 activeSessionId）
 - `loadSession`：active → active（设置 activeSessionId）
 - `close`：非 idle → closing → idle
 - `forceReset`：任意 → idle
+
+### 生命周期边界矩阵
+
+| 场景 | 触发时机 | 输入序列 | 预期迁移 | 备注 |
+|------|---------|----------|---------|------|
+| 工作区切换 | 用户选中新工作区 | `close` → `enter` | active/resuming → idle → entering | WorkspaceViewStateMachine 自动重置投影缓存，平台层负责驱动 lifecycle |
+| 会话恢复 | 断线重连后恢复 | `resume(sessionId)` → `resumeCompleted` | active → resuming → active | 补拉缺失消息后恢复 |
+| 流式中断 | 网络丢失或流异常 | `streamInterrupted(sessionId)` → `resumeCompleted`/`close` | active → resuming → active/idle | 等待恢复或用户手动关闭 |
+| 关闭聊天 | 用户离开聊天页面 | `close` | 非 idle → closing → idle | 保存快照、取消订阅 |
+| 强制重置 | 断开连接/项目删除 | `forceReset` | 任意 → idle | 平台在 WS 断连回调中直接调用 |
+| 断开连接 | WS 连接丢失 | `forceReset` | 任意 → idle | 不可恢复场景，立即清空上下文 |
 
 ### 多工作区隔离规则
 
@@ -1302,7 +1314,8 @@ idle → entering → active ⇄ resuming
 2. 切换工作区时必须先 `close` 当前舞台，再 `enter` 新工作区的舞台。
 3. 来自非活跃工作区的流式事件不得影响当前舞台状态。
 4. 断线重连后只恢复当前活跃工作区的聊天舞台，不自动恢复后台工作区。
-5. `WorkspaceViewStateMachine` 在工作区切换时自动重置 AI 聊天舞台状态。
+5. `WorkspaceViewStateMachine` 在工作区切换时自动重置 AI 聊天舞台投影缓存。
+6. 平台层（macOS/iOS）在工作区切换完成后必须调用 `lifecycle.apply(.forceReset)` 或 `.close` 确保状态机归位。
 
 ### 双端一致性约束
 
@@ -1310,3 +1323,4 @@ idle → entering → active ⇄ resuming
 2. 两端不得在视图层直接操作舞台 phase 字段或绕过状态机。
 3. 进入聊天、恢复快照、切换工具、新建会话、关闭聊天的事件序列必须相同。
 4. 流式事件的接受/拒绝判断通过 `acceptsStreamEvent(project:workspace:aiTool:)` 统一决策。
+5. 断开连接时双端统一使用 `forceReset` 而非 `close`，避免异步快照保存在断连状态下失败。
