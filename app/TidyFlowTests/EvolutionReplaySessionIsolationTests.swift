@@ -248,6 +248,100 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
         XCTAssertEqual(set.count, 2, "不同项目的 Context 在 Set 中不应碰撞")
     }
 
+    // MARK: - AI 聊天舞台生命周期与多工作区隔离
+
+    /// 验证舞台 acceptsStreamEvent 在 idle 阶段拒绝所有事件。
+    func testStageRejectsEventsInIdlePhase() {
+        let lifecycle = AIChatStageLifecycle()
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .opencode),
+                       "idle 阶段应拒绝所有流式事件")
+    }
+
+    /// 验证舞台 acceptsStreamEvent 在 entering 阶段拒绝事件。
+    func testStageRejectsEventsInEnteringPhase() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        XCTAssertEqual(lifecycle.state.phase, .entering)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .opencode),
+                       "entering 阶段应拒绝流式事件（尚未就绪）")
+    }
+
+    /// 验证舞台 acceptsStreamEvent 在 active 阶段只接受匹配上下文的事件。
+    func testStageAcceptsMatchingEventsInActivePhase() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj-a", workspace: "ws-1", aiTool: .claude_code))
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-1", aiTool: .claude_code))
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj-b", workspace: "ws-1", aiTool: .claude_code),
+                       "不同项目的事件应被拒绝")
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-2", aiTool: .claude_code),
+                       "不同工作区的事件应被拒绝")
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-1", aiTool: .codex),
+                       "不同工具的事件应被拒绝")
+    }
+
+    /// 验证舞台 resume/resumeCompleted 迁移路径正确。
+    func testStageResumeLifecycle() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+
+        let resumeResult = lifecycle.apply(.resume(sessionId: "session-123"))
+        XCTAssertNotEqual(resumeResult, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+        XCTAssertEqual(lifecycle.state.activeSessionId, "session-123")
+        // resuming 阶段仍接受匹配上下文的事件
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .opencode))
+
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+    }
+
+    /// 验证 forceReset 从任意阶段迁移到 idle。
+    func testStageForceResetFromAnyPhase() {
+        let lifecycle = AIChatStageLifecycle()
+
+        // 从 entering
+        lifecycle.apply(.enter(project: "p", workspace: "w", aiTool: .codex))
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+
+        // 从 active
+        lifecycle.apply(.enter(project: "p", workspace: "w", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+
+        // 从 resuming
+        lifecycle.apply(.enter(project: "p", workspace: "w", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.resume(sessionId: "s"))
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+    }
+
+    /// 验证舞台上下文键的多工作区隔离。
+    func testStageContextKeyIsolation() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj-a", workspace: "ws-1", aiTool: .opencode))
+        let key1 = lifecycle.state.contextKey
+
+        lifecycle.apply(.close)
+        lifecycle.apply(.enter(project: "proj-a", workspace: "ws-2", aiTool: .opencode))
+        let key2 = lifecycle.state.contextKey
+
+        lifecycle.apply(.close)
+        lifecycle.apply(.enter(project: "proj-b", workspace: "ws-1", aiTool: .opencode))
+        let key3 = lifecycle.state.contextKey
+
+        XCTAssertNotEqual(key1, key2, "不同工作区的上下文键应不同")
+        XCTAssertNotEqual(key1, key3, "不同项目的上下文键应不同")
+        XCTAssertNotEqual(key2, key3, "不同项目+工作区组合的上下文键应不同")
+    }
+
     private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

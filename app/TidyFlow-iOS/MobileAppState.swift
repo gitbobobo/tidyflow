@@ -225,6 +225,8 @@ final class MobileAppState: ObservableObject {
     @Published var aiActiveWorkspace: String = ""
     @Published var aiChatTool: AIChatTool = .opencode
     @Published var aiCurrentSessionId: String?
+    /// AI 聊天舞台生命周期状态机（双端共享契约，统一驱动进入/恢复/切换/关闭迁移）
+    let aiChatStageLifecycle = AIChatStageLifecycle()
     /// 主聊天状态统一由 AIChatStore 承载，避免重复数组写入。
     var aiChatMessages: [AIChatMessage] { aiChatStore.messages }
     var aiIsStreaming: Bool {
@@ -2184,6 +2186,11 @@ final class MobileAppState: ObservableObject {
         let trimmedWorkspace = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedProject.isEmpty, !trimmedWorkspace.isEmpty else { return }
 
+        // 通知舞台状态机进入聊天上下文
+        let stageResult = aiChatStageLifecycle.apply(.enter(
+            project: trimmedProject, workspace: trimmedWorkspace, aiTool: aiChatTool
+        ))
+
         let contextChanged = aiActiveProject != trimmedProject || aiActiveWorkspace != trimmedWorkspace
         if contextChanged {
             saveCurrentAISnapshotIfNeeded()
@@ -2198,7 +2205,6 @@ final class MobileAppState: ObservableObject {
         if contextChanged {
             restoreAISnapshot(project: trimmedProject, workspace: trimmedWorkspace)
         } else if aiChatMessages.isEmpty {
-            // 同一上下文视图重建时，优先从快照恢复，避免页面闪空
             restoreAISnapshot(project: trimmedProject, workspace: trimmedWorkspace)
         }
 
@@ -2211,17 +2217,24 @@ final class MobileAppState: ObservableObject {
         refreshCurrentAISlashCommands(for: aiChatTool)
         requestAIContextResources(refreshSessionList: true)
         reloadCurrentAISessionIfNeeded()
+
+        // 进入完成后标记就绪（如果舞台确实进入了 entering 阶段）
+        if case .transitioned = stageResult {
+            aiChatStageLifecycle.apply(.ready)
+        }
     }
 
-    /// 离开 AI 聊天页面：仅保存快照，不主动清空上下文，便于返回时秒级恢复
+    /// 离开 AI 聊天页面：通过共享生命周期契约关闭舞台
     func closeAIChat() {
+        aiChatStageLifecycle.apply(.close)
         saveCurrentAISnapshotIfNeeded()
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
     }
 
-    /// 新建空会话（本地清空态）
+    /// 新建空会话（本地清空态），通过共享生命周期契约通知舞台
     func createNewAISession() {
+        aiChatStageLifecycle.apply(.newSession)
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
         aiCurrentSessionId = nil
@@ -2236,10 +2249,12 @@ final class MobileAppState: ObservableObject {
         !aiIsStreaming
     }
 
-    /// 切换 AI 工具（仅空白会话允许）
+    /// 切换 AI 工具（仅空白会话允许），通过共享生命周期契约迁移舞台状态
     func switchAIChatTool(_ newTool: AIChatTool) {
         guard newTool != aiChatTool else { return }
         guard canSwitchAIChatTool else { return }
+
+        aiChatStageLifecycle.apply(.switchTool(newTool: newTool))
 
         saveCurrentAISnapshotIfNeeded()
         aiPendingSendRequest = nil
@@ -2258,6 +2273,9 @@ final class MobileAppState: ObservableObject {
             requestAIContextResources(refreshSessionList: false)
             reloadCurrentAISessionIfNeeded()
         }
+
+        // 切换完成后标记就绪
+        aiChatStageLifecycle.apply(.ready)
     }
 
     /// 拉取当前工具的上下文资源；仅在进入聊天上下文时刷新会话列表。
@@ -2361,6 +2379,9 @@ final class MobileAppState: ObservableObject {
         let targetTool = session.aiTool
         let previousTool = aiChatTool
         let previousSessionId = aiCurrentSessionId
+
+        // 通知舞台状态机加载会话
+        aiChatStageLifecycle.apply(.loadSession(sessionId: session.id, aiTool: targetTool))
 
         if targetTool != aiChatTool {
             // 跨工具打开历史会话时，允许在“非流式/非待发/非停止中”条件下切换工具，

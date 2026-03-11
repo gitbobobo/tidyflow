@@ -1,5 +1,204 @@
 import Foundation
 
+// MARK: - AI 聊天舞台生命周期契约
+//
+// 双端共享的 AI 聊天舞台（Chat Stage）生命周期状态机。
+// macOS 与 iOS 必须通过 `AIChatStageLifecycle.apply(_:)` 驱动所有状态迁移，
+// 不允许在平台视图层直接操作舞台状态字段。
+//
+// 生命周期阶段：
+//   idle → entering → active ⇄ resuming
+//                   ↓         ↓
+//                closing → idle
+//
+// 多工作区隔离：
+//   每个 `(project, workspace, aiTool)` 三元组拥有独立的舞台状态槽位。
+//   切换工作区时必须先 close 当前舞台，再 enter 新工作区的舞台。
+//   跨工作区的流式事件不得影响非活跃舞台。
+
+/// AI 聊天舞台阶段枚举，描述用户与 AI 聊天上下文的交互生命周期。
+enum AIChatStagePhase: String, Equatable, Sendable {
+    /// 空闲态：无活跃聊天上下文
+    case idle
+    /// 进入中：正在加载会话列表、恢复快照、订阅消息流
+    case entering
+    /// 活跃态：聊天上下文已就绪，用户可发送消息和接收流式响应
+    case active
+    /// 恢复中：断线重连后正在重新订阅与拉取缺失消息
+    case resuming
+    /// 关闭中：正在保存快照、取消订阅、清理本地状态
+    case closing
+}
+
+/// AI 聊天舞台生命周期输入事件。
+/// 所有状态迁移必须通过此枚举触发，禁止直接写入舞台 phase 字段。
+enum AIChatStageInput: Equatable, Sendable {
+    /// 用户打开 AI 聊天上下文（进入聊天页面或选中某个工作区）
+    case enter(project: String, workspace: String, aiTool: AIChatTool)
+    /// 聊天上下文就绪（会话列表/历史消息加载完成，订阅确认收到）
+    case ready
+    /// 恢复已有会话（从快照/断线重连恢复选中会话的消息流）
+    case resume(sessionId: String)
+    /// 恢复完成（缺失消息补齐，流式状态同步）
+    case resumeCompleted
+    /// 切换 AI 工具（在当前工作区切换到不同的 AI 工具）
+    case switchTool(newTool: AIChatTool)
+    /// 新建空会话（清空当前消息，取消当前订阅）
+    case newSession
+    /// 加载已有会话（切换到历史会话列表中的某个会话）
+    case loadSession(sessionId: String, aiTool: AIChatTool)
+    /// 关闭聊天上下文（离开聊天页面或切换工作区）
+    case close
+    /// 强制重置（断开连接、项目被删除等不可恢复场景）
+    case forceReset
+}
+
+/// AI 聊天舞台状态快照，包含当前阶段和关联的上下文信息。
+struct AIChatStageState: Equatable, Sendable {
+    let phase: AIChatStagePhase
+    let project: String
+    let workspace: String
+    let aiTool: AIChatTool
+    let activeSessionId: String?
+
+    /// 舞台上下文的三元组键，用于多工作区隔离校验。
+    var contextKey: String {
+        "\(project)::\(workspace)::\(aiTool.rawValue)"
+    }
+
+    static let idle = AIChatStageState(
+        phase: .idle, project: "", workspace: "", aiTool: .opencode, activeSessionId: nil
+    )
+}
+
+/// AI 聊天舞台生命周期状态机。
+/// 双端通过 `apply(_:)` 驱动状态迁移；当前状态通过 `state` 属性读取。
+///
+/// 设计约束：
+/// - 不持有任何平台类型（无 Color、View、NSObject 等）
+/// - 不直接触发网络请求或 UI 刷新，由调用方根据迁移结果执行副作用
+/// - 多工作区场景下通过 contextKey 隔离不同舞台
+final class AIChatStageLifecycle: @unchecked Sendable {
+
+    /// 当前舞台状态
+    private(set) var state: AIChatStageState = .idle
+
+    /// 迁移结果，调用方根据此信息决定需要执行的副作用
+    enum TransitionResult: Equatable {
+        /// 迁移成功，附带迁移后的状态
+        case transitioned(AIChatStageState)
+        /// 迁移被忽略（当前阶段不允许该输入）
+        case ignored
+    }
+
+    /// 应用输入事件并更新舞台状态。返回迁移结果。
+    @discardableResult
+    func apply(_ input: AIChatStageInput) -> TransitionResult {
+        switch input {
+
+        case .enter(let project, let workspace, let aiTool):
+            // 从 idle 或其他阶段进入新的聊天上下文
+            // 如果已在活跃态且上下文相同，忽略
+            if state.phase == .active || state.phase == .entering {
+                if state.project == project && state.workspace == workspace && state.aiTool == aiTool {
+                    return .ignored
+                }
+            }
+            let next = AIChatStageState(
+                phase: .entering, project: project, workspace: workspace,
+                aiTool: aiTool, activeSessionId: nil
+            )
+            state = next
+            return .transitioned(next)
+
+        case .ready:
+            guard state.phase == .entering || state.phase == .resuming else { return .ignored }
+            let next = AIChatStageState(
+                phase: .active, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: state.activeSessionId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .resume(let sessionId):
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let next = AIChatStageState(
+                phase: .resuming, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: sessionId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .resumeCompleted:
+            guard state.phase == .resuming else { return .ignored }
+            let next = AIChatStageState(
+                phase: .active, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: state.activeSessionId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .switchTool(let newTool):
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            guard newTool != state.aiTool else { return .ignored }
+            let next = AIChatStageState(
+                phase: .entering, project: state.project, workspace: state.workspace,
+                aiTool: newTool, activeSessionId: nil
+            )
+            state = next
+            return .transitioned(next)
+
+        case .newSession:
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let next = AIChatStageState(
+                phase: .active, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: nil
+            )
+            state = next
+            return .transitioned(next)
+
+        case .loadSession(let sessionId, let aiTool):
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let effectiveTool = aiTool
+            let next = AIChatStageState(
+                phase: .active, project: state.project, workspace: state.workspace,
+                aiTool: effectiveTool, activeSessionId: sessionId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .close:
+            guard state.phase != .idle else { return .ignored }
+            let next = AIChatStageState(
+                phase: .closing, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: state.activeSessionId
+            )
+            state = next
+            // 关闭后立即迁移到 idle
+            state = .idle
+            return .transitioned(.idle)
+
+        case .forceReset:
+            let wasIdle = state.phase == .idle
+            state = .idle
+            return wasIdle ? .ignored : .transitioned(.idle)
+        }
+    }
+
+    /// 判断当前舞台是否接受来自指定上下文的流式事件。
+    /// 只有活跃态或恢复态且上下文匹配时才接受。
+    func acceptsStreamEvent(project: String, workspace: String, aiTool: AIChatTool) -> Bool {
+        guard state.phase == .active || state.phase == .resuming else { return false }
+        return state.project == project && state.workspace == workspace && state.aiTool == aiTool
+    }
+
+    /// 判断当前舞台是否接受指定会话的事件。
+    func acceptsSessionEvent(sessionId: String) -> Bool {
+        guard state.phase == .active || state.phase == .resuming else { return false }
+        return state.activeSessionId == sessionId || state.activeSessionId == nil
+    }
+}
+
 // MARK: - AI 会话共享语义层
 //
 // 跨平台共享的 AI 会话语义工具层，提供统一的 selection hint 合并与推导、

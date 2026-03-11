@@ -90,6 +90,70 @@ final class AIChatStageProjectionTests: XCTestCase {
         XCTAssertTrue(second.transcriptIdentity.contains("session-a"))
     }
 
+    // MARK: - AI 聊天舞台生命周期投影
+
+    /// 验证 newSession 输入在 active 阶段清空 activeSessionId。
+    func testStageNewSessionClearsActiveSessionId() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.loadSession(sessionId: "session-1", aiTool: .codex))
+        XCTAssertEqual(lifecycle.state.activeSessionId, "session-1")
+
+        lifecycle.apply(.newSession)
+        XCTAssertEqual(lifecycle.state.phase, .active, "newSession 应保持 active 阶段")
+        XCTAssertNil(lifecycle.state.activeSessionId, "newSession 应清空 activeSessionId")
+    }
+
+    /// 验证 loadSession 在 active 阶段正确设置 activeSessionId。
+    func testStageLoadSessionSetsActiveSessionId() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+
+        lifecycle.apply(.loadSession(sessionId: "session-abc", aiTool: .opencode))
+        XCTAssertEqual(lifecycle.state.phase, .active)
+        XCTAssertEqual(lifecycle.state.activeSessionId, "session-abc")
+    }
+
+    /// 验证 loadSession 允许跨工具加载（更新 aiTool）。
+    func testStageLoadSessionCrossToolUpdatesAiTool() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+
+        lifecycle.apply(.loadSession(sessionId: "session-x", aiTool: .claude_code))
+        XCTAssertEqual(lifecycle.state.aiTool, .claude_code, "跨工具加载应更新 aiTool")
+        XCTAssertEqual(lifecycle.state.activeSessionId, "session-x")
+    }
+
+    /// 验证 acceptsSessionEvent 对 activeSessionId 匹配与 nil 的处理。
+    func testStageAcceptsSessionEvent() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+
+        // activeSessionId 为 nil 时接受任何 session event
+        XCTAssertTrue(lifecycle.acceptsSessionEvent(sessionId: "any-session"),
+                      "activeSessionId 为 nil 时应接受任意会话事件")
+
+        lifecycle.apply(.loadSession(sessionId: "session-1", aiTool: .codex))
+        XCTAssertTrue(lifecycle.acceptsSessionEvent(sessionId: "session-1"))
+        XCTAssertFalse(lifecycle.acceptsSessionEvent(sessionId: "session-2"),
+                       "不匹配的会话事件应被拒绝")
+    }
+
+    /// 验证重复 enter 相同上下文被忽略。
+    func testStageIgnoresDuplicateEnter() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+
+        let result = lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        XCTAssertEqual(result, .ignored, "相同上下文的重复 enter 应被忽略")
+        XCTAssertEqual(lifecycle.state.phase, .active, "阶段不应改变")
+    }
+
     private func makePlainMessage(id: String) -> AIChatMessage {
         AIChatMessage(
             messageId: id,

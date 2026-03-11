@@ -387,3 +387,30 @@ HTTP 读取接口：
 - `GET .../ai/context-snapshots`：读取跨工作区快照列表（支持 `?ai_tool=` 筛选）
 
 跨工作区引用：使用 `@@project-name` 语法后，注入对应项目已持久化的上下文快照（`context_summary` 与 `selection_hint`），不依赖当前运行状态。
+
+## AI 聊天舞台生命周期契约
+
+### 概述
+
+AI 聊天舞台（Chat Stage）是客户端 AI 聊天上下文的统一生命周期抽象。
+macOS 与 iOS 双端通过共享状态机（`AIChatStageLifecycle`）驱动所有状态迁移。
+
+### 舞台阶段
+
+- `idle`：无活跃聊天上下文
+- `entering`：正在加载会话列表、恢复快照
+- `active`：聊天上下文就绪，可收发消息
+- `resuming`：断线重连后恢复消息流
+- `closing`：保存快照、取消订阅（自动迁移到 idle）
+
+### 多工作区隔离约束
+
+1. 舞台状态按 `(project, workspace, ai_tool)` 三元组隔离。
+2. 工作区切换时 `WorkspaceViewStateMachine` 自动重置聊天舞台为 idle。
+3. 流式事件仅在 active/resuming 阶段且上下文三元组匹配时被接受。
+4. 客户端**不得**用 `session_id` 单键判断事件归属，必须同时校验 `(project, workspace, ai_tool)`。
+
+### 与订阅确认的关系
+
+- `ai_session_subscribe_ack` 到达后，客户端应将舞台从 entering 迁移到 active。
+- 如果 ack 到达时舞台已被 `close` 或 `forceReset`，ack 应被丢弃。

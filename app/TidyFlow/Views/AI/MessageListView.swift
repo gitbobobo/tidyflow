@@ -699,8 +699,9 @@ struct AIChatTranscriptContent: View {
             if showsStreamingFooter {
                 AIChatStreamingStatusFooter()
                     .padding(.horizontal, 24)
-                    .padding(.top, messages.isEmpty ? 0 : 6)
-                    .padding(.bottom, 10)
+                    .padding(.leading, 6)
+                    .padding(.top, messages.isEmpty ? 0 : 4)
+                    .padding(.bottom, 12)
                     .transition(.opacity)
             } else {
                 Color.clear

@@ -1263,3 +1263,50 @@ GET /api/v1/system/health
 2. 预算状态按 `project_name + workspace_name` 二维键存储，不同项目/工作区的预算独立计算。
 3. 显式选择（`selected_by=explicit`）不受预算触发的降级影响，保证用户意图优先。
 4. 降级记录只影响当前工作区的重试计数，不污染其它工作区状态。
+
+## AI 聊天舞台生命周期语义（v7.1）
+
+本节定义 AI 聊天舞台（Chat Stage）的统一生命周期契约，macOS 与 iOS 双端必须共享同一组状态迁移规则。
+
+### 聊天舞台阶段
+
+| 阶段 | 含义 | 允许的用户操作 |
+|------|------|----------------|
+| `idle` | 无活跃聊天上下文 | 进入聊天 |
+| `entering` | 正在加载会话列表、恢复快照 | 等待就绪 |
+| `active` | 聊天上下文就绪 | 发送消息、切换工具、切换会话、新建会话、关闭聊天 |
+| `resuming` | 断线重连后恢复消息流 | 等待恢复完成 |
+| `closing` | 保存快照、取消订阅 | 无（自动迁移到 idle） |
+
+### 状态迁移图
+
+```
+idle → entering → active ⇄ resuming
+                 ↓         ↓
+              closing → idle
+```
+
+- `enter`：idle/任意 → entering（上下文不同时重新进入）
+- `ready`：entering/resuming → active
+- `resume`：active/entering → resuming
+- `resumeCompleted`：resuming → active
+- `switchTool`：active/entering → entering（切换 aiTool）
+- `newSession`：active → active（清空 activeSessionId）
+- `loadSession`：active → active（设置 activeSessionId）
+- `close`：非 idle → closing → idle
+- `forceReset`：任意 → idle
+
+### 多工作区隔离规则
+
+1. 每个 `(project, workspace, aiTool)` 三元组拥有独立的舞台状态槽位。
+2. 切换工作区时必须先 `close` 当前舞台，再 `enter` 新工作区的舞台。
+3. 来自非活跃工作区的流式事件不得影响当前舞台状态。
+4. 断线重连后只恢复当前活跃工作区的聊天舞台，不自动恢复后台工作区。
+5. `WorkspaceViewStateMachine` 在工作区切换时自动重置 AI 聊天舞台状态。
+
+### 双端一致性约束
+
+1. macOS 和 iOS 必须通过 `AIChatStageLifecycle.apply(_:)` 驱动所有舞台状态迁移。
+2. 两端不得在视图层直接操作舞台 phase 字段或绕过状态机。
+3. 进入聊天、恢复快照、切换工具、新建会话、关闭聊天的事件序列必须相同。
+4. 流式事件的接受/拒绝判断通过 `acceptsStreamEvent(project:workspace:aiTool:)` 统一决策。

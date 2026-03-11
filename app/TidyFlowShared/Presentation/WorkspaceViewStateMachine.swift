@@ -27,6 +27,7 @@ public final class WorkspaceViewStateMachine: @unchecked Sendable {
     // MARK: - 状态迁移入口
 
     /// 应用输入事件并更新状态。返回迁移后的选中状态（可能为 nil）。
+    /// 工作区切换时自动重置 AI 聊天舞台状态，确保多工作区间不串台。
     /// - Returns: 迁移后的 `selected` 快照
     @discardableResult
     public func apply(_ input: WorkspaceViewStateInput) -> WorkspaceViewState? {
@@ -38,24 +39,50 @@ public final class WorkspaceViewStateMachine: @unchecked Sendable {
                 projectId: projectId,
                 isRestored: false
             )
+            if selected != next { resetAIChatStage() }
             selected = next
             return next
 
         case .restore(let projectName, let workspaceName):
-            // 恢复时不携带 UUID（iOS 场景），保留 isRestored 标记
             let next = WorkspaceViewState(
                 projectName: projectName,
                 workspaceName: workspaceName,
                 projectId: nil,
                 isRestored: true
             )
+            if selected != next { resetAIChatStage() }
             selected = next
             return next
 
         case .clear:
+            resetAIChatStage()
             selected = nil
             return nil
         }
+    }
+
+    // MARK: - AI 聊天舞台状态追踪
+
+    /// 当前工作区关联的 AI 聊天舞台阶段。
+    /// 跟随工作区切换自动重置为 idle，确保多工作区间不串台。
+    public private(set) var aiChatStagePhase: String = "idle"
+
+    /// 当前工作区关联的 AI 聊天舞台上下文键（`project::workspace::aiTool`）。
+    /// 为 nil 表示无活跃聊天舞台。
+    public private(set) var aiChatStageContextKey: String?
+
+    /// 更新 AI 聊天舞台阶段。调用方在 `AIChatStageLifecycle.apply()` 后
+    /// 应同步调用此方法，确保 `WorkspaceViewStateMachine` 始终持有最新舞台状态。
+    public func updateAIChatStage(phase: String, contextKey: String?) {
+        aiChatStagePhase = phase
+        aiChatStageContextKey = contextKey
+    }
+
+    /// 重置 AI 聊天舞台状态为 idle。
+    /// 在工作区切换、断开连接等场景中由状态机自动调用。
+    public func resetAIChatStage() {
+        aiChatStagePhase = "idle"
+        aiChatStageContextKey = nil
     }
 
     // MARK: - 查询接口

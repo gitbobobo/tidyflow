@@ -201,8 +201,9 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertNotEqual(loading, fallback)
     }
 
-    // MARK: - 5. 多工作区隔离
+    // MARK: - 5. 多工作区隔离（macOS 专属，GitCacheState 定义在 GitCacheState.swift）
 
+    #if os(macOS)
     func test_multiWorkspaceIsolation() {
         let cache = GitCacheState()
 
@@ -252,6 +253,7 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertEqual(snapshotA.currentBranch, "feature-a")
         XCTAssertEqual(snapshotB.currentBranch, "main")
     }
+    #endif
 
     // MARK: - 6. empty() 工厂
 
@@ -331,8 +333,9 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertEqual(snapshot.stagedItems.first?.path, "conflict.swift")
     }
 
-    // MARK: - 10. 多工作区下冲突向导缓存独立（WI-006）
+    // MARK: - 10. 多工作区下冲突向导缓存独立（WI-006，macOS 专属）
 
+    #if os(macOS)
     func test_conflictWizardCache_multiWorkspaceIsolation() {
         let state = GitCacheState()
 
@@ -375,4 +378,5 @@ final class GitPanelSemanticLayerTests: XCTestCase {
         XCTAssertEqual(wizardA.currentDetail?.oursContent, "a_ours")
         XCTAssertEqual(wizardB.currentDetail?.oursContent, "b_ours")
     }
+    #endif
 }

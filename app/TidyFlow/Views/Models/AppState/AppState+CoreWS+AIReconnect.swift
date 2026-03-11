@@ -59,6 +59,11 @@ extension AppState {
             return
         }
 
+        // 通知舞台状态机进入恢复阶段
+        if let sessionId = aiStore(for: aiChatTool).currentSessionId, !sessionId.isEmpty {
+            aiChatStageLifecycle.apply(.resume(sessionId: sessionId))
+        }
+
         _ = requestAISessionList(for: sessionPanelFilter, limit: Self.aiSessionListLimit, force: true)
 
         // 若某工具已有选中会话，则补拉详情，避免断线窗口内响应丢失导致空白。
@@ -81,6 +86,9 @@ extension AppState {
                 cacheMode: .forceRefresh
             )
         }
+
+        // 恢复完成后迁移到 active
+        aiChatStageLifecycle.apply(.resumeCompleted)
     }
 
     func handleSceneDidBecomeActive() {

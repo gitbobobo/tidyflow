@@ -393,6 +393,8 @@ class AppState: ObservableObject {
 
     // AI Chat 状态（按 ai_tool 分桶，当前工具上下文映射到这些兼容字段）
     private(set) var aiChatStore: AIChatStore = AIChatStore()
+    /// AI 聊天舞台生命周期状态机（双端共享契约，统一驱动进入/恢复/切换/关闭迁移）
+    let aiChatStageLifecycle = AIChatStageLifecycle()
     @Published var aiChatTool: AIChatTool = .opencode {
         didSet {
             guard oldValue != aiChatTool else { return }
@@ -930,6 +932,9 @@ class AppState: ObservableObject {
         if aiChatStore !== store {
             aiChatStore = store
         }
+
+        // 通知舞台状态机切换工具
+        aiChatStageLifecycle.apply(.switchTool(newTool: tool))
 
         aiSessions = aiSessionsByTool[tool] ?? []
         aiProviders = aiProvidersByTool[tool] ?? []

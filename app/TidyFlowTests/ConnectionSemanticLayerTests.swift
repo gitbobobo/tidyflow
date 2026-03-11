@@ -62,8 +62,9 @@ final class ConnectionSemanticLayerTests: XCTestCase {
         }
     }
 
-    // MARK: - legacyConnectionState 兼容导出
+    // MARK: - legacyConnectionState 兼容导出（macOS 专属，ConnectionState 定义在 TabModels.swift）
 
+    #if os(macOS)
     func testLegacyConnectionStateConnected() {
         XCTAssertEqual(ConnectionPhase.connected.legacyConnectionState, .connected)
     }
@@ -83,6 +84,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
             )
         }
     }
+    #endif
 
     // MARK: - iOS ReconnectState 兼容导出（仅 iOS 构建时运行）
 

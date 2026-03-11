@@ -409,6 +409,58 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertFalse(store.recentHistoryIsLoading)
     }
 
+    // MARK: - AI 聊天舞台生命周期与缓存隔离
+
+    /// 验证舞台 enter → ready 迁移后，工具切换（switchTool）正确重置上下文。
+    func testStageLifecycleEnterReadySwitchTool() {
+        let lifecycle = AIChatStageLifecycle()
+
+        let enterResult = lifecycle.apply(.enter(project: "proj-a", workspace: "ws-1", aiTool: .opencode))
+        XCTAssertNotEqual(enterResult, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .entering)
+        XCTAssertEqual(lifecycle.state.project, "proj-a")
+        XCTAssertEqual(lifecycle.state.aiTool, .opencode)
+
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        let switchResult = lifecycle.apply(.switchTool(newTool: .codex))
+        XCTAssertNotEqual(switchResult, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .entering)
+        XCTAssertEqual(lifecycle.state.aiTool, .codex)
+        XCTAssertNil(lifecycle.state.activeSessionId, "切换工具应清空 activeSessionId")
+    }
+
+    /// 验证舞台关闭后进入 idle，缓存不受影响。
+    func testStageLifecycleCloseTransitionsToIdle() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .claude_code))
+        lifecycle.apply(.ready)
+
+        lifecycle.apply(.close)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertEqual(lifecycle.state.project, "", "idle 状态应重置项目名")
+    }
+
+    /// 验证多工作区场景下，不同工作区的 enter 不会互相干扰。
+    func testStageLifecycleMultiWorkspaceIsolation() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "proj-a", workspace: "ws-1", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-1", aiTool: .opencode))
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-2", aiTool: .opencode),
+                       "不同工作区的流式事件应被拒绝")
+
+        // 切换到另一个工作区
+        lifecycle.apply(.close)
+        lifecycle.apply(.enter(project: "proj-a", workspace: "ws-2", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-1", aiTool: .opencode),
+                       "前一个工作区的流式事件应被拒绝")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-2", aiTool: .opencode))
+    }
+
     private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
         let toolStatus: AIToolStatus
         switch status {

@@ -1862,14 +1862,31 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = (
+					"AISelectorHTTPFailureHandlingTests.swift",
+					"AISessionVisibilityTests.swift",
+					"EvolutionAgentProfileNormalizationTests.swift",
+					"EvolutionControlStateMachineTests.swift",
+					"EvolutionLoopRoundAdjustmentTests.swift",
+					"EvolutionPerformanceRegressionTests.swift",
+					"EvolutionStageChatAvailabilityTests.swift",
+					"GitConflictWizardSemanticTests.swift",
+					"MainThreadReliefRegressionTests.swift",
+					"SwiftUIPerformanceProjectionTests.swift",
+					"TerminalSearchCoordinatorTests.swift",
+					"WorkspaceVisualSemanticsTests.swift",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_VERSION = 5.0;
-				GENERATE_INFOPLIST_FILE = YES;
+				"TARGETED_DEVICE_FAMILY[sdk=iphone*]" = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TidyFlow-Debug.app/Contents/MacOS/TidyFlow-Debug";
+				"TEST_HOST[sdk=iphone*]" = "$(BUILT_PRODUCTS_DIR)/TidyFlow.app/TidyFlow";
 			};
 			name = Debug;
 		};
@@ -1878,14 +1895,31 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = (
+					"AISelectorHTTPFailureHandlingTests.swift",
+					"AISessionVisibilityTests.swift",
+					"EvolutionAgentProfileNormalizationTests.swift",
+					"EvolutionControlStateMachineTests.swift",
+					"EvolutionLoopRoundAdjustmentTests.swift",
+					"EvolutionPerformanceRegressionTests.swift",
+					"EvolutionStageChatAvailabilityTests.swift",
+					"GitConflictWizardSemanticTests.swift",
+					"MainThreadReliefRegressionTests.swift",
+					"SwiftUIPerformanceProjectionTests.swift",
+					"TerminalSearchCoordinatorTests.swift",
+					"WorkspaceVisualSemanticsTests.swift",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_VERSION = 5.0;
-				GENERATE_INFOPLIST_FILE = YES;
+				"TARGETED_DEVICE_FAMILY[sdk=iphone*]" = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TidyFlow-Debug.app/Contents/MacOS/TidyFlow-Debug";
+				"TEST_HOST[sdk=iphone*]" = "$(BUILT_PRODUCTS_DIR)/TidyFlow.app/TidyFlow";
 			};
 			name = Release;
 		};

@@ -212,4 +212,46 @@ extension AppState {
         // 流结束后清理分片缓存
         codeCompletionChunks.removeValue(forKey: ev.requestId)
     }
+
+    // MARK: - AI 聊天舞台生命周期入口（macOS）
+
+    /// 进入 AI 聊天舞台。统一入口，macOS 在打开聊天页面或选中工作区时调用。
+    func enterAIChatStage(project: String, workspace: String) {
+        let result = aiChatStageLifecycle.apply(.enter(
+            project: project, workspace: workspace, aiTool: aiChatTool
+        ))
+        if case .transitioned = result {
+            TFLog.app.info(
+                "AI chat stage entered: project=\(project, privacy: .public), workspace=\(workspace, privacy: .public), tool=\(self.aiChatTool.rawValue, privacy: .public)"
+            )
+        }
+    }
+
+    /// AI 聊天舞台就绪（订阅确认已收到、消息加载完成）。
+    func markAIChatStageReady() {
+        aiChatStageLifecycle.apply(.ready)
+    }
+
+    /// 关闭 AI 聊天舞台。统一入口，macOS 在离开聊天页面或切换工作区时调用。
+    func closeAIChatStage() {
+        let result = aiChatStageLifecycle.apply(.close)
+        if case .transitioned = result {
+            TFLog.app.info("AI chat stage closed")
+        }
+    }
+
+    /// AI 聊天舞台加载已有会话。统一入口。
+    func loadSessionInStage(sessionId: String, aiTool: AIChatTool) {
+        aiChatStageLifecycle.apply(.loadSession(sessionId: sessionId, aiTool: aiTool))
+    }
+
+    /// AI 聊天舞台新建空会话。统一入口。
+    func newSessionInStage() {
+        aiChatStageLifecycle.apply(.newSession)
+    }
+
+    /// 判断当前舞台是否接受指定上下文的流式事件。
+    func aiChatStageAcceptsEvent(project: String, workspace: String, aiTool: AIChatTool) -> Bool {
+        aiChatStageLifecycle.acceptsStreamEvent(project: project, workspace: workspace, aiTool: aiTool)
+    }
 }
