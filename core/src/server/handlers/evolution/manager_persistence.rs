@@ -665,54 +665,6 @@ impl EvolutionManager {
     }
 }
 
-impl EvolutionManager {
-    /// 持久化学习状态到循环目录
-    pub(super) async fn persist_learning_state(
-        &self,
-        project: &str,
-        workspace: &str,
-        cycle_dir: &std::path::Path,
-    ) {
-        let key = super::profile::profile_key(project, workspace);
-        let stats_snapshot = if let Ok(store) = super::profile_control::learning_store().lock() {
-            store.get(&key).map(|state| {
-                let mut stage_summaries = Vec::new();
-                for (stage, stats) in &state.stage_stats {
-                    stage_summaries.push(serde_json::json!({
-                        "stage": stage,
-                        "success_count": stats.success_count,
-                        "failure_count": stats.failure_count,
-                        "success_rate": stats.success_rate(),
-                        "avg_duration_ms": stats.avg_duration_ms,
-                        "last_duration_ms": stats.last_duration_ms,
-                        "total_tool_calls": stats.total_tool_calls,
-                        "consecutive_failures": stats.consecutive_failures,
-                    }));
-                }
-                serde_json::json!({
-                    "profile_key": key,
-                    "stage_stats": stage_summaries,
-                    "has_safe_baseline": state.safe_baseline_profiles.is_some(),
-                    "baseline_recorded_at": state.baseline_recorded_at,
-                    "rollback_count": state.rollback_count,
-                    "persisted_at": chrono::Utc::now().to_rfc3339(),
-                })
-            })
-        } else {
-            None
-        };
-
-        if let Some(snapshot) = stats_snapshot {
-            let learning_file = cycle_dir.join("learning_state.json");
-            if let Ok(json_str) = serde_json::to_string_pretty(&snapshot) {
-                if let Err(e) = tokio::fs::write(&learning_file, json_str).await {
-                    tracing::warn!("persist learning state failed: {}", e);
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::utils::inject_stage_artifact_updated_at;

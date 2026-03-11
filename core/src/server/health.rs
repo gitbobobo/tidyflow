@@ -820,7 +820,7 @@ mod tests {
         let _serial = GATE_TEST_LOCK.lock().unwrap();
         // 创建一个独立的注册表来测试门禁裁决逻辑
         let decision = evaluate_gate_decision("proj", "ws", "cycle-1", 0);
-        use crate::server::protocol::health::{GateVerdict, SystemHealthStatus};
+        use crate::server::protocol::health::GateVerdict;
         // 没有注入 critical incident 时应通过或跳过
         assert!(
             decision.verdict == GateVerdict::Pass || decision.verdict == GateVerdict::Skip,

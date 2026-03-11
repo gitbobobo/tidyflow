@@ -171,18 +171,6 @@ pub(super) fn stage_profile_stage(stage: &str) -> Option<String> {
     None
 }
 
-// 自适应调度安全边界
-/// 并发上限最小值（自适应调度不得低于此值）
-pub(super) const ADAPTIVE_MIN_PARALLEL: u32 = 1;
-/// 并发上限最大值（自适应调度不得超过此值）
-pub(super) const ADAPTIVE_MAX_PARALLEL: u32 = 8;
-/// 自适应退避倍数上限
-pub(super) const ADAPTIVE_MAX_BACKOFF_MULTIPLIER: u32 = 4;
-/// 降级工作区最大数量（防止全部被降级）
-pub(super) const ADAPTIVE_MAX_DEGRADED_WORKSPACES: usize = 3;
-/// 延迟排队最大时长（秒）
-pub(super) const ADAPTIVE_MAX_DEFER_SECS: u64 = 300;
-
 pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
     match stage.trim() {
         "direction" => Some("direction.jsonc".to_string()),

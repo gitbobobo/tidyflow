@@ -10,7 +10,6 @@ pub(super) struct EvolutionState {
     pub(super) max_parallel_workspaces: u32,
     pub(super) seq_by_workspace: HashMap<String, u64>,
     pub(super) workspaces: HashMap<String, WorkspaceRunState>,
-    /// 自适应调度状态
     pub(super) adaptive: AdaptiveSchedulingState,
 }
 
@@ -71,60 +70,9 @@ pub(super) struct SnapshotResult {
     pub(super) workspace_items: Vec<EvolutionWorkspaceItem>,
 }
 
-/// 自适应调度决策记录
-///
-/// 记录调度器基于分析结果做出的每次调优动作，
-/// 包含原因、作用范围和安全边界，用于审计和回退。
-#[derive(Clone, Debug)]
-pub(super) struct AdaptiveDecision {
-    /// 决策类型
-    pub(super) kind: AdaptiveDecisionKind,
-    /// 机器可读原因
-    pub(super) reason: String,
-    /// 决策前的值
-    pub(super) previous_value: i64,
-    /// 决策后的值
-    pub(super) new_value: i64,
-    /// 安全下限
-    pub(super) safe_lower_bound: i64,
-    /// 安全上限
-    pub(super) safe_upper_bound: i64,
-    /// 决策时间（RFC3339）
-    pub(super) decided_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum AdaptiveDecisionKind {
-    /// 调整并发上限
-    ConcurrencyAdjusted,
-    /// 工作区降级（暂停）
-    WorkspaceDegraded,
-    /// 延迟排队（速率限制退避）
-    QueueDeferred,
-    /// 重试退避调整
-    BackoffAdjusted,
-    /// 回退到保守默认值
-    FallbackToDefault,
-}
-
 /// 自适应调度状态（挂在 EvolutionState 上）
 #[derive(Clone, Debug, Default)]
 pub(super) struct AdaptiveSchedulingState {
     /// 最近一次生效的并发上限（自适应调整后的值）
     pub(super) effective_max_parallel: Option<u32>,
-    /// 最近的决策历史（最多保留 20 条）
-    pub(super) recent_decisions: Vec<AdaptiveDecision>,
-    /// 被降级暂停的工作区键列表
-    pub(super) degraded_workspaces: HashSet<String>,
-    /// 延迟排队的工作区键及其恢复时间（RFC3339）
-    pub(super) deferred_workspaces: HashMap<String, String>,
-}
-
-impl AdaptiveSchedulingState {
-    pub(super) fn record_decision(&mut self, decision: AdaptiveDecision) {
-        self.recent_decisions.push(decision);
-        if self.recent_decisions.len() > 20 {
-            self.recent_decisions.remove(0);
-        }
-    }
 }

@@ -150,42 +150,6 @@ impl EvolutionManager {
         }
     }
 
-    /// 从已完成的会话执行中提取学习数据并馈送到参数自学习系统
-    pub(super) async fn feed_learning_from_execution(
-        &self,
-        key: &str,
-        stage: &str,
-        session_id: &str,
-    ) {
-        let state = self.state.lock().await;
-        let Some(entry) = state.workspaces.get(key) else {
-            return;
-        };
-        let Some(execution) = entry
-            .session_executions
-            .iter()
-            .rev()
-            .find(|item| item.stage == stage && item.session_id == session_id)
-        else {
-            return;
-        };
-        let success = execution.status == "done" || execution.status == "completed";
-        let duration_ms = execution.duration_ms;
-        let tool_calls = execution.tool_call_count;
-        let project = entry.project.clone();
-        let workspace = entry.workspace.clone();
-        drop(state);
-
-        self.record_learning_result(
-            &project,
-            &workspace,
-            stage,
-            success,
-            duration_ms,
-            tool_calls,
-        );
-    }
-
     pub(super) async fn stage_tool_call_count(&self, key: &str, stage: &str) -> u32 {
         let state = self.state.lock().await;
         state
