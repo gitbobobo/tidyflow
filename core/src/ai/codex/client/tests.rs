@@ -1,4 +1,5 @@
 use super::CodexAppServerClient;
+use serde_json::json;
 
 #[test]
 fn mode_priority_should_keep_default_then_plan_first() {
@@ -44,4 +45,101 @@ fn turn_start_reasoning_effort_invalid_values_are_rejected() {
             effort
         );
     }
+}
+
+#[test]
+fn parse_model_list_response_extracts_reasoning_effort_metadata() {
+    let response = json!({
+        "data": [
+            {
+                "id": "gpt-5-codex",
+                "model": "gpt-5-codex",
+                "displayName": "GPT-5 Codex",
+                "description": "适合代码任务",
+                "supportedReasoningEfforts": [
+                    { "reasoningEffort": "low", "description": "更快" },
+                    { "reasoningEffort": "high", "description": "更深入" }
+                ],
+                "defaultReasoningEffort": "high",
+                "inputModalities": ["text", "image"],
+                "isDefault": true
+            }
+        ]
+    });
+
+    let models =
+        CodexAppServerClient::parse_model_list_response(&response).expect("parse should succeed");
+    assert_eq!(models.len(), 1);
+    let model = &models[0];
+    assert_eq!(model.id, "gpt-5-codex");
+    assert_eq!(model.description.as_deref(), Some("适合代码任务"));
+    assert_eq!(
+        model
+            .supported_reasoning_efforts
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["low", "high"]
+    );
+    assert_eq!(model.default_reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(model.input_modalities, vec!["text", "image"]);
+    assert!(model.is_default);
+}
+
+#[test]
+fn apply_turn_start_overrides_sends_top_level_effort_without_collaboration_mode() {
+    let mut params = json!({
+        "threadId": "thread-1",
+        "input": []
+    });
+
+    CodexAppServerClient::apply_turn_start_overrides(
+        &mut params,
+        Some("gpt-5-codex".to_string()),
+        None,
+        Some("high".to_string()),
+        None,
+    );
+
+    assert_eq!(
+        params.get("model").and_then(|v| v.as_str()),
+        Some("gpt-5-codex")
+    );
+    assert_eq!(params.get("effort").and_then(|v| v.as_str()), Some("high"));
+    assert!(params.get("modelProvider").is_none());
+    assert!(params.get("collaborationMode").is_none());
+}
+
+#[test]
+fn apply_turn_start_overrides_keeps_collaboration_mode_but_omits_reasoning_effort_from_settings() {
+    let mut params = json!({
+        "threadId": "thread-1",
+        "input": []
+    });
+
+    CodexAppServerClient::apply_turn_start_overrides(
+        &mut params,
+        None,
+        Some("plan".to_string()),
+        Some("medium".to_string()),
+        Some("gpt-5-codex".to_string()),
+    );
+
+    assert_eq!(
+        params.get("model").and_then(|v| v.as_str()),
+        Some("gpt-5-codex")
+    );
+    assert_eq!(
+        params.get("effort").and_then(|v| v.as_str()),
+        Some("medium")
+    );
+    assert_eq!(
+        params
+            .pointer("/collaborationMode/settings/model")
+            .and_then(|v| v.as_str()),
+        Some("gpt-5-codex")
+    );
+    assert!(params
+        .pointer("/collaborationMode/settings/reasoning_effort")
+        .is_none());
 }

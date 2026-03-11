@@ -1,6 +1,71 @@
 use super::*;
 use async_trait::async_trait;
 
+impl CodexAppServerAgent {
+    async fn load_codex_models(&self) -> Result<Vec<CodexModelInfo>, String> {
+        self.client.ensure_started().await?;
+        self.client.model_list().await
+    }
+
+    async fn resolve_active_model(
+        &self,
+        directory: &str,
+        session_id: Option<&str>,
+        explicit_model: Option<&AiModelSelection>,
+    ) -> Result<Option<CodexModelInfo>, String> {
+        let models = self.load_codex_models().await?;
+        if models.is_empty() {
+            return Ok(None);
+        }
+
+        let hinted_model_id = if explicit_model.is_none() {
+            if let Some(session_id) = session_id {
+                self.session_selection_hint(directory, session_id)
+                    .await?
+                    .and_then(|hint| hint.model_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self::resolve_model_by_id(
+            &models,
+            explicit_model
+                .map(|model| model.model_id.as_str())
+                .or(hinted_model_id.as_deref()),
+        ))
+    }
+
+    async fn resolve_reasoning_effort_override(
+        &self,
+        directory: &str,
+        session_id: &str,
+        explicit_model: Option<&AiModelSelection>,
+        config_overrides: Option<&HashMap<String, AiSessionConfigValue>>,
+    ) -> Result<Option<String>, String> {
+        let requested = config_overrides
+            .and_then(|overrides| overrides.get("model_variant"))
+            .and_then(|value| value.as_str())
+            .and_then(Self::normalize_model_variant);
+        let Some(requested) = requested else {
+            return Ok(None);
+        };
+
+        let Some(model) = self
+            .resolve_active_model(directory, Some(session_id), explicit_model)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Self::model_variants(&model)
+            .into_iter()
+            .find(|candidate| candidate == &requested))
+    }
+}
+
 #[async_trait]
 impl AiAgent for CodexAppServerAgent {
     async fn start(&self) -> Result<(), String> {
@@ -81,7 +146,6 @@ impl AiAgent for CodexAppServerAgent {
                 session_id,
                 input.clone(),
                 model_id.clone(),
-                model_provider.clone(),
                 collaboration_mode.clone(),
                 None,
             )
@@ -101,14 +165,7 @@ impl AiAgent for CodexAppServerAgent {
                     );
                 }
                 self.client
-                    .turn_start(
-                        session_id,
-                        input,
-                        model_id,
-                        model_provider,
-                        collaboration_mode,
-                        None,
-                    )
+                    .turn_start(session_id, input, model_id, collaboration_mode, None)
                     .await?
             }
             Err(err) => return Err(err),
@@ -324,22 +381,13 @@ impl AiAgent for CodexAppServerAgent {
     }
 
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
-        self.client.ensure_started().await?;
-        let models = self.client.model_list().await?;
+        let models = self.load_codex_models().await?;
         Ok(Self::provider_from_models(models))
     }
 
-    async fn list_agents(&self, directory: &str) -> Result<Vec<AiAgentInfo>, String> {
-        let providers = self.list_providers(directory).await?;
-        let default_model_id = providers
-            .first()
-            .and_then(|p| {
-                p.models
-                    .iter()
-                    .find(|m| m.id == "default")
-                    .or_else(|| p.models.first())
-            })
-            .map(|m| m.id.clone());
+    async fn list_agents(&self, _directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+        let default_model_id =
+            Self::default_model(&self.load_codex_models().await?).map(|model| model.id);
 
         let agents = self.client.agent_list().await?;
         Ok(agents
@@ -512,41 +560,36 @@ impl AiAgent for CodexAppServerAgent {
             .await
     }
 
-    /// Codex 静态模型变体配置项，用于在未接收到动态配置时提供 reasoning_effort 选项。
     async fn list_session_config_options(
         &self,
-        _directory: &str,
-        _session_id: Option<&str>,
+        directory: &str,
+        session_id: Option<&str>,
     ) -> Result<Vec<AiSessionConfigOption>, String> {
-        Ok(vec![AiSessionConfigOption {
-            option_id: "model_variant".to_string(),
-            category: Some("model_variant".to_string()),
-            name: "模型变体".to_string(),
-            description: Some("控制 Codex 推理深度：low 快速，medium 均衡，high 深入".to_string()),
-            current_value: None,
-            options: vec![
-                AiSessionConfigOptionChoice {
-                    value: serde_json::json!("low"),
-                    label: "low".to_string(),
-                    description: None,
-                },
-                AiSessionConfigOptionChoice {
-                    value: serde_json::json!("medium"),
-                    label: "medium".to_string(),
-                    description: None,
-                },
-                AiSessionConfigOptionChoice {
-                    value: serde_json::json!("high"),
-                    label: "high".to_string(),
-                    description: None,
-                },
-            ],
-            option_groups: vec![],
-            raw: None,
-        }])
+        let models = self.load_codex_models().await?;
+        if models.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let hint = if let Some(session_id) = session_id {
+            self.session_selection_hint(directory, session_id).await?
+        } else {
+            None
+        };
+        let current_value = hint
+            .as_ref()
+            .and_then(|hint| hint.config_options.as_ref())
+            .and_then(|options| options.get("model_variant"));
+        let selected_model = Self::resolve_model_by_id(
+            &models,
+            hint.as_ref().and_then(|hint| hint.model_id.as_deref()),
+        );
+
+        Ok(selected_model
+            .and_then(|model| Self::build_model_variant_option(&model, current_value))
+            .into_iter()
+            .collect())
     }
 
-    /// 支持 config_overrides 的发送消息，提取 model_variant 并写入 reasoning_effort。
     async fn send_message_with_config(
         &self,
         directory: &str,
@@ -593,18 +636,17 @@ impl AiAgent for CodexAppServerAgent {
             }
         }
 
-        // 从 config_overrides 中提取 model_variant 作为 reasoning_effort
-        let reasoning_effort = config_overrides.as_ref().and_then(|overrides| {
-            overrides
-                .get("model_variant")
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| matches!(s.as_str(), "low" | "medium" | "high"))
-        });
+        let reasoning_effort = self
+            .resolve_reasoning_effort_override(
+                directory,
+                session_id,
+                model.as_ref(),
+                config_overrides.as_ref(),
+            )
+            .await?;
 
         let (model_id, model_provider) = Self::parse_model_selection(model);
         let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
-        // 将 config_overrides 中的 model_variant 回写到 outbound_hint，保证会话恢复后能复现
         let outbound_config_options = reasoning_effort.as_ref().map(|effort| {
             let mut map = HashMap::new();
             map.insert("model_variant".to_string(), serde_json::json!(effort));
@@ -622,7 +664,6 @@ impl AiAgent for CodexAppServerAgent {
                 session_id,
                 input.clone(),
                 model_id.clone(),
-                model_provider.clone(),
                 collaboration_mode.clone(),
                 reasoning_effort.clone(),
             )
@@ -646,7 +687,6 @@ impl AiAgent for CodexAppServerAgent {
                         session_id,
                         input,
                         model_id,
-                        model_provider,
                         collaboration_mode,
                         reasoning_effort,
                     )
@@ -657,6 +697,7 @@ impl AiAgent for CodexAppServerAgent {
         if outbound_hint.agent.is_some()
             || outbound_hint.model_provider_id.is_some()
             || outbound_hint.model_id.is_some()
+            || outbound_hint.config_options.is_some()
         {
             self.selection_hints
                 .lock()

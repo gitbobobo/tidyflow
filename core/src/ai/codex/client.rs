@@ -19,8 +19,17 @@ pub struct CodexModelInfo {
     pub id: String,
     pub model: String,
     pub display_name: String,
+    pub description: Option<String>,
     pub input_modalities: Vec<String>,
+    pub supported_reasoning_efforts: Vec<CodexReasoningEffortInfo>,
+    pub default_reasoning_effort: Option<String>,
     pub is_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexReasoningEffortInfo {
+    pub value: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -220,7 +229,6 @@ impl CodexAppServerClient {
         thread_id: &str,
         input: Vec<Value>,
         model_id: Option<String>,
-        model_provider: Option<String>,
         collaboration_mode: Option<String>,
         reasoning_effort: Option<String>,
     ) -> Result<String, String> {
@@ -229,48 +237,34 @@ impl CodexAppServerClient {
             "threadId": thread_id,
             "input": input
         });
-        if let Some(model_id) = explicit_model_id.clone() {
-            params["model"] = Value::String(model_id);
-        }
-        if let Some(provider) = model_provider {
-            params["modelProvider"] = Value::String(provider);
-        }
-        if let Some(mode) = collaboration_mode {
-            let mode_model = if let Some(model) = explicit_model_id.clone() {
-                model
-            } else {
-                match self.model_list().await {
-                    Ok(models) => models
+        let fallback_mode_model = if collaboration_mode.is_some() && explicit_model_id.is_none() {
+            match self.model_list().await {
+                Ok(models) => Some(
+                    models
                         .iter()
                         .find(|m| m.is_default && m.id != "default")
                         .or_else(|| models.iter().find(|m| m.id != "default"))
                         .map(|m| m.id.clone())
                         .unwrap_or_else(|| "default".to_string()),
-                    Err(err) => {
-                        warn!(
-                            "turn_start fallback model_list failed, use `default` for collaboration mode: {}",
-                            err
-                        );
-                        "default".to_string()
-                    }
+                ),
+                Err(err) => {
+                    warn!(
+                        "turn_start fallback model_list failed, use `default` for collaboration mode: {}",
+                        err
+                    );
+                    Some("default".to_string())
                 }
-            };
-            if explicit_model_id.is_none() && mode_model != "default" {
-                params["model"] = Value::String(mode_model.clone());
             }
-            let effort_value = reasoning_effort
-                .as_deref()
-                .map(Value::from)
-                .unwrap_or(Value::Null);
-            params["collaborationMode"] = serde_json::json!({
-                "mode": mode,
-                "settings": {
-                    "model": mode_model,
-                    "reasoning_effort": effort_value,
-                    "developer_instructions": null
-                }
-            });
-        }
+        } else {
+            None
+        };
+        Self::apply_turn_start_overrides(
+            &mut params,
+            explicit_model_id,
+            collaboration_mode,
+            reasoning_effort,
+            fallback_mode_model,
+        );
 
         let result = self
             .manager
@@ -303,6 +297,10 @@ impl CodexAppServerClient {
             .manager
             .send_request("model/list", Some(serde_json::json!({})))
             .await?;
+        Self::parse_model_list_response(&result)
+    }
+
+    fn parse_model_list_response(result: &Value) -> Result<Vec<CodexModelInfo>, String> {
         let data = result
             .get("data")
             .and_then(|v| v.as_array())
@@ -322,15 +320,18 @@ impl CodexAppServerClient {
                 .and_then(|v| v.as_str())
                 .unwrap_or(&model)
                 .to_string();
-            let input_modalities = row
-                .get("inputModalities")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|it| it.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
+            let description = row
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let input_modalities = Self::parse_input_modalities(row);
+            let supported_reasoning_efforts = Self::parse_supported_reasoning_efforts(row);
+            let default_reasoning_effort = Self::parse_reasoning_effort_token(
+                row.get("defaultReasoningEffort")
+                    .or_else(|| row.get("default_reasoning_effort")),
+            );
             let is_default = row
                 .get("isDefault")
                 .and_then(|v| v.as_bool())
@@ -340,11 +341,105 @@ impl CodexAppServerClient {
                 id: id.to_string(),
                 model,
                 display_name,
+                description,
                 input_modalities,
+                supported_reasoning_efforts,
+                default_reasoning_effort,
                 is_default,
             });
         }
         Ok(models)
+    }
+
+    fn parse_input_modalities(row: &Value) -> Vec<String> {
+        row.get("inputModalities")
+            .or_else(|| row.get("input_modalities"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| it.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn parse_supported_reasoning_efforts(row: &Value) -> Vec<CodexReasoningEffortInfo> {
+        let Some(items) = row
+            .get("supportedReasoningEfforts")
+            .or_else(|| row.get("supported_reasoning_efforts"))
+            .and_then(|v| v.as_array())
+        else {
+            return Vec::new();
+        };
+
+        let mut efforts = Vec::new();
+        for item in items {
+            let Some(value) = Self::parse_reasoning_effort_token(
+                item.get("reasoningEffort")
+                    .or_else(|| item.get("reasoning_effort"))
+                    .or(Some(item)),
+            ) else {
+                continue;
+            };
+            if efforts
+                .iter()
+                .any(|existing: &CodexReasoningEffortInfo| existing.value == value)
+            {
+                continue;
+            }
+            let description = item
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            efforts.push(CodexReasoningEffortInfo { value, description });
+        }
+        efforts
+    }
+
+    fn parse_reasoning_effort_token(value: Option<&Value>) -> Option<String> {
+        match value {
+            Some(Value::String(text)) => {
+                let normalized = text.trim().to_lowercase();
+                if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_turn_start_overrides(
+        params: &mut Value,
+        explicit_model_id: Option<String>,
+        collaboration_mode: Option<String>,
+        reasoning_effort: Option<String>,
+        fallback_mode_model: Option<String>,
+    ) {
+        if let Some(model_id) = explicit_model_id.clone() {
+            params["model"] = Value::String(model_id);
+        }
+        if let Some(effort) = reasoning_effort {
+            params["effort"] = Value::String(effort);
+        }
+        if let Some(mode) = collaboration_mode {
+            let mode_model = explicit_model_id
+                .or(fallback_mode_model)
+                .unwrap_or_else(|| "default".to_string());
+            if params.get("model").is_none() && mode_model != "default" {
+                params["model"] = Value::String(mode_model.clone());
+            }
+            params["collaborationMode"] = serde_json::json!({
+                "mode": mode,
+                "settings": {
+                    "model": mode_model,
+                    "developer_instructions": null
+                }
+            });
+        }
     }
 
     pub async fn agent_list(&self) -> Result<Vec<CodexAgentInfo>, String> {

@@ -1,4 +1,5 @@
 use super::CodexAppServerAgent;
+use crate::ai::codex::client::{CodexModelInfo, CodexReasoningEffortInfo};
 use crate::ai::{AiQuestionInfo, AiQuestionRequest};
 use std::collections::HashMap;
 
@@ -448,6 +449,89 @@ fn map_item_to_part_maps_list_with_title_and_output_only() {
             .and_then(|v| v.as_object())
             .map(|m| m.len()),
         Some(0)
+    );
+}
+
+#[test]
+fn provider_from_models_maps_reasoning_efforts_to_variants() {
+    let providers = CodexAppServerAgent::provider_from_models(vec![CodexModelInfo {
+        id: "gpt-5-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
+        display_name: "GPT-5 Codex".to_string(),
+        description: Some("适合代码任务".to_string()),
+        input_modalities: vec!["text".to_string()],
+        supported_reasoning_efforts: vec![
+            CodexReasoningEffortInfo {
+                value: "low".to_string(),
+                description: Some("更快".to_string()),
+            },
+            CodexReasoningEffortInfo {
+                value: "high".to_string(),
+                description: Some("更深入".to_string()),
+            },
+        ],
+        default_reasoning_effort: Some("high".to_string()),
+        is_default: true,
+    }]);
+
+    let variants = &providers[0].models[0].variants;
+    assert_eq!(variants, &vec!["low".to_string(), "high".to_string()]);
+}
+
+#[test]
+fn build_model_variant_option_prefers_hint_then_default() {
+    let model = CodexModelInfo {
+        id: "gpt-5-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
+        display_name: "GPT-5 Codex".to_string(),
+        description: Some("适合代码任务".to_string()),
+        input_modalities: vec!["text".to_string()],
+        supported_reasoning_efforts: vec![
+            CodexReasoningEffortInfo {
+                value: "low".to_string(),
+                description: Some("更快".to_string()),
+            },
+            CodexReasoningEffortInfo {
+                value: "medium".to_string(),
+                description: Some("均衡".to_string()),
+            },
+        ],
+        default_reasoning_effort: Some("medium".to_string()),
+        is_default: true,
+    };
+
+    let option =
+        CodexAppServerAgent::build_model_variant_option(&model, Some(&serde_json::json!("low")))
+            .expect("option should exist");
+    assert_eq!(option.current_value, Some(serde_json::json!("low")));
+
+    let fallback = CodexAppServerAgent::build_model_variant_option(&model, None)
+        .expect("default option should exist");
+    assert_eq!(fallback.current_value, Some(serde_json::json!("medium")));
+    assert_eq!(fallback.options.len(), 2);
+    assert_eq!(fallback.options[0].description.as_deref(), Some("更快"));
+}
+
+#[test]
+fn selection_hint_from_thread_payload_maps_reasoning_effort_to_model_variant() {
+    let payload = serde_json::json!({
+        "thread": {
+            "model": "gpt-5-codex",
+            "modelProvider": "openai",
+            "reasoningEffort": "medium"
+        }
+    });
+
+    let hint = CodexAppServerAgent::selection_hint_from_thread_payload(&payload)
+        .expect("hint should exist");
+    assert_eq!(hint.model_id.as_deref(), Some("gpt-5-codex"));
+    assert_eq!(hint.model_provider_id.as_deref(), Some("openai"));
+    assert_eq!(
+        hint.config_options
+            .as_ref()
+            .and_then(|options| options.get("model_variant"))
+            .and_then(|value| value.as_str()),
+        Some("medium")
     );
 }
 

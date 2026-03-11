@@ -167,6 +167,127 @@ impl CodexAppServerAgent {
         }
     }
 
+    pub(super) fn normalize_model_variant(value: &str) -> Option<String> {
+        let normalized = value.trim().to_lowercase();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    pub(super) fn default_model(models: &[CodexModelInfo]) -> Option<CodexModelInfo> {
+        models
+            .iter()
+            .find(|m| m.is_default)
+            .or_else(|| models.first())
+            .cloned()
+    }
+
+    pub(super) fn resolve_model_by_id(
+        models: &[CodexModelInfo],
+        model_id: Option<&str>,
+    ) -> Option<CodexModelInfo> {
+        let selected = model_id
+            .map(str::trim)
+            .filter(|candidate| !candidate.is_empty())
+            .and_then(|candidate| {
+                models
+                    .iter()
+                    .find(|m| {
+                        m.id.eq_ignore_ascii_case(candidate)
+                            || m.model.eq_ignore_ascii_case(candidate)
+                    })
+                    .cloned()
+            });
+        selected.or_else(|| Self::default_model(models))
+    }
+
+    pub(super) fn model_variants(model: &CodexModelInfo) -> Vec<String> {
+        let mut variants = Vec::new();
+        for effort in &model.supported_reasoning_efforts {
+            if !variants.contains(&effort.value) {
+                variants.push(effort.value.clone());
+            }
+        }
+        if variants.is_empty() {
+            if let Some(default_effort) = model
+                .default_reasoning_effort
+                .as_deref()
+                .and_then(Self::normalize_model_variant)
+            {
+                variants.push(default_effort);
+            }
+        }
+        variants
+    }
+
+    pub(super) fn resolve_model_variant_current_value(
+        model: &CodexModelInfo,
+        requested_value: Option<&serde_json::Value>,
+    ) -> Option<String> {
+        let allowed = Self::model_variants(model);
+        if allowed.is_empty() {
+            return None;
+        }
+
+        requested_value
+            .and_then(|value| value.as_str())
+            .and_then(Self::normalize_model_variant)
+            .filter(|value| allowed.iter().any(|candidate| candidate == value))
+            .or_else(|| {
+                model
+                    .default_reasoning_effort
+                    .as_deref()
+                    .and_then(Self::normalize_model_variant)
+                    .filter(|value| allowed.iter().any(|candidate| candidate == value))
+            })
+    }
+
+    pub(super) fn build_model_variant_option(
+        model: &CodexModelInfo,
+        current_value: Option<&serde_json::Value>,
+    ) -> Option<AiSessionConfigOption> {
+        let variants = Self::model_variants(model);
+        if variants.is_empty() {
+            return None;
+        }
+
+        let options = variants
+            .iter()
+            .map(|variant| {
+                let description = model
+                    .supported_reasoning_efforts
+                    .iter()
+                    .find(|effort| effort.value == *variant)
+                    .and_then(|effort| effort.description.clone());
+                AiSessionConfigOptionChoice {
+                    value: serde_json::json!(variant),
+                    label: variant.clone(),
+                    description,
+                }
+            })
+            .collect();
+
+        Some(AiSessionConfigOption {
+            option_id: "model_variant".to_string(),
+            category: Some("model_variant".to_string()),
+            name: "模型变体".to_string(),
+            description: Some(
+                model
+                    .description
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| format!("控制 {} 的推理深度。", model.display_name)),
+            ),
+            current_value: Self::resolve_model_variant_current_value(model, current_value)
+                .map(serde_json::Value::String),
+            options,
+            option_groups: vec![],
+            raw: None,
+        })
+    }
+
     pub(super) fn parse_collaboration_mode(agent: Option<&str>) -> Option<String> {
         let normalized = agent?.trim().to_lowercase();
         if normalized.is_empty() {
@@ -681,7 +802,7 @@ impl CodexAppServerAgent {
                     .input_modalities
                     .iter()
                     .any(|modality| modality.eq_ignore_ascii_case("image")),
-                variants: vec![],
+                variants: Self::model_variants(&m),
             })
             .collect::<Vec<_>>();
         vec![AiProviderInfo {

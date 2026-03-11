@@ -105,13 +105,13 @@ pub(super) fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSess
     );
     let config_options: Option<HashMap<String, serde_json::Value>> =
         reasoning_effort.and_then(|effort| {
-                let normalized = effort.trim().to_lowercase();
-                if matches!(normalized.as_str(), "low" | "medium" | "high") {
-                    let mut map = HashMap::new();
-                    map.insert("model_variant".to_string(), json!(normalized));
-                    Some(map)
-                } else {
-                    None
+            let normalized = effort.trim().to_lowercase();
+            if normalized.is_empty() {
+                None
+            } else {
+                let mut map = HashMap::new();
+                map.insert("model_variant".to_string(), json!(normalized));
+                Some(map)
             }
         });
 
