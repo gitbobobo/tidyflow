@@ -20,8 +20,12 @@ extension WSClient {
             )
             onSystemSnapshot?(cacheMetrics)
             onObservabilitySnapshot?(observability)
-            // 工作区恢复状态摘要：从 workspace_items 提取，按 (project, workspace) 隔离
+            // 工作区恢复状态与 Evolution 摘要：从 workspace_items 提取，按 (project, workspace) 隔离
             if let workspaceItems = json["workspace_items"] as? [[String: Any]] {
+                let evolutionSummaries = workspaceItems.compactMap {
+                    SystemSnapshotEvolutionWorkspaceSummary.from(workspaceItem: $0)
+                }
+                onEvolutionWorkspaceSummaries?(evolutionSummaries)
                 let recoverySummaries = workspaceItems.compactMap { item -> WorkspaceRecoverySummary? in
                     guard let project = item["project"] as? String,
                           let workspace = item["workspace"] as? String

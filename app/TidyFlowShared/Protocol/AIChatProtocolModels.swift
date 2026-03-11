@@ -3356,3 +3356,74 @@ public struct SystemSnapshotCacheMetrics {
         self.index = index
     }
 }
+
+/// system_snapshot workspace_items 中的 Evolution 摘要。
+/// 仅承载工作区级摘要，不包含 agent/execution 细节。
+public struct SystemSnapshotEvolutionWorkspaceSummary: Equatable {
+    public let project: String
+    public let workspace: String
+    public let status: String
+    public let cycleID: String?
+    public let title: String?
+    public let failureReason: String?
+
+    public static func from(workspaceItem json: [String: Any]) -> SystemSnapshotEvolutionWorkspaceSummary? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let status = json["evolution_status"] as? String else {
+            return nil
+        }
+        return SystemSnapshotEvolutionWorkspaceSummary(
+            project: project,
+            workspace: workspace,
+            status: status,
+            cycleID: parseOptionalString(json["evolution_cycle_id"]),
+            title: parseOptionalString(json["title"]),
+            failureReason: parseOptionalString(json["failure_reason"])
+        )
+    }
+
+    public func toWorkspaceItem(
+        preserving existing: EvolutionWorkspaceItemV2?
+    ) -> EvolutionWorkspaceItemV2 {
+        let normalizedCycleID = cycleID ?? ""
+        let canPreserveDetail = !normalizedCycleID.isEmpty && existing?.cycleID == normalizedCycleID
+        return EvolutionWorkspaceItemV2(
+            project: project,
+            workspace: workspace,
+            cycleID: normalizedCycleID,
+            title: title,
+            status: status,
+            currentStage: canPreserveDetail ? (existing?.currentStage ?? "") : "",
+            globalLoopRound: canPreserveDetail ? (existing?.globalLoopRound ?? 0) : 0,
+            loopRoundLimit: canPreserveDetail ? (existing?.loopRoundLimit ?? 1) : 1,
+            verifyIteration: canPreserveDetail ? (existing?.verifyIteration ?? 0) : 0,
+            verifyIterationLimit: canPreserveDetail ? (existing?.verifyIterationLimit ?? 0) : 0,
+            agents: canPreserveDetail ? (existing?.agents ?? []) : [],
+            executions: canPreserveDetail ? (existing?.executions ?? []) : [],
+            terminalReasonCode: nil,
+            terminalErrorMessage: failureReason,
+            rateLimitErrorMessage: nil,
+            startedAt: canPreserveDetail ? existing?.startedAt : nil,
+            durationMs: canPreserveDetail ? existing?.durationMs : nil,
+            errorCode: canPreserveDetail ? existing?.errorCode : nil,
+            retryable: canPreserveDetail ? (existing?.retryable ?? false) : false
+        )
+    }
+
+    public init(
+        project: String,
+        workspace: String,
+        status: String,
+        cycleID: String?,
+        title: String?,
+        failureReason: String?
+    ) {
+        self.project = project
+        self.workspace = workspace
+        self.status = status
+        self.cycleID = cycleID
+        self.title = title
+        self.failureReason = failureReason
+    }
+}

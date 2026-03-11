@@ -373,6 +373,110 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
         XCTAssertTrue(scheduledRequests.isEmpty, "分析投影更新不应触发 snapshot fallback")
     }
 
+    func testSystemEvolutionSummariesSeedWorkspaceItems() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        appState.handleSystemEvolutionWorkspaceSummaries([
+            SystemSnapshotEvolutionWorkspaceSummary(
+                project: "proj",
+                workspace: "ws",
+                status: "running",
+                cycleID: "cycle-1",
+                title: "Cycle",
+                failureReason: nil
+            ),
+            SystemSnapshotEvolutionWorkspaceSummary(
+                project: "proj",
+                workspace: "ws-2",
+                status: "failed",
+                cycleID: "cycle-2",
+                title: "Cycle 2",
+                failureReason: "boom"
+            )
+        ])
+
+        waitForEvolutionAsyncWork()
+
+        XCTAssertEqual(appState.evolutionWorkspaceItems.count, 2)
+        XCTAssertEqual(appState.evolutionItem(project: "proj", workspace: "ws")?.cycleID, "cycle-1")
+        XCTAssertEqual(appState.evolutionItem(project: "proj", workspace: "ws")?.agents.count, 0)
+        XCTAssertEqual(
+            appState.evolutionItem(project: "proj", workspace: "ws-2")?.terminalErrorMessage,
+            "boom"
+        )
+    }
+
+    func testSystemEvolutionSummariesPreserveDetailForSameCycle() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let detailed = EvolutionWorkspaceItemV2(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            title: "Old",
+            status: "running",
+            currentStage: "implement.general.1",
+            globalLoopRound: 2,
+            loopRoundLimit: 3,
+            verifyIteration: 1,
+            verifyIterationLimit: 5,
+            agents: [
+                EvolutionAgentInfoV2(
+                    stage: "implement.general.1",
+                    agent: "ImplementAgent",
+                    status: "running",
+                    toolCallCount: 3,
+                    startedAt: "2026-03-11T00:00:00Z",
+                    durationMs: nil
+                )
+            ],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.1",
+                    agent: "ImplementAgent",
+                    aiTool: "codex",
+                    sessionID: "sess-1",
+                    status: "running",
+                    startedAt: "2026-03-11T00:00:00Z",
+                    completedAt: nil,
+                    durationMs: nil,
+                    toolCallCount: 3
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+        appState.replaceEvolutionWorkspaceItems([detailed])
+
+        appState.handleSystemEvolutionWorkspaceSummaries([
+            SystemSnapshotEvolutionWorkspaceSummary(
+                project: "proj",
+                workspace: "ws",
+                status: "running",
+                cycleID: "cycle-1",
+                title: "Cycle",
+                failureReason: nil
+            )
+        ])
+
+        waitForEvolutionAsyncWork()
+
+        let updated = appState.evolutionItem(project: "proj", workspace: "ws")
+        XCTAssertEqual(updated?.title, "Cycle")
+        XCTAssertEqual(updated?.currentStage, "implement.general.1")
+        XCTAssertEqual(updated?.agents.count, 1)
+        XCTAssertEqual(updated?.executions.count, 1)
+    }
+
     private func waitForEvolutionAsyncWork() {
         let exp = expectation(description: "等待 Evolution 异步更新完成")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {

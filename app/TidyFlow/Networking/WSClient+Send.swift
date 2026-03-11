@@ -1157,7 +1157,16 @@ extension WSClient {
                 case let .evolutionWorkspace(project, workspace):
                     let snapshotPath = "/api/v1/evolution/snapshot"
                     let workspacePrefix = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
-                    return key.path == snapshotPath || key.path.hasPrefix(workspacePrefix)
+                    if key.path == snapshotPath {
+                        let projectMatch = key.queryItems.contains {
+                            $0.name == "project" && $0.value == project
+                        }
+                        let workspaceMatch = key.queryItems.contains {
+                            $0.name == "workspace" && $0.value == workspace
+                        }
+                        return projectMatch && workspaceMatch
+                    }
+                    return key.path.hasPrefix(workspacePrefix)
                 case let .evidenceWorkspace(project, workspace):
                     let prefix = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
                     return key.path.hasPrefix(prefix)

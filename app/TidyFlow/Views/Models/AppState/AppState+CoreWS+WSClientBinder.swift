@@ -33,7 +33,6 @@ extension AppState {
                 self.wsClient.requestListProjects(cacheMode: .forceRefresh)
                 self.wsClient.requestGetClientSettings(cacheMode: .forceRefresh)
                 self.reloadAISessionDataAfterReconnect()
-                self.wsClient.requestEvoSnapshot(cacheMode: .forceRefresh)
                 self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连后尝试附着已有终端会话
                 self.requestTerminalReattach()
@@ -90,6 +89,11 @@ extension AppState {
             guard let self else { return }
             self.fileCache.updateCacheMetrics(metrics)
             self.gitCache.updateCacheMetrics(metrics)
+        }
+
+        // 工作区 Evolution 摘要：由 system_snapshot 驱动种子/更新工作区运行态摘要
+        wsClient.onEvolutionWorkspaceSummaries = { [weak self] summaries in
+            self?.handleSystemEvolutionWorkspaceSummaries(summaries)
         }
 
         // v1.42: 统一可观测性快照 — 更新共享观测状态，双端统一消费

@@ -979,6 +979,11 @@ final class MobileAppState: ObservableObject {
         wsClient.requestEvoListCycleHistory(project: project, workspace: normalizedWorkspace)
     }
 
+    func requestEvolutionSnapshot(project: String? = nil, workspace: String? = nil) {
+        let normalizedWorkspace = workspace.map { normalizeEvolutionWorkspaceName($0) }
+        wsClient.requestEvoSnapshot(project: project, workspace: normalizedWorkspace)
+    }
+
     func workspacesForProject(_ project: String) -> [WorkspaceInfo] {
         workspacesByProject[project] ?? []
     }
@@ -4226,7 +4231,6 @@ final class MobileAppState: ObservableObject {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
-                self.wsClient.requestEvoSnapshot(cacheMode: .forceRefresh)
                 self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
                 self.reattachTerminalIfNeeded()
@@ -4313,6 +4317,13 @@ final class MobileAppState: ObservableObject {
         // 工作区缓存可观测性快照：更新 Core 权威指标（语义与 macOS 对齐）
         wsClient.onSystemSnapshot = { [weak self] metrics in
             self?.workspaceCacheMetrics = metrics
+        }
+
+        // 工作区 Evolution 摘要：由 system_snapshot 驱动种子/更新工作区运行态摘要
+        wsClient.onEvolutionWorkspaceSummaries = { [weak self] summaries in
+            DispatchQueue.main.async {
+                self?.handleSystemEvolutionWorkspaceSummaries(summaries)
+            }
         }
 
         // v1.42: 统一可观测性快照 — 与 macOS 使用同一套共享模型

@@ -125,6 +125,9 @@ final class MobileAppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandle
     }
 
     func handleEvolutionPulse() { dispatchToMain { $0.handleEvolutionPulse() } }
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) {
+        dispatchToMain { $0.handleEvolutionWorkspaceStatusEvent(ev) }
+    }
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { dispatchToMain { $0.handleEvolutionSnapshot(snapshot) } }
     func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) { dispatchToMain { $0.handleEvolutionCycleUpdated(ev) } }
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { dispatchToMain { $0.handleEvolutionAgentProfile(ev) } }

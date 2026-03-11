@@ -418,7 +418,65 @@ extension MobileAppState {
     // MARK: - Evolution
 
     func handleEvolutionPulse() {
-        wsClient.requestEvoSnapshot()
+        if let selectedWorkspaceIdentity {
+            requestEvolutionSnapshot(
+                project: selectedWorkspaceIdentity.projectName,
+                workspace: selectedWorkspaceIdentity.workspaceName
+            )
+        } else {
+            requestEvolutionSnapshot()
+        }
+    }
+
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) {
+        let workspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        let key = globalWorkspaceKey(project: ev.project, workspace: workspace)
+        guard let existingIndex = evolutionWorkspaceItems.firstIndex(where: { item in
+            globalWorkspaceKey(project: item.project, workspace: normalizeEvolutionWorkspaceName(item.workspace)) == key
+        }) else {
+            requestEvolutionSnapshot(project: ev.project, workspace: workspace)
+            return
+        }
+
+        let existing = evolutionWorkspaceItems[existingIndex]
+        let shouldFallback: Bool
+        switch ev.kind {
+        case .started, .resumed:
+            shouldFallback = existing.cycleID != ev.cycleID
+        case .stageChanged:
+            shouldFallback = existing.cycleID != ev.cycleID || (ev.currentStage?.isEmpty ?? true)
+        case .stopped:
+            shouldFallback = false
+        }
+        if shouldFallback {
+            requestEvolutionSnapshot(project: ev.project, workspace: workspace)
+            return
+        }
+
+        let updated = EvolutionWorkspaceItemV2(
+            project: existing.project,
+            workspace: existing.workspace,
+            cycleID: ev.cycleID,
+            title: existing.title,
+            status: ev.status ?? existing.status,
+            currentStage: ev.currentStage ?? existing.currentStage,
+            globalLoopRound: existing.globalLoopRound,
+            loopRoundLimit: existing.loopRoundLimit,
+            verifyIteration: ev.verifyIteration ?? existing.verifyIteration,
+            verifyIterationLimit: existing.verifyIterationLimit,
+            agents: existing.agents,
+            executions: existing.executions,
+            terminalReasonCode: existing.terminalReasonCode,
+            terminalErrorMessage: existing.terminalErrorMessage,
+            rateLimitErrorMessage: existing.rateLimitErrorMessage,
+            startedAt: existing.startedAt,
+            durationMs: existing.durationMs,
+            errorCode: existing.errorCode,
+            retryable: existing.retryable
+        )
+        if evolutionWorkspaceItems[existingIndex] != updated {
+            evolutionWorkspaceItems[existingIndex] = updated
+        }
     }
 
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
@@ -443,7 +501,7 @@ extension MobileAppState {
         guard let existingIndex = evolutionWorkspaceItems.firstIndex(where: { item in
             globalWorkspaceKey(project: item.project, workspace: normalizeEvolutionWorkspaceName(item.workspace)) == key
         }) else {
-            wsClient.requestEvoSnapshot()
+            requestEvolutionSnapshot(project: ev.project, workspace: workspace)
             return
         }
 
@@ -474,6 +532,37 @@ extension MobileAppState {
         }
         if ev.status != "interrupted" {
             evolutionPendingActionByWorkspace.removeValue(forKey: key)
+        }
+    }
+
+    func handleSystemEvolutionWorkspaceSummaries(
+        _ summaries: [SystemSnapshotEvolutionWorkspaceSummary]
+    ) {
+        let existingByKey = Dictionary(
+            uniqueKeysWithValues: evolutionWorkspaceItems.map {
+                (globalWorkspaceKey(project: $0.project, workspace: normalizeEvolutionWorkspaceName($0.workspace)), $0)
+            }
+        )
+        let items = summaries
+            .map { summary in
+                let workspace = normalizeEvolutionWorkspaceName(summary.workspace)
+                let key = globalWorkspaceKey(project: summary.project, workspace: workspace)
+                let normalizedSummary = SystemSnapshotEvolutionWorkspaceSummary(
+                    project: summary.project,
+                    workspace: workspace,
+                    status: summary.status,
+                    cycleID: summary.cycleID,
+                    title: summary.title,
+                    failureReason: summary.failureReason
+                )
+                return normalizedSummary.toWorkspaceItem(preserving: existingByKey[key])
+            }
+            .sorted { ($0.project, $0.workspace) < ($1.project, $1.workspace) }
+        if evolutionWorkspaceItems != items {
+            evolutionWorkspaceItems = items
+        }
+        for item in items where item.status != "interrupted" {
+            evolutionPendingActionByWorkspace.removeValue(forKey: item.workspaceKey)
         }
     }
 

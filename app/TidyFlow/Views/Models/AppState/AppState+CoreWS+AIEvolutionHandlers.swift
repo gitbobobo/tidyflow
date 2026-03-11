@@ -935,6 +935,44 @@ extension AppState {
         }
     }
 
+    /// 使用 system_snapshot 的 Evolution 摘要更新工作区列表，避免重连后重复拉取 evo_snapshot。
+    func handleSystemEvolutionWorkspaceSummaries(
+        _ summaries: [SystemSnapshotEvolutionWorkspaceSummary]
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.assertEvolutionStateAccessOnMainThread()
+            let existingByKey = self.evolutionWorkspaceItemIndexByKey
+            let items = summaries
+                .map { summary in
+                    let workspace = self.normalizeEvolutionWorkspaceName(summary.workspace)
+                    let key = self.globalWorkspaceKey(projectName: summary.project, workspaceName: workspace)
+                    let normalizedSummary = SystemSnapshotEvolutionWorkspaceSummary(
+                        project: summary.project,
+                        workspace: workspace,
+                        status: summary.status,
+                        cycleID: summary.cycleID,
+                        title: summary.title,
+                        failureReason: summary.failureReason
+                    )
+                    return normalizedSummary.toWorkspaceItem(preserving: existingByKey[key])
+                }
+                .sorted { ($0.project, $0.workspace) < ($1.project, $1.workspace) }
+
+            self.replaceEvolutionWorkspaceItems(items)
+            for item in items {
+                let key = item.workspaceKey
+                if let pendingAction = self.evolutionPendingActionByWorkspace[key],
+                   EvolutionControlCapability.shouldClearPendingAction(
+                    pendingAction,
+                    currentStatus: item.status
+                ) {
+                    self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
+                }
+            }
+        }
+    }
+
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {
         let workspace = normalizeEvolutionWorkspaceName(ev.workspace)
         let key = globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
