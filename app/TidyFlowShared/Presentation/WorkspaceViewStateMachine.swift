@@ -62,6 +62,16 @@ public final class WorkspaceViewStateMachine: @unchecked Sendable {
     }
 
     // MARK: - AI 聊天舞台状态追踪
+    //
+    // WorkspaceViewStateMachine 与 AIChatStageLifecycle 的协调约束：
+    //
+    // 1. 工作区切换时，本状态机 resetAIChatStage() 先于平台层触发。
+    //    平台层在收到新工作区选中事件后，应调用 lifecycle.apply(.forceReset) 或
+    //    lifecycle.apply(.close) 确保状态机本体也回到 idle。
+    // 2. 本状态机的 aiChatStagePhase/aiChatStageContextKey 仅为投影缓存，
+    //    不是生命周期权威状态——权威状态始终以 AIChatStageLifecycle.state 为准。
+    // 3. 断开连接场景由平台层直接调用 lifecycle.apply(.forceReset)，
+    //    本状态机不参与断连判断。
 
     /// 当前工作区关联的 AI 聊天舞台阶段。
     /// 跟随工作区切换自动重置为 idle，确保多工作区间不串台。

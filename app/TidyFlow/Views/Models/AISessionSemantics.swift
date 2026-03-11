@@ -15,6 +15,18 @@ import Foundation
 //   每个 `(project, workspace, aiTool)` 三元组拥有独立的舞台状态槽位。
 //   切换工作区时必须先 close 当前舞台，再 enter 新工作区的舞台。
 //   跨工作区的流式事件不得影响非活跃舞台。
+//
+// 边界矩阵（输入 × 场景 → 迁移结果）：
+//
+// | 场景               | 输入               | 预期迁移                  | 备注                                              |
+// |--------------------|--------------------|---------------------------|----------------------------------------------------|
+// | 工作区切换          | close → enter      | active/resuming → idle → entering | WorkspaceViewStateMachine 自动重置后由平台调用       |
+// | 会话恢复            | resume             | active/entering → resuming | 断线重连后需补拉缺失消息                             |
+// | 会话恢复完成        | resumeCompleted    | resuming → active         | 缺失消息补齐，流式状态同步                           |
+// | 流式中断            | streamInterrupted  | active/entering → resuming | 网络丢失或流异常时自动触发，等待恢复或手动关闭        |
+// | 关闭聊天            | close              | 非 idle → closing → idle  | 保存快照、取消订阅                                   |
+// | 强制重置            | forceReset         | 任意 → idle               | 断开连接、项目删除等不可恢复场景                      |
+// | 断开连接            | forceReset         | 任意 → idle               | 平台在 WS 断连回调中调用                             |
 
 /// AI 聊天舞台阶段枚举，描述用户与 AI 聊天上下文的交互生命周期。
 enum AIChatStagePhase: String, Equatable, Sendable {
@@ -47,6 +59,8 @@ enum AIChatStageInput: Equatable, Sendable {
     case newSession
     /// 加载已有会话（切换到历史会话列表中的某个会话）
     case loadSession(sessionId: String, aiTool: AIChatTool)
+    /// 流式中断（网络丢失或流异常导致消息流被打断，需等待恢复或手动关闭）
+    case streamInterrupted(sessionId: String)
     /// 关闭聊天上下文（离开聊天页面或切换工作区）
     case close
     /// 强制重置（断开连接、项目被删除等不可恢复场景）
@@ -163,6 +177,16 @@ final class AIChatStageLifecycle: @unchecked Sendable {
             let next = AIChatStageState(
                 phase: .active, project: state.project, workspace: state.workspace,
                 aiTool: effectiveTool, activeSessionId: sessionId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .streamInterrupted(let sessionId):
+            // 流式中断：从 active/entering 迁移到 resuming，等待恢复或手动关闭
+            guard state.phase == .active || state.phase == .entering else { return .ignored }
+            let next = AIChatStageState(
+                phase: .resuming, project: state.project, workspace: state.workspace,
+                aiTool: state.aiTool, activeSessionId: sessionId
             )
             state = next
             return .transitioned(next)
