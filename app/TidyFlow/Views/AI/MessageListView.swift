@@ -513,8 +513,10 @@ struct AIChatTranscriptContainer: View {
         executeScrollCommand(decision.command, proxy: proxy)
     }
 
+    /// 按钮显隐只取决于是否在底部附近：到达底部时立即隐藏，无论 autoFollow 状态如何。
+    /// autoFollow 的开关状态仅影响新消息到来时是否自动滚动，与按钮可见性语义无关。
     private var showJumpToBottomButton: Bool {
-        !isAutoFollowActive || !isNearBottom
+        !isNearBottom
     }
 
     private var jumpToBottomButton: some View {
