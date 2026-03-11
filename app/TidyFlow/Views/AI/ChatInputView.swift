@@ -3,6 +3,14 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
+#if os(macOS)
+import AppKit
+#endif
+
+#if os(iOS)
+import UIKit
+#endif
+
 #if os(iOS) && canImport(PhotosUI)
 import PhotosUI
 #endif
@@ -64,10 +72,8 @@ struct ChatInputView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     #endif
 
-    #if os(macOS)
     @State private var showImageImporter = false
     private let maxImageAttachmentCount = 9
-    #endif
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
@@ -455,11 +461,32 @@ struct ChatInputView: View {
                 Text(placeholderText)
                     .foregroundStyle(.secondary.opacity(0.6))
                     .font(.system(size: editorFontSize))
-                    .padding(.horizontal, editorHorizontalInset + 4)
-                    .padding(.vertical, editorVerticalInset + 3)
+                    .padding(.horizontal, editorHorizontalInset)
+                    .padding(.vertical, editorVerticalInset)
                     .allowsHitTesting(false)
             }
 
+            #if os(iOS)
+            IOSPasteAwareTextView(
+                text: $text,
+                isFocused: Binding(
+                    get: { inputFocused },
+                    set: { inputFocused = $0 }
+                ),
+                selectionOffset: textSelection?.utf16InsertionOffset(in: text),
+                fontSize: editorFontSize,
+                onSelectionChange: { location in
+                    let clampedLocation = min(max(0, location), text.utf16.count)
+                    let index = String.Index(utf16Offset: clampedLocation, in: text)
+                    textSelection = TextSelection(insertionPoint: index)
+                    onInputContextChange?(location, false)
+                },
+                onPasteProviders: handlePastedImageProviders
+            )
+            .frame(minHeight: editorCollapsedMinHeight, maxHeight: editorExpandedMaxHeight)
+            .padding(.horizontal, editorHorizontalInset)
+            .padding(.vertical, editorVerticalInset)
+            #else
             TextEditor(text: $text, selection: $textSelection)
                 .font(.system(size: editorFontSize))
                 .frame(minHeight: editorCollapsedMinHeight, maxHeight: editorExpandedMaxHeight)
@@ -467,9 +494,11 @@ struct ChatInputView: View {
                 .padding(.horizontal, editorHorizontalInset)
                 .padding(.vertical, editorVerticalInset)
                 .focused($inputFocused)
+                .onPasteCommand(of: [.image, .fileURL], perform: handlePastedImageProviders)
                 .onKeyPress(phases: [.down]) { keyPress in
                     handleKeyPress(keyPress)
                 }
+            #endif
         }
     }
 
@@ -686,17 +715,16 @@ struct ChatInputView: View {
     private func handleSelectedPhotoItems(_ items: [PhotosPickerItem]) {
         guard !items.isEmpty else { return }
         Task {
+            var attachments: [ImageAttachment] = []
             for item in items {
                 guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-                let fileInfo = Self.detectImageFileInfo(data: data)
-                let suffix = UUID().uuidString.prefix(8)
-                let filename = "image_\(suffix).\(fileInfo.ext)"
-                let attachment = ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
-                await MainActor.run {
-                    imageAttachments.append(attachment)
+                guard let attachment = Self.makeImageAttachment(from: data, suggestedFilename: nil, fallbackPrefix: "image") else {
+                    continue
                 }
+                attachments.append(attachment)
             }
             await MainActor.run {
+                appendImageAttachments(attachments)
                 selectedPhotoItems = []
             }
         }
@@ -709,13 +737,6 @@ struct ChatInputView: View {
         #endif
     }
 
-    #if os(macOS)
-    private func handleImageImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result else { return }
-        let attachments = urls.compactMap(Self.makeImageAttachment(from:))
-        appendImageAttachments(attachments)
-    }
-
     private func appendImageAttachments(_ attachments: [ImageAttachment]) {
         guard !attachments.isEmpty else { return }
         let remaining = max(0, maxImageAttachmentCount - imageAttachments.count)
@@ -723,11 +744,69 @@ struct ChatInputView: View {
         imageAttachments.append(contentsOf: attachments.prefix(remaining))
     }
 
+    private func handlePastedImageProviders(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url: URL?
+                    if let data = item as? Data {
+                        url = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let fileURL = item as? URL {
+                        url = fileURL
+                    } else {
+                        url = nil
+                    }
+                    guard let url, let attachment = Self.makeImageAttachment(from: url) else { return }
+                    DispatchQueue.main.async {
+                        self.appendImageAttachments([attachment])
+                    }
+                }
+                continue
+            }
+
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data,
+                          let attachment = Self.makeImageAttachment(from: data, suggestedFilename: nil, fallbackPrefix: "pasted")
+                    else {
+                        return
+                    }
+                    DispatchQueue.main.async {
+                        self.appendImageAttachments([attachment])
+                    }
+                }
+            }
+        }
+    }
+
     private static func makeImageAttachment(from url: URL) -> ImageAttachment? {
         guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
+        return makeImageAttachment(from: data, suggestedFilename: url.lastPathComponent)
+    }
+
+    private static func makeImageAttachment(
+        from data: Data,
+        suggestedFilename: String?,
+        fallbackPrefix: String = "image"
+    ) -> ImageAttachment? {
         let fileInfo = detectImageFileInfo(data: data)
         guard fileInfo.mime.hasPrefix("image/") else { return nil }
-        return ImageAttachment(filename: url.lastPathComponent, data: data, mime: fileInfo.mime)
+        let filename: String
+        if let suggestedFilename,
+           !suggestedFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            filename = suggestedFilename
+        } else {
+            let suffix = UUID().uuidString.prefix(8)
+            filename = "\(fallbackPrefix)_\(suffix).\(fileInfo.ext)"
+        }
+        return ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
+    }
+
+    #if os(macOS)
+    private func handleImageImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        let attachments = urls.compactMap(Self.makeImageAttachment(from:))
+        appendImageAttachments(attachments)
     }
 
     private func handleDroppedImageProviders(_ providers: [NSItemProvider]) -> Bool {
@@ -752,12 +831,11 @@ struct ChatInputView: View {
 
             if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-                    guard let data else { return }
-                    let fileInfo = Self.detectImageFileInfo(data: data)
-                    guard fileInfo.mime.hasPrefix("image/") else { return }
-                    let suffix = UUID().uuidString.prefix(8)
-                    let filename = "dropped_\(suffix).\(fileInfo.ext)"
-                    let attachment = ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
+                    guard let data,
+                          let attachment = Self.makeImageAttachment(from: data, suggestedFilename: nil, fallbackPrefix: "dropped")
+                    else {
+                        return
+                    }
                     DispatchQueue.main.async {
                         self.appendImageAttachments([attachment])
                     }
@@ -1050,6 +1128,10 @@ struct ChatInputView: View {
     }
 
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        if isTextInputComposing {
+            return .ignored
+        }
+
         switch keyPress.key {
         case .return:
             if keyPress.modifiers.contains(.shift) {
@@ -1095,12 +1177,132 @@ struct ChatInputView: View {
         }
     }
 
+    private var isTextInputComposing: Bool {
+        #if os(macOS)
+        guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            return false
+        }
+        return textView.hasMarkedText()
+        #else
+        return false
+        #endif
+    }
+
     private func updateSelectionToEnd() {
         let endIndex = text.endIndex
         textSelection = TextSelection(insertionPoint: endIndex)
         onInputContextChange?(text.utf16.count, false)
     }
 }
+
+#if os(iOS)
+private struct IOSPasteAwareTextView: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+
+    let selectionOffset: Int?
+    let fontSize: CGFloat
+    let onSelectionChange: (Int) -> Void
+    let onPasteProviders: ([NSItemProvider]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> PasteAwareUITextView {
+        let textView = PasteAwareUITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .systemFont(ofSize: fontSize)
+        textView.textColor = .label
+        textView.tintColor = .systemBlue
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.adjustsFontForContentSizeCategory = true
+        textView.isScrollEnabled = true
+        textView.keyboardDismissMode = .interactive
+        textView.onPasteProviders = onPasteProviders
+        textView.text = text
+        return textView
+    }
+
+    func updateUIView(_ uiView: PasteAwareUITextView, context: Context) {
+        context.coordinator.parent = self
+        uiView.onPasteProviders = onPasteProviders
+
+        if uiView.text != text {
+            context.coordinator.isSyncingFromSwiftUI = true
+            uiView.text = text
+            context.coordinator.isSyncingFromSwiftUI = false
+        }
+
+        if uiView.font?.pointSize != fontSize {
+            uiView.font = .systemFont(ofSize: fontSize)
+        }
+
+        if let selectionOffset {
+            let clampedLocation = min(max(0, selectionOffset), uiView.text.utf16.count)
+            if uiView.selectedRange.location != clampedLocation || uiView.selectedRange.length != 0 {
+                uiView.selectedRange = NSRange(location: clampedLocation, length: 0)
+            }
+        }
+
+        if isFocused, !uiView.isFirstResponder {
+            uiView.becomeFirstResponder()
+        } else if !isFocused, uiView.isFirstResponder {
+            uiView.resignFirstResponder()
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: IOSPasteAwareTextView
+        var isSyncingFromSwiftUI = false
+
+        init(parent: IOSPasteAwareTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            guard !parent.isFocused else { return }
+            parent.isFocused = true
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            guard parent.isFocused else { return }
+            parent.isFocused = false
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard !isSyncingFromSwiftUI else { return }
+            let newText = textView.text ?? ""
+            guard parent.text != newText else { return }
+            parent.text = newText
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            parent.onSelectionChange(textView.selectedRange.location)
+        }
+    }
+}
+
+private final class PasteAwareUITextView: UITextView {
+    var onPasteProviders: (([NSItemProvider]) -> Void)?
+
+    override func paste(_ sender: Any?) {
+        let supportedProviders = UIPasteboard.general.itemProviders.filter { provider in
+            provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+                || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+
+        guard !supportedProviders.isEmpty else {
+            super.paste(sender)
+            return
+        }
+
+        onPasteProviders?(supportedProviders)
+    }
+}
+#endif
 
 private struct AIChatFloatingComposerChrome: ViewModifier {
     let colorScheme: ColorScheme
