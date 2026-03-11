@@ -163,10 +163,7 @@ impl OpenCodeClient {
             body["model"] = Self::opencode_model_payload(m);
         }
 
-        if let Some(a) = agent
-            .map(|it| it.trim())
-            .filter(|it| !it.is_empty())
-        {
+        if let Some(a) = agent.map(|it| it.trim()).filter(|it| !it.is_empty()) {
             body["agent"] = serde_json::json!(a);
         }
 

@@ -320,6 +320,9 @@ mod tests {
         }))
         .expect("model response should parse");
 
-        assert_eq!(model.variants_vec(), vec!["high".to_string(), "low".to_string()]);
+        assert_eq!(
+            model.variants_vec(),
+            vec!["high".to_string(), "low".to_string()]
+        );
     }
 }
