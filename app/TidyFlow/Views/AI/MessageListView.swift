@@ -1,6 +1,7 @@
 import SwiftUI
 import ImageIO
 import CoreGraphics
+import Shimmer
 
 private struct ChatImagePreviewPayload {
     let data: Data
@@ -846,19 +847,16 @@ struct AIChatTranscriptContent: View {
 
 private struct AIChatStreamingStatusFooter: View {
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.8)) { context in
-            let phase = Int(context.date.timeIntervalSinceReferenceDate.rounded(.down)) % 3
-            HStack(spacing: 4) {
-                Text("思考中")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(String(repeating: "•", count: phase + 1))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary.opacity(0.75))
-                    .contentTransition(.opacity)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 0) {
+            Text("思考中")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .shimmering(
+                    active: true,
+                    animation: .linear(duration: 1.4).repeatForever(autoreverses: false)
+                )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

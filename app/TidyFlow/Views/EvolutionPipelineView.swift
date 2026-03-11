@@ -42,12 +42,6 @@ final class SharedSecondTicker: ObservableObject {
     }
 }
 
-private struct EvolutionAnimationPolicy {
-    static func progressPhase(for now: Date) -> Int {
-        Int(now.timeIntervalSinceReferenceDate.rounded(.down)) % 3
-    }
-}
-
 struct EvolutionRunningAgentCardModel: Identifiable, Equatable {
     let id: String
     let stage: String
@@ -2364,27 +2358,33 @@ struct StandbyFlowLayout: Layout {
 // MARK: - 进度条（从 EvolutionPipelineView 提升为顶层，供子视图共享）
 
 struct PipelineProgressBar: View {
-    @ObservedObject private var ticker = SharedSecondTicker.shared
+    @State private var offset: CGFloat = -1
 
     var body: some View {
-        let phase = EvolutionAnimationPolicy.progressPhase(for: ticker.now)
         GeometryReader { geo in
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color.orange.opacity(0.15))
                 .frame(height: 3)
                 .overlay(
-                    HStack(spacing: 4) {
-                        ForEach(0..<3, id: \.self) { index in
-                            Capsule(style: .continuous)
-                                .fill(Color.orange.opacity(phase == index ? 0.9 : 0.28))
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .frame(width: geo.size.width, height: 3)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(
+                            LinearGradient(
+                                colors: [.orange.opacity(0), .orange, .orange.opacity(0)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width * 0.3, height: 3)
+                        .offset(x: offset * geo.size.width * 0.7)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 2))
         }
         .frame(height: 3)
+        .onAppear {
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                offset = 1
+            }
+        }
     }
 }
 
