@@ -867,31 +867,12 @@ struct AIChatMessageRow: View, Equatable {
             lhs.sessionId == rhs.sessionId
     }
 
-    /// 判断所有有内容的 display node 是否都是宽布局类型（tool/plan/compaction）。
-    private static func computeUsesWideLayout(isUser: Bool, nodes: [AIChatMessageDisplayNode]) -> Bool {
-        guard !isUser, !nodes.isEmpty else { return false }
-        return nodes.allSatisfy { node in
-            switch node {
-            case .textGroup:
-                return false
-            case .part(let part):
-                switch part.kind {
-                case .tool, .plan, .compaction:
-                    return true
-                case .text, .reasoning, .file:
-                    return false
-                }
-            }
-        }
-    }
-
     var body: some View {
         let nodes = AIChatMessageLayoutSemantics.displayNodes(
             for: message,
             pendingQuestions: pendingQuestions
         )
-        let wideLayout = Self.computeUsesWideLayout(isUser: isUser, nodes: nodes)
-        let contentMaxWidth: CGFloat = isUser ? 520 : (wideLayout ? .infinity : 760)
+        let contentMaxWidth: CGFloat = isUser ? 520 : .infinity
 
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             AIChatMessageBody(
