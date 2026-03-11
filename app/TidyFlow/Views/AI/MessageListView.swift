@@ -234,6 +234,9 @@ struct AIChatTranscriptContainer: View {
     /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
     /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
+    /// 上一帧的 ScrollView 内容高度，用于区分"内容增长"和"用户滚动"。
+    /// 当 distanceToBottom 增加时，如果内容高度同步增长，说明是内容推远了底部，而非用户主动滚离。
+    @State private var lastKnownContentHeight: CGFloat = 0
     /// 缓存的显示消息列表，仅在消息数量或会话变化时完整重算。
     /// 流式增量更新只修改最后一条消息内容，无需重跑 O(n) filter。
     @State private var cachedDisplayMessages: [AIChatMessage] = []
@@ -389,6 +392,13 @@ struct AIChatTranscriptContainer: View {
             .onChange(of: jumpToBottomRequestID) {
                 executeScrollCommand(.scrollToBottom(.jumpToBottom), proxy: proxy)
             }
+            .onChange(of: bottomOverlayInset) { oldValue, newValue in
+                // 输入框高度增加时（多行输入、待处理交互等），dock 向上扩展覆盖更多视口，
+                // 而 ScrollView 滚动位置不变，导致原本可见的消息被遮挡。
+                // 仅在 autoFollow 激活且 inset 增加时重新贴底，用无动画避免视觉跳动。
+                guard newValue > oldValue, isAutoFollowActive else { return }
+                scrollToBottom(proxy: proxy, animation: .none)
+            }
         }
         .tfRenderProbe("AIMessageList", metadata: [
             "session": sessionToken ?? "none",
@@ -467,6 +477,7 @@ struct AIChatTranscriptContainer: View {
         isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         lastDisplayMessageCount = displayMessages.count
         lastTailMessageID = displayMessages.last?.id
+        lastKnownContentHeight = 0
 
         guard decision.command != .noOp else { return }
         jumpToBottomRequestID += 1
@@ -603,7 +614,15 @@ struct AIChatTranscriptContainer: View {
         scrollDistanceToBottom = metrics.distanceToBottom
         let config = scrollPolicy.configuration
         let nearBottom = !metrics.canScrollVertically || metrics.distanceToBottom <= config.nearBottomThreshold
-        let withinAutoFollowZone = !metrics.canScrollVertically || metrics.distanceToBottom <= config.autoFollowBreakThreshold
+
+        // 用内容高度增量修正 autoFollow zone 判断：
+        // 如果 distanceToBottom 增加是因为内容增长（流式输出），不应中断 autoFollow。
+        // 只有扣除内容增长后仍超过阈值（即用户主动上滚），才视为离开底部。
+        let contentHeightGrowth = max(0, metrics.contentHeight - lastKnownContentHeight)
+        lastKnownContentHeight = metrics.contentHeight
+        let adjustedDistance = max(0, metrics.distanceToBottom - contentHeightGrowth)
+        let withinAutoFollowZone = !metrics.canScrollVertically || adjustedDistance <= config.autoFollowBreakThreshold
+
         updateNearBottomState(nearBottom: nearBottom, withinAutoFollowZone: withinAutoFollowZone)
     }
 }
@@ -805,6 +824,7 @@ struct AIChatTranscriptContent: View {
 private struct MessageListScrollMetrics: Equatable {
     let distanceToBottom: CGFloat
     let canScrollVertically: Bool
+    let contentHeight: CGFloat
 
     init(geometry: ScrollGeometry) {
         let contentHeight = geometry.contentSize.height
@@ -818,6 +838,7 @@ private struct MessageListScrollMetrics: Equatable {
 
         self.distanceToBottom = max(distanceByVisibleRect, distanceByOffset)
         self.canScrollVertically = maxOffsetY > 1
+        self.contentHeight = contentHeight
     }
 }
 
