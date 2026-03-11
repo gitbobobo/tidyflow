@@ -8,6 +8,70 @@ private struct ChatImagePreviewPayload {
     let previewCGImage: CGImage
 }
 
+struct AIChatTranscriptDisplayCacheSnapshot {
+    let messages: [AIChatMessage]
+    let sourceCount: Int
+}
+
+enum AIChatTranscriptDisplayCacheSemantics {
+    static func makeSnapshot(
+        sourceMessages: [AIChatMessage],
+        pendingQuestions: [String: AIQuestionRequestInfo]
+    ) -> AIChatTranscriptDisplayCacheSnapshot {
+        AIChatTranscriptDisplayCacheSnapshot(
+            messages: filteredDisplayMessages(
+                from: sourceMessages,
+                pendingQuestions: pendingQuestions
+            ),
+            sourceCount: sourceMessages.count
+        )
+    }
+
+    /// 流式过程中只补丁尾消息，避免每个 token 都触发整表过滤；
+    /// 一旦尾消息结束流式或消息数变化，则回退到完整重建，保证可见性判定不陈旧。
+    static func synchronizeAfterTailChange(
+        sourceMessages: [AIChatMessage],
+        pendingQuestions: [String: AIQuestionRequestInfo],
+        cachedDisplayMessages: [AIChatMessage],
+        cachedSourceCount: Int
+    ) -> AIChatTranscriptDisplayCacheSnapshot {
+        guard cachedSourceCount == sourceMessages.count,
+              let lastMessage = sourceMessages.last,
+              lastMessage.isStreaming else {
+            return makeSnapshot(
+                sourceMessages: sourceMessages,
+                pendingQuestions: pendingQuestions
+            )
+        }
+
+        var nextMessages = cachedDisplayMessages
+        if let lastIndex = nextMessages.indices.last,
+           nextMessages[lastIndex].id == lastMessage.id {
+            nextMessages[lastIndex] = lastMessage
+        } else {
+            nextMessages.append(lastMessage)
+        }
+
+        return AIChatTranscriptDisplayCacheSnapshot(
+            messages: nextMessages,
+            sourceCount: sourceMessages.count
+        )
+    }
+
+    static func filteredDisplayMessages(
+        from sourceMessages: [AIChatMessage],
+        pendingQuestions: [String: AIQuestionRequestInfo]
+    ) -> [AIChatMessage] {
+        sourceMessages.filter { message in
+            if message.isStreaming { return true }
+            return AIChatMessageLayoutSemantics.hasRenderableContent(
+                in: message,
+                pendingQuestions: pendingQuestions
+            )
+        }
+    }
+}
+
 private actor ChatImageLoader {
     static let shared = ChatImageLoader()
 
@@ -210,9 +274,10 @@ struct AIChatTranscriptContainer: View {
     /// 返回当前显示消息列表：优先使用缓存，仅在流式消息内容变化时补丁最后一条。
     /// 完整的 filter 重算通过 recomputeDisplayMessages() 在 onChange 中触发。
     private var displayMessages: [AIChatMessage] {
-        guard !cachedDisplayMessages.isEmpty else {
+        guard cachedDisplayMessageSourceCount == messages.count else {
             return recomputeDisplayMessagesSnapshot()
         }
+        guard !cachedDisplayMessages.isEmpty else { return [] }
         // 流式期间，消息数量不变但最后一条消息内容持续更新。
         // 直接在缓存基础上补丁最后一条，避免 O(n) filter + displayNodes 计算。
         if let lastMessage = messages.last, lastMessage.isStreaming {
@@ -230,19 +295,30 @@ struct AIChatTranscriptContainer: View {
 
     /// 完整重算显示消息（O(n) filter + displayNodes），仅在消息数量或结构变化时调用。
     private func recomputeDisplayMessagesSnapshot() -> [AIChatMessage] {
-        messages.filter { message in
-            if message.isStreaming { return true }
-            return AIChatMessageLayoutSemantics.hasRenderableContent(
-                in: message,
-                pendingQuestions: pendingQuestions
-            )
-        }
+        AIChatTranscriptDisplayCacheSemantics.filteredDisplayMessages(
+            from: messages,
+            pendingQuestions: pendingQuestions
+        )
     }
 
     private func refreshDisplayMessagesCache() {
-        let snapshot = recomputeDisplayMessagesSnapshot()
-        cachedDisplayMessages = snapshot
-        cachedDisplayMessageSourceCount = messages.count
+        let snapshot = AIChatTranscriptDisplayCacheSemantics.makeSnapshot(
+            sourceMessages: messages,
+            pendingQuestions: pendingQuestions
+        )
+        cachedDisplayMessages = snapshot.messages
+        cachedDisplayMessageSourceCount = snapshot.sourceCount
+    }
+
+    private func synchronizeDisplayMessagesCacheAfterTailChange() {
+        let snapshot = AIChatTranscriptDisplayCacheSemantics.synchronizeAfterTailChange(
+            sourceMessages: messages,
+            pendingQuestions: pendingQuestions,
+            cachedDisplayMessages: cachedDisplayMessages,
+            cachedSourceCount: cachedDisplayMessageSourceCount
+        )
+        cachedDisplayMessages = snapshot.messages
+        cachedDisplayMessageSourceCount = snapshot.sourceCount
     }
 
     var body: some View {
@@ -307,6 +383,7 @@ struct AIChatTranscriptContainer: View {
                 handleSessionTokenChangeIfNeeded()
             }
             .onChange(of: aiChatStore.tailRevision) { _, _ in
+                synchronizeDisplayMessagesCacheAfterTailChange()
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
