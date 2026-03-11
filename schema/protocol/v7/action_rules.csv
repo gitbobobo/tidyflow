@@ -42,3 +42,5 @@ prefix,evolution,evo_
 prefix,git,git_conflict_
 # v1.41: 系统健康诊断与自修复域
 prefix,health,health_
+# v1.46: 统一协调层
+prefix,coordinator,coordinator_

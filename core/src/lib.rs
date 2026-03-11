@@ -25,6 +25,7 @@
 
 pub mod ai;
 pub mod application;
+pub mod coordinator;
 pub mod pty;
 pub mod server;
 pub mod util;

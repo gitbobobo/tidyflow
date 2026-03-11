@@ -1356,3 +1356,79 @@ idle → entering → active ⇄ resuming
 3. 进入聊天、恢复快照、切换工具、新建会话、关闭聊天的事件序列必须相同。
 4. 流式事件的接受/拒绝判断通过 `acceptsStreamEvent(project:workspace:aiTool:)` 统一决策。
 5. 断开连接时双端统一使用 `forceReset` 而非 `close`，避免异步快照保存在断连状态下失败。
+
+## v1.46：统一协调层（Coordinator）
+
+统一协调层将 AI、终端、文件三类领域状态收敛到统一的协调治理体系，
+为每个 `(project, workspace)` 提供单一的协调状态入口。
+
+### 协调层身份模型
+
+- **WorkspaceCoordinatorId**：`{ project, workspace }` 二元组，与协议层边界字段对齐。
+- **CoordinatorScope**：支持 `system`（跨所有项目）、`project`（指定项目）、`workspace`（精确工作区）三级作用域。
+- **global_key**：格式 `"project:workspace"`，与客户端 `globalKey` 语义一致。
+
+### 工作区协调聚合状态（WorkspaceCoordinatorState）
+
+| 字段 | 类型 | 持久化 | 说明 |
+|------|------|--------|------|
+| `id` | `WorkspaceCoordinatorId` | 持久化 | 工作区身份 |
+| `ai` | `AiDomainState` | 瞬时 | AI 子系统聚合状态 |
+| `terminal` | `TerminalDomainState` | 瞬时 | 终端子系统聚合状态 |
+| `file` | `FileDomainState` | 瞬时 | 文件子系统聚合状态 |
+| `health` | `CoordinatorHealth` | 持久化 | 三领域综合健康度 |
+| `generated_at` | `DateTime` | 持久化 | 状态生成时间 |
+| `version` | `u64` | 持久化 | 单调递增版本号 |
+
+#### 领域相位定义
+
+**AiDomainPhase**：`idle` | `active` | `faulted`
+- `idle`：无活跃 AI 会话
+- `active`：至少一个会话正在执行
+- `faulted`：存在失败会话且无活跃会话
+
+**TerminalDomainPhase**：`idle` | `active` | `faulted`
+- `idle`：无存活终端
+- `active`：至少一个终端正在运行
+- `faulted`：至少一个终端异常退出且无活跃终端
+
+**FileDomainPhase**：`idle` | `ready` | `degraded` | `error`
+- `idle`：文件子系统未激活
+- `ready`：watching 或 indexing 中
+- `degraded`：降级或恢复中
+- `error`：文件子系统不可用
+
+**CoordinatorHealth**：`healthy` | `degraded` | `faulted`
+- 由三个领域相位综合计算，任一领域 faulted/error 则整体 faulted
+
+### 跨工作区快照
+
+- **CoordinatorSnapshot**：包含所有工作区的协调元数据，可序列化持久化。
+- **持久化部分**（`PersistableCoordinatorMeta`）：仅保存相位、健康度和版本号。
+- **瞬时部分**（活跃会话数、终端计数等）：恢复时归零，由运行时重新采集。
+- 快照支持按 `CoordinatorScope` 筛选条目，实现选择性恢复。
+- 恢复入口由 Core 驱动（`restore_from_snapshot`），不依赖客户端推导。
+
+### 一致性校验
+
+Core 对工作区协调状态执行以下校验规则：
+
+1. 终端相位为 Active 但存活计数为 0 → 状态漂移
+2. AI 相位为 Active 但活跃会话数为 0 → 状态漂移
+3. AI 活跃但文件不可用 → 跨领域依赖风险
+4. 终端活跃但文件不可用 → 跨领域依赖风险
+5. 健康度与实际领域状态不匹配 → 聚合不一致
+
+校验结果输出 `RecoveryDecision` 列表，包含作用域、恢复动作和优先级。
+
+### 故障恢复编排
+
+- 恢复编排器按优先级顺序执行决策，每个决策幂等。
+- 恢复动作：`reset_domain_phase`、`resync_domain_state`、`recompute_health`、`mark_degraded`、`full_reset`。
+- 多工作区场景下每个工作区独立恢复，不互相影响。
+
+### 多工作区隔离约束
+
+1. 协调层通过 `WorkspaceCoordinatorId` 精确寻址，不同项目下的同名工作区绝不共享状态。
+2. 一致性校验和恢复编排按工作区独立执行。
+3. 客户端消费协调层状态时，必须使用 `global_key`（`"project:workspace"`）做缓存键。

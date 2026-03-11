@@ -203,6 +203,40 @@ domains:
   # HTTP 端点：GET /api/v1/system/snapshot 响应新增 analysis_summaries 可选字段
   - id: health
     action_rule: prefix("health_")
+  # v1.46: 统一协调层（Coordinator）
+  # 将 AI、终端、文件三类领域状态收敛到统一协调治理体系。
+  # coordinator_snapshot      - Core 推送工作区协调状态快照
+  # coordinator_check         - 客户端请求一致性校验
+  # coordinator_check_result  - Core 推送校验结果
+  # coordinator_recovery      - 客户端请求执行恢复动作
+  # coordinator_recovery_result - Core 推送恢复执行结果
+  #
+  # WorkspaceCoordinatorState 字段契约：
+  #   id:          { project, workspace }（工作区身份）
+  #   ai:          { phase, active_session_count, total_session_count }
+  #   terminal:    { phase, alive_count, total_count }
+  #   file:        { phase, watcher_active, indexing_in_progress }
+  #   health:      healthy | degraded | faulted（三领域综合健康度）
+  #   generated_at: RFC3339 时间戳
+  #   version:     状态版本号（单调递增）
+  #
+  # CoordinatorSnapshot 字段契约：
+  #   snapshot_version: 快照格式版本（当前为 1）
+  #   created_at:  快照生成时间
+  #   workspaces:  { [global_key]: WorkspaceSnapshotEntry }
+  #
+  # ConsistencyCheckResult 字段契约：
+  #   inconsistencies: 不一致条目列表
+  #   recovery_decisions: 恢复决策列表（按优先级排序）
+  #   is_consistent: 校验是否通过
+  #
+  # 多工作区边界：每个工作区独立校验和恢复，不互相影响。
+  # 作用域支持 system / project / workspace 三级粒度。
+  - id: coordinator
+    action_rule: prefix("coordinator_")
+    required_boundary_fields:
+      - project
+      - workspace
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved
