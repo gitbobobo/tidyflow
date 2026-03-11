@@ -62,7 +62,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         XCTAssertFalse(policy.autoFollow, "用户上滑（nearBottom=false）应切到手动模式")
         XCTAssertFalse(policy.nearBottom)
-        XCTAssertEqual(decision.action, .none, "切换手动时不应触发滚动")
+        XCTAssertEqual(decision.command, .noOp, "切换手动时不应触发滚动")
     }
 
     /// 手动模式 -> 自动跟随：用户滚回底部时自动恢复
@@ -73,7 +73,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         XCTAssertTrue(policy.autoFollow, "用户滚回底部（nearBottom=true）应恢复自动跟随")
         XCTAssertTrue(policy.nearBottom)
-        XCTAssertEqual(decision.action, .none)
+        XCTAssertEqual(decision.command, .noOp)
     }
 
     /// 自动跟随保持：用户在底部附近滚动，nearBottom 仍为 true 时不切换
@@ -83,7 +83,7 @@ final class ChatScrollPolicyTests: XCTestCase {
         let decision = policy.reduce(event: .userScrolled(nearBottom: true))
 
         XCTAssertTrue(policy.autoFollow, "用户在底部附近滚动时应保持自动跟随")
-        XCTAssertEqual(decision.action, .none)
+        XCTAssertEqual(decision.command, .noOp)
     }
 
     /// 非用户触发不应切到手动：messageAppended/Incremented 不改变 autoFollow
@@ -111,7 +111,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         XCTAssertTrue(policy.autoFollow, "jumpToBottomClicked 应恢复 autoFollow=true")
         XCTAssertTrue(policy.nearBottom, "jumpToBottomClicked 应设置 nearBottom=true")
-        XCTAssertEqual(decision.action, .scrollToBottom, "jumpToBottomClicked 应触发滚动")
+        XCTAssertEqual(decision.command, .scrollToBottom(.jumpToBottom), "jumpToBottomClicked 应触发滚动")
         XCTAssertTrue(decision.shouldScrollToBottom)
     }
 
@@ -123,7 +123,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         let decision = policy.reduce(event: .messageIncremented)
 
-        XCTAssertEqual(decision.action, .throttledScrollToBottom,
+        XCTAssertEqual(decision.command, .scrollToBottom(.none),
                        "autoFollow=true 时 messageIncremented 应触发节流滚动")
         XCTAssertTrue(decision.shouldScrollToBottom)
     }
@@ -134,7 +134,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         let decision = policy.reduce(event: .messageIncremented)
 
-        XCTAssertEqual(decision.action, .none,
+        XCTAssertEqual(decision.command, .noOp,
                        "autoFollow=false 时 messageIncremented 不应触发滚动")
         XCTAssertFalse(decision.shouldScrollToBottom)
     }
@@ -145,7 +145,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         let decision = policy.reduce(event: .messageAppended)
 
-        XCTAssertEqual(decision.action, .scrollToBottom,
+        XCTAssertEqual(decision.command, .scrollToBottom(.spring()),
                        "autoFollow=true 时 messageAppended 应触发滚动")
     }
 
@@ -155,7 +155,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         let decision = policy.reduce(event: .messageAppended)
 
-        XCTAssertEqual(decision.action, .none,
+        XCTAssertEqual(decision.command, .noOp,
                        "autoFollow=false 时 messageAppended 不应触发滚动")
     }
 
@@ -171,8 +171,8 @@ final class ChatScrollPolicyTests: XCTestCase {
         // 50ms 后的第二次，在 500ms 节流窗口内
         let second = policy.reduce(event: .messageIncremented, now: baseTime.addingTimeInterval(0.05))
 
-        XCTAssertEqual(first.action, .throttledScrollToBottom, "首次增量应触发节流滚动")
-        XCTAssertEqual(second.action, .none, "节流窗口内的后续增量应被抑制")
+        XCTAssertEqual(first.command, .scrollToBottom(.none), "首次增量应触发节流滚动")
+        XCTAssertEqual(second.command, .noOp, "节流窗口内的后续增量应被抑制")
     }
 
     /// 节流间隔过后恢复触发
@@ -185,7 +185,7 @@ final class ChatScrollPolicyTests: XCTestCase {
         // 200ms 后（超过 100ms 节流窗口）
         let second = policy.reduce(event: .messageIncremented, now: baseTime.addingTimeInterval(0.2))
 
-        XCTAssertEqual(second.action, .throttledScrollToBottom, "节流间隔后应恢复触发")
+        XCTAssertEqual(second.command, .scrollToBottom(.none), "节流间隔后应恢复触发")
     }
 
     // MARK: - 会话切换场景
@@ -197,7 +197,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         XCTAssertTrue(policy.autoFollow, "sessionSwitched 应重置 autoFollow=true")
         XCTAssertTrue(policy.nearBottom, "sessionSwitched 应重置 nearBottom=true")
-        XCTAssertEqual(decision.action, .scrollToBottom, "sessionSwitched 应触发滚动到底部")
+        XCTAssertEqual(decision.command, .scrollToBottom(.jumpToBottom), "sessionSwitched 应触发滚动到底部")
     }
 
     // MARK: - 配置测试
@@ -226,6 +226,18 @@ final class ChatScrollPolicyTests: XCTestCase {
 
         XCTAssertTrue(decision.states.contains(.autoFollow(true)))
         XCTAssertTrue(decision.states.contains(.nearBottom(true)))
+    }
+
+    func testHistoryPrepended_returnsPreserveVisibleContentCommand() {
+        let policy = ChatScrollPolicy()
+
+        let decision = policy.reduce(event: .historyPrepended(anchorID: "anchor-1"))
+
+        XCTAssertEqual(
+            decision.command,
+            .preserveVisibleContentAfterPrepend(anchorID: "anchor-1")
+        )
+        XCTAssertFalse(decision.shouldScrollToBottom)
     }
 
     // MARK: - WS coalesce 规则测试

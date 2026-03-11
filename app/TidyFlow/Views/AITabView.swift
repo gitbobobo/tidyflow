@@ -33,16 +33,12 @@ struct AITabView: View {
     @StateObject private var sidebarState = AIChatSidebarState()
     @State private var isCompactSidebarDrawerPresented = false
     @State private var projectionStore = AIChatShellProjectionStore()
-    @State private var floatingComposerHeight: CGFloat = 0
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
     private let sessionStatusMinInterval: TimeInterval = 1.2
     private let persistentSidebarWidth: CGFloat = 260
     private let compactSidebarCollapseWidth: CGFloat = 920
     private let compactSidebarMaxWidth: CGFloat = 320
-    private let floatingComposerHorizontalPadding: CGFloat = 12
-    private let floatingComposerBottomPadding: CGFloat = 12
-    private let floatingComposerMinimumReserveHeight: CGFloat = 148
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -447,17 +443,25 @@ struct AITabView: View {
     }
 
     private var floatingChatStage: some View {
-        ZStack(alignment: .bottomLeading) {
-            messageArea
-                .overlay {
-                    // 弹出层可见时，点击消息区域关闭
-                    if autocomplete.isVisible {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture { autocomplete.reset() }
-                    }
+        AIChatStageView(
+            projection: projectionStore.projection,
+            store: aiChatStore,
+            selectedTool: aiChatToolBinding,
+            platformChrome: .macOS,
+            actions: AIChatStageActions(
+                onLoadOlderMessages: loadOlderMessages,
+                onQuestionReply: handleQuestionReply,
+                onQuestionReject: handleQuestionReject,
+                onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
+                onOpenLinkedSession: { sessionId in
+                    openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                 }
-
+            ),
+            enablesTranscriptTapDismiss: autocomplete.isVisible,
+            onTranscriptTap: { autocomplete.reset() }
+        ) {
+            composerDock
+        } accessoryOverlay: { composerHeight in
             if autocomplete.isVisible {
                 AutocompletePopupView(
                     autocomplete: autocomplete,
@@ -466,33 +470,9 @@ struct AITabView: View {
                 )
                 .frame(width: 320)
                 .fixedSize(horizontal: false, vertical: true)
-                .offset(x: 12, y: -floatingAutocompleteOffset)
+                .padding(.bottom, composerHeight + 6)
             }
-
-            inputArea
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: MacAIComposerHeightPreferenceKey.self,
-                            value: geo.size.height
-                        )
-                    }
-                )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .onPreferenceChange(MacAIComposerHeightPreferenceKey.self) { newHeight in
-            guard abs(newHeight - floatingComposerHeight) > 0.5 else { return }
-            floatingComposerHeight = newHeight
-        }
-    }
-
-    private var reservedMessageBottomInset: CGFloat {
-        max(floatingComposerHeight, floatingComposerMinimumReserveHeight) +
-            AIChatComposerLayoutSemantics.messageBottomClearance
-    }
-
-    private var floatingAutocompleteOffset: CGFloat {
-        floatingComposerHeight + 6
     }
 
     private func consumeOneShotHintIfNeeded() {
@@ -558,39 +538,6 @@ struct AITabView: View {
                 .foregroundColor(separatorColor),
             alignment: .bottom
         )
-    }
-
-    private var messageArea: some View {
-        let chatPresentation = projectionStore.projection.presentation
-        return ZStack {
-            Color.clear
-
-            if chatPresentation.showsEmptyState {
-                AIChatEmptyStateView(
-                    currentTool: chatPresentation.tool,
-                    selectedTool: aiChatToolBinding,
-                    canSwitchTool: chatPresentation.canSwitchTool,
-                    isLoading: chatPresentation.isLoadingMessages
-                )
-            } else {
-                MessageListView(
-                    messages: aiChatStore.messages,
-                    sessionToken: chatPresentation.currentSessionId,
-                    canLoadOlderMessages: chatPresentation.canLoadOlderMessages,
-                    isLoadingOlderMessages: chatPresentation.isLoadingOlderMessages,
-                    onLoadOlderMessages: loadOlderMessages,
-                    bottomOverlayInset: reservedMessageBottomInset,
-                    onQuestionReply: handleQuestionReply,
-                    onQuestionReject: handleQuestionReject,
-                    onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
-                    onOpenLinkedSession: { sessionId in
-                        openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
-                    }
-                )
-                .id(chatPresentation.messageListIdentity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func refreshShellProjection() {
@@ -660,7 +607,7 @@ struct AITabView: View {
         presentedSubAgentSession = SubAgentSessionRoute(id: trimmedSessionId, sourceToolName: sourceToolName)
     }
 
-    private var inputArea: some View {
+    private var composerDock: some View {
         let shellProjection = projectionStore.projection
 
         return AIChatComposerHostView(
@@ -700,9 +647,6 @@ struct AITabView: View {
                 }
             )
         }
-        .padding(.horizontal, floatingComposerHorizontalPadding)
-        .padding(.bottom, floatingComposerBottomPadding)
-        .frame(maxWidth: .infinity, alignment: .bottom)
         .onChange(of: inputText) { _, newText in
             if !inputIsComposing {
                 refreshAutocomplete(text: newText)
@@ -1831,13 +1775,6 @@ struct AITabView: View {
     }
 }
 
-private struct MacAIComposerHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
 
 struct AITabView_Previews: PreviewProvider {
     static var previews: some View {

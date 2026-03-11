@@ -89,7 +89,6 @@ private actor ChatImageLoader {
 }
 
 struct MessageListView: View {
-    @Environment(AIChatStore.self) var aiChatStore
     let messages: [AIChatMessage]
     let sessionToken: String?
     let canLoadOlderMessages: Bool
@@ -100,28 +99,7 @@ struct MessageListView: View {
     let onQuestionReplyAsMessage: (String) -> Void
     let onOpenLinkedSession: ((String) -> Void)?
     let bottomOverlayInset: CGFloat
-    @State private var isNearBottom: Bool = true
-    @State private var isAutoFollowActive: Bool = true
-    @State private var scrollDistanceToBottom: CGFloat = 0
-    @State private var scrollPolicy: ChatScrollPolicy = ChatScrollPolicy()
-    @State private var lastTailMessageID: String?
-    @State private var lastDisplayMessageCount: Int = 0
-    @State private var visibleMessageIDs: Set<String> = []
-    @State private var jumpToBottomRequestID: Int = 0
-    @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
-    /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
-    /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
-    @State private var programmaticScrollProtectedUntil: Date = .distantPast
-    /// 缓存的显示消息列表，仅在消息数量或会话变化时完整重算。
-    /// 流式增量更新只修改最后一条消息内容，无需重跑 O(n) filter。
-    @State private var cachedDisplayMessages: [AIChatMessage] = []
-    /// 上次完整重算时的消息数量，用于检测结构性变化。
-    @State private var cachedDisplayMessageSourceCount: Int = -1
-
-    private let bottomAnchorId = "ai_message_bottom_anchor"
-    /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
-    private let virtualizationWindow = MessageVirtualizationWindow()
-    private var pendingQuestions: [String: AIQuestionRequestInfo] { aiChatStore.pendingToolQuestions }
+    let jumpToBottomClearance: CGFloat
 
     init(
         messages: [AIChatMessage],
@@ -130,6 +108,7 @@ struct MessageListView: View {
         isLoadingOlderMessages: Bool = false,
         onLoadOlderMessages: (() -> Void)? = nil,
         bottomOverlayInset: CGFloat = 0,
+        jumpToBottomClearance: CGFloat = AIChatComposerLayoutSemantics.jumpToBottomClearance,
         onQuestionReply: @escaping (AIQuestionRequestInfo, [[String]]) -> Void,
         onQuestionReject: @escaping (AIQuestionRequestInfo) -> Void,
         onQuestionReplyAsMessage: @escaping (String) -> Void,
@@ -141,6 +120,87 @@ struct MessageListView: View {
         self.isLoadingOlderMessages = isLoadingOlderMessages
         self.onLoadOlderMessages = onLoadOlderMessages
         self.bottomOverlayInset = bottomOverlayInset
+        self.jumpToBottomClearance = jumpToBottomClearance
+        self.onQuestionReply = onQuestionReply
+        self.onQuestionReject = onQuestionReject
+        self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
+        self.onOpenLinkedSession = onOpenLinkedSession
+    }
+
+    var body: some View {
+        AIChatTranscriptContainer(
+            messages: messages,
+            sessionToken: sessionToken,
+            canLoadOlderMessages: canLoadOlderMessages,
+            isLoadingOlderMessages: isLoadingOlderMessages,
+            onLoadOlderMessages: onLoadOlderMessages,
+            bottomOverlayInset: bottomOverlayInset,
+            jumpToBottomClearance: jumpToBottomClearance,
+            onQuestionReply: onQuestionReply,
+            onQuestionReject: onQuestionReject,
+            onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+            onOpenLinkedSession: onOpenLinkedSession
+        )
+    }
+}
+
+struct AIChatTranscriptContainer: View {
+    @Environment(AIChatStore.self) var aiChatStore
+    let messages: [AIChatMessage]
+    let sessionToken: String?
+    let canLoadOlderMessages: Bool
+    let isLoadingOlderMessages: Bool
+    let onLoadOlderMessages: (() -> Void)?
+    let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
+    let onQuestionReject: (AIQuestionRequestInfo) -> Void
+    let onQuestionReplyAsMessage: (String) -> Void
+    let onOpenLinkedSession: ((String) -> Void)?
+    let bottomOverlayInset: CGFloat
+    let jumpToBottomClearance: CGFloat
+    @State private var isNearBottom: Bool = true
+    @State private var isAutoFollowActive: Bool = true
+    @State private var scrollDistanceToBottom: CGFloat = 0
+    @State private var scrollPolicy: ChatScrollPolicy = ChatScrollPolicy()
+    @State private var lastTailMessageID: String?
+    @State private var lastDisplayMessageCount: Int = 0
+    @State private var visibleMessageIDs: Set<String> = []
+    @State private var jumpToBottomRequestID: Int = 0
+    @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
+    @State private var pendingPrependAnchorID: String?
+    /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
+    /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
+    @State private var programmaticScrollProtectedUntil: Date = .distantPast
+    /// 缓存的显示消息列表，仅在消息数量或会话变化时完整重算。
+    /// 流式增量更新只修改最后一条消息内容，无需重跑 O(n) filter。
+    @State private var cachedDisplayMessages: [AIChatMessage] = []
+    /// 上次完整重算时的消息数量，用于检测结构性变化。
+    @State private var cachedDisplayMessageSourceCount: Int = -1
+
+    static let bottomAnchorId = "ai_message_bottom_anchor"
+    /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
+    private let virtualizationWindow = MessageVirtualizationWindow()
+    private var pendingQuestions: [String: AIQuestionRequestInfo] { aiChatStore.pendingToolQuestions }
+
+    init(
+        messages: [AIChatMessage],
+        sessionToken: String?,
+        canLoadOlderMessages: Bool = false,
+        isLoadingOlderMessages: Bool = false,
+        onLoadOlderMessages: (() -> Void)? = nil,
+        bottomOverlayInset: CGFloat = 0,
+        jumpToBottomClearance: CGFloat = AIChatComposerLayoutSemantics.jumpToBottomClearance,
+        onQuestionReply: @escaping (AIQuestionRequestInfo, [[String]]) -> Void,
+        onQuestionReject: @escaping (AIQuestionRequestInfo) -> Void,
+        onQuestionReplyAsMessage: @escaping (String) -> Void,
+        onOpenLinkedSession: ((String) -> Void)?
+    ) {
+        self.messages = messages
+        self.sessionToken = sessionToken
+        self.canLoadOlderMessages = canLoadOlderMessages
+        self.isLoadingOlderMessages = isLoadingOlderMessages
+        self.onLoadOlderMessages = onLoadOlderMessages
+        self.bottomOverlayInset = bottomOverlayInset
+        self.jumpToBottomClearance = jumpToBottomClearance
         self.onQuestionReply = onQuestionReply
         self.onQuestionReject = onQuestionReject
         self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
@@ -185,21 +245,38 @@ struct MessageListView: View {
         cachedDisplayMessageSourceCount = messages.count
     }
 
-    /// 预计算虚拟化渲染范围，供 messageStack() 在 ForEach 外一次性调用。
-    /// 避免在 ForEach 内部对每条消息重复触发 O(n) 扫描，将 O(n²) 降为 O(n)。
-    private func precomputeFullRenderRange(for msgs: [AIChatMessage]) -> ClosedRange<Int>? {
-        let visibleIndices = msgs.indices.filter { visibleMessageIDs.contains(msgs[$0].id) }
-        return virtualizationWindow.computeFullRenderRange(
-            visibleIndices: visibleIndices,
-            totalCount: msgs.count
-        )
-    }
-
     var body: some View {
         let _ = Self.debugPrintChangesIfNeeded()
         ScrollViewReader { proxy in
             ScrollView {
-                messageStack()
+                AIChatTranscriptContent(
+                    messages: displayMessages,
+                    pendingQuestions: pendingQuestions,
+                    virtualizationWindow: virtualizationWindow,
+                    visibleMessageIDs: visibleMessageIDs,
+                    sessionId: aiChatStore.currentSessionId ?? "",
+                    loadingOlderState: loadingOlderState,
+                    bottomOverlayInset: bottomOverlayInset,
+                    onLoadOlderMessages: handleLoadOlderMessages,
+                    questionRequestResolver: { callId, toolPartId, messageId, requestId in
+                        aiChatStore.questionRequest(
+                            forToolCallId: callId,
+                            toolPartId: toolPartId,
+                            toolMessageId: messageId,
+                            requestId: requestId
+                        )
+                    },
+                    onQuestionReply: onQuestionReply,
+                    onQuestionReject: onQuestionReject,
+                    onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                    onOpenLinkedSession: onOpenLinkedSession,
+                    onMessageAppear: { messageId in
+                        visibleMessageIDs.insert(messageId)
+                    },
+                    onMessageDisappear: { messageId in
+                        visibleMessageIDs.remove(messageId)
+                    }
+                )
             }
             .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(
@@ -219,10 +296,11 @@ struct MessageListView: View {
                 initializeScrollPolicyStateIfNeeded()
                 // defaultScrollAnchor(.bottom) 处理初始定位，
                 // 但仍需手动滚动以确保在已有消息时精确定位底部。
-                scrollToBottom(proxy: proxy, animation: .none)
+                executeScrollCommand(.scrollToBottom(.none), proxy: proxy)
             }
-            .onChange(of: messages.count) { _, _ in
+            .onChange(of: messages.count) { oldCount, newCount in
                 refreshDisplayMessagesCache()
+                handleMessageCountChanged(oldCount: oldCount, newCount: newCount, proxy: proxy)
             }
             .onChange(of: sessionToken) { _, _ in
                 refreshDisplayMessagesCache()
@@ -232,7 +310,7 @@ struct MessageListView: View {
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
-                scrollToBottom(proxy: proxy, animation: .jumpToBottom)
+                executeScrollCommand(.scrollToBottom(.jumpToBottom), proxy: proxy)
             }
         }
         .tfRenderProbe("AIMessageList", metadata: [
@@ -256,115 +334,19 @@ struct MessageListView: View {
         }
     }
 
-    @ViewBuilder
-    private func messageStack() -> some View {
-        // 提前计算避免 ForEach 内部重复调用 O(n) 的 displayMessages，将整体复杂度从 O(n²) 降为 O(n)。
-        let msgs = displayMessages
-        let renderRange = precomputeFullRenderRange(for: msgs)
-
-        LazyVStack(spacing: 0) {
-            if canLoadOlderMessages || isLoadingOlderMessages {
-                HStack {
-                    Spacer(minLength: 0)
-                    if isLoadingOlderMessages {
-                        ProgressView("加载中…")
-                            .controlSize(.small)
-                            .font(.caption)
-                    } else if canLoadOlderMessages, let onLoadOlderMessages {
-                        Button("加载更早消息", action: onLoadOlderMessages)
-                            .font(.caption)
-                            .buttonStyle(.bordered)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 4)
-            }
-
-            // 预构建 ID→索引映射，避免 Array(msgs.enumerated()) 的临时数组分配，
-            // 同时保持 O(1) 索引查找。
-            let msgIndexMap = Dictionary(
-                uniqueKeysWithValues: msgs.enumerated().map { ($1.id, $0) }
-            )
-            ForEach(msgs) { message in
-                let index = msgIndexMap[message.id] ?? 0
-                MessageBubble(
-                    message: message,
-                    prefersFullRender: virtualizationWindow.shouldFullyRender(
-                        index: index,
-                        isStreaming: message.isStreaming,
-                        fullRenderRange: renderRange,
-                        totalCount: msgs.count
-                    ),
-                    pendingQuestionToken: pendingQuestionToken(for: message),
-                    pendingQuestions: pendingQuestions,
-                    sessionId: aiChatStore.currentSessionId ?? "",
-                    questionRequestResolver: { callId, toolPartId, messageId, requestId in
-                        aiChatStore.questionRequest(
-                            forToolCallId: callId,
-                            toolPartId: toolPartId,
-                            toolMessageId: messageId,
-                            requestId: requestId
-                        )
-                    },
-                    onQuestionReply: onQuestionReply,
-                    onQuestionReject: onQuestionReject,
-                    onQuestionReplyAsMessage: onQuestionReplyAsMessage,
-                    onOpenLinkedSession: onOpenLinkedSession
-                )
-                .equatable()
-                .id(message.id)
-                .padding(.top, messageSpacing(at: index, in: msgs))
-                .onAppear {
-                    visibleMessageIDs.insert(message.id)
-                }
-                .onDisappear {
-                    visibleMessageIDs.remove(message.id)
-                }
-            }
-
-            Color.clear
-                .frame(height: bottomOverlayInset)
-
-            Color.clear
-                .frame(height: 1)
-                .id(bottomAnchorId)
+    private var loadingOlderState: AIChatLoadingOlderState {
+        if isLoadingOlderMessages {
+            return .loading
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
+        if canLoadOlderMessages {
+            return .available
+        }
+        return .hidden
     }
 
-    /// 统一的工具卡片消息间距常量（8pt），macOS 与 iOS 共用
-    private static let toolCardSpacing: CGFloat = 8
-
-    /// 消息间动态间距规则：
-    /// - 连续工具类消息（assistant 且全为工具/推理 part）之间使用 8pt 紧凑间距，
-    ///   与同一消息内部 part 间距保持一致，避免视觉不规则。
-    /// - 其余组合保持 16pt 阅读节奏。
-    private func messageSpacing(at index: Int, in messages: [AIChatMessage]) -> CGFloat {
-        guard index > 0 else { return 0 }
-        let prev = messages[index - 1]
-        let current = messages[index]
-        if isToolOnlyAssistantMessage(prev) && isToolOnlyAssistantMessage(current) {
-            return Self.toolCardSpacing
-        }
-        return 16
-    }
-
-    /// 是否为工具类 assistant 消息（所有有实际内容的 part 均为 tool 或 reasoning）
-    private func isToolOnlyAssistantMessage(_ message: AIChatMessage) -> Bool {
-        guard message.role == .assistant, !message.parts.isEmpty else { return false }
-        // 过滤出有实际内容的 part（空 text part 不计入判断）
-        let significantParts = message.parts.filter { part in
-            switch part.kind {
-            case .tool, .reasoning, .file, .plan, .compaction:
-                return true
-            case .text:
-                let trimmed = (part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                return !trimmed.isEmpty
-            }
-        }
-        guard !significantParts.isEmpty else { return false }
-        return significantParts.allSatisfy { $0.kind == .tool || $0.kind == .reasoning }
+    private func handleLoadOlderMessages() {
+        pendingPrependAnchorID = currentTopVisibleAnchorID()
+        onLoadOlderMessages?()
     }
 
     /// 使用双阈值策略更新滚动状态：
@@ -409,8 +391,17 @@ struct MessageListView: View {
         lastDisplayMessageCount = displayMessages.count
         lastTailMessageID = displayMessages.last?.id
 
-        guard decision.shouldScrollToBottom else { return }
+        guard decision.command != .noOp else { return }
         jumpToBottomRequestID += 1
+    }
+
+    private func handleMessageCountChanged(oldCount: Int, newCount: Int, proxy: ScrollViewProxy) {
+        guard newCount > oldCount else { return }
+        guard let prependAnchor = pendingPrependAnchorID else { return }
+        pendingPrependAnchorID = nil
+        guard displayMessages.contains(where: { $0.id == prependAnchor }) else { return }
+        let decision = scrollPolicy.reduce(event: .historyPrepended(anchorID: prependAnchor))
+        executeScrollCommand(decision.command, proxy: proxy)
     }
 
     private func tailChangeEvent() -> ChatScrollEvent {
@@ -429,11 +420,9 @@ struct MessageListView: View {
 
     private func handleTailChanged(proxy: ScrollViewProxy) {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
-        guard decision.shouldScrollToBottom else { return }
+        guard decision.command != .noOp else { return }
         guard scrollExecutionGate.consumeAutoScrollRequest() else { return }
-        // 新消息出现（messageAppended）用 spring 动画，流式增量（throttledScrollToBottom）保持无动画避免频繁抖动。
-        let animation: ChatScrollAnimation = decision.action == .scrollToBottom ? .spring() : .none
-        scrollToBottom(proxy: proxy, animation: animation)
+        executeScrollCommand(decision.command, proxy: proxy)
     }
 
     private var showJumpToBottomButton: Bool {
@@ -457,8 +446,31 @@ struct MessageListView: View {
         .buttonStyle(.plain)
         .padding(
             .bottom,
-            bottomOverlayInset + AIChatComposerLayoutSemantics.jumpToBottomClearance
+            bottomOverlayInset + jumpToBottomClearance
         )
+    }
+
+    private func currentTopVisibleAnchorID() -> String? {
+        let msgs = displayMessages
+        let visibleIndices = msgs.indices.filter { visibleMessageIDs.contains(msgs[$0].id) }
+        guard let index = visibleIndices.min() else { return msgs.first?.id }
+        return msgs[index].id
+    }
+
+    private func executeScrollCommand(_ command: ChatScrollCommand, proxy: ScrollViewProxy) {
+        switch command {
+        case .noOp:
+            break
+        case .scrollToBottom(let animation):
+            scrollToBottom(proxy: proxy, animation: animation)
+        case .preserveVisibleContentAfterPrepend(let anchorID):
+            preserveVisibleContent(proxy: proxy, anchorID: anchorID)
+        }
+    }
+
+    private func preserveVisibleContent(proxy: ScrollViewProxy, anchorID: String) {
+        programmaticScrollProtectedUntil = Date().addingTimeInterval(0.2)
+        proxy.scrollTo(anchorID, anchor: .top)
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animation: ChatScrollAnimation = .none) {
@@ -469,7 +481,7 @@ struct MessageListView: View {
         // 仍报告旧的（偏离底部的）距离，错误中断 autoFollow。保护期内忽略这些误报。
         programmaticScrollProtectedUntil = Date().addingTimeInterval(0.5)
         let action = {
-            proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+            proxy.scrollTo(Self.bottomAnchorId, anchor: .bottom)
         }
         let finalizeManualJumpIfNeeded = {
             guard scrollExecutionGate.completeManualJumpToBottom() else { return }
@@ -517,6 +529,114 @@ struct MessageListView: View {
         let withinAutoFollowZone = !metrics.canScrollVertically || metrics.distanceToBottom <= config.autoFollowBreakThreshold
         updateNearBottomState(nearBottom: nearBottom, withinAutoFollowZone: withinAutoFollowZone)
     }
+}
+
+struct AIChatTranscriptContent: View {
+    let messages: [AIChatMessage]
+    let pendingQuestions: [String: AIQuestionRequestInfo]
+    let virtualizationWindow: MessageVirtualizationWindow
+    let visibleMessageIDs: Set<String>
+    let sessionId: String
+    let loadingOlderState: AIChatLoadingOlderState
+    let bottomOverlayInset: CGFloat
+    let onLoadOlderMessages: (() -> Void)?
+    let questionRequestResolver: (String?, String?, String?, String?) -> AIQuestionRequestInfo?
+    let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
+    let onQuestionReject: (AIQuestionRequestInfo) -> Void
+    let onQuestionReplyAsMessage: (String) -> Void
+    let onOpenLinkedSession: ((String) -> Void)?
+    let onMessageAppear: (String) -> Void
+    let onMessageDisappear: (String) -> Void
+
+    var body: some View {
+        let renderRange = precomputeFullRenderRange(for: messages)
+
+        LazyVStack(spacing: 0) {
+            loadingOlderHeader
+
+            let msgIndexMap = Dictionary(
+                uniqueKeysWithValues: messages.enumerated().map { ($1.id, $0) }
+            )
+            ForEach(messages) { message in
+                let index = msgIndexMap[message.id] ?? 0
+                AIChatMessageRow(
+                    message: message,
+                    prefersFullRender: virtualizationWindow.shouldFullyRender(
+                        index: index,
+                        isStreaming: message.isStreaming,
+                        fullRenderRange: renderRange,
+                        totalCount: messages.count
+                    ),
+                    pendingQuestionToken: pendingQuestionToken(for: message),
+                    pendingQuestions: pendingQuestions,
+                    sessionId: sessionId,
+                    questionRequestResolver: questionRequestResolver,
+                    onQuestionReply: onQuestionReply,
+                    onQuestionReject: onQuestionReject,
+                    onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                    onOpenLinkedSession: onOpenLinkedSession
+                )
+                .equatable()
+                .id(message.id)
+                .padding(.top, messageSpacing(at: index, in: messages))
+                .onAppear {
+                    onMessageAppear(message.id)
+                }
+                .onDisappear {
+                    onMessageDisappear(message.id)
+                }
+            }
+
+            Color.clear
+                .frame(height: bottomOverlayInset)
+
+            Color.clear
+                .frame(height: 1)
+                .id(AIChatTranscriptContainer.bottomAnchorId)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var loadingOlderHeader: some View {
+        switch loadingOlderState {
+        case .hidden:
+            EmptyView()
+        case .loading:
+            HStack {
+                Spacer(minLength: 0)
+                ProgressView("加载中…")
+                    .controlSize(.small)
+                    .font(.caption)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+        case .available:
+            HStack {
+                Spacer(minLength: 0)
+                Button("加载更早消息") {
+                    onLoadOlderMessages?()
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private func precomputeFullRenderRange(for msgs: [AIChatMessage]) -> ClosedRange<Int>? {
+        let visibleIndices = msgs.indices.filter { visibleMessageIDs.contains(msgs[$0].id) }
+        return virtualizationWindow.computeFullRenderRange(
+            visibleIndices: visibleIndices,
+            totalCount: msgs.count
+        )
+    }
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
         guard message.parts.contains(where: { $0.kind == .tool }) else {
@@ -525,15 +645,15 @@ struct MessageListView: View {
         let items: [String] = message.parts.compactMap { part in
             guard part.kind == .tool else { return nil }
             let requestId = questionRequestIdFromPart(part)
-            let request = aiChatStore.questionRequest(
-                forToolCallId: part.toolCallId,
-                toolPartId: part.id,
-                toolMessageId: message.messageId,
-                requestId: requestId
+            let request = questionRequestResolver(
+                part.toolCallId,
+                part.id,
+                message.messageId,
+                requestId
             ) ?? fallbackQuestionRequestFromPart(
                 message: message,
                 part: part,
-                sessionId: aiChatStore.currentSessionId ?? ""
+                sessionId: sessionId
             )
             guard let request else { return nil }
             let linkKey =
@@ -578,6 +698,31 @@ struct MessageListView: View {
             toolCallId: part.toolCallId
         )
     }
+
+    private func messageSpacing(at index: Int, in messages: [AIChatMessage]) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let previous = messages[index - 1]
+        let current = messages[index]
+        if isToolOnlyAssistantMessage(previous) && isToolOnlyAssistantMessage(current) {
+            return 8
+        }
+        return 16
+    }
+
+    private func isToolOnlyAssistantMessage(_ message: AIChatMessage) -> Bool {
+        guard message.role == .assistant, !message.parts.isEmpty else { return false }
+        let significantParts = message.parts.filter { part in
+            switch part.kind {
+            case .tool, .reasoning, .file, .plan, .compaction:
+                return true
+            case .text:
+                let trimmed = (part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return !trimmed.isEmpty
+            }
+        }
+        guard !significantParts.isEmpty else { return false }
+        return significantParts.allSatisfy { $0.kind == .tool || $0.kind == .reasoning }
+    }
 }
 
 private struct MessageListScrollMetrics: Equatable {
@@ -599,7 +744,7 @@ private struct MessageListScrollMetrics: Equatable {
     }
 }
 
-private struct MessageBubble: View, Equatable {
+struct AIChatMessageRow: View, Equatable {
     let message: AIChatMessage
     let prefersFullRender: Bool
     let pendingQuestionToken: String
@@ -614,11 +759,8 @@ private struct MessageBubble: View, Equatable {
     @State private var fullscreenImageData: Data?
 
     private var isUser: Bool { message.role == .user }
-    private var bubbleCornerRadius: CGFloat { 12 }
-    private var primaryTextColor: Color { .primary }
-    private var secondaryTextColor: Color { .secondary }
 
-    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
+    static func == (lhs: AIChatMessageRow, rhs: AIChatMessageRow) -> Bool {
         lhs.message.id == rhs.message.id &&
             lhs.message.renderRevision == rhs.message.renderRevision &&
             lhs.message.isStreaming == rhs.message.isStreaming &&
@@ -627,11 +769,7 @@ private struct MessageBubble: View, Equatable {
             lhs.sessionId == rhs.sessionId
     }
 
-    private var showsStreamingStatus: Bool {
-        !isUser && message.isStreaming
-    }
-
-    /// 判断所有有内容的 display node 是否都是宽布局类型（tool/plan/compaction）
+    /// 判断所有有内容的 display node 是否都是宽布局类型（tool/plan/compaction）。
     private static func computeUsesWideLayout(isUser: Bool, nodes: [AIChatMessageDisplayNode]) -> Bool {
         guard !isUser, !nodes.isEmpty else { return false }
         return nodes.allSatisfy { node in
@@ -649,11 +787,126 @@ private struct MessageBubble: View, Equatable {
         }
     }
 
+    var body: some View {
+        let nodes = AIChatMessageLayoutSemantics.displayNodes(
+            for: message,
+            pendingQuestions: pendingQuestions
+        )
+        let wideLayout = Self.computeUsesWideLayout(isUser: isUser, nodes: nodes)
+        let contentMaxWidth: CGFloat = isUser ? 520 : (wideLayout ? .infinity : 760)
+
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+            AIChatMessageBody(
+                message: message,
+                nodes: nodes,
+                prefersFullRender: prefersFullRender,
+                sessionId: sessionId,
+                questionRequestResolver: questionRequestResolver,
+                onQuestionReply: onQuestionReply,
+                onQuestionReject: onQuestionReject,
+                onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                onOpenLinkedSession: onOpenLinkedSession,
+                onOpenFullscreenImage: { fullscreenImageData = $0 }
+            )
+            .frame(maxWidth: contentMaxWidth, alignment: isUser ? .trailing : .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .padding(.horizontal, 8)
+        .sheet(item: Binding(
+            get: { fullscreenImageData.map { FullscreenImageItem(data: $0) } },
+            set: { if $0 == nil { fullscreenImageData = nil } }
+        )) { item in
+            FullscreenImageSheet(data: item.data)
+        }
+    }
+}
+
+private struct AIChatMessageBody: View {
+    let message: AIChatMessage
+    let nodes: [AIChatMessageDisplayNode]
+    let prefersFullRender: Bool
+    let sessionId: String
+    let questionRequestResolver: (String?, String?, String?, String?) -> AIQuestionRequestInfo?
+    let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
+    let onQuestionReject: (AIQuestionRequestInfo) -> Void
+    let onQuestionReplyAsMessage: (String) -> Void
+    let onOpenLinkedSession: ((String) -> Void)?
+    let onOpenFullscreenImage: (Data) -> Void
+
+    private var isUser: Bool { message.role == .user }
+    private var bubbleCornerRadius: CGFloat { 12 }
+    private var primaryTextColor: Color { .primary }
+    private var secondaryTextColor: Color { .secondary }
+    private var showsStreamingStatus: Bool { !isUser && message.isStreaming }
+
+    var body: some View {
+        Group {
+            if !prefersFullRender {
+                lightweightBubble
+            } else {
+                fullRenderBubble
+            }
+        }
+    }
+
+    private var fullRenderBubble: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if nodes.isEmpty {
+                EmptyView()
+            } else {
+                ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
+                    displayNodeView(node)
+                        .padding(.top, spacingBeforeNode(at: index))
+                        .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
+                }
+            }
+            if showsStreamingStatus {
+                streamingStatusIndicator(nodesEmpty: nodes.isEmpty)
+                    .transition(.opacity)
+            }
+        }
+        .animation(message.isStreaming ? nil : .easeOut(duration: 0.18), value: nodes.count)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(bubbleBackgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
+        )
+        .clipShape(.rect(cornerRadius: bubbleCornerRadius))
+    }
+
+    private var lightweightBubble: some View {
+        let summary = compactSummaryText
+        return VStack(alignment: .leading, spacing: 6) {
+            if summary.isEmpty {
+                Text("...")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isUser ? primaryTextColor.opacity(0.85) : .secondary)
+            } else {
+                Text(summary)
+                    .textSelection(.enabled)
+                    .font(.system(size: 13))
+                    .foregroundStyle(primaryTextColor)
+                    .lineLimit(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(bubbleBackgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
+        )
+        .clipShape(.rect(cornerRadius: bubbleCornerRadius))
+    }
+
     /// 相邻节点之间的动态间距规则：
     /// - 连续工具卡之间使用 8pt 紧凑间距，避免过度分散
     /// - 文本块紧接工具卡或计划卡时使用更宽松间距
     /// - 其余组合保持 10pt 阅读节奏
-    private func spacingBeforeNode(at index: Int, in nodes: [AIChatMessageDisplayNode]) -> CGFloat {
+    private func spacingBeforeNode(at index: Int) -> CGFloat {
         guard index > 0 else { return 0 }
         let previousNode = nodes[index - 1]
         let currentNode = nodes[index]
@@ -666,61 +919,6 @@ private struct MessageBubble: View, Equatable {
             return 12
         default:
             return 10
-        }
-    }
-
-    var body: some View {
-        // 一次性计算 displayNodes，避免在 usesWideAssistantLayout、bubble、compactSummaryText 中重复调用。
-        let nodes = AIChatMessageLayoutSemantics.displayNodes(
-            for: message,
-            pendingQuestions: pendingQuestions
-        )
-        let wideLayout = Self.computeUsesWideLayout(isUser: isUser, nodes: nodes)
-        let contentMaxWidth: CGFloat = isUser ? 520 : (wideLayout ? .infinity : 760)
-
-        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            bubbleContent(nodes: nodes)
-                .frame(maxWidth: contentMaxWidth, alignment: isUser ? .trailing : .leading)
-        }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-        .padding(.horizontal, 8)
-        .sheet(item: Binding(
-            get: { fullscreenImageData.map { FullscreenImageItem(data: $0) } },
-            set: { if $0 == nil { fullscreenImageData = nil } }
-        )) { item in
-            FullscreenImageSheet(data: item.data)
-        }
-    }
-
-    @ViewBuilder
-    private func bubbleContent(nodes: [AIChatMessageDisplayNode]) -> some View {
-        if !prefersFullRender {
-            lightweightBubble(nodes: nodes)
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
-                if nodes.isEmpty {
-                    EmptyView()
-                } else {
-                    ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
-                        displayNodeView(node)
-                            .padding(.top, spacingBeforeNode(at: index, in: nodes))
-                            .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
-                    }
-                }
-                if showsStreamingStatus {
-                    streamingStatusIndicator(nodesEmpty: nodes.isEmpty)
-                        .transition(.opacity)
-                }
-            }
-            .animation(message.isStreaming ? nil : .easeOut(duration: 0.18), value: nodes.count)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(bubbleBackgroundColor)
-            .overlay(
-                RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                    .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
-            )
-            .clipShape(.rect(cornerRadius: bubbleCornerRadius))
         }
     }
 
@@ -770,7 +968,7 @@ private struct MessageBubble: View, Equatable {
                 part.id,
                 message.messageId,
                 requestId
-            ) ?? fallbackQuestionRequest(message: message, part: part, sessionId: sessionId)
+            ) ?? fallbackQuestionRequest(message: message, part: part)
             ToolCardView(
                 name: part.toolName ?? "unknown",
                 callID: part.toolCallId,
@@ -798,8 +996,7 @@ private struct MessageBubble: View, Equatable {
 
     private func fallbackQuestionRequest(
         message: AIChatMessage,
-        part: AIChatPart,
-        sessionId: String
+        part: AIChatPart
     ) -> AIQuestionRequestInfo? {
         guard part.kind == .tool else { return nil }
         let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -823,7 +1020,7 @@ private struct MessageBubble: View, Equatable {
         )
     }
 
-    /// 流式状态指示器，接收预计算的 nodesEmpty 避免重复调用 displayNodes。
+    /// 流式状态指示器，接收预计算的 nodesEmpty，避免重复调用 displayNodes。
     private func streamingStatusIndicator(nodesEmpty: Bool) -> some View {
         HStack(spacing: 0) {
             Text("思考中")
@@ -834,33 +1031,7 @@ private struct MessageBubble: View, Equatable {
         .padding(.top, nodesEmpty ? 0 : 4)
     }
 
-    private func lightweightBubble(nodes: [AIChatMessageDisplayNode]) -> some View {
-        let summary = compactSummaryText(nodes: nodes)
-        return VStack(alignment: .leading, spacing: 6) {
-            if summary.isEmpty {
-                Text("...")
-                    .font(.system(size: 12))
-                    .foregroundStyle(isUser ? primaryTextColor.opacity(0.85) : .secondary)
-            } else {
-                Text(summary)
-                    .textSelection(.enabled)
-                    .font(.system(size: 13))
-                    .foregroundStyle(primaryTextColor)
-                    .lineLimit(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(bubbleBackgroundColor)
-        .overlay(
-            RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
-        )
-        .clipShape(.rect(cornerRadius: bubbleCornerRadius))
-    }
-
-    private func compactSummaryText(nodes: [AIChatMessageDisplayNode]) -> String {
+    private var compactSummaryText: String {
         var lines: [String] = []
         for node in nodes {
             switch node {
@@ -890,72 +1061,15 @@ private struct MessageBubble: View, Equatable {
                 }
             }
         }
-        if lines.isEmpty { return "" }
         return lines.joined(separator: "\n")
     }
 
     private var bubbleBackgroundColor: Color {
-        if isUser {
-            return Color.primary.opacity(0.08)
-        } else {
-            return .clear
-        }
+        isUser ? Color.primary.opacity(0.08) : .clear
     }
 
     private var bubbleBorderColor: Color {
-        return .clear
-    }
-
-    /// 流式阶段的文本规范化：兼顾可读性与抖动控制。
-    private func normalizedStreamingDisplayText(_ raw: String, keepOriginalForUser: Bool) -> String? {
-        // 用户消息尽量保留原始格式；仅过滤纯空白输入。
-        if keepOriginalForUser {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : raw
-        }
-
-        var text = normalizedLineBreaks(raw)
-
-        // 仅用于判空，不直接裁剪文本，避免吞掉“行完成”所需的尾部换行信号。
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-
-        // 连续 3 行以上空白压缩为最多 2 行，保留基本段落感。
-        text = text.replacingOccurrences(
-            of: #"\n{3,}"#,
-            with: "\n\n",
-            options: .regularExpression
-        )
-
-        // 仅去掉首部空白行，保留尾部换行以便“行完成后立即触发 Markdown 渲染”。
-        text = text.replacingOccurrences(
-            of: #"^\n+"#,
-            with: "",
-            options: .regularExpression
-        )
-
-        return text
-    }
-
-    private func styledStreamingText(for group: AIChatTextRunGroup) -> Text? {
-        var result: Text?
-
-        for run in group.displayRuns {
-            guard let normalizedText = normalizedStreamingDisplayText(
-                run.text,
-                keepOriginalForUser: isUser
-            ) else {
-                continue
-            }
-
-            let chunk = Text(verbatim: normalizedText)
-                .foregroundColor(
-                    (!isUser && run.kind == .reasoning) ? .secondary : .primary
-                )
-
-            result = result.map { $0 + chunk } ?? chunk
-        }
-
-        return result
+        .clear
     }
 
     /// 完成态 Markdown 规范化：仅统一换行，不压缩内部空行，避免破坏 Markdown 语义。
@@ -988,9 +1102,7 @@ private struct MessageBubble: View, Equatable {
                 AsyncChatAttachmentImageView(
                     cacheKey: cacheKey,
                     urlString: imageURL,
-                    onOpenFullscreen: { data in
-                        fullscreenImageData = data
-                    }
+                    onOpenFullscreen: onOpenFullscreenImage
                 )
                 .frame(maxWidth: 320, maxHeight: 240)
                 .clipShape(.rect(cornerRadius: 8))

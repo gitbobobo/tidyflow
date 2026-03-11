@@ -10,7 +10,11 @@ extension AIChatPresentationProjection {
         isLoadingMessages: false,
         canLoadOlderMessages: false,
         isLoadingOlderMessages: false,
-        messageListIdentity: "main-session-opencode--0",
+        transcriptIdentity: "main-session-opencode--0",
+        composerMode: .standard,
+        bottomDockClearance: AIChatComposerLayoutSemantics.messageBottomClearance,
+        jumpToBottomClearance: AIChatComposerLayoutSemantics.jumpToBottomClearance,
+        loadingOlderState: .hidden,
         shouldReplaceComposer: false
     )
 }
@@ -76,7 +80,11 @@ enum AIChatShellProjectionSemantics {
             isLoadingMessages: presentation.isLoadingMessages,
             canLoadOlderMessages: presentation.canLoadOlderMessages,
             isLoadingOlderMessages: presentation.isLoadingOlderMessages,
-            messageListIdentity: presentation.messageListIdentity,
+            transcriptIdentity: presentation.transcriptIdentity,
+            composerMode: pendingInteractionQueue.hasPendingInteraction ? .pendingInteraction : .standard,
+            bottomDockClearance: presentation.bottomDockClearance,
+            jumpToBottomClearance: presentation.jumpToBottomClearance,
+            loadingOlderState: presentation.loadingOlderState,
             shouldReplaceComposer: pendingInteractionQueue.hasPendingInteraction
         )
         let sessionActive = sessionStatus?.isActive == true

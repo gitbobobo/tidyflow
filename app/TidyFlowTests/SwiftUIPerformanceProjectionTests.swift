@@ -425,7 +425,11 @@ final class AIChatShellProjectionStoreTests: XCTestCase {
                     isLoadingMessages: false,
                     canLoadOlderMessages: true,
                     isLoadingOlderMessages: false,
-                    messageListIdentity: "main-session-opencode-session-2-1",
+                    transcriptIdentity: "main-session-opencode-session-2-1",
+                    composerMode: .standard,
+                    bottomDockClearance: AIChatComposerLayoutSemantics.messageBottomClearance,
+                    jumpToBottomClearance: AIChatComposerLayoutSemantics.jumpToBottomClearance,
+                    loadingOlderState: .available,
                     shouldReplaceComposer: false
                 ),
                 sessionStatus: nil,

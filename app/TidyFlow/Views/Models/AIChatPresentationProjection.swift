@@ -1,4 +1,16 @@
 import Foundation
+import CoreGraphics
+
+enum AIChatComposerMode: Equatable {
+    case standard
+    case pendingInteraction
+}
+
+enum AIChatLoadingOlderState: Equatable {
+    case hidden
+    case available
+    case loading
+}
 
 struct AIChatPresentationProjection: Equatable {
     let tool: AIChatTool
@@ -8,8 +20,16 @@ struct AIChatPresentationProjection: Equatable {
     let isLoadingMessages: Bool
     let canLoadOlderMessages: Bool
     let isLoadingOlderMessages: Bool
-    let messageListIdentity: String
+    let transcriptIdentity: String
+    let composerMode: AIChatComposerMode
+    let bottomDockClearance: CGFloat
+    let jumpToBottomClearance: CGFloat
+    let loadingOlderState: AIChatLoadingOlderState
     let shouldReplaceComposer: Bool
+
+    var messageListIdentity: String {
+        transcriptIdentity
+    }
 }
 
 enum AIChatPresentationSemantics {
@@ -35,7 +55,19 @@ enum AIChatPresentationSemantics {
             isLoadingMessages: isLoadingMessages,
             canLoadOlderMessages: currentSessionId != nil && historyHasMore,
             isLoadingOlderMessages: historyIsLoading,
-            messageListIdentity: "main-session-\(tool.rawValue)-\(effectiveSessionId)-\(scrollSessionToken)",
+            transcriptIdentity: "main-session-\(tool.rawValue)-\(effectiveSessionId)-\(scrollSessionToken)",
+            composerMode: .standard,
+            bottomDockClearance: AIChatComposerLayoutSemantics.messageBottomClearance,
+            jumpToBottomClearance: AIChatComposerLayoutSemantics.jumpToBottomClearance,
+            loadingOlderState: {
+                if historyIsLoading {
+                    return .loading
+                }
+                if currentSessionId != nil && historyHasMore {
+                    return .available
+                }
+                return .hidden
+            }(),
             shouldReplaceComposer: false
         )
     }

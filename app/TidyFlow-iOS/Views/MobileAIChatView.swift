@@ -5,14 +5,6 @@ private struct MobileSubAgentSessionRoute: Identifiable {
     let sourceToolName: String
 }
 
-private struct MobileAIComposerHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct MobileAIChatView: View {
     let appState: MobileAppState
     let aiChatStore: AIChatStore
@@ -31,9 +23,6 @@ struct MobileAIChatView: View {
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
     @State private var projectionStore = AIChatShellProjectionStore()
-    @State private var floatingComposerHeight: CGFloat = 0
-
-    private let floatingComposerMinimumReserveHeight: CGFloat = 152
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -77,14 +66,6 @@ struct MobileAIChatView: View {
         return Color(UIColor.systemBackground)
         #else
         return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
-
-    private var systemGroupedBackgroundColor: Color {
-        #if os(iOS)
-        return Color(UIColor.systemGroupedBackground)
-        #else
-        return Color(NSColor.textBackgroundColor)
         #endif
     }
 
@@ -261,51 +242,6 @@ struct MobileAIChatView: View {
         )
     }
 
-    private var messageArea: some View {
-        let chatPresentation = projectionStore.projection.presentation
-        return ZStack {
-            if chatPresentation.showsEmptyState {
-                AIChatEmptyStateView(
-                    currentTool: chatPresentation.tool,
-                    selectedTool: aiToolBinding,
-                    canSwitchTool: chatPresentation.canSwitchTool,
-                    isLoading: chatPresentation.isLoadingMessages
-                )
-            } else {
-                MessageListView(
-                    messages: aiChatStore.messages,
-                    sessionToken: chatPresentation.currentSessionId,
-                    canLoadOlderMessages: chatPresentation.canLoadOlderMessages,
-                    isLoadingOlderMessages: chatPresentation.isLoadingOlderMessages,
-                    onLoadOlderMessages: loadOlderMessages,
-                    bottomOverlayInset: reservedMessageBottomInset,
-                    onQuestionReply: { request, answers in
-                        handleQuestionReply(request: request, answers: answers)
-                    },
-                    onQuestionReject: { request in
-                        handleQuestionReject(request: request)
-                    },
-                    onQuestionReplyAsMessage: { text in
-                        _ = appState.sendAIMessage(text: text, imageAttachments: [])
-                    },
-                    onOpenLinkedSession: { sessionId in
-                        appState.openSubAgentSessionViewer(
-                            project: appState.aiActiveProject,
-                            workspace: appState.aiActiveWorkspace,
-                            aiTool: appState.aiChatTool,
-                            sessionId: sessionId,
-                            sourceToolName: "task"
-                        )
-                        presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
-                    }
-                )
-                .environment(aiChatStore)
-                .id(chatPresentation.messageListIdentity)
-            }
-        }
-        .background(systemGroupedBackgroundColor)
-    }
-
     private func refreshShellProjection() {
         let sessionStatus: AISessionStatusSnapshot? = {
             guard let sessionId = appState.aiCurrentSessionId, !sessionId.isEmpty else { return nil }
@@ -366,32 +302,35 @@ struct MobileAIChatView: View {
     }
 
     private var floatingChatStage: some View {
-        ZStack(alignment: .bottom) {
-            messageArea
-
-            inputArea
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: MobileAIComposerHeightPreferenceKey.self,
-                            value: geo.size.height
-                        )
-                    }
-                )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .onPreferenceChange(MobileAIComposerHeightPreferenceKey.self) { newHeight in
-            guard abs(newHeight - floatingComposerHeight) > 0.5 else { return }
-            floatingComposerHeight = newHeight
+        AIChatStageView(
+            projection: projectionStore.projection,
+            store: aiChatStore,
+            selectedTool: aiToolBinding,
+            platformChrome: .iOS,
+            actions: AIChatStageActions(
+                onLoadOlderMessages: loadOlderMessages,
+                onQuestionReply: handleQuestionReply,
+                onQuestionReject: handleQuestionReject,
+                onQuestionReplyAsMessage: { text in
+                    _ = appState.sendAIMessage(text: text, imageAttachments: [])
+                },
+                onOpenLinkedSession: { sessionId in
+                    appState.openSubAgentSessionViewer(
+                        project: appState.aiActiveProject,
+                        workspace: appState.aiActiveWorkspace,
+                        aiTool: appState.aiChatTool,
+                        sessionId: sessionId,
+                        sourceToolName: "task"
+                    )
+                    presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                }
+            )
+        ) {
+            composerDock
         }
     }
 
-    private var reservedMessageBottomInset: CGFloat {
-        max(floatingComposerHeight, floatingComposerMinimumReserveHeight) +
-            AIChatComposerLayoutSemantics.messageBottomClearance
-    }
-
-    private var inputArea: some View {
+    private var composerDock: some View {
         let shellProjection = projectionStore.projection
 
         return AIChatComposerHostView(
@@ -432,8 +371,6 @@ struct MobileAIChatView: View {
                 onInputContextChange: nil
             )
         }
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, alignment: .bottom)
     }
 
     private func loadSession(_ session: AISessionInfo) {
