@@ -721,9 +721,7 @@ final class EvolutionPipelineProjectionStore {
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
-            // v1.44: 健康快照变更触发刷新，使预测投影保持最新
-            appState.$systemHealthSnapshot.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }
@@ -786,9 +784,7 @@ final class EvolutionPipelineProjectionStore {
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
-            // v1.44: 健康快照变更触发刷新，使预测投影保持最新
-            appState.$systemHealthSnapshot.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }

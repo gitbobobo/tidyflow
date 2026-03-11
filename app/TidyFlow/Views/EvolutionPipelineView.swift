@@ -2,6 +2,64 @@ import SwiftUI
 
 #if os(macOS)
 
+@MainActor
+final class SharedSecondTicker: ObservableObject {
+    static let shared = SharedSecondTicker()
+
+    @Published private(set) var now: Date = Date()
+
+    private var timer: Timer?
+    private var activeConsumerIDs: Set<String> = []
+
+    private init() {}
+
+    func setActive(_ active: Bool, consumerID: String) {
+        let changed: Bool
+        if active {
+            changed = activeConsumerIDs.insert(consumerID).inserted
+        } else {
+            changed = activeConsumerIDs.remove(consumerID) != nil
+        }
+        guard changed else { return }
+        updateTimerIfNeeded()
+    }
+
+    private func updateTimerIfNeeded() {
+        if activeConsumerIDs.isEmpty {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
+        guard timer == nil else { return }
+        now = Date()
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.now = Date()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+}
+
+private struct EvolutionAnimationPolicy {
+    static func progressPhase(for now: Date) -> Int {
+        Int(now.timeIntervalSinceReferenceDate.rounded(.down)) % 3
+    }
+}
+
+struct EvolutionRunningAgentCardModel: Identifiable, Equatable {
+    let id: String
+    let stage: String
+    let stageDisplayName: String
+    let stageIconName: String
+    let toolIconAssetName: String?
+    let agent: String
+    let toolCallCount: Int
+    let startedAtDate: Date?
+    let canOpenSession: Bool
+}
+
 // MARK: - 进化流水线视图（右侧面板）
 
 /// 自主进化的流水线视图，显示在右侧 Inspector 面板中
@@ -28,6 +86,9 @@ struct EvolutionPipelineView: View {
     @State private var cycleStartDate: Date = Date()
     /// 当前时间线快照签名（用于跳过重复重算）
     @State private var timelineSnapshotSignature: Int = 0
+    @State private var realtimeIndicatorsActive: Bool = false
+    @State private var activeRealtimeConsumerID: String?
+    @State private var lastRealtimeMetricsSignature: String = ""
     private let untitledCycleTitle = "Untitled"
 
     private struct EvolutionPipelineBlockerDraft {
@@ -50,6 +111,37 @@ struct EvolutionPipelineView: View {
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
     private var runningAgents: [EvolutionAgentInfoV2] { projection.runningAgents }
     private var standbyAgents: [PipelineStandbyAgent] { projection.standbyAgents }
+    private var openableRunningStages: Set<String> {
+        guard let item = currentItem else { return [] }
+        return Set(
+            item.executions
+                .filter(\.hasResolvedSessionReference)
+                .map { normalizedStageKey($0.stage) }
+        )
+    }
+    private var runningAgentCards: [EvolutionRunningAgentCardModel] {
+        runningAgents.map { agent in
+            let normalizedStage = normalizedStageKey(agent.stage)
+            let profile = findProfile(for: normalizedStage)
+            return EvolutionRunningAgentCardModel(
+                id: normalizedStage,
+                stage: agent.stage,
+                stageDisplayName: EvolutionStageSemantics.displayName(for: agent.stage),
+                stageIconName: EvolutionStageSemantics.iconName(for: agent.stage),
+                toolIconAssetName: profile?.aiTool.iconAssetName,
+                agent: agent.agent,
+                toolCallCount: agent.toolCallCount,
+                startedAtDate: executionStartDate(agent.startedAt),
+                canOpenSession: openableRunningStages.contains(normalizedStage)
+            )
+        }
+    }
+    private var realtimeConsumerID: String {
+        "EvolutionPipelineView:\(workspaceContextKey)"
+    }
+    private var shouldEnableRealtimeIndicators: Bool {
+        workspaceReady && !runningAgentCards.isEmpty && appState.isSceneActive
+    }
 
     /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
     private var primaryControlShowsStop: Bool {
@@ -120,6 +212,10 @@ struct EvolutionPipelineView: View {
             projectionStore.bind(appState: appState)
             syncStartOptions()
             refreshData()
+            updateRealtimeIndicatorsActivation()
+        }
+        .onDisappear {
+            deactivateRealtimeIndicators()
         }
         .tfRenderProbe("EvolutionPipelineView", metadata: [
             "project": project,
@@ -139,11 +235,20 @@ struct EvolutionPipelineView: View {
             guard state == .connected else { return }
             refreshData()
         }
+        .onChange(of: workspaceContextKey) { _, _ in
+            updateRealtimeIndicatorsActivation()
+        }
+        .onChange(of: appState.isSceneActive) { _, _ in
+            updateRealtimeIndicatorsActivation()
+        }
         .onChange(of: currentItem?.statusStageRoundSignature) { _, _ in
             syncStartOptions()
         }
         .onChange(of: currentItem?.timelineSignature) { _, _ in
             updateTimeline()
+        }
+        .onChange(of: runningAgentCards) { _, _ in
+            updateRealtimeIndicatorsActivation()
         }
         .onChange(of: blockingRequest) { _, value in
             syncBlockerSheetState(value)
@@ -356,12 +461,8 @@ struct EvolutionPipelineView: View {
             controlSection
             terminalReasonBanner
             EvolutionRunningAgentsSectionView(
-                appState: appState,
-                project: project,
-                workspace: workspace,
-                runningAgents: runningAgents,
+                runningAgentCards: runningAgentCards,
                 totalDurationText: projection.totalDurationText,
-                currentItem: currentItem,
                 onOpenStageSession: { stage in
                     openStageSession(stage: stage)
                 }
@@ -1684,6 +1785,35 @@ struct EvolutionPipelineView: View {
         resetCurrentCycleTimeline()
     }
 
+    private func updateRealtimeIndicatorsActivation() {
+        let shouldActivate = shouldEnableRealtimeIndicators
+        if activeRealtimeConsumerID != realtimeConsumerID {
+            if let activeRealtimeConsumerID {
+                SharedSecondTicker.shared.setActive(false, consumerID: activeRealtimeConsumerID)
+            }
+            activeRealtimeConsumerID = realtimeConsumerID
+        }
+        SharedSecondTicker.shared.setActive(shouldActivate, consumerID: realtimeConsumerID)
+        if realtimeIndicatorsActive != shouldActivate {
+            realtimeIndicatorsActive = shouldActivate
+        }
+        let metricsSignature =
+            "\(shouldActivate)|\(runningAgentCards.count)|\(appState.isSceneActive)|\(workspaceContextKey)"
+        guard metricsSignature != lastRealtimeMetricsSignature else { return }
+        lastRealtimeMetricsSignature = metricsSignature
+        TFLog.perf.info(
+            "perf evolution_realtime_indicators active=\(shouldActivate ? 1 : 0, privacy: .public) running_cards=\(runningAgentCards.count, privacy: .public) active_animation_count=\(shouldActivate ? runningAgentCards.count : 0, privacy: .public) scene_active=\(appState.isSceneActive ? 1 : 0, privacy: .public) key=\(workspaceContextKey, privacy: .public)"
+        )
+    }
+
+    private func deactivateRealtimeIndicators() {
+        if let activeRealtimeConsumerID {
+            SharedSecondTicker.shared.setActive(false, consumerID: activeRealtimeConsumerID)
+        }
+        activeRealtimeConsumerID = nil
+        realtimeIndicatorsActive = false
+    }
+
     // MARK: - Stage Session
 
     private func openStageSession(stage: String) {
@@ -2234,33 +2364,27 @@ struct StandbyFlowLayout: Layout {
 // MARK: - 进度条（从 EvolutionPipelineView 提升为顶层，供子视图共享）
 
 struct PipelineProgressBar: View {
-    @State private var offset: CGFloat = -1
+    @ObservedObject private var ticker = SharedSecondTicker.shared
 
     var body: some View {
+        let phase = EvolutionAnimationPolicy.progressPhase(for: ticker.now)
         GeometryReader { geo in
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color.orange.opacity(0.15))
                 .frame(height: 3)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(
-                            LinearGradient(
-                                colors: [.orange.opacity(0), .orange, .orange.opacity(0)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geo.size.width * 0.3, height: 3)
-                        .offset(x: offset * geo.size.width * 0.7)
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { index in
+                            Capsule(style: .continuous)
+                                .fill(Color.orange.opacity(phase == index ? 0.9 : 0.28))
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(width: geo.size.width, height: 3)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 2))
         }
         .frame(height: 3)
-        .onAppear {
-            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                offset = 1
-            }
-        }
     }
 }
 
@@ -2268,16 +2392,12 @@ struct PipelineProgressBar: View {
 
 /// 运行中代理卡片区，接收预计算的 Equatable 数据，仅在 runningAgents 实际变化时刷新
 struct EvolutionRunningAgentsSectionView: View {
-    let appState: AppState
-    let project: String
-    let workspace: String?
-    let runningAgents: [EvolutionAgentInfoV2]
+    let runningAgentCards: [EvolutionRunningAgentCardModel]
     let totalDurationText: String?
-    let currentItem: EvolutionWorkspaceItemV2?
     var onOpenStageSession: ((String) -> Void)?
 
     var body: some View {
-        if !runningAgents.isEmpty {
+        if !runningAgentCards.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
@@ -2293,29 +2413,28 @@ struct EvolutionRunningAgentsSectionView: View {
                     }
                 }
 
-                ForEach(runningAgents, id: \.stage) { agent in
-                    runningAgentCard(agent)
+                ForEach(runningAgentCards) { card in
+                    runningAgentCard(card)
                         .transition(.asymmetric(
                             insertion: .move(edge: .top).combined(with: .opacity),
                             removal: .move(edge: .bottom).combined(with: .opacity)
                         ))
                 }
             }
-            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgents.map(\.stage))
+            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: runningAgentCards.map(\.id))
         }
     }
 
-    private func runningAgentCard(_ agent: EvolutionAgentInfoV2) -> some View {
-        let startedAtDate = executionStartDate(agent.startedAt)
+    private func runningAgentCard(_ card: EvolutionRunningAgentCardModel) -> some View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                aiToolIcon(for: agent.stage)
+                aiToolIcon(card)
                     .frame(width: 32, height: 32)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(EvolutionStageSemantics.displayName(for: agent.stage))
+                    Text(card.stageDisplayName)
                         .font(.system(size: 13, weight: .semibold))
-                    Text(agent.agent)
+                    Text(card.agent)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -2328,7 +2447,7 @@ struct EvolutionRunningAgentsSectionView: View {
                     Image(systemName: "wrench.and.screwdriver")
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
-                    Text("\(agent.toolCallCount)")
+                    Text("\(card.toolCallCount)")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                 }
 
@@ -2336,15 +2455,15 @@ struct EvolutionRunningAgentsSectionView: View {
                     Image(systemName: "clock")
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
-                    elapsedTimeText(startedAtDate)
+                    SharedElapsedTimeText(startedAtDate: card.startedAtDate)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                 }
 
                 Spacer()
 
-                if canOpenStageSession(stage: agent.stage) {
+                if card.canOpenSession {
                     Button {
-                        openStageSession(stage: agent.stage)
+                        openStageSession(stage: card.stage)
                     } label: {
                         Image(systemName: "bubble.left.and.text.bubble.right")
                             .font(.system(size: 10))
@@ -2382,69 +2501,44 @@ struct EvolutionRunningAgentsSectionView: View {
         .padding(.bottom, 4)
     }
 
-    private func aiToolIcon(for stage: String) -> some View {
-        let key = EvolutionStageSemantics.runtimeStageKey(stage)
-        let profile = findProfile(for: key)
-        let toolIconAsset = profile?.aiTool.iconAssetName
-
+    private func aiToolIcon(_ card: EvolutionRunningAgentCardModel) -> some View {
         return Group {
-            if let asset = toolIconAsset {
+            if let asset = card.toolIconAssetName {
                 Image(asset)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: EvolutionStageSemantics.iconName(for: stage))
+                Image(systemName: card.stageIconName)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(EvolutionStageSemantics.stageColor(stage))
+                    .foregroundColor(EvolutionStageSemantics.stageColor(card.stage))
             }
         }
-    }
-
-    private func findProfile(for stageKey: String) -> EvolutionStageProfileInfoV2? {
-        let normalizedProfileStage = EvolutionStageSemantics.profileStageKey(for: stageKey)
-        if let workspace, !workspace.isEmpty {
-            let profiles = appState.evolutionProfiles(project: project, workspace: workspace)
-            if let match = profiles.first(where: { EvolutionStageSemantics.runtimeStageKey($0.stage) == normalizedProfileStage }) {
-                return match
-            }
-        }
-        let defaults = appState.evolutionDefaultProfiles
-        if let match = defaults.first(where: { EvolutionStageSemantics.runtimeStageKey($0.stage) == normalizedProfileStage }) {
-            let model: EvolutionModelSelectionV2? = {
-                guard !match.providerID.isEmpty, !match.modelID.isEmpty else { return nil }
-                return EvolutionModelSelectionV2(providerID: match.providerID, modelID: match.modelID)
-            }()
-            return EvolutionStageProfileInfoV2(
-                stage: match.stage,
-                aiTool: match.aiTool,
-                mode: match.mode.isEmpty ? nil : match.mode,
-                model: model,
-                configOptions: match.configOptions
-            )
-        }
-        return nil
     }
 
     private func canOpenStageSession(stage: String) -> Bool {
-        currentItem?.latestResolvedExecution(forExactStage: stage) != nil
+        onOpenStageSession != nil && !stage.isEmpty
     }
 
     private func openStageSession(stage: String) {
         onOpenStageSession?(stage)
     }
+}
 
-    @ViewBuilder
-    private func elapsedTimeText(_ startedAtDate: Date?) -> some View {
-        if let startedAtDate {
-            Text(startedAtDate, style: .timer)
-                .monospacedDigit()
-        } else {
-            Text("0s")
-        }
+private struct SharedElapsedTimeText: View {
+    @ObservedObject private var ticker = SharedSecondTicker.shared
+
+    let startedAtDate: Date?
+
+    var body: some View {
+        Text(value(for: ticker.now))
+            .monospacedDigit()
     }
 
-    private func executionStartDate(_ value: String?) -> Date? {
-        EvolutionPipelineDateFormatting.rfc3339Date(from: value)
+    private func value(for now: Date) -> String {
+        guard let startedAtDate else { return "0s" }
+        return EvolutionPipelineDateFormatting.formatDuration(
+            max(0, now.timeIntervalSince(startedAtDate))
+        )
     }
 }
 
