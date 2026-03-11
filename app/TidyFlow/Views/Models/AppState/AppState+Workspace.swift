@@ -166,4 +166,44 @@ extension AppState {
             scheduleWorkspaceSidebarStatusRefresh(projectName: project, debounce: debounce)
         }
     }
+
+    func hasWorkspaceStreamingChat(project: String, workspace: String) -> Bool {
+        let prefix = "\(project)::\(workspace)::"
+        for tool in AIChatTool.allCases {
+            if let statuses = aiSessionStatusesByTool[tool],
+               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isActive }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    func workspaceAIStatus(project: String, workspace: String) -> AISessionStatusSnapshot? {
+        let prefix = "\(project)::\(workspace)::"
+        var snapshots: [AISessionStatusSnapshot] = []
+        for tool in AIChatTool.allCases {
+            if let statuses = aiSessionStatusesByTool[tool] {
+                snapshots.append(contentsOf: statuses
+                    .filter { $0.key.hasPrefix(prefix) }
+                    .map(\.value))
+            }
+        }
+        guard !snapshots.isEmpty else { return nil }
+        if let active = snapshots.first(where: { $0.isActive }) { return active }
+        if let failure = snapshots.first(where: { $0.isError }) { return failure }
+        if let success = snapshots.first(where: { $0.normalizedStatus == "success" }) { return success }
+        if let cancelled = snapshots.first(where: { $0.normalizedStatus == "cancelled" }) { return cancelled }
+        return snapshots.first
+    }
+
+    func hasWorkspaceActiveEvolutionLoop(project: String, workspace: String) -> Bool {
+        guard let item = evolutionItem(project: project, workspace: workspace) else { return false }
+        let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["queued", "running", "pending", "in_progress", "processing"].contains(status)
+    }
+
+    func activeTaskIconForWorkspace(project: String, workspace: String) -> String? {
+        let key = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        return taskManager.taskStore.sidebarActiveIconName(for: key)
+    }
 }

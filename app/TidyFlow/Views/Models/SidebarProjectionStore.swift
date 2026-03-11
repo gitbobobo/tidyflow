@@ -52,13 +52,13 @@ extension SidebarProjectionSemantics {
             let hasUnseenCompletion = defaultGlobalWorkspaceKey.map {
                 unseenCompletionKeys.contains($0)
             } ?? false
-            let activityIndicators = activityIndicators(
-                chatIconName: (defaultWorkspace?.sidebarStatus.hasStreamingChat == true)
-                    ? "bubble.left.and.bubble.right.fill"
-                    : nil,
-                hasActiveEvolutionLoop: defaultWorkspace?.sidebarStatus.hasActiveEvolutionLoop == true,
-                taskIconName: defaultWorkspace?.sidebarStatus.taskIconName
-            )
+            let activityIndicators = defaultWorkspace.map {
+                macActivityIndicators(
+                    appState: appState,
+                    project: project.name,
+                    workspace: $0
+                )
+            } ?? []
 
             let visibleWorkspaces = appState.sidebarVisibleWorkspaces(for: project).map { workspace in
                 let globalWorkspaceKey = appState.globalWorkspaceKey(
@@ -84,12 +84,10 @@ extension SidebarProjectionSemantics {
                     hasOpenTabs: !(appState.workspaceTabs[globalWorkspaceKey] ?? []).isEmpty,
                     isDeleting: appState.deletingWorkspaces.contains(globalWorkspaceKey),
                     hasUnseenCompletion: unseenCompletionKeys.contains(globalWorkspaceKey),
-                    activityIndicators: Self.activityIndicators(
-                        chatIconName: workspace.sidebarStatus.hasStreamingChat
-                            ? "bubble.left.and.bubble.right.fill"
-                            : nil,
-                        hasActiveEvolutionLoop: workspace.sidebarStatus.hasActiveEvolutionLoop,
-                        taskIconName: workspace.sidebarStatus.taskIconName
+                    activityIndicators: Self.macActivityIndicators(
+                        appState: appState,
+                        project: project.name,
+                        workspace: workspace
                     )
                 )
             }
@@ -151,6 +149,28 @@ extension SidebarProjectionSemantics {
             }
         }
         return minKey
+    }
+
+    private static func macActivityIndicators(
+        appState: AppState,
+        project: String,
+        workspace: WorkspaceModel
+    ) -> [SidebarActivityIndicatorProjection] {
+        let hasStreamingChat =
+            appState.hasWorkspaceStreamingChat(project: project, workspace: workspace.name) ||
+            workspace.sidebarStatus.hasStreamingChat
+        let hasActiveEvolutionLoop =
+            appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace.name) ||
+            workspace.sidebarStatus.hasActiveEvolutionLoop
+        let taskIconName =
+            appState.activeTaskIconForWorkspace(project: project, workspace: workspace.name) ??
+            workspace.sidebarStatus.taskIconName
+
+        return activityIndicators(
+            chatIconName: hasStreamingChat ? "bubble.left.and.bubble.right.fill" : nil,
+            hasActiveEvolutionLoop: hasActiveEvolutionLoop,
+            taskIconName: taskIconName
+        )
     }
 #endif
 
@@ -330,7 +350,10 @@ final class MacSidebarProjectionStore: ObservableObject {
         appState.$selectedWorkspaceKey.sink { _ in refresh() }.store(in: &cancellables)
         appState.$workspaceTabs.sink { _ in refresh() }.store(in: &cancellables)
         appState.$deletingWorkspaces.sink { _ in refresh() }.store(in: &cancellables)
+        appState.$aiSessionStatusesByTool.sink { _ in refresh() }.store(in: &cancellables)
+        appState.$evolutionWorkspaceItems.sink { _ in refresh() }.store(in: &cancellables)
         terminalStore.$workspaceTerminalOpenTime.sink { _ in refresh() }.store(in: &cancellables)
+        taskStore.$tasksByKey.sink { _ in refresh() }.store(in: &cancellables)
         taskStore.$unseenCompletionKeys.sink { _ in refresh() }.store(in: &cancellables)
 
         refresh()
