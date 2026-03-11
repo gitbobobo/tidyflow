@@ -1366,7 +1366,13 @@ final class AIChatStore {
                 if awaitingUserEcho, pendingUserEchoAssistantMessageId == nil {
                     pendingUserEchoAssistantMessageId = messageId
                 }
-                latestMessageIndex = msgIdx
+                // 取 max 确保始终指向最新（最大索引）的 assistant 消息，
+                // 避免同批次中旧消息事件晚到导致流式指针回退。
+                if let current = latestMessageIndex {
+                    latestMessageIndex = max(current, msgIdx)
+                } else {
+                    latestMessageIndex = msgIdx
+                }
             }
         }
 
@@ -1411,7 +1417,11 @@ final class AIChatStore {
                        let assistantMessageId = messages[msgIdx].messageId {
                         pendingUserEchoAssistantMessageId = assistantMessageId
                     }
-                    latestMessageIndex = msgIdx
+                    if let current = latestMessageIndex {
+                        latestMessageIndex = max(current, msgIdx)
+                    } else {
+                        latestMessageIndex = msgIdx
+                    }
                 }
             case .partDelta(let messageId, let partId, let partType, let field, let delta):
                 var roleHint = messageRoleByMessageId[messageId]
@@ -1435,7 +1445,11 @@ final class AIChatStore {
                        let assistantMessageId = messages[msgIdx].messageId {
                         pendingUserEchoAssistantMessageId = assistantMessageId
                     }
-                    latestMessageIndex = msgIdx
+                    if let current = latestMessageIndex {
+                        latestMessageIndex = max(current, msgIdx)
+                    } else {
+                        latestMessageIndex = msgIdx
+                    }
                 }
             }
         }
@@ -1961,14 +1975,12 @@ final class AIChatStore {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         guard messages[msgIdx].role == .assistant else { return }
 
-        if let previous = streamingAssistantIndex,
-           previous != msgIdx,
-           previous >= 0, previous < messages.count,
-           messages[previous].role == .assistant {
-            if messages[previous].isStreaming {
-                messages[previous].isStreaming = false
-                touchRenderRevision(at: previous)
-            }
+        // 清除所有其他 streaming assistant，不仅限于缓存的 streamingAssistantIndex，
+        // 防止同批次内 ensureMessage 新建的多条 assistant 消息同时保持 isStreaming=true。
+        for i in messages.indices where i != msgIdx {
+            guard messages[i].role == .assistant, messages[i].isStreaming else { continue }
+            messages[i].isStreaming = false
+            touchRenderRevision(at: i)
         }
 
         let wasStreaming = messages[msgIdx].isStreaming
