@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ToolCardView: View {
     let name: String
+    let toolKind: String?
     let callID: String?
     let toolView: AIToolView?
     let questionRequest: AIQuestionRequestInfo?
@@ -14,7 +15,10 @@ struct ToolCardView: View {
     @State private var isCardExpanded: Bool = false
 
     private var resolvedToolID: String {
-        let candidate = (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "tool" : name)
+        let preferredKind = toolKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let candidate = preferredKind.isEmpty
+            ? (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "tool" : name)
+            : preferredKind
         return candidate.lowercased()
     }
 
@@ -31,7 +35,7 @@ struct ToolCardView: View {
 
     private var prefersCommandAsTitle: Bool {
         guard headerCommandSummary != nil else { return false }
-        return resolvedToolID == "bash" || resolvedToolID == "terminal"
+        return resolvedToolID == "bash" || resolvedToolID == "terminal" || resolvedToolID == "execute"
     }
 
     private var primaryHeaderText: String {
@@ -497,16 +501,20 @@ struct ToolCardView: View {
             return "person.2.badge.gearshape"
         case "read":
             return "eye"
-        case "edit", "write", "apply_patch", "multiedit":
+        case "edit", "write", "apply_patch", "multiedit", "delete", "move":
             return "square.and.pencil"
-        case "bash", "terminal":
+        case "bash", "terminal", "execute":
             return "terminal"
-        case "grep", "glob", "list", "websearch", "codesearch", "webfetch":
+        case "grep", "glob", "list", "websearch", "codesearch", "webfetch", "search", "fetch":
             return "magnifyingglass"
         case "question":
             return "questionmark.circle"
         case "task", "skill", "plan_enter", "plan_exit":
             return "list.bullet.clipboard"
+        case "think":
+            return "brain.head.profile"
+        case "switch_mode":
+            return "arrow.triangle.2.circlepath"
         case "todowrite", "todoread":
             return "checklist"
         case "batch":

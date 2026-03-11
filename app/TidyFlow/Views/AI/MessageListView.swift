@@ -1071,6 +1071,7 @@ private struct AIChatMessageBody: View {
             ) ?? fallbackQuestionRequest(message: message, part: part)
             ToolCardView(
                 name: part.toolName ?? "unknown",
+                toolKind: part.toolKind,
                 callID: part.toolCallId,
                 toolView: part.toolView,
                 questionRequest: pendingQuestion,

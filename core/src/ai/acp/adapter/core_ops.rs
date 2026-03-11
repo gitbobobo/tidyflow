@@ -1463,10 +1463,6 @@ impl AcpAgent {
         stream_mapping::map_update_to_output(session_update)
     }
 
-    pub(super) fn normalized_update_token(raw: &str) -> String {
-        stream_mapping::normalized_update_token(raw)
-    }
-
     pub(super) fn is_terminal_update(session_update: &str, content_type: &str) -> bool {
         stream_mapping::is_terminal_update(session_update, content_type)
     }

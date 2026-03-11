@@ -10,6 +10,7 @@ pub(crate) struct ParsedToolCallUpdate {
     pub(crate) status: Option<String>,
     pub(crate) raw_input: Option<Value>,
     pub(crate) raw_output: Option<Value>,
+    pub(crate) structured_content: Option<Value>,
     pub(crate) locations: Option<Vec<AiToolCallLocation>>,
     pub(crate) progress_delta: Option<String>,
     pub(crate) output_delta: Option<String>,
@@ -176,21 +177,45 @@ fn normalize_tool_name(
     raw_input: Option<&Value>,
     tool_kind: Option<&str>,
 ) -> String {
-    for candidate in [raw_name, tool_title, tool_kind] {
-        if let Some(mapped) = candidate.and_then(infer_tool_name_from_token) {
-            return mapped.to_string();
-        }
+    if let Some(name) = raw_name.and_then(normalize_non_empty_token) {
+        return name;
+    }
+
+    if let Some(kind) = tool_kind.and_then(normalize_non_empty_token) {
+        return kind;
     }
 
     if let Some(mapped) = infer_tool_name_from_input(raw_input) {
         return mapped.to_string();
     }
 
-    raw_name
-        .and_then(normalize_non_empty_token)
-        .or_else(|| tool_kind.and_then(normalize_non_empty_token))
+    tool_title
+        .and_then(infer_tool_name_from_token)
+        .map(|mapped| mapped.to_string())
         .or_else(|| tool_title.and_then(normalize_non_empty_token))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn normalize_tool_kind(raw: Option<&Value>) -> Option<String> {
+    raw.and_then(|value| value.as_str())
+        .and_then(normalize_non_empty_token)
+        .map(|value| normalized_update_token(&value))
+}
+
+pub(crate) fn tool_kind_semantic_id(raw: Option<&str>) -> Option<&'static str> {
+    match raw.map(normalized_update_token).as_deref() {
+        Some("execute") | Some("terminal") | Some("bash") => Some("terminal"),
+        Some("search") => Some("search"),
+        Some("read") | Some("fetch") => Some("read"),
+        Some("edit") | Some("delete") | Some("move") => Some("edit"),
+        Some("think") | Some("other") => Some("generic"),
+        Some("switch_mode") => Some("switch_mode"),
+        _ => None,
+    }
+}
+
+pub(crate) fn tool_kind_is_terminal_like(raw: Option<&str>) -> bool {
+    matches!(tool_kind_semantic_id(raw), Some("terminal"))
 }
 
 fn normalized_content_type(content: &serde_json::Map<String, Value>) -> String {
@@ -472,6 +497,79 @@ fn extract_text_from_content_array(arr: &[Value]) -> Option<String> {
     normalize_non_empty_token(&parts.join(""))
 }
 
+fn collect_standard_tool_call_content_items(arr: &[Value]) -> Option<Vec<Value>> {
+    let mut items = Vec::new();
+    for item in arr {
+        let obj = item.as_object()?;
+        let item_type = obj
+            .get("type")
+            .and_then(|value| value.as_str())
+            .map(normalized_update_token)?;
+        match item_type.as_str() {
+            "content" => {
+                obj.get("content").and_then(|value| value.as_object())?;
+                items.push(Value::Object(obj.clone()));
+            }
+            "diff" => {
+                obj.get("path").and_then(|value| value.as_str())?;
+                obj.get("newText")
+                    .or_else(|| obj.get("new_text"))
+                    .and_then(|value| value.as_str())?;
+                items.push(Value::Object(obj.clone()));
+            }
+            "terminal" => {
+                obj.get("terminalId")
+                    .or_else(|| obj.get("terminal_id"))
+                    .and_then(|value| value.as_str())?;
+                items.push(Value::Object(obj.clone()));
+            }
+            _ => return None,
+        }
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
+fn content_array_looks_like_legacy_input(items: &[Value]) -> bool {
+    let Some(text) = extract_text_from_content_array(items) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .is_some_and(|value| value.is_object() || value.is_array())
+}
+
+fn should_treat_content_array_as_structured_output(
+    items: &[Value],
+    tool_kind: Option<&str>,
+    is_terminal_status: bool,
+    has_explicit_output: bool,
+) -> bool {
+    let has_non_content_item = items.iter().any(|item| {
+        item.as_object()
+            .and_then(|obj| obj.get("type"))
+            .and_then(|value| value.as_str())
+            .map(normalized_update_token)
+            .is_some_and(|item_type| item_type != "content")
+    });
+    if has_non_content_item {
+        return true;
+    }
+
+    if tool_kind.is_some() || is_terminal_status || has_explicit_output {
+        return true;
+    }
+
+    if extract_text_from_content_array(items).is_none() {
+        return false;
+    }
+
+    !content_array_looks_like_legacy_input(items)
+}
+
 pub(crate) fn extract_tool_output_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => normalize_non_empty_token(text),
@@ -517,12 +615,12 @@ pub(crate) fn parse_tool_call_update_content(
         .or_else(|| content.get("id"))
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token);
-    let tool_kind = content
-        .get("kind")
-        .or_else(|| content.get("toolKind"))
-        .or_else(|| content.get("tool_kind"))
-        .and_then(|v| v.as_str())
-        .and_then(normalize_non_empty_token);
+    let tool_kind = normalize_tool_kind(
+        content
+            .get("kind")
+            .or_else(|| content.get("toolKind"))
+            .or_else(|| content.get("tool_kind")),
+    );
     let tool_title = content
         .get("title")
         .or_else(|| content.get("label"))
@@ -534,13 +632,7 @@ pub(crate) fn parse_tool_call_update_content(
         .or_else(|| content.get("tool_name"))
         .or_else(|| content.get("name"))
         .and_then(|v| v.as_str())
-        .and_then(normalize_non_empty_token)
-        .or_else(|| tool_kind.clone())
-        .or_else(|| {
-            tool_title
-                .as_ref()
-                .map(|title| title.split(':').next().unwrap_or(title).trim().to_string())
-        });
+        .and_then(normalize_non_empty_token);
     let status = Some(normalize_tool_status(
         content
             .get("status")
@@ -564,11 +656,31 @@ pub(crate) fn parse_tool_call_update_content(
         .cloned()
         .filter(|v| !v.is_null());
     let nested_content = content.get("content").cloned().filter(|v| !v.is_null());
+    let explicit_output = content
+        .get("rawOutput")
+        .or_else(|| content.get("raw_output"))
+        .cloned()
+        .filter(|v| !v.is_null());
+    let structured_content = nested_content.as_ref().and_then(|value| {
+        let items = value.as_array()?;
+        let normalized = collect_standard_tool_call_content_items(items)?;
+        if should_treat_content_array_as_structured_output(
+            &normalized,
+            tool_kind.as_deref(),
+            is_terminal_status,
+            explicit_output.is_some(),
+        ) {
+            Some(Value::Array(normalized))
+        } else {
+            None
+        }
+    });
 
     // Kimi ACP 格式: content 是数组 [{"content": {"text": "...", "type": "text"}, "type": "content"}]
     // 进行中时数组文本是工具输入参数，完成时是工具输出结果
     let array_text: Option<String> = nested_content
         .as_ref()
+        .filter(|_| structured_content.is_none())
         .and_then(|v| v.as_array())
         .and_then(|arr| extract_text_from_content_array(arr));
 
@@ -584,12 +696,10 @@ pub(crate) fn parse_tool_call_update_content(
         tool_kind.as_deref(),
     );
 
-    let explicit_output = content
-        .get("rawOutput")
-        .or_else(|| content.get("raw_output"))
-        .cloned()
-        .filter(|v| !v.is_null());
     let raw_output = explicit_output.or_else(|| {
+        if let Some(structured) = structured_content.clone() {
+            return Some(structured);
+        }
         if nested_content
             .as_ref()
             .map(|v| v.is_array())
@@ -651,6 +761,9 @@ pub(crate) fn parse_tool_call_update_content(
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token)
         .or_else(|| {
+            if structured_content.is_some() {
+                return None;
+            }
             if is_terminal_status {
                 // 终态时从数组内容或嵌套对象中提取输出
                 array_text
@@ -672,6 +785,7 @@ pub(crate) fn parse_tool_call_update_content(
         status,
         raw_input,
         raw_output,
+        structured_content,
         locations,
         progress_delta,
         output_delta,
@@ -776,6 +890,9 @@ fn tool_state_from_parsed_tool_update(parsed: &ParsedToolCallUpdate) -> Value {
         if let Some(output_text) = extract_tool_output_text(&raw_output) {
             state.insert("output".to_string(), Value::String(output_text));
         }
+    }
+    if let Some(structured_content) = parsed.structured_content.clone() {
+        state.insert("content".to_string(), structured_content);
     }
     let mut metadata = serde_json::Map::<String, Value>::new();
     if let Some(kind) = parsed.tool_kind.clone() {
@@ -903,7 +1020,15 @@ pub(crate) fn merge_tool_state(previous: Option<&Value>, parsed: &ParsedToolCall
     let resolved_status = resolve_merged_tool_status(previous_status, incoming_status);
     merged_obj.insert("status".to_string(), Value::String(resolved_status));
 
-    for key in ["title", "input", "raw", "error", "attachments", "time"] {
+    for key in [
+        "title",
+        "input",
+        "raw",
+        "content",
+        "error",
+        "attachments",
+        "time",
+    ] {
         if let Some(value) = incoming_obj.get(key) {
             merged_obj.insert(key.to_string(), value.clone());
         }
@@ -968,6 +1093,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_kind_semantic_mapping() {
+        assert_eq!(tool_kind_semantic_id(Some("execute")), Some("terminal"));
+        assert_eq!(tool_kind_semantic_id(Some("fetch")), Some("read"));
+        assert_eq!(tool_kind_semantic_id(Some("delete")), Some("edit"));
+        assert!(tool_kind_is_terminal_like(Some("execute")));
+        assert!(!tool_kind_is_terminal_like(Some("search")));
+    }
+
+    #[test]
     fn test_kimi_tool_call_initial() {
         // Kimi ACP 初始 tool_call 格式
         let update = json!({
@@ -1007,6 +1141,7 @@ mod tests {
         );
         // 进行中时不应有 raw_output
         assert!(parsed.raw_output.is_none());
+        assert!(parsed.structured_content.is_none());
         assert!(parsed.output_delta.is_none());
     }
 
@@ -1024,9 +1159,9 @@ mod tests {
         assert_eq!(parsed.status.as_deref(), Some("completed"));
         // 完成时内容作为 raw_output
         assert!(parsed.raw_output.is_some());
+        assert!(parsed.structured_content.is_some());
         // normalize_non_empty_token 会 trim 两端空白
-        assert!(parsed.output_delta.is_some());
-        assert!(parsed.output_delta.as_ref().unwrap().contains("变更日志"));
+        assert!(parsed.output_delta.is_none());
         // 完成时不设置 raw_input
         assert!(parsed.raw_input.is_none());
     }
@@ -1073,15 +1208,77 @@ mod tests {
             state.get("status").and_then(|v| v.as_str()),
             Some("completed")
         );
-        assert_eq!(
-            state.get("output").and_then(|v| v.as_str()),
-            Some("file content here")
-        );
+        assert!(state.get("content").is_some());
         // 输入应保留（完成更新没有覆盖）
         assert_eq!(
             state.get("input").and_then(|v| v.as_str()),
             Some("{\"path\": \"file.txt\"}")
         );
+    }
+
+    #[test]
+    fn test_standard_tool_call_content_should_preserve_structured_sections() {
+        let update = json!({
+            "type": "tool_call_update",
+            "toolCallId": "call-structured",
+            "toolName": "executeCommand",
+            "kind": "execute",
+            "status": "in_progress",
+            "rawInput": {
+                "command": "npm test"
+            },
+            "content": [
+                {
+                    "type": "terminal",
+                    "terminalId": "term_123"
+                },
+                {
+                    "type": "content",
+                    "content": {
+                        "type": "text",
+                        "text": "running..."
+                    }
+                }
+            ]
+        });
+        let parsed = parse_tool_call_update_content(update.as_object().expect("object"))
+            .expect("should parse");
+        assert_eq!(parsed.tool_name, "executeCommand");
+        assert_eq!(parsed.tool_kind.as_deref(), Some("execute"));
+        assert!(parsed.structured_content.is_some());
+        assert!(parsed.output_delta.is_none());
+        assert_eq!(
+            parsed
+                .raw_output
+                .as_ref()
+                .and_then(|value| value.as_array())
+                .map(|items| items.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_standard_tool_call_content_running_json_should_not_be_treated_as_kimi_input_when_kind_present(
+    ) {
+        let update = json!({
+            "type": "tool_call_update",
+            "toolCallId": "call-json",
+            "kind": "read",
+            "status": "in_progress",
+            "content": [
+                {
+                    "type": "content",
+                    "content": {
+                        "type": "text",
+                        "text": "{\"path\":\"/tmp/demo.txt\"}"
+                    }
+                }
+            ]
+        });
+        let parsed = parse_tool_call_update_content(update.as_object().expect("object"))
+            .expect("should parse");
+        assert!(parsed.raw_input.is_none());
+        assert!(parsed.structured_content.is_some());
     }
 
     #[test]
@@ -1191,7 +1388,7 @@ mod tests {
             "sessionUpdate": "tool_call_update"
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
-        assert_eq!(parsed.tool_name, "bash");
+        assert_eq!(parsed.tool_name, "executeCommand");
         assert_eq!(
             parsed.tool_title.as_deref(),
             Some("验证 event_bus_concurrent_test")

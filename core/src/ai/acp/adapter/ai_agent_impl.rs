@@ -455,12 +455,10 @@ impl AiAgent for AcpAgent {
                                 }));
                             }
 
-                            let tool_kind = parsed
-                                .tool_kind
-                                .as_deref()
-                                .map(Self::normalized_update_token)
-                                .unwrap_or_default();
-                            if follow_along_supported && tool_kind == "terminal" {
+                            let tool_kind = parsed.tool_kind.as_deref();
+                            if follow_along_supported
+                                && crate::ai::acp::tool_call::tool_kind_is_terminal_like(tool_kind)
+                            {
                                 let tool_call_key = parsed
                                     .tool_call_id
                                     .clone()

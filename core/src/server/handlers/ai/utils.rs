@@ -1507,6 +1507,154 @@ fn extract_acp_content_text(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn build_unified_diff_from_snapshot(path: &str, old_text: Option<&str>, new_text: &str) -> String {
+    let old_lines = old_text
+        .unwrap_or_default()
+        .lines()
+        .map(|line| format!("-{}", line))
+        .collect::<Vec<_>>();
+    let new_lines = new_text
+        .lines()
+        .map(|line| format!("+{}", line))
+        .collect::<Vec<_>>();
+    let old_count = old_text.unwrap_or_default().lines().count().max(1);
+    let new_count = new_text.lines().count().max(1);
+    let mut lines = vec![
+        format!("--- {}", path),
+        format!("+++ {}", path),
+        format!("@@ -1,{} +1,{} @@", old_count, new_count),
+    ];
+    lines.extend(old_lines);
+    lines.extend(new_lines);
+    lines.join("\n")
+}
+
+fn structured_content_to_tool_sections(
+    value: Option<&serde_json::Value>,
+) -> Vec<crate::server::protocol::ai::ToolViewSection> {
+    let Some(items) = value.and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+
+    let mut sections = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let item_type = value_as_string(obj.get("type"))
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_default();
+        match item_type.as_str() {
+            "content" => {
+                let Some(content) = obj.get("content").and_then(|value| value.as_object()) else {
+                    continue;
+                };
+                let content_type = value_as_string(content.get("type"))
+                    .map(|value| value.to_ascii_lowercase())
+                    .unwrap_or_default();
+                match content_type.as_str() {
+                    "text" => {
+                        if let Some(text) = value_as_string(content.get("text")) {
+                            sections.push(tool_section(
+                                format!("structured-content-{}", index),
+                                "output",
+                                text,
+                                crate::server::protocol::ai::ToolViewSectionStyle::Text,
+                                None,
+                            ));
+                        }
+                    }
+                    "markdown" | "md" => {
+                        if let Some(text) = value_as_string(content.get("text"))
+                            .or_else(|| value_as_string(content.get("markdown")))
+                            .or_else(|| value_as_string(content.get("content")))
+                        {
+                            sections.push(tool_section(
+                                format!("structured-markdown-{}", index),
+                                "markdown",
+                                text,
+                                crate::server::protocol::ai::ToolViewSectionStyle::Markdown,
+                                None,
+                            ));
+                        }
+                    }
+                    "resource" | "resource_link" => {
+                        if let Some(text) = value_as_string(content.get("text"))
+                            .or_else(|| value_as_string(content.get("uri")))
+                            .or_else(|| value_as_string(content.get("name")))
+                        {
+                            sections.push(tool_section(
+                                format!("structured-resource-{}", index),
+                                "resource",
+                                text,
+                                crate::server::protocol::ai::ToolViewSectionStyle::Text,
+                                None,
+                            ));
+                        }
+                    }
+                    _ => {
+                        sections.push(tool_section(
+                            format!("structured-content-raw-{}", index),
+                            "output",
+                            json_string(item),
+                            crate::server::protocol::ai::ToolViewSectionStyle::Code,
+                            Some("json"),
+                        ));
+                    }
+                }
+            }
+            "diff" => {
+                let path =
+                    value_as_string(obj.get("path")).unwrap_or_else(|| "unknown".to_string());
+                let new_text = value_as_string(obj.get("newText").or_else(|| obj.get("new_text")));
+                if let Some(new_text) = new_text {
+                    let old_text =
+                        value_as_string(obj.get("oldText").or_else(|| obj.get("old_text")));
+                    sections.push(tool_section(
+                        format!("structured-diff-{}", index),
+                        "diff",
+                        build_unified_diff_from_snapshot(&path, old_text.as_deref(), &new_text),
+                        crate::server::protocol::ai::ToolViewSectionStyle::Diff,
+                        Some("diff"),
+                    ));
+                }
+            }
+            "terminal" => {
+                if let Some(terminal_id) =
+                    value_as_string(obj.get("terminalId").or_else(|| obj.get("terminal_id")))
+                {
+                    sections.push(tool_section(
+                        format!("structured-terminal-{}", index),
+                        "terminal",
+                        format!("terminalId: {}", terminal_id),
+                        crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
+                        Some("text"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    sections
+}
+
+fn semantic_tool_id_for_view(tool_name: Option<&str>, tool_kind: Option<&str>) -> String {
+    if let Some(mapped) = crate::ai::acp::tool_call::tool_kind_semantic_id(tool_kind) {
+        return mapped.to_string();
+    }
+
+    let normalized_name = tool_name
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    match normalized_name.as_str() {
+        "bash" => "terminal".to_string(),
+        "grep" | "glob" | "list" | "websearch" | "codesearch" | "webfetch" => "search".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn extract_session_id_recursive(
     value: &serde_json::Value,
     keys: &HashSet<&'static str>,
@@ -1795,7 +1943,7 @@ fn build_tool_summary(
     output: Option<&str>,
 ) -> Option<String> {
     match tool_id {
-        "list" | "codesearch" | "webfetch" | "websearch" => input
+        "search" | "list" | "codesearch" | "webfetch" | "websearch" => input
             .get("query")
             .and_then(|value| value_as_string(Some(value)))
             .or_else(|| {
@@ -1876,6 +2024,7 @@ fn format_todo_summary(items: &[serde_json::Map<String, serde_json::Value>]) -> 
 fn build_tool_sections(
     tool_id: &str,
     input: &HashMap<String, serde_json::Value>,
+    structured_content: Option<&serde_json::Value>,
     raw: Option<&str>,
     output: Option<&str>,
     error: Option<&str>,
@@ -1886,6 +2035,7 @@ fn build_tool_sections(
 ) {
     let mut sections = Vec::new();
     let mut summary = build_tool_summary(tool_id, input, metadata, output);
+    let structured_sections = structured_content_to_tool_sections(structured_content);
 
     let add_json_section = |sections: &mut Vec<crate::server::protocol::ai::ToolViewSection>,
                             id: &str,
@@ -1903,9 +2053,11 @@ fn build_tool_sections(
     };
 
     match tool_id {
-        "read" | "subagent_result" | "websearch" | "contextcompaction" | "context_compaction" => {}
+        "read" | "subagent_result" | "contextcompaction" | "context_compaction" => {}
         "edit" | "write" | "apply_patch" | "multiedit" => {
-            if let Some(diff) = metadata
+            if !structured_sections.is_empty() {
+                sections.extend(structured_sections.clone());
+            } else if let Some(diff) = metadata
                 .and_then(|map| map.get("diff"))
                 .and_then(|value| value_as_string(Some(value)))
             {
@@ -1933,7 +2085,7 @@ fn build_tool_sections(
                 ));
             }
         }
-        "bash" => {
+        "terminal" => {
             if let Some(command) = input
                 .get("command")
                 .or_else(|| input.get("cmd"))
@@ -1959,26 +2111,11 @@ fn build_tool_sections(
             if let Some(progress) = progress_section(metadata, "bash") {
                 sections.push(progress);
             }
-            if let Some(output) = output {
+            if !structured_sections.is_empty() {
+                sections.extend(structured_sections.clone());
+            } else if let Some(output) = output {
                 sections.push(tool_section(
                     "bash-output",
-                    "output",
-                    output,
-                    crate::server::protocol::ai::ToolViewSectionStyle::Code,
-                    Some("text"),
-                ));
-            }
-        }
-        "terminal" => {
-            if terminal_command_summary(input).is_none() && !input.is_empty() {
-                add_json_section(&mut sections, "terminal-input", "input", input);
-            }
-            if let Some(progress) = progress_section(metadata, "terminal") {
-                sections.push(progress);
-            }
-            if let Some(output) = output {
-                sections.push(tool_section(
-                    "terminal-output",
                     "output",
                     output,
                     crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
@@ -2071,7 +2208,9 @@ fn build_tool_sections(
             if let Some(progress) = progress_section(metadata, "generic") {
                 sections.push(progress);
             }
-            if let Some(output) = output {
+            if !structured_sections.is_empty() {
+                sections.extend(structured_sections.clone());
+            } else if let Some(output) = output {
                 sections.push(tool_section(
                     "generic-output",
                     "output",
@@ -2112,18 +2251,13 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     if part.part_type != "tool" {
         return None;
     }
-    let tool_id = part
-        .tool_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or("unknown")
-        .to_ascii_lowercase();
     let state_obj = part.tool_state.as_ref().and_then(|value| value.as_object());
     let input = parse_input_map(state_obj.and_then(|obj| obj.get("input")));
+    let tool_id = semantic_tool_id_for_view(part.tool_name.as_deref(), part.tool_kind.as_deref());
     let metadata = state_obj
         .and_then(|obj| obj.get("metadata"))
         .and_then(|value| value.as_object());
+    let structured_content = state_obj.and_then(|obj| obj.get("content"));
     let output = state_obj
         .and_then(|obj| obj.get("output"))
         .and_then(|value| value_as_string(Some(value)))
@@ -2168,31 +2302,55 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     let (sections, summary) = build_tool_sections(
         &tool_id,
         &input,
+        structured_content,
         raw.as_deref(),
         output.as_deref(),
         error.as_deref(),
         metadata,
     );
-    let header_command_summary = if matches!(tool_id.as_str(), "terminal" | "bash") {
+    let header_command_summary = if matches!(tool_id.as_str(), "terminal") {
         terminal_command_summary(&input)
     } else {
         None
     };
     let display_title = title.unwrap_or_else(|| {
-        if tool_id == "grep" {
+        if tool_id == "search" {
             input
                 .get("pattern")
                 .and_then(|value| value_as_string(Some(value)))
                 .map(|pattern| format!("grep({})", pattern))
+                .unwrap_or_else(|| {
+                    part.tool_kind
+                        .clone()
+                        .unwrap_or_else(|| tool_display_name(&tool_id))
+                })
+        } else if matches!(
+            tool_id.as_str(),
+            "read" | "edit" | "terminal" | "switch_mode"
+        ) {
+            part.tool_kind
+                .clone()
                 .unwrap_or_else(|| tool_display_name(&tool_id))
-        } else if tool_id == "websearch" {
+        } else if part
+            .tool_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("websearch"))
+        {
             input
                 .get("query")
                 .and_then(|value| value_as_string(Some(value)))
                 .map(|query| format!("websearch({})", query))
-                .unwrap_or_else(|| tool_display_name(&tool_id))
+                .unwrap_or_else(|| {
+                    part.tool_kind
+                        .clone()
+                        .or_else(|| part.tool_name.clone())
+                        .unwrap_or_else(|| tool_display_name(&tool_id))
+                })
         } else {
-            tool_display_name(&tool_id)
+            part.tool_kind
+                .clone()
+                .or_else(|| part.tool_name.clone())
+                .unwrap_or_else(|| tool_display_name(&tool_id))
         }
     });
 
@@ -2682,6 +2840,57 @@ mod tests {
             .sections
             .iter()
             .any(|section| section.id == "bash-output" && section.content.contains("running")));
+    }
+
+    #[test]
+    fn normalize_part_for_wire_prefers_acp_kind_and_structured_content() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-execute".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("executeCommand".to_string()),
+            tool_call_id: Some("call-execute".to_string()),
+            tool_kind: Some("execute".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "in_progress",
+                "input": {
+                    "command": "npm test"
+                },
+                "content": [
+                    {
+                        "type": "terminal",
+                        "terminalId": "term_123"
+                    },
+                    {
+                        "type": "diff",
+                        "path": "/tmp/demo.txt",
+                        "oldText": "before\n",
+                        "newText": "after\n"
+                    }
+                ]
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(part.tool_name.as_deref(), Some("executeCommand"));
+        assert_eq!(part.tool_kind.as_deref(), Some("execute"));
+        assert_eq!(tool_view.display_title, "execute");
+        assert_eq!(
+            tool_view.header_command_summary.as_deref(),
+            Some("npm test")
+        );
+        assert!(tool_view.sections.iter().any(|section| {
+            matches!(
+                &section.style,
+                crate::server::protocol::ai::ToolViewSectionStyle::Terminal
+            ) && section.content.contains("term_123")
+        }));
+        assert!(tool_view.sections.iter().any(|section| {
+            matches!(
+                &section.style,
+                crate::server::protocol::ai::ToolViewSectionStyle::Diff
+            ) && section.content.contains("--- /tmp/demo.txt")
+        }));
     }
 
     #[test]
