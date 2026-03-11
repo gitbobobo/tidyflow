@@ -446,7 +446,7 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `has_more`：是否还有更旧历史可翻页
   - `next_before_message_id`：下一页游标（用于继续向前翻页）
   - `selection_hint`：会话选择提示（可选）
-  - `truncated`：是否因载荷限制发生裁剪（可选）
+  - `truncated`：保留兼容字段；当前 HTTP 历史读取默认不做消息内容裁剪（通常省略）
 
 ### 请求示例（首屏）
 
@@ -562,8 +562,8 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `ai_session_messages` 返回完整 `tool_view`。
   - `ai_session_messages_update` 中，tool part 的对外更新统一以 `PartUpdated` 发送当前完整 `tool_view` 快照；文本/推理 part 仍可使用 `PartDelta`。
 - 大 payload 策略：
-  - `ai_session_messages.truncated=true` 表示本次历史响应为展示目的裁剪过 `tool_view.sections[].content`。
-  - 历史读取只裁剪 section 内容，保留 `display_title/status/question/linked_session/locations` 与消息骨架，避免最近页退化为空白。
+  - `ai_session_messages` 通过 HTTP `GET .../messages` 读取，默认依赖分页控制返回规模，不因旧的 WebSocket 单帧限制裁剪消息内容。
+  - `truncated` 字段仅为兼容保留；当前历史读取通常不返回该字段。
 - 客户端 part_id 去重：
   - `replaceMessagesFromSessionCache` 在每条消息内按 `part_id` 去重（保留最后一次，即最完整状态），防止 Core 历史回放中多次工具状态更新产生重复工具卡片。
   - 去重仅在消息内部发生，跨消息的同名 `part_id` 相互独立。

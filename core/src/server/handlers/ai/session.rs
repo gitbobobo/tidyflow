@@ -75,7 +75,6 @@ async fn touch_directory_last_used(ai_state: &SharedAIState, ai_tool: &str, dire
 struct AiSessionMessagesPage {
     requested_before_message_id: Option<String>,
     applied_before_message_id: Option<String>,
-    window_end: usize,
     messages: Vec<crate::server::protocol::ai::MessageInfo>,
     has_more: bool,
     next_before_message_id: Option<String>,
@@ -159,95 +158,10 @@ fn paginate_ai_session_messages(
     AiSessionMessagesPage {
         requested_before_message_id,
         applied_before_message_id,
-        window_end,
         messages,
         has_more,
         next_before_message_id,
     }
-}
-
-fn recompute_ai_session_page_meta_after_truncate(
-    all_messages: &[crate::server::protocol::ai::MessageInfo],
-    page: &mut AiSessionMessagesPage,
-) {
-    if let Some(first) = page.messages.first() {
-        if let Some(first_idx) = all_messages.iter().position(|it| it.id == first.id) {
-            page.has_more = first_idx > 0;
-            page.next_before_message_id = if page.has_more {
-                Some(first.id.clone())
-            } else {
-                None
-            };
-            return;
-        }
-    }
-
-    if page.window_end > 0 {
-        // 当当前页被裁剪为空时，使用“窗口最后一条”作为翻页锚点，继续向更旧历史翻页。
-        let fallback_idx = page.window_end.saturating_sub(1);
-        page.has_more = fallback_idx > 0;
-        page.next_before_message_id = if page.has_more {
-            all_messages.get(fallback_idx).map(|it| it.id.clone())
-        } else {
-            None
-        };
-    } else {
-        page.has_more = false;
-        page.next_before_message_id = None;
-    }
-}
-
-fn clamp_text_for_history(text: &str, limit: usize) -> String {
-    if limit == 0 || text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let head_count = limit.saturating_sub(180);
-    let tail_count = 160usize.min(limit / 6);
-    let head = text.chars().take(head_count).collect::<String>();
-    let tail = if tail_count > 0 {
-        text.chars()
-            .rev()
-            .take(tail_count)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-    } else {
-        String::new()
-    };
-    format!(
-        "{}\n…（已为历史展示裁剪，原始长度 {} 字符）…\n{}",
-        head,
-        text.chars().count(),
-        tail
-    )
-}
-
-fn truncate_tool_view_sections_for_history(
-    message: &mut crate::server::protocol::ai::MessageInfo,
-) -> bool {
-    let mut changed = false;
-    for part in &mut message.parts {
-        let Some(tool_view) = part.tool_view.as_mut() else {
-            continue;
-        };
-        for section in &mut tool_view.sections {
-            let limit = match section.style {
-                crate::server::protocol::ai::ToolViewSectionStyle::Code
-                | crate::server::protocol::ai::ToolViewSectionStyle::Diff
-                | crate::server::protocol::ai::ToolViewSectionStyle::Terminal => 24_000,
-                crate::server::protocol::ai::ToolViewSectionStyle::Markdown
-                | crate::server::protocol::ai::ToolViewSectionStyle::Text => 8_000,
-            };
-            let clamped = clamp_text_for_history(&section.content, limit);
-            if clamped != section.content {
-                section.content = clamped;
-                section.collapsed_by_default = true;
-                changed = true;
-            }
-        }
-    }
-    changed
 }
 
 pub(super) async fn handle_ai_read_via_http_required(
@@ -478,8 +392,7 @@ pub(crate) async fn query_ai_session_messages(
         );
     }
     let page_size = normalize_ai_session_messages_page_size(limit);
-    let mut page =
-        paginate_ai_session_messages(&all_messages, before_message_id.as_deref(), page_size);
+    let page = paginate_ai_session_messages(&all_messages, before_message_id.as_deref(), page_size);
     if page.requested_before_message_id.is_some() && page.applied_before_message_id.is_none() {
         warn!(
             "AISessionMessages before_message_id not found, fallback to latest page: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, page_size={}",
@@ -491,7 +404,7 @@ pub(crate) async fn query_ai_session_messages(
             page_size
         );
     }
-    let mut messages = page.messages.clone();
+    let messages = page.messages.clone();
 
     let selection_hint = if matches!(messages_source, AiSessionMessagesSource::Snapshot) {
         if cached_selection_hint.is_some() {
@@ -539,7 +452,7 @@ pub(crate) async fn query_ai_session_messages(
             project_name, workspace_name, ai_tool, session_id
         );
     }
-    let mut payload_bytes = ai_session_messages_encoded_len(
+    let payload_bytes = ai_session_messages_encoded_len(
         project_name,
         workspace_name,
         &ai_tool,
@@ -551,69 +464,9 @@ pub(crate) async fn query_ai_session_messages(
         selection_hint.clone(),
         None,
     )?;
-    let mut dropped_count = 0usize;
-    let mut truncated = false;
-    while payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES && messages.len() > 1 {
-        messages.remove(0);
-        dropped_count += 1;
-        truncated = true;
-        page.messages = messages.clone();
-        recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
-        payload_bytes = ai_session_messages_encoded_len(
-            project_name,
-            workspace_name,
-            &ai_tool,
-            session_id,
-            page.applied_before_message_id.clone(),
-            messages.clone(),
-            page.has_more,
-            page.next_before_message_id.clone(),
-            selection_hint.clone(),
-            Some(true),
-        )?;
-    }
     if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
-        let mut section_truncated = false;
-        for message in &mut messages {
-            section_truncated |= truncate_tool_view_sections_for_history(message);
-        }
-        if section_truncated {
-            truncated = true;
-            page.messages = messages.clone();
-            recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
-            payload_bytes = ai_session_messages_encoded_len(
-                project_name,
-                workspace_name,
-                &ai_tool,
-                session_id,
-                page.applied_before_message_id.clone(),
-                messages.clone(),
-                page.has_more,
-                page.next_before_message_id.clone(),
-                selection_hint.clone(),
-                Some(true),
-            )?;
-        }
-    }
-    if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
-        truncated = true;
-        messages.clear();
-        page.messages.clear();
-        recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
-        payload_bytes = ai_session_messages_encoded_len(
-            project_name,
-            workspace_name,
-            &ai_tool,
-            session_id,
-            page.applied_before_message_id.clone(),
-            messages.clone(),
-            page.has_more,
-            page.next_before_message_id.clone(),
-            selection_hint.clone(),
-            Some(true),
-        )?;
         warn!(
-            "AISessionMessages payload still exceeds limit after section truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, payload_bytes={}, limit_bytes={}",
+            "AISessionMessages payload exceeds previous websocket-oriented soft limit but is served via HTTP without truncation: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, messages_count={}, payload_bytes={}, soft_limit_bytes={}",
             project_name,
             workspace_name,
             ai_tool,
@@ -621,24 +474,7 @@ pub(crate) async fn query_ai_session_messages(
             page.requested_before_message_id.as_deref(),
             page.applied_before_message_id.as_deref(),
             page_size,
-            payload_bytes,
-            MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
-        );
-    }
-    if dropped_count > 0 {
-        warn!(
-            "AISessionMessages payload truncated: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, dropped_count={}, remaining_count={}, has_more={}, next_before={:?}, payload_bytes={}, max_payload_bytes={}",
-            project_name,
-            workspace_name,
-            ai_tool,
-            session_id,
-            page.requested_before_message_id.as_deref(),
-            page.applied_before_message_id.as_deref(),
-            page_size,
-            dropped_count,
             messages.len(),
-            page.has_more,
-            page.next_before_message_id.as_deref(),
             payload_bytes,
             MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
         );
@@ -665,7 +501,7 @@ pub(crate) async fn query_ai_session_messages(
         text_bytes,
         payload_bytes,
         selection_hint.is_some(),
-        truncated
+        false
     );
 
     Ok(ServerMessage::AISessionMessages {
@@ -678,7 +514,7 @@ pub(crate) async fn query_ai_session_messages(
         has_more: page.has_more,
         next_before_message_id: page.next_before_message_id.clone(),
         selection_hint,
-        truncated: if truncated { Some(true) } else { None },
+        truncated: None,
     })
 }
 
@@ -1571,31 +1407,6 @@ mod tests {
         assert_eq!(page.next_before_message_id.as_deref(), Some("msg_031"));
     }
 
-    #[test]
-    fn recompute_meta_after_truncate_keeps_pagination_progress() {
-        let messages = build_messages(10);
-        let mut page = paginate_ai_session_messages(&messages, None, 5);
-        assert_eq!(
-            page.messages.first().map(|it| it.id.as_str()),
-            Some("msg_006")
-        );
-        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_006"));
-
-        page.messages.remove(0);
-        recompute_ai_session_page_meta_after_truncate(&messages, &mut page);
-        assert_eq!(
-            page.messages.first().map(|it| it.id.as_str()),
-            Some("msg_007")
-        );
-        assert!(page.has_more);
-        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_007"));
-
-        page.messages.clear();
-        recompute_ai_session_page_meta_after_truncate(&messages, &mut page);
-        assert!(page.has_more);
-        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_010"));
-    }
-
     // ACP 历史分页边界（WI-002）
 
     #[test]
@@ -1636,75 +1447,6 @@ mod tests {
             Some("msg_002"),
             "翻页游标应指向当前页第一条消息"
         );
-    }
-
-    #[test]
-    fn truncate_tool_view_sections_for_history_preserves_card_shell() {
-        let mut message = crate::server::protocol::ai::MessageInfo {
-            id: "msg-1".to_string(),
-            role: "assistant".to_string(),
-            created_at: None,
-            agent: None,
-            model_provider_id: None,
-            model_id: None,
-            parts: vec![crate::server::protocol::ai::PartInfo {
-                id: "tool-1".to_string(),
-                part_type: "tool".to_string(),
-                text: None,
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: Some("bash".to_string()),
-                tool_call_id: Some("call-1".to_string()),
-                tool_kind: Some("terminal".to_string()),
-                tool_view: Some(crate::server::protocol::ai::ToolView {
-                    status: "running".to_string(),
-                    display_title: "执行测试".to_string(),
-                    status_text: "running".to_string(),
-                    summary: Some("正在执行".to_string()),
-                    header_command_summary: Some("npm test".to_string()),
-                    duration_ms: None,
-                    sections: vec![crate::server::protocol::ai::ToolViewSection {
-                        id: "terminal-output".to_string(),
-                        title: "output".to_string(),
-                        content: "x".repeat(40_000),
-                        style: crate::server::protocol::ai::ToolViewSectionStyle::Terminal,
-                        language: None,
-                        copyable: true,
-                        collapsed_by_default: false,
-                    }],
-                    locations: vec![crate::server::protocol::ai::ToolViewLocation {
-                        uri: None,
-                        path: Some("src/main.ts".to_string()),
-                        line: Some(1),
-                        column: Some(1),
-                        end_line: None,
-                        end_column: None,
-                        label: Some("入口".to_string()),
-                    }],
-                    question: None,
-                    linked_session: None,
-                }),
-            }],
-        };
-
-        let changed = truncate_tool_view_sections_for_history(&mut message);
-        let tool_view = message.parts[0]
-            .tool_view
-            .as_ref()
-            .expect("tool_view should exist");
-        let section = tool_view.sections.first().expect("section should exist");
-
-        assert!(changed);
-        assert_eq!(tool_view.display_title, "执行测试");
-        assert_eq!(tool_view.status, "running");
-        assert_eq!(tool_view.locations.len(), 1);
-        assert!(section.content.contains("已为历史展示裁剪"));
-        assert!(section.collapsed_by_default);
-        assert!(section.content.chars().count() < 40_000);
     }
 
     #[test]

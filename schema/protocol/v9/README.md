@@ -209,10 +209,10 @@ Core `upsert_tool_part_in_history_messages` 在加载历史时原地更新已存
 - 保留最后一次（最完整状态）
 - 仅在消息内部去重，跨消息的同名 `part_id` 相互独立
 
-## 历史读取裁剪语义（v9 补充）
+## 历史读取语义（v9 补充）
 
-当 `ai_session_messages` 的历史页过大时，Core 只允许裁剪 `tool_view.sections[].content`，并在响应顶层返回 `truncated=true`。
-该裁剪不会删除最近消息本身，也不会删除 `display_title/status/question/linked_session/locations` 等工具卡片骨架字段。
+`ai_session_messages` 通过 HTTP `GET .../messages` 读取，默认依赖分页控制返回规模，不因旧的 WebSocket 单帧限制裁剪消息内容。
+`truncated` 字段仅为兼容保留；当前历史读取通常不返回该字段。
 
 ## 流式更新语义（v9 补充）
 
