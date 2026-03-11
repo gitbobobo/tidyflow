@@ -87,10 +87,17 @@ struct CapsuleSegmentedControl: View {
 struct InspectorContentView: View {
     @EnvironmentObject var appState: AppState
 
+    private var activeRightToolSelection: Binding<RightTool?> {
+        Binding(
+            get: { appState.activeRightTool },
+            set: { appState.activeRightTool = $0 }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // 工具选择器：Xcode 风格胶囊、仅图标（自定义 CapsuleSegmentedControl）
-            CapsuleSegmentedControl(selection: $appState.activeRightTool)
+            CapsuleSegmentedControl(selection: activeRightToolSelection)
                 .padding(.horizontal, 12)
 
             // 内容区域

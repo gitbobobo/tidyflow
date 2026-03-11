@@ -115,7 +115,7 @@ extension AppState {
         if result.ok {
             if let index = projects.firstIndex(where: { $0.name == result.project }) {
                 projects[index].workspaces.removeAll { $0.name == result.workspace }
-                if selectedWorkspaceKey == result.workspace {
+                if selectedProjectName == result.project, selectedWorkspaceKey == result.workspace {
                     let fallback = defaultWorkspace(for: projects[index]) ?? projects[index].workspaces.first
                     if let fallback {
                         selectWorkspace(projectId: projects[index].id, workspaceName: fallback.name)
@@ -133,9 +133,29 @@ extension AppState {
             workspaceTerminalOpenTime.removeValue(forKey: globalKey)
             workspaceDiagnostics.removeValue(forKey: globalKey)
             workspaceSpecialPageByWorkspace.removeValue(forKey: globalKey)
+            #if os(macOS)
+            clearWorkspaceLayout(for: globalKey)
+            #endif
             // 通过专用清理接口确保文件/Git 缓存按工作区边界完整释放
             fileCache.clearWorkspaceCache(globalKey: globalKey)
             gitCache.clearWorkspaceCache(globalKey: globalKey)
+        }
+    }
+
+    /// Handle project removed result from WebSocket
+    func handleProjectRemoved(_ result: ProjectRemovedResult) {
+        guard result.ok else {
+            TFLog.app.error("移除项目失败: \(result.message ?? "未知错误", privacy: .public)")
+            return
+        }
+
+        if let removedProject = projects.first(where: { $0.name == result.name }) {
+            if selectedProjectId == removedProject.id {
+                selectedProjectId = nil
+                selectedWorkspaceKey = nil
+            }
+            evictProjectCache(projectName: result.name)
+            projects.removeAll { $0.name == result.name }
         }
     }
 
@@ -144,6 +164,9 @@ extension AppState {
     func evictProjectCache(projectName: String) {
         guard let project = projects.first(where: { $0.name == projectName }) else { return }
         let workspaceNames = project.workspaces.map(\.name) + ["default"]
+        #if os(macOS)
+        clearProjectWorkspaceLayouts(projectName: projectName, workspaceNames: workspaceNames)
+        #endif
         for wsName in workspaceNames {
             let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: wsName)
             fileCache.clearWorkspaceCache(globalKey: globalKey)
@@ -172,6 +195,8 @@ extension AppState {
         guard let project = projects.first(where: { $0.id == id }) else { return }
         guard connectionState == .connected else { return }
 
+        evictProjectCache(projectName: project.name)
+
         // 先从 UI 移除
         projects.removeAll { $0.id == id }
 
@@ -195,7 +220,8 @@ extension AppState {
         deletingWorkspaces.insert(globalKey)
 
         // 如果当前选中的就是要删除的工作空间，先切换到其他工作空间
-        if selectedWorkspaceKey == workspaceName,
+        if selectedProjectName == projectName,
+           selectedWorkspaceKey == workspaceName,
            let project = projects.first(where: { $0.name == projectName }),
            let other = project.workspaces.first(where: { $0.name != workspaceName }) {
             selectWorkspace(projectId: project.id, workspaceName: other.name)

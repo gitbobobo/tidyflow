@@ -1,4 +1,152 @@
 import Foundation
+#if os(macOS)
+import CoreGraphics
+#endif
+
+#if os(macOS)
+/// macOS 工作区壳层布局快照。
+/// 仅覆盖工作区外层布局，不包含聊天内部抽屉、搜索词、滚动位置等瞬时态。
+struct MacWorkspaceLayoutState: Equatable {
+    var rightSidebarCollapsed: Bool
+    var activeRightTool: RightTool?
+    var tabPanelExpanded: Bool
+    var tabPanelHeight: CGFloat
+    var tabPanelLastExpandedHeight: CGFloat?
+
+    static let `default` = MacWorkspaceLayoutState(
+        rightSidebarCollapsed: false,
+        activeRightTool: .explorer,
+        tabPanelExpanded: false,
+        tabPanelHeight: 0,
+        tabPanelLastExpandedHeight: nil
+    )
+}
+
+extension AppState {
+    var activeRightTool: RightTool? {
+        get { currentMacWorkspaceLayoutState.activeRightTool }
+        set {
+            updateCurrentWorkspaceLayout { layout in
+                layout.activeRightTool = newValue
+            }
+        }
+    }
+
+    var rightSidebarCollapsed: Bool {
+        get { currentMacWorkspaceLayoutState.rightSidebarCollapsed }
+        set {
+            updateCurrentWorkspaceLayout { layout in
+                layout.rightSidebarCollapsed = newValue
+            }
+        }
+    }
+
+    /// Tab 面板是否展开（false 时仅显示底部收起的 Tab 条）。
+    var tabPanelExpanded: Bool {
+        get { currentMacWorkspaceLayoutState.tabPanelExpanded }
+        set {
+            updateCurrentWorkspaceLayout { layout in
+                layout.tabPanelExpanded = newValue
+            }
+        }
+    }
+
+    /// Tab 面板展开时的高度（会话内记忆，不持久化）。
+    var tabPanelHeight: CGFloat {
+        get { currentMacWorkspaceLayoutState.tabPanelHeight }
+        set {
+            updateCurrentWorkspaceLayout { layout in
+                layout.tabPanelHeight = newValue
+            }
+        }
+    }
+
+    /// 最近一次有效展开高度，用于收起后恢复。
+    var tabPanelLastExpandedHeight: CGFloat? {
+        get { currentMacWorkspaceLayoutState.tabPanelLastExpandedHeight }
+        set {
+            updateCurrentWorkspaceLayout { layout in
+                layout.tabPanelLastExpandedHeight = newValue
+            }
+        }
+    }
+
+    var currentMacWorkspaceLayoutState: MacWorkspaceLayoutState {
+        macWorkspaceLayout(for: currentGlobalWorkspaceKey)
+    }
+
+    func storedMacWorkspaceLayout(for workspaceKey: String) -> MacWorkspaceLayoutState? {
+        workspaceLayoutByWorkspace[workspaceKey]
+    }
+
+    func saveCurrentWorkspaceLayout(for workspaceKey: String? = nil) {
+        let workspaceKey = workspaceKey ?? currentGlobalWorkspaceKey
+        guard workspaceKey != nil else { return }
+        storeMacWorkspaceLayout(
+            currentMacWorkspaceLayoutState,
+            for: workspaceKey
+        )
+    }
+
+    func restoreWorkspaceLayout(for workspaceKey: String) {
+        let layout = workspaceLayoutByWorkspace[workspaceKey] ?? .default
+        applyMacWorkspaceLayout(layout, for: workspaceKey)
+    }
+
+    func applyDefaultWorkspaceLayout() {
+        applyMacWorkspaceLayout(.default, for: currentGlobalWorkspaceKey)
+    }
+
+    func clearWorkspaceLayout(for workspaceKey: String) {
+        workspaceLayoutByWorkspace.removeValue(forKey: workspaceKey)
+    }
+
+    func clearProjectWorkspaceLayouts(projectName: String, workspaceNames: [String]) {
+        for workspaceName in workspaceNames {
+            let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+            workspaceLayoutByWorkspace.removeValue(forKey: globalKey)
+        }
+    }
+
+    private func updateCurrentWorkspaceLayout(
+        _ update: (inout MacWorkspaceLayoutState) -> Void
+    ) {
+        var layout = currentMacWorkspaceLayoutState
+        let previous = layout
+        update(&layout)
+        guard layout != previous else { return }
+        objectWillChange.send()
+        storeMacWorkspaceLayout(layout, for: currentGlobalWorkspaceKey)
+    }
+
+    private func applyMacWorkspaceLayout(
+        _ layout: MacWorkspaceLayoutState,
+        for workspaceKey: String?
+    ) {
+        guard macWorkspaceLayout(for: workspaceKey) != layout else { return }
+        objectWillChange.send()
+        storeMacWorkspaceLayout(layout, for: workspaceKey)
+    }
+
+    private func macWorkspaceLayout(for workspaceKey: String?) -> MacWorkspaceLayoutState {
+        if let workspaceKey {
+            return workspaceLayoutByWorkspace[workspaceKey] ?? .default
+        }
+        return inactiveWorkspaceLayout
+    }
+
+    private func storeMacWorkspaceLayout(
+        _ layout: MacWorkspaceLayoutState,
+        for workspaceKey: String?
+    ) {
+        if let workspaceKey {
+            workspaceLayoutByWorkspace[workspaceKey] = layout
+        } else {
+            inactiveWorkspaceLayout = layout
+        }
+    }
+}
+#endif
 
 extension AppState {
     // MARK: - UX-1: Project/Workspace Selection
@@ -37,6 +185,11 @@ extension AppState {
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
         let previousIdentity = selectedWorkspaceIdentity
+        #if os(macOS)
+        let previousGlobalKey = previousIdentity.map {
+            globalWorkspaceKey(projectName: $0.projectName, workspaceName: $0.workspaceName)
+        }
+        #endif
         // 性能追踪：工作区切换
         let projectName = WorkspaceSelectionSemantics.resolveProjectName(
             projectId: projectId,
@@ -57,6 +210,12 @@ extension AppState {
             project: projectName,
             workspace: workspaceName
         ))
+
+        #if os(macOS)
+        if didChangeWorkspaceIdentity, let previousGlobalKey {
+            saveCurrentWorkspaceLayout(for: previousGlobalKey)
+        }
+        #endif
 
         // 先切项目名，再切工作空间，避免同名 workspace 跨项目切换时上下文短暂错位。
         selectedProjectName = projectName
@@ -84,6 +243,12 @@ extension AppState {
 
         // 确保有默认 Tab（使用全局键）
         ensureDefaultTab(for: globalKey)
+
+        #if os(macOS)
+        if didChangeWorkspaceIdentity {
+            restoreWorkspaceLayout(for: globalKey)
+        }
+        #endif
 
         // 连接后请求数据（使用原始 workspaceName，因为 fetchXXX 方法内部会用 selectedProjectName 构建完整键）
         // 切换项目但 workspace 名相同时（如 A-default → B-default）selectedWorkspaceKey 不变，onChange 不触发，

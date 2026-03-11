@@ -41,11 +41,7 @@ final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {
     func handleWorkspacesList(_ result: WorkspacesListResult) { appState?.handleWorkspacesList(result) }
     func handleProjectImported(_ result: ProjectImportedResult) { appState?.handleProjectImported(result) }
     func handleWorkspaceCreated(_ result: WorkspaceCreatedResult) { appState?.handleWorkspaceCreated(result) }
-    func handleProjectRemoved(_ result: ProjectRemovedResult) {
-        if !result.ok {
-            TFLog.app.error("移除项目失败: \(result.message ?? "未知错误", privacy: .public)")
-        }
-    }
+    func handleProjectRemoved(_ result: ProjectRemovedResult) { appState?.handleProjectRemoved(result) }
     func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) { appState?.handleWorkspaceRemoved(result) }
     func handleProjectCommandsSaved(_ project: String, _ ok: Bool, _ message: String?) {
         if !ok {

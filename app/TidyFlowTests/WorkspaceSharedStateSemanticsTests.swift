@@ -253,3 +253,188 @@ final class WorkspaceSharedStateSemanticsTests: XCTestCase {
                        "新阶段不应继承上一阶段的 isRestored 标记")
     }
 }
+
+#if os(macOS)
+final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
+    func testSwitchWorkspace_restoresOwnLayout() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let project = makeProject(
+            name: "ProjectA",
+            workspaces: ["ws-a", "ws-b"]
+        )
+        appState.projects = [project]
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-a")
+        appState.activeRightTool = .git
+        appState.rightSidebarCollapsed = true
+        appState.tabPanelExpanded = true
+        appState.tabPanelHeight = 320
+        appState.tabPanelLastExpandedHeight = 320
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-b")
+        XCTAssertEqual(appState.activeRightTool, .explorer)
+        XCTAssertFalse(appState.rightSidebarCollapsed)
+        XCTAssertFalse(appState.tabPanelExpanded)
+        XCTAssertEqual(appState.tabPanelHeight, 0)
+        XCTAssertNil(appState.tabPanelLastExpandedHeight)
+
+        appState.activeRightTool = .search
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-a")
+        XCTAssertEqual(appState.activeRightTool, .git)
+        XCTAssertTrue(appState.rightSidebarCollapsed)
+        XCTAssertTrue(appState.tabPanelExpanded)
+        XCTAssertEqual(appState.tabPanelHeight, 320)
+        XCTAssertEqual(appState.tabPanelLastExpandedHeight, 320)
+    }
+
+    func testFirstVisitWorkspace_usesDefaultLayout() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let project = makeProject(
+            name: "ProjectA",
+            workspaces: ["ws-a", "ws-b"]
+        )
+        appState.projects = [project]
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-a")
+        appState.activeRightTool = .git
+        appState.rightSidebarCollapsed = true
+        appState.tabPanelExpanded = true
+        appState.tabPanelHeight = 260
+        appState.tabPanelLastExpandedHeight = 260
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-b")
+        XCTAssertEqual(appState.activeRightTool, .explorer)
+        XCTAssertFalse(appState.rightSidebarCollapsed)
+        XCTAssertFalse(appState.tabPanelExpanded)
+        XCTAssertEqual(appState.tabPanelHeight, 0)
+        XCTAssertNil(appState.tabPanelLastExpandedHeight)
+    }
+
+    func testSameWorkspaceNameAcrossProjects_keepsLayoutsIsolated() {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let projectA = makeProject(name: "ProjectA", workspaces: ["default"])
+        let projectB = makeProject(name: "ProjectB", workspaces: ["default"])
+        appState.projects = [projectA, projectB]
+
+        appState.selectWorkspace(projectId: projectA.id, workspaceName: "default")
+        appState.activeRightTool = .git
+        appState.rightSidebarCollapsed = true
+        appState.tabPanelExpanded = true
+        appState.tabPanelHeight = 280
+        appState.tabPanelLastExpandedHeight = 280
+
+        appState.selectWorkspace(projectId: projectB.id, workspaceName: "default")
+        XCTAssertEqual(appState.activeRightTool, .explorer)
+        XCTAssertFalse(appState.rightSidebarCollapsed)
+        XCTAssertFalse(appState.tabPanelExpanded)
+
+        appState.activeRightTool = .search
+
+        appState.selectWorkspace(projectId: projectA.id, workspaceName: "default")
+        XCTAssertEqual(appState.activeRightTool, .git)
+        XCTAssertTrue(appState.rightSidebarCollapsed)
+        XCTAssertTrue(appState.tabPanelExpanded)
+        XCTAssertEqual(appState.tabPanelHeight, 280)
+        XCTAssertEqual(appState.tabPanelLastExpandedHeight, 280)
+    }
+
+    func testReselectSameWorkspace_doesNotResetLayout() throws {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let project = makeProject(name: "ProjectA", workspaces: ["ws-a"])
+        appState.projects = [project]
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-a")
+        appState.activeRightTool = .git
+        appState.rightSidebarCollapsed = true
+        appState.tabPanelExpanded = true
+        appState.tabPanelHeight = 300
+        appState.tabPanelLastExpandedHeight = 300
+
+        let globalKey = try XCTUnwrap(appState.currentGlobalWorkspaceKey)
+        let storedBefore = appState.storedMacWorkspaceLayout(for: globalKey)
+
+        appState.selectWorkspace(projectId: project.id, workspaceName: "ws-a")
+
+        XCTAssertEqual(appState.activeRightTool, .git)
+        XCTAssertTrue(appState.rightSidebarCollapsed)
+        XCTAssertTrue(appState.tabPanelExpanded)
+        XCTAssertEqual(appState.tabPanelHeight, 300)
+        XCTAssertEqual(appState.tabPanelLastExpandedHeight, 300)
+        XCTAssertEqual(appState.storedMacWorkspaceLayout(for: globalKey), storedBefore)
+    }
+
+    func testCleanupClearsStoredLayoutsForWorkspaceAndProject() throws {
+        let appState = AppState()
+        defer {
+            appState.wsClient.disconnect()
+            appState.coreProcessManager.stop()
+        }
+
+        let projectA = makeProject(name: "ProjectA", workspaces: ["ws-a", "ws-b"])
+        let projectB = makeProject(name: "ProjectB", workspaces: ["default"])
+        appState.projects = [projectA, projectB]
+
+        appState.selectWorkspace(projectId: projectA.id, workspaceName: "ws-a")
+        appState.activeRightTool = .git
+        let workspaceAKey = try XCTUnwrap(appState.currentGlobalWorkspaceKey)
+
+        appState.selectWorkspace(projectId: projectA.id, workspaceName: "ws-b")
+        appState.activeRightTool = .search
+        let workspaceBKey = try XCTUnwrap(appState.currentGlobalWorkspaceKey)
+
+        appState.selectWorkspace(projectId: projectB.id, workspaceName: "default")
+        appState.activeRightTool = .todos
+        let workspaceProjectBKey = try XCTUnwrap(appState.currentGlobalWorkspaceKey)
+
+        XCTAssertNotNil(appState.storedMacWorkspaceLayout(for: workspaceAKey))
+        XCTAssertNotNil(appState.storedMacWorkspaceLayout(for: workspaceBKey))
+        XCTAssertNotNil(appState.storedMacWorkspaceLayout(for: workspaceProjectBKey))
+
+        appState.handleWorkspaceRemoved(
+            WorkspaceRemovedResult(project: "ProjectA", workspace: "ws-a", ok: true, message: nil)
+        )
+        XCTAssertNil(appState.storedMacWorkspaceLayout(for: workspaceAKey))
+
+        appState.evictProjectCache(projectName: "ProjectB")
+        XCTAssertNil(appState.storedMacWorkspaceLayout(for: workspaceProjectBKey))
+        XCTAssertNotNil(appState.storedMacWorkspaceLayout(for: workspaceBKey))
+    }
+
+    private func makeProject(name: String, workspaces: [String]) -> ProjectModel {
+        ProjectModel(
+            id: UUID(),
+            name: name,
+            path: "/tmp/\(name)",
+            workspaces: workspaces.map { workspace in
+                WorkspaceModel(
+                    name: workspace,
+                    root: "/tmp/\(name)/\(workspace)",
+                    status: "ready",
+                    isDefault: workspace == "default",
+                    sidebarStatus: .empty
+                )
+            }
+        )
+    }
+}
+#endif

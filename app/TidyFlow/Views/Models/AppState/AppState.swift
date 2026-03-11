@@ -232,7 +232,6 @@ class AppState: ObservableObject {
     }()
 
     @Published var selectedWorkspaceKey: String?
-    @Published var activeRightTool: RightTool? = .explorer
     /// 共享连接语义层：单一入口表达所有连接阶段，视图和组件应优先读取此属性。
     @Published var connectionPhase: ConnectionPhase = .intentionallyDisconnected
     /// 向后兼容导出（二值）；新代码请使用 `connectionPhase`。
@@ -288,16 +287,11 @@ class AppState: ObservableObject {
     // 远程终端追踪
     @Published var remoteTerminals: [RemoteTerminalInfo] = []
 
-    // Right Sidebar State
-    @Published var rightSidebarCollapsed: Bool = false
-
     #if os(macOS)
-    /// Tab 面板是否展开（false 时仅显示底部收起的 Tab 条）
-    @Published var tabPanelExpanded: Bool = false
-    /// Tab 面板展开时的高度（会话内记忆，不持久化）
-    @Published var tabPanelHeight: CGFloat = 0
-    /// 最近一次有效展开高度，用于收起后恢复。
-    @Published var tabPanelLastExpandedHeight: CGFloat?
+    /// macOS 工作区壳层布局快照，按 `project:workspace` 隔离。
+    var workspaceLayoutByWorkspace: [String: MacWorkspaceLayoutState] = [:]
+    /// 无选中工作区时的临时布局槽位，不参与工作区间继承。
+    var inactiveWorkspaceLayout: MacWorkspaceLayoutState = .default
     #endif
 
     // UX-1: Project Tree State
