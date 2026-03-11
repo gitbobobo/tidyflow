@@ -342,6 +342,84 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
         XCTAssertNotEqual(key2, key3, "不同项目+工作区组合的上下文键应不同")
     }
 
+    // MARK: - AI 聊天舞台生命周期边界回归（多工作区 + 流式中断）
+
+    /// 回归：多工作区切换 → forceReset → enter 新工作区后，旧工作区事件被拒绝。
+    func testMultiWorkspaceSwitchIsolation() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        // 工作区 A 活跃
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-a", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("session-a")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-a", aiTool: .opencode))
+
+        // 模拟平台层工作区切换：forceReset + clearAll
+        lifecycle.apply(.forceReset)
+        store.clearAll()
+
+        // 工作区 B 活跃
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-b", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("session-b")
+
+        // 旧工作区 A 的事件应被拒绝（舞台 + 缓存双层验证）
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-a", aiTool: .opencode),
+                       "旧工作区的事件应被舞台拒绝")
+        XCTAssertFalse(store.subscribedSessionIds.contains("session-a"),
+                       "旧工作区的会话 ID 不应在订阅集合中")
+        // 新工作区 B 的事件应被接受
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-b", aiTool: .opencode))
+        XCTAssertTrue(store.subscribedSessionIds.contains("session-b"))
+    }
+
+    /// 回归：流式中断后恢复 → 确认事件仍被正确路由。
+    func testStreamInterruptionRecoveryWithSessionIsolation() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .claude_code))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("sess-1")
+
+        // 流式中断
+        lifecycle.apply(.streamInterrupted(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+        // resuming 阶段仍接受匹配上下文的事件
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code))
+        XCTAssertTrue(store.subscribedSessionIds.contains("sess-1"),
+                      "流式中断不应清空订阅集合")
+
+        // 恢复完成
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        // 切换到新会话后旧会话事件被拒绝
+        store.clearAll()
+        store.setCurrentSessionId("sess-2")
+        XCTAssertFalse(store.subscribedSessionIds.contains("sess-1"),
+                       "切换会话后旧 session ID 应被移出订阅")
+    }
+
+    /// 回归：forceReset 从 resuming 阶段恢复到 idle，不残留任何上下文。
+    func testForceResetFromResumingClearsContext() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.streamInterrupted(sessionId: "sess-x"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertEqual(lifecycle.state.project, "", "forceReset 后 project 应为空")
+        XCTAssertEqual(lifecycle.state.workspace, "", "forceReset 后 workspace 应为空")
+        XCTAssertNil(lifecycle.state.activeSessionId, "forceReset 后 activeSessionId 应为 nil")
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex),
+                       "forceReset 后不应接受任何事件")
+    }
+
     private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

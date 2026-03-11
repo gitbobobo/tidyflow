@@ -461,6 +461,70 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj-a", workspace: "ws-2", aiTool: .opencode))
     }
 
+    // MARK: - AI 聊天舞台生命周期与缓存隔离（流式中断边界）
+
+    /// 验证流式中断后缓存状态与舞台状态一致。
+    func testStreamInterruptionCacheConsistency() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("sess-1")
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m1", role: "assistant"),
+                .partUpdated(messageId: "m1", part: makeTextPart(id: "p1", text: "streaming...")),
+            ],
+            isStreaming: true
+        )
+        store.flushPendingStreamEvents()
+        XCTAssertTrue(store.isStreaming)
+
+        // 流式中断
+        lifecycle.apply(.streamInterrupted(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+        // 缓存中的消息应保留（不清空），等待恢复
+        XCTAssertEqual(store.messages.count, 1, "流式中断不应清空消息缓存")
+
+        // 恢复完成后替换消息
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+        store.handleChatDone(sessionId: "sess-1")
+        XCTAssertFalse(store.isStreaming, "恢复完成后流式标志应清除")
+    }
+
+    /// 验证工作区切换后 clearAll + 舞台 forceReset 联动正确。
+    func testWorkspaceSwitchClearAllWithStageReset() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        // 在工作区 A 建立会话
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-a", aiTool: .codex))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("sess-a")
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m1", role: "user")],
+            isStreaming: false
+        )
+
+        // 模拟工作区切换
+        lifecycle.apply(.forceReset)
+        store.clearAll()
+
+        // 验证清理完整
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertTrue(store.subscribedSessionIds.isEmpty)
+        XCTAssertTrue(store.messages.isEmpty)
+
+        // 进入工作区 B，不应残留工作区 A 的状态
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-b", aiTool: .codex))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("sess-b")
+        XCTAssertFalse(store.subscribedSessionIds.contains("sess-a"),
+                       "工作区切换后旧会话 ID 不应在订阅集合中")
+    }
+
     private func makeToolPart(id: String, status: String) -> AIProtocolPartInfo {
         let toolStatus: AIToolStatus
         switch status {

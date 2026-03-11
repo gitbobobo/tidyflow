@@ -154,6 +154,97 @@ final class AIChatStageProjectionTests: XCTestCase {
         XCTAssertEqual(lifecycle.state.phase, .active, "阶段不应改变")
     }
 
+    // MARK: - AI 聊天舞台生命周期边界回归
+
+    /// 回归：流式中断 → resuming → resumeCompleted → active
+    func testStageStreamInterruptionRecovery() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.loadSession(sessionId: "s1", aiTool: .opencode))
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        // 流式中断
+        let interruptResult = lifecycle.apply(.streamInterrupted(sessionId: "s1"))
+        XCTAssertNotEqual(interruptResult, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .resuming, "流式中断应迁移到 resuming")
+        XCTAssertEqual(lifecycle.state.activeSessionId, "s1", "流式中断应保留会话 ID")
+        // resuming 阶段仍接受匹配上下文的事件
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .opencode))
+
+        // 恢复完成
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active, "恢复完成应回到 active")
+    }
+
+    /// 回归：流式中断后直接关闭（用户不等恢复）
+    func testStageStreamInterruptionThenClose() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+
+        lifecycle.apply(.streamInterrupted(sessionId: "s1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        lifecycle.apply(.close)
+        XCTAssertEqual(lifecycle.state.phase, .idle, "流式中断后关闭应直接回到 idle")
+    }
+
+    /// 回归：工作区切换后旧上下文不再接受事件
+    func testStageWorkspaceSwitchPreventsOldContextProjection() {
+        let lifecycle = AIChatStageLifecycle()
+
+        // 在 ws-1 中进入 active
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-1", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-1", aiTool: .opencode))
+
+        // forceReset（模拟平台工作区切换时的重置）
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-1", aiTool: .opencode),
+                        "forceReset 后旧上下文的事件应被拒绝")
+
+        // 进入新工作区 ws-2
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-2", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-1", aiTool: .opencode),
+                        "旧工作区的事件在新上下文中应被拒绝")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-2", aiTool: .opencode))
+    }
+
+    /// 回归：会话恢复完成后能正常接收流式事件
+    func testStageSessionRecoveryCompletionAcceptsEvents() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .claude_code))
+        lifecycle.apply(.ready)
+
+        // resume → resumeCompleted
+        lifecycle.apply(.resume(sessionId: "sess-123"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code),
+                      "resuming 阶段应接受匹配上下文的事件")
+
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code))
+    }
+
+    /// 回归：关闭后清理——contextKey 归空、不再接受事件
+    func testStageCloseCleanup() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        let activeContextKey = lifecycle.state.contextKey
+        XCTAssertFalse(activeContextKey.isEmpty)
+
+        lifecycle.apply(.close)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertEqual(lifecycle.state.project, "", "idle 状态应重置项目名")
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex),
+                       "关闭后不应接受任何事件")
+    }
+
     private func makePlainMessage(id: String) -> AIChatMessage {
         AIChatMessage(
             messageId: id,
