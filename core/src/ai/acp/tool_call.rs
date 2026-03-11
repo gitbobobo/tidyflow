@@ -72,12 +72,16 @@ fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
             | "editfile"
             | "replace"
             | "strreplace"
+            | "strreplacefile"
             | "stringreplace"
+            | "stringreplacefile"
             | "applypatch"
             | "multiedit"
             | "patch"
     ) || normalized.starts_with("edit")
         || normalized.starts_with("replace")
+        || normalized.starts_with("strreplace")
+        || normalized.starts_with("stringreplace")
         || normalized.starts_with("patch")
         || normalized.starts_with("applypatch")
         || normalized.starts_with("multiedit")
@@ -125,6 +129,14 @@ fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
     }
 
     None
+}
+
+fn normalize_explicit_tool_name(raw_name: &str) -> Option<String> {
+    let mapped = infer_tool_name_from_token(raw_name)?;
+    match mapped {
+        "read" | "edit" | "write" => Some(mapped.to_string()),
+        _ => None,
+    }
 }
 
 fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
@@ -178,6 +190,9 @@ fn normalize_tool_name(
     tool_kind: Option<&str>,
 ) -> String {
     if let Some(name) = raw_name.and_then(normalize_non_empty_token) {
+        if let Some(mapped) = normalize_explicit_tool_name(&name) {
+            return mapped;
+        }
         return name;
     }
 
@@ -1401,5 +1416,37 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("cargo test --test event_bus_concurrent_test")
         );
+    }
+
+    #[test]
+    fn test_explicit_kimi_read_file_tool_name_should_normalize_to_read() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "ReadFile",
+            "toolCallId": "kimi-read-1",
+            "rawInput": {
+                "path": "/tmp/demo.txt"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "read");
+    }
+
+    #[test]
+    fn test_explicit_kimi_str_replace_file_tool_name_should_normalize_to_edit() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "StrReplaceFile",
+            "toolCallId": "kimi-edit-1",
+            "rawInput": {
+                "path": "/tmp/demo.txt",
+                "old_str": "before",
+                "new_str": "after"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "edit");
     }
 }
