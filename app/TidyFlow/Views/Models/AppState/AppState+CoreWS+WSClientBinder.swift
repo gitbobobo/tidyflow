@@ -37,17 +37,22 @@ extension AppState {
                 self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连后尝试附着已有终端会话
                 self.requestTerminalReattach()
-            } else if let phase = ConnectionPhase.evaluateDisconnect(
-                isIntentional: self.wsClient.isIntentionalDisconnect,
-                isCoreAvailable: self.coreProcessManager.isRunning
-            ) {
-                // 主动断开或 Core 不可用：直接设置确定阶段
-                self.connectionPhase = phase
             } else {
-                // 意外断连且 Core 仍在运行：通过共享语义层触发自动重连
-                TFLog.core.warning("WebSocket 意外断连，触发自动重连")
-                self.markAllTerminalSessionsStale()
-                self.startAutoReconnect()
+                // 断连时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影残留
+                self.forceResetAIChatStage()
+
+                if let phase = ConnectionPhase.evaluateDisconnect(
+                    isIntentional: self.wsClient.isIntentionalDisconnect,
+                    isCoreAvailable: self.coreProcessManager.isRunning
+                ) {
+                    // 主动断开或 Core 不可用：直接设置确定阶段
+                    self.connectionPhase = phase
+                } else {
+                    // 意外断连且 Core 仍在运行：通过共享语义层触发自动重连
+                    TFLog.core.warning("WebSocket 意外断连，触发自动重连")
+                    self.markAllTerminalSessionsStale()
+                    self.startAutoReconnect()
+                }
             }
         }
 

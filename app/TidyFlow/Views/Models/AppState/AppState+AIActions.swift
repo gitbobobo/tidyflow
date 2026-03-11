@@ -240,6 +240,35 @@ extension AppState {
         }
     }
 
+    /// 恢复 AI 聊天舞台会话（断线重连后补拉缺失消息）。
+    func resumeAIChatStage(sessionId: String) {
+        let result = aiChatStageLifecycle.apply(.resume(sessionId: sessionId))
+        if case .transitioned = result {
+            TFLog.app.info("AI chat stage resuming: sessionId=\(sessionId, privacy: .public)")
+        }
+    }
+
+    /// AI 聊天舞台恢复完成（缺失消息补齐，流式状态同步）。
+    func markAIChatStageResumeCompleted() {
+        aiChatStageLifecycle.apply(.resumeCompleted)
+    }
+
+    /// 流式中断后通知 AI 聊天舞台。统一入口，网络丢失或流异常时调用。
+    func streamInterruptedAIChatStage(sessionId: String) {
+        let result = aiChatStageLifecycle.apply(.streamInterrupted(sessionId: sessionId))
+        if case .transitioned = result {
+            TFLog.app.info("AI chat stage stream interrupted: sessionId=\(sessionId, privacy: .public)")
+        }
+    }
+
+    /// 强制重置 AI 聊天舞台。断开连接或不可恢复场景时调用。
+    func forceResetAIChatStage() {
+        let result = aiChatStageLifecycle.apply(.forceReset)
+        if case .transitioned = result {
+            TFLog.app.info("AI chat stage force reset")
+        }
+    }
+
     /// AI 聊天舞台加载已有会话。统一入口。
     func loadSessionInStage(sessionId: String, aiTool: AIChatTool) {
         aiChatStageLifecycle.apply(.loadSession(sessionId: sessionId, aiTool: aiTool))
