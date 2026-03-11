@@ -8,7 +8,6 @@ pub mod evolution_prompts;
 pub mod file;
 pub mod git;
 pub mod health;
-pub mod log;
 pub mod project;
 pub mod settings;
 pub mod terminal;

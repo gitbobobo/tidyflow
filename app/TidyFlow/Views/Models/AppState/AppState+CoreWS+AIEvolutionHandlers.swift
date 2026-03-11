@@ -66,11 +66,9 @@ extension AppState {
             }
             return text
         }()
-        wsClient.sendLogEntry(
-            level: "DEBUG",
-            category: "ai_selection_sync_pipeline",
-            msg: "ai selection pipeline \(event)",
-            detail: detailText
+        let serializedDetail = detailText ?? "{}"
+        TFLog.app.debug(
+            "ai selection pipeline \(event, privacy: .public) detail=\(serializedDetail, privacy: .public)"
         )
     }
 

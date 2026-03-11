@@ -757,7 +757,6 @@ extension WSClient {
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
         ("project", "template_"),
-        ("log", "log_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
@@ -1819,36 +1818,6 @@ extension WSClient {
     /// 上传剪贴板图片到服务端（转 JPG 写入 macOS 系统剪贴板）
     func sendClipboardImageUpload(imageData: [UInt8]) {
         sendTyped(ClipboardImageUploadRequest(imageData: Data(imageData)))
-    }
-
-    // MARK: - 日志上报
-
-    /// 发送日志到 Rust Core 统一写入文件（含结构化错误码与上下文）
-    func sendLogEntry(
-        level: String,
-        category: String? = nil,
-        msg: String,
-        detail: String? = nil,
-        errorCode: CoreErrorCode? = nil,
-        project: String? = nil,
-        workspace: String? = nil,
-        sessionId: String? = nil,
-        cycleId: String? = nil
-    ) {
-        var dict: [String: Any] = [
-            "type": "log_entry",
-            "level": level,
-            "source": "swift",
-            "msg": msg
-        ]
-        if let category { dict["category"] = category }
-        if let detail { dict["detail"] = detail }
-        if let errorCode { dict["error_code"] = errorCode.rawValue }
-        if let project { dict["project"] = project }
-        if let workspace { dict["workspace"] = workspace }
-        if let sessionId { dict["session_id"] = sessionId }
-        if let cycleId { dict["cycle_id"] = cycleId }
-        send(dict)
     }
 
     // MARK: - 任务历史

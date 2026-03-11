@@ -296,27 +296,12 @@ AI 会话列表 HTTP 读取接口统一为：
 }
 ```
 
-### 结构化日志字段（`ClientMessage::LogEntry`，v1.30.1）
+### 日志可观测性
 
-客户端日志上报（`log_entry`）现支持携带结构化错误信息：
+客户端 `log_entry` 上报接口已移除。当前仅保留 Core 自身文件日志与只读诊断摘要：
 
-```json
-{
-  "type": "log_entry",
-  "level": "ERROR",
-  "source": "swift",
-  "category": "ws",
-  "msg": "WebSocket receive failed",
-  "detail": "...",
-  "error_code": "ws_receive_error",
-  "project": "myproject",
-  "workspace": "default",
-  "session_id": null,
-  "cycle_id": null
-}
-```
-
-Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Core 日志均写入相同的上下文字段，便于跨端关联同一问题。
+- Core 文件日志仍写入 `~/.tidyflow/logs/YYYY-MM-DD[-suffix].log`
+- `GET /api/v1/system/snapshot` 的 `log_context` 字段继续暴露当天日志文件路径、保留天数与 perf 日志开关
 
 ## 工作区缓存可观测性字段（v1.40+）
 

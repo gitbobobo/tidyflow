@@ -49,7 +49,6 @@ exact,project,import_template
 exact,project,templates
 prefix,project,template_
 contains,settings,client_settings
-prefix,log,log_
 prefix,ai,ai_
 prefix,evidence,evidence_
 prefix,evolution,evo_

@@ -49,10 +49,6 @@ pub(super) async fn handle_settings_domain(
     crate::server::handlers::settings::handle_settings_message(client_msg, socket, ctx).await
 }
 
-pub(super) fn handle_log_domain(client_msg: &ClientMessage) -> Result<bool, String> {
-    crate::server::handlers::log::handle_log_message(client_msg)
-}
-
 pub(super) async fn handle_ai_domain(
     client_msg: &ClientMessage,
     socket: &WebSocket,

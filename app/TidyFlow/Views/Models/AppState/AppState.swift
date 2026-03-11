@@ -1658,11 +1658,9 @@ class AppState: ObservableObject {
             detail[key] = value
         }
 
-        wsClient.sendLogEntry(
-            level: "DEBUG",
-            category: "ai_selection_sync",
-            msg: "ai selection sync \(event)",
-            detail: aiSelectionSyncDetailString(detail)
+        let detailText = aiSelectionSyncDetailString(detail) ?? "{}"
+        TFLog.app.debug(
+            "ai selection sync \(event, privacy: .public) detail=\(detailText, privacy: .public)"
         )
     }
 

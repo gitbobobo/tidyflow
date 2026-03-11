@@ -124,8 +124,6 @@ domains:
       - GET /api/v1/client-settings
     ws_read_via_http_required:
       - get_client_settings
-  - id: log
-    action_rule: prefix("log_")
   # AI payload 兼容说明（字段定义在 core 协议 DTO 中）：
   # - ai_chat_send / ai_chat_command 现支持可选 audio_parts
   # - ACP content 双栈兼容：text/image/audio/resource/resource_link

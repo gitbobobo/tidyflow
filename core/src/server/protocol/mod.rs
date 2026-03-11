@@ -493,29 +493,6 @@ pub enum ClientMessage {
         template: TemplateInfo,
     },
 
-    // v1.30: 客户端日志上报（v1.30.1: 添加结构化错误码与上下文）
-    LogEntry {
-        level: String,
-        source: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        category: Option<String>,
-        msg: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        detail: Option<String>,
-        /// 结构化错误码（仅错误级别日志携带，Apple 端与 Core 端共享）
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error_code: Option<String>,
-        /// 错误上下文：用于多项目/多工作区场景下关联错误归属
-        #[serde(skip_serializing_if = "Option::is_none")]
-        project: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        workspace: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cycle_id: Option<String>,
-    },
-
     // v1.37: 取消 AI 任务
     CancelAiTask {
         project: String,
@@ -2853,66 +2830,19 @@ mod tests {
     }
 
     #[test]
-    fn log_entry_new_fields_remain_backward_compatible() {
-        let json_with_error_code = serde_json::json!({
+    fn log_entry_should_be_rejected() {
+        let payload = serde_json::json!({
             "type": "log_entry",
             "level": "ERROR",
             "source": "swift",
-            "category": "ws",
-            "msg": "WebSocket receive failed",
-            "detail": "timeout",
-            "error_code": "ws_receive_error",
-            "project": "myproject",
-            "workspace": "default",
-            "session_id": null,
-            "cycle_id": null
+            "msg": "WebSocket receive failed"
         });
 
-        let msg: ClientMessage =
-            serde_json::from_value(json_with_error_code).expect("deserialize should succeed");
-        match msg {
-            ClientMessage::LogEntry {
-                level,
-                error_code,
-                project,
-                workspace,
-                ..
-            } => {
-                assert_eq!(level, "ERROR");
-                assert_eq!(error_code.as_deref(), Some("ws_receive_error"));
-                assert_eq!(project.as_deref(), Some("myproject"));
-                assert_eq!(workspace.as_deref(), Some("default"));
-            }
-            _ => panic!("Expected ClientMessage::LogEntry"),
-        }
-
-        let json_old_format = serde_json::json!({
-            "type": "log_entry",
-            "level": "INFO",
-            "source": "swift",
-            "msg": "App started"
-        });
-
-        let msg: ClientMessage =
-            serde_json::from_value(json_old_format).expect("old format deserialize should succeed");
-        match msg {
-            ClientMessage::LogEntry {
-                level,
-                error_code,
-                project,
-                workspace,
-                session_id,
-                cycle_id,
-                ..
-            } => {
-                assert_eq!(level, "INFO");
-                assert!(error_code.is_none());
-                assert!(project.is_none());
-                assert!(workspace.is_none());
-                assert!(session_id.is_none());
-                assert!(cycle_id.is_none());
-            }
-            _ => panic!("Expected ClientMessage::LogEntry"),
-        }
+        let err = serde_json::from_value::<ClientMessage>(payload)
+            .expect_err("log_entry should no longer deserialize");
+        assert!(
+            err.to_string().contains("unknown variant"),
+            "unexpected error: {err}"
+        );
     }
 }

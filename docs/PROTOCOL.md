@@ -711,9 +711,9 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 
 `evo_error` 事件额外包含 `source`、`ts`、`cycle_id`，客户端解析时应通过 `CoreError.fromEvoError()` 提取。
 
-### 结构化日志（v1.30.1）
+### 结构化日志
 
-`log_entry` 消息新增 `error_code`、`project`、`workspace`、`session_id`、`cycle_id` 字段，供 Core 文件日志与客户端日志跨端关联同一问题归因。
+客户端 `log_entry` 上报接口已移除。当前仅保留 Core 自身文件日志，以及 `system_snapshot.log_context` 提供的只读日志上下文摘要（日志路径、保留天数、perf 日志开关）。
 
 ## 调试建议
 
@@ -722,7 +722,7 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `core/src/server/protocol/mod.rs`
   - `app/TidyFlow/Networking/ProtocolModels.swift`
   - 对应 handler 与 UI 调用方
-  - `schema/protocol/v7/README.md`（错误契约部分）
+  - `schema/protocol/v9/README.md`
 
 ## 统一运行状态面板（v1.43+）
 

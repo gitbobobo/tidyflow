@@ -38,7 +38,6 @@ extension WSClient {
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
         ("project", "template_"),
-        ("log", "log_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
