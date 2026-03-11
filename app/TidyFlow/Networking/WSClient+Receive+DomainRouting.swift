@@ -13,6 +13,11 @@ extension WSClient {
         ("terminal", "resize"),
         ("file", "clipboard_image_upload"),
         ("git", "cancel_ai_task"),
+        ("project", "save_template"),
+        ("project", "delete_template"),
+        ("project", "export_template"),
+        ("project", "import_template"),
+        ("project", "templates"),
         ]
     }
 
@@ -32,6 +37,7 @@ extension WSClient {
         ("project", "save_project_commands"),
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
+        ("project", "template_"),
         ("log", "log_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),

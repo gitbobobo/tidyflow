@@ -5,7 +5,7 @@ use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
 mod mutate;
-mod query;
+pub(crate) mod query;
 
 /// 处理设置相关的客户端消息
 pub async fn handle_settings_message(
@@ -13,6 +13,18 @@ pub async fn handle_settings_message(
     socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
+    if matches!(client_msg, ClientMessage::GetClientSettings) {
+        crate::server::handlers::send_read_via_http_required(
+            socket,
+            "get_client_settings",
+            "/api/v1/client-settings",
+            None,
+            None,
+        )
+        .await?;
+        return Ok(true);
+    }
+
     dispatch_handlers!(
         query::handle_query_message(client_msg, socket, ctx),
         mutate::handle_mutate_message(client_msg, socket, ctx),

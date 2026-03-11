@@ -727,6 +727,11 @@ extension WSClient {
         ("terminal", "resize"),
         ("file", "clipboard_image_upload"),
         ("git", "cancel_ai_task"),
+        ("project", "save_template"),
+        ("project", "delete_template"),
+        ("project", "export_template"),
+        ("project", "import_template"),
+        ("project", "templates"),
         ]
     }
 
@@ -746,6 +751,7 @@ extension WSClient {
         ("project", "save_project_commands"),
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
+        ("project", "template_"),
         ("log", "log_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),
@@ -931,6 +937,18 @@ extension WSClient {
         let action = (json["type"] as? String) ?? fallbackAction
         let handled: Bool
         switch domain {
+        case "system":
+            handled = handleSystemDomain(action, json: json)
+        case "project":
+            handled = handleProjectDomain(action, json: json)
+        case "settings":
+            handled = handleSettingsDomain(action, json: json)
+        case "terminal":
+            handled = handleTerminalDomain(action, json: json)
+        case "file":
+            handled = handleFileDomain(action, json: json)
+        case "git":
+            handled = handleGitDomain(action, json: json)
         case "ai":
             handled = handleAiDomain(action, json: json)
         case "evolution":
@@ -991,37 +1009,76 @@ extension WSClient {
     }
 
     func requestFileIndex(project: String, workspace: String, query: String? = nil) {
-        sendTyped(FileIndexRequest(project: project, workspace: workspace, query: query))
+        let path = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/index"
+        let queryItems = query.map { [URLQueryItem(name: "query", value: $0)] } ?? []
+        requestReadViaHTTP(
+            domain: "file",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "file_index_result"
+        )
     }
 
     /// 请求文件列表（目录浏览）
     func requestFileList(project: String, workspace: String, path: String = ".") {
-        sendTyped(FileListRequest(project: project, workspace: workspace, path: path))
+        requestReadViaHTTP(
+            domain: "file",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files",
+            queryItems: [URLQueryItem(name: "path", value: path)],
+            fallbackAction: "file_list_result"
+        )
     }
 
     /// 请求读取文件内容（文本/二进制）
     func requestFileRead(project: String, workspace: String, path: String) {
-        sendTyped(ProjectWorkspacePathTypedWSRequest(action: "file_read", project: project, workspace: workspace, path: path))
+        requestReadViaHTTP(
+            domain: "file",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/content",
+            queryItems: [URLQueryItem(name: "path", value: path)],
+            fallbackAction: "file_read_result",
+            context: .fileRead(project: project, workspace: workspace, path: path)
+        )
     }
 
     // Phase C2-2a: Request git diff
     func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
-        sendTyped(GitDiffRequest(project: project, workspace: workspace, path: path, mode: mode))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/diff",
+            queryItems: [
+                URLQueryItem(name: "path", value: path),
+                URLQueryItem(name: "mode", value: mode)
+            ],
+            fallbackAction: "git_diff_result"
+        )
     }
 
     // Phase C3-1: Request git status
     func requestGitStatus(project: String, workspace: String) {
-        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_status", project: project, workspace: workspace))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/status",
+            fallbackAction: "git_status_result"
+        )
     }
 
     // Git Log: Request commit history
     func requestGitLog(project: String, workspace: String, limit: Int = 50) {
-        sendTyped(GitLogRequest(project: project, workspace: workspace, limit: limit))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/log",
+            queryItems: [URLQueryItem(name: "limit", value: "\(limit)")],
+            fallbackAction: "git_log_result"
+        )
     }
 
     // Git Show: Request single commit details
     func requestGitShow(project: String, workspace: String, sha: String) {
-        sendTyped(GitShowRequest(project: project, workspace: workspace, sha: sha))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/commits/\(encodePathComponent(sha))",
+            fallbackAction: "git_show_result"
+        )
     }
 
     // Phase C3-2a: Request git stage
@@ -1049,7 +1106,11 @@ extension WSClient {
 
     // Phase C3-3a: Request git branches
     func requestGitBranches(project: String, workspace: String) {
-        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_branches", project: project, workspace: workspace))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/branches",
+            fallbackAction: "git_branches_result"
+        )
     }
 
     // Phase C3-3a: Request git switch branch
@@ -1099,7 +1160,11 @@ extension WSClient {
 
     // Phase UX-3a: Request git operation status
     func requestGitOpStatus(project: String, workspace: String) {
-        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_op_status", project: project, workspace: workspace))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/op-status",
+            fallbackAction: "git_op_status_result"
+        )
     }
 
     // Phase UX-3b: Request git merge to default
@@ -1119,7 +1184,11 @@ extension WSClient {
 
     // Phase UX-3b: Request git integration status
     func requestGitIntegrationStatus(project: String) {
-        sendTyped(ProjectTypedWSRequest(action: "git_integration_status", project: project))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/git/integration-status",
+            fallbackAction: "git_integration_status_result"
+        )
     }
 
     // Phase UX-4: Request git rebase onto default
@@ -1144,14 +1213,26 @@ extension WSClient {
 
     // Phase UX-6: Request git check branch up to date
     func requestGitCheckBranchUpToDate(project: String, workspace: String) {
-        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_check_branch_up_to_date", project: project, workspace: workspace))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/up-to-date",
+            fallbackAction: "git_integration_status_result"
+        )
     }
 
     // v1.40: 冲突向导请求方法
 
     /// 读取单文件四路对比内容
     func requestGitConflictDetail(project: String, workspace: String, path: String, context: String) {
-        sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_detail", project: project, workspace: workspace, path: path, context: context))
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/conflicts/detail",
+            queryItems: [
+                URLQueryItem(name: "path", value: path),
+                URLQueryItem(name: "context", value: context)
+            ],
+            fallbackAction: "git_conflict_detail_result"
+        )
     }
 
     /// 接受我方版本（ours）解决冲突
@@ -1181,12 +1262,20 @@ extension WSClient {
 
     // UX-2: Request list projects
     func requestListProjects() {
-        sendTyped(EmptyTypedWSRequest(action: "list_projects"))
+        requestReadViaHTTP(
+            domain: "project",
+            path: "/api/v1/projects",
+            fallbackAction: "projects"
+        )
     }
 
     // Request list workspaces
     func requestListWorkspaces(project: String) {
-        sendTyped(ListWorkspacesRequest(project: project))
+        requestReadViaHTTP(
+            domain: "project",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces",
+            fallbackAction: "workspaces"
+        )
     }
 
     // MARK: - 终端会话（供 iOS / 远程客户端复用）
@@ -1207,7 +1296,11 @@ extension WSClient {
 
     /// 获取终端会话列表
     func requestTermList() {
-        sendTyped(EmptyTypedWSRequest(action: "term_list"))
+        requestReadViaHTTP(
+            domain: "terminal",
+            path: "/api/v1/terminals",
+            fallbackAction: "term_list"
+        )
     }
 
     /// 关闭终端
@@ -1264,7 +1357,11 @@ extension WSClient {
 
     /// 请求获取客户端设置
     func requestGetClientSettings() {
-        sendTyped(GetClientSettingsRequest(), requestId: UUID().uuidString)
+        requestReadViaHTTP(
+            domain: "settings",
+            path: "/api/v1/client-settings",
+            fallbackAction: "client_settings_result"
+        )
     }
 
     /// 保存客户端设置
@@ -1443,7 +1540,11 @@ extension WSClient {
 
     /// 获取所有工作流模板列表
     func requestListTemplates() {
-        sendTyped(EmptyTypedWSRequest(action: "list_templates"))
+        requestReadViaHTTP(
+            domain: "project",
+            path: "/api/v1/templates",
+            fallbackAction: "templates"
+        )
     }
 
     /// 保存（新增或更新）工作流模板
@@ -1461,7 +1562,11 @@ extension WSClient {
 
     /// 导出工作流模板（服务端返回完整模板数据）
     func requestExportTemplate(templateId: String) {
-        sendTyped(TemplateIDRequest(action: "export_template", templateID: templateId))
+        requestReadViaHTTP(
+            domain: "project",
+            path: "/api/v1/templates/\(encodePathComponent(templateId))/export",
+            fallbackAction: "template_exported"
+        )
     }
 
     /// 导入工作流模板
@@ -1520,7 +1625,11 @@ extension WSClient {
 
     /// 请求任务快照（用于移动端重连后恢复后台任务状态）
     func requestListTasks() {
-        sendTyped(EmptyTypedWSRequest(action: "list_tasks"))
+        requestReadViaHTTP(
+            domain: "project",
+            path: "/api/v1/tasks",
+            fallbackAction: "tasks_snapshot"
+        )
     }
 
     // MARK: - AI Chat（结构化 message/part 流）

@@ -23,6 +23,76 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/pair/revoke",
             post(crate::server::ws::pairing::pair_revoke_handler),
         )
+        .route("/api/v1/projects", get(crate::server::ws::http_api::projects_handler))
+        .route(
+            "/api/v1/projects/:project/workspaces",
+            get(crate::server::ws::http_api::workspaces_handler),
+        )
+        .route("/api/v1/tasks", get(crate::server::ws::http_api::tasks_handler))
+        .route(
+            "/api/v1/client-settings",
+            get(crate::server::ws::http_api::client_settings_handler),
+        )
+        .route(
+            "/api/v1/templates",
+            get(crate::server::ws::http_api::templates_handler),
+        )
+        .route(
+            "/api/v1/templates/:template_id/export",
+            get(crate::server::ws::http_api::template_export_handler),
+        )
+        .route(
+            "/api/v1/terminals",
+            get(crate::server::ws::http_api::terminals_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/files",
+            get(crate::server::ws::http_api::file_list_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/files/index",
+            get(crate::server::ws::http_api::file_index_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/files/content",
+            get(crate::server::ws::http_api::file_content_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/status",
+            get(crate::server::ws::http_api::git_status_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/diff",
+            get(crate::server::ws::http_api::git_diff_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/branches",
+            get(crate::server::ws::http_api::git_branches_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/log",
+            get(crate::server::ws::http_api::git_log_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/commits/:sha",
+            get(crate::server::ws::http_api::git_commit_show_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/op-status",
+            get(crate::server::ws::http_api::git_op_status_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/git/integration-status",
+            get(crate::server::ws::http_api::git_integration_status_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/up-to-date",
+            get(crate::server::ws::http_api::git_check_branch_up_to_date_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/conflicts/detail",
+            get(crate::server::ws::http_api::git_conflict_detail_handler),
+        )
         .route(
             "/api/v1/projects/:project/workspaces/:workspace/ai/sessions",
             get(crate::server::ws::http_api::ai_sessions_handler),

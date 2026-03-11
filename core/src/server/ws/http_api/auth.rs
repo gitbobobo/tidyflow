@@ -2,6 +2,13 @@ use axum::http::HeaderMap;
 
 use super::common::ApiError;
 
+#[derive(Debug, Clone)]
+pub(in crate::server::ws) struct HttpRequestIdentity {
+    pub token_id: Option<String>,
+    pub device_name: Option<String>,
+    pub is_remote: bool,
+}
+
 fn parse_bearer_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(axum::http::header::AUTHORIZATION)?;
     let raw = value.to_str().ok()?.trim();
@@ -28,7 +35,7 @@ pub(in crate::server::ws) async fn ensure_http_authorized(
     ctx: &crate::server::ws::transport::bootstrap::AppContext,
     headers: &HeaderMap,
     query_token: Option<&str>,
-) -> Result<(), ApiError> {
+) -> Result<HttpRequestIdentity, ApiError> {
     let provided_token = parse_bearer_token(headers).or_else(|| normalize_token(query_token));
 
     if crate::server::ws::pairing::is_ws_token_authorized(
@@ -38,7 +45,23 @@ pub(in crate::server::ws) async fn ensure_http_authorized(
     )
     .await
     {
-        Ok(())
+        let paired_info = if let Some(token) = provided_token.as_deref() {
+            crate::server::ws::pairing::lookup_paired_info(&ctx.pairing_registry, token).await
+        } else {
+            None
+        };
+        Ok(match paired_info {
+            Some((token_id, device_name)) => HttpRequestIdentity {
+                token_id: Some(token_id),
+                device_name: Some(device_name),
+                is_remote: true,
+            },
+            None => HttpRequestIdentity {
+                token_id: None,
+                device_name: None,
+                is_remote: false,
+            },
+        })
     } else {
         Err(ApiError::Unauthorized)
     }

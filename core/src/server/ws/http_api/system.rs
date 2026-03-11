@@ -112,7 +112,7 @@ struct EvolutionWorkspaceSummary {
 pub(in crate::server::ws) async fn system_snapshot_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
 ) -> Result<Json<SystemSnapshotResponse>, ApiError> {
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, None);
     let evo_snapshot =
         crate::server::handlers::evolution::query_evolution_snapshot(None, None, &handler_ctx)
             .await
@@ -218,7 +218,13 @@ pub(in crate::server::ws) async fn system_repair_handler(
 /// 从 Evolution 快照消息提取调度器信息和工作区索引（避免重复查询）
 fn evolution_index_and_scheduler_from_message(
     msg: ServerMessage,
-) -> Result<((u32, u32), HashMap<(String, String), EvolutionWorkspaceSummary>), ApiError> {
+) -> Result<
+    (
+        (u32, u32),
+        HashMap<(String, String), EvolutionWorkspaceSummary>,
+    ),
+    ApiError,
+> {
     let ServerMessage::EvoSnapshot {
         scheduler,
         workspace_items,
@@ -452,7 +458,11 @@ fn build_log_context_summary() -> LogContextSummary {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let suffix = std::env::var("TIDYFLOW_LOG_SUFFIX").ok().and_then(|s| {
         let trimmed = s.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
     let filename = match suffix {
         Some(s) => format!("{today}-{s}.log"),

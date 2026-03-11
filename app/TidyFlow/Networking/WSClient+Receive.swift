@@ -156,7 +156,7 @@ extension WSClient {
         case .data(let data):
             parseAndDispatchBinary(data, identity: identity)
         case .string:
-            TFLog.ws.error("Received unexpected text message, protocol v8 requires binary")
+            TFLog.ws.error("Received unexpected text message, protocol v9 requires binary")
         @unknown default:
             break
         }

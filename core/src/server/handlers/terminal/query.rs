@@ -2,9 +2,17 @@ use crate::server::ws::OutboundTx as WebSocket;
 use tracing::info;
 
 use crate::application::terminal as terminal_app;
-use crate::server::context::HandlerContext;
+use crate::server::context::{ConnectionMeta, HandlerContext};
 use crate::server::protocol::ClientMessage;
 use crate::server::ws::send_message;
+
+pub(crate) async fn query_term_list(
+    ctx: &HandlerContext,
+    conn_meta: &ConnectionMeta,
+) -> (crate::server::protocol::ServerMessage, usize, usize) {
+    terminal_app::term_list_message(&ctx.terminal_registry, &ctx.remote_sub_registry, conn_meta)
+        .await
+}
 
 pub async fn handle_query_message(
     client_msg: &ClientMessage,
@@ -13,12 +21,7 @@ pub async fn handle_query_message(
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::TermList => {
-            let (msg, terminal_count, remote_count) = terminal_app::term_list_message(
-                &ctx.terminal_registry,
-                &ctx.remote_sub_registry,
-                &ctx.conn_meta,
-            )
-            .await;
+            let (msg, terminal_count, remote_count) = query_term_list(ctx, &ctx.conn_meta).await;
             info!(
                 total_terminals = terminal_count,
                 remote_subscriber_count = remote_count,

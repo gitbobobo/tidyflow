@@ -5212,6 +5212,24 @@ extension MobileAppState {
             if isAILoadingAgents {
                 isAILoadingAgents = false
             }
+        case let .fileRead(project, workspace, path):
+            if let pending = pendingExplorerPreviewRequest,
+               pending.project == project,
+               pending.workspace == workspace,
+               pending.path == path {
+                pendingExplorerPreviewRequest = nil
+                explorerPreviewLoading = false
+                explorerPreviewError = failure.message
+                explorerPreviewContent = ""
+            }
+
+            if pendingPlanDocumentReadPath == path,
+               aiActiveProject == project,
+               aiActiveWorkspace == workspace {
+                pendingPlanDocumentReadPath = nil
+                evolutionPlanDocumentLoading = false
+                evolutionPlanDocumentError = failure.message
+            }
         }
     }
 }

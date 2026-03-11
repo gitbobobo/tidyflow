@@ -16,7 +16,13 @@ public struct FileReadResult {
               let path = json["path"] as? String else {
             return nil
         }
-        let content = WSBinary.decodeBytes(json["content"])
+        let content: [UInt8]
+        if let contentBase64 = json["content_base64"] as? String,
+           let data = Data(base64Encoded: contentBase64) {
+            content = [UInt8](data)
+        } else {
+            content = WSBinary.decodeBytes(json["content"])
+        }
         let size: UInt64
         if let value = json["size"] as? UInt64 {
             size = value

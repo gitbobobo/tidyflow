@@ -280,9 +280,9 @@ class AppState: ObservableObject {
 
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
-    /// 最近一次收到的 WS v8 包络序号（仅调试用，无视图观察，去掉 @Published 避免每条 WS 消息触发全局刷新）
+    /// 最近一次收到的 WS v9 包络序号（仅调试用，无视图观察，去掉 @Published 避免每条 WS 消息触发全局刷新）
     var wsLastEnvelopeSeq: UInt64 = 0
-    /// 最近一次收到的 WS v8 包络摘要（domain/action/kind）
+    /// 最近一次收到的 WS v9 包络摘要（domain/action/kind）
     var wsLastEnvelopeSummary: String = ""
 
     // 远程终端追踪

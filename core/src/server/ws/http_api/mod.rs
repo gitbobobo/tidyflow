@@ -3,7 +3,11 @@ mod auth;
 mod common;
 mod evidence;
 mod evolution;
+mod file;
+mod git;
+mod project;
 mod system;
+mod terminal;
 
 pub(in crate::server::ws) use ai::{
     ai_agent_list_handler, ai_cross_context_snapshots_handler, ai_provider_list_handler,
@@ -17,6 +21,17 @@ pub(in crate::server::ws) use evidence::{
 pub(in crate::server::ws) use evolution::{
     evolution_agent_profile_handler, evolution_cycle_history_handler, evolution_snapshot_handler,
 };
+pub(in crate::server::ws) use file::{file_content_handler, file_index_handler, file_list_handler};
+pub(in crate::server::ws) use git::{
+    git_branches_handler, git_check_branch_up_to_date_handler, git_commit_show_handler,
+    git_conflict_detail_handler, git_diff_handler, git_integration_status_handler, git_log_handler,
+    git_op_status_handler, git_status_handler,
+};
+pub(in crate::server::ws) use project::{
+    client_settings_handler, projects_handler, tasks_handler, template_export_handler,
+    templates_handler, workspaces_handler,
+};
 pub(in crate::server::ws) use system::{
     system_health_snapshot_handler, system_repair_handler, system_snapshot_handler,
 };
+pub(in crate::server::ws) use terminal::terminals_handler;

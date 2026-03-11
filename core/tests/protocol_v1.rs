@@ -331,7 +331,7 @@ async fn test_ping_pong() {
     println!("  ✓ Pong received");
 }
 
-/// Test 3: List Projects
+/// Test 3: List Projects（v9 起要求经 HTTP 读取）
 #[tokio::test]
 async fn test_list_projects() {
     let server = ServerGuard::start().expect("启动服务器失败");
@@ -343,18 +343,16 @@ async fn test_list_projects() {
     let msg = encode_client_message("project", "list_projects", json!({}));
     write.send(Message::Binary(msg)).await.unwrap();
 
-    let env = wait_for_action(&mut read, "projects")
+    let env = wait_for_action(&mut read, "error")
         .await
-        .expect("No projects response");
+        .expect("No error response");
 
-    assert_eq!(env.domain, "project");
-    assert_eq!(env.kind, "event");
-    assert!(env.payload["items"].is_array());
-    let count = env.payload["items"].as_array().unwrap().len();
-    println!("  ✓ Projects: {} found", count);
+    assert_eq!(env.kind, "error");
+    assert_eq!(env.payload["code"], "read_via_http_required");
+    println!("  ✓ Error: {}", env.payload["message"]);
 }
 
-/// Test 4: List Workspaces (nonexistent project)
+/// Test 4: List Workspaces（v9 起要求经 HTTP 读取）
 #[tokio::test]
 async fn test_list_workspaces_error_case() {
     let server = ServerGuard::start().expect("启动服务器失败");
@@ -375,7 +373,8 @@ async fn test_list_workspaces_error_case() {
         .expect("No error response");
 
     assert_eq!(env.kind, "error");
-    assert_eq!(env.payload["code"], "project_not_found");
+    assert_eq!(env.payload["code"], "read_via_http_required");
+    assert_eq!(env.payload["project"], "nonexistent_xyz");
     println!("  ✓ Error: {}", env.payload["message"]);
 }
 

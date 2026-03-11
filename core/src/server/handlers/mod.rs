@@ -13,6 +13,9 @@ pub mod project;
 pub mod settings;
 pub mod terminal;
 
+use crate::server::protocol::ServerMessage;
+use crate::server::ws::{send_message, OutboundTx as WebSocket};
+
 macro_rules! dispatch_handlers {
     ($($call:expr),+ $(,)?) => {{
         $(
@@ -24,6 +27,27 @@ macro_rules! dispatch_handlers {
 }
 
 pub(crate) use dispatch_handlers;
+
+pub(crate) async fn send_read_via_http_required(
+    socket: &WebSocket,
+    action: &str,
+    http_path_hint: &str,
+    project: Option<String>,
+    workspace: Option<String>,
+) -> Result<(), String> {
+    send_message(
+        socket,
+        &ServerMessage::Error {
+            code: "read_via_http_required".to_string(),
+            message: format!("{action} must be fetched via HTTP API ({http_path_hint})"),
+            project,
+            workspace,
+            session_id: None,
+            cycle_id: None,
+        },
+    )
+    .await
+}
 
 #[cfg(test)]
 mod tests {

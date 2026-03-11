@@ -8,11 +8,12 @@ import TidyFlowShared
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
 /// Minimal WebSocket client for Core communication
-/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v8，包络结构沿用 v6）
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v9，包络结构沿用 v6）
 class WSClient: NSObject, ObservableObject {
     enum HTTPReadRequestContext: Equatable {
         case aiProviderList(project: String, workspace: String, aiTool: AIChatTool)
         case aiAgentList(project: String, workspace: String, aiTool: AIChatTool)
+        case fileRead(project: String, workspace: String, path: String)
     }
 
     struct HTTPReadFailure: Equatable {
@@ -48,7 +49,7 @@ class WSClient: NSObject, ObservableObject {
     private(set) var wsAuthToken: String?
     /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
     private var pendingReconnectWorkItem: DispatchWorkItem?
-    /// 最近一次已处理的服务端 seq（v8 包络），用于丢弃乱序/重复消息
+    /// 最近一次已处理的服务端 seq（v9 包络），用于丢弃乱序/重复消息
     var lastServerSeq: UInt64 = 0
     /// 当前连接身份；每次建立新 socket 都会刷新，用于屏蔽旧连接的延迟回调。
     var connectionIdentity: String?
@@ -190,7 +191,7 @@ class WSClient: NSObject, ObservableObject {
     /// 结构化 Core 错误回调（含错误码与上下文）
     var onCoreError: ((CoreError) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
-    /// v8 包络元信息流（用于上层统一路由/观测）
+    /// v9 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
     /// v1.41: Core 推送系统健康快照
     var onHealthSnapshot: ((SystemHealthSnapshot) -> Void)?

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
+use super::auth::HttpRequestIdentity;
 use crate::server::context::{ConnectionMeta, HandlerContext};
 use crate::server::protocol::ServerMessage;
 
@@ -157,9 +158,18 @@ impl WorkspaceQueryContext {
 
 pub(in crate::server::ws) fn build_http_handler_context(
     ctx: &crate::server::ws::transport::bootstrap::AppContext,
+    identity: Option<&HttpRequestIdentity>,
 ) -> HandlerContext {
     let (agg_tx, _agg_rx) = mpsc::channel::<(String, Vec<u8>)>(1);
     let (cmd_output_tx, _cmd_output_rx) = mpsc::channel::<ServerMessage>(1);
+    let (token_id, device_name, is_remote) = match identity {
+        Some(identity) => (
+            identity.token_id.clone(),
+            identity.device_name.clone(),
+            identity.is_remote,
+        ),
+        None => (None, None, false),
+    };
 
     HandlerContext {
         app_state: ctx.app_state.clone(),
@@ -175,9 +185,9 @@ pub(in crate::server::ws) fn build_http_handler_context(
         task_history: ctx.task_history.clone(),
         conn_meta: ConnectionMeta {
             conn_id: "http-api".to_string(),
-            token_id: None,
-            is_remote: false,
-            device_name: None,
+            token_id,
+            is_remote,
+            device_name,
         },
         remote_sub_registry: ctx.remote_sub_registry.clone(),
         ai_state: ctx.ai_state.clone(),

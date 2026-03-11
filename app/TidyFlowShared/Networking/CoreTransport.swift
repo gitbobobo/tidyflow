@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 共享传输协议抽象
 
-/// 服务端包络元数据（v8 协议）
+/// 服务端包络元数据（v9 协议）
 public struct ServerEnvelopeMeta {
     public let seq: UInt64
     public let domain: String

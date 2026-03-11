@@ -45,9 +45,9 @@ pub(in crate::server::ws) async fn evidence_snapshot_handler(
     Path(path): Path<EvidenceWorkspacePath>,
     Query(query): Query<EvidenceTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evidence::query_evidence_snapshot(
         &path.project,
@@ -66,9 +66,9 @@ pub(in crate::server::ws) async fn evidence_rebuild_prompt_handler(
     Path(path): Path<EvidenceWorkspacePath>,
     Query(query): Query<EvidenceTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evidence::query_evidence_rebuild_prompt(
         &path.project,
@@ -87,9 +87,9 @@ pub(in crate::server::ws) async fn evidence_item_chunk_handler(
     Path(path): Path<EvidenceItemPath>,
     Query(query): Query<EvidenceChunkQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evidence::query_evidence_item_chunk(
         &path.project,

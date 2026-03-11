@@ -18,7 +18,9 @@ pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
         || action.starts_with("workspace_")
         || action == "projects"
         || action == "workspaces"
+        || action == "templates"
         || action.starts_with("tasks_")
+        || action.starts_with("template_")
     {
         return "project".to_string();
     }

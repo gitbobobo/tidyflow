@@ -1282,6 +1282,31 @@ extension AppState {
                 aiTool: aiTool,
                 kind: .agentList
             )
+        case let .fileRead(project, workspace, path):
+            if pendingEvolutionPlanDocumentReadPath == path,
+               selectedProjectName == project,
+               selectedWorkspaceKey == workspace {
+                pendingEvolutionPlanDocumentReadPath = nil
+                evolutionPlanDocumentLoading = false
+                evolutionPlanDocumentError = failure.message
+            }
+
+            let key = EditorRequestKey(project: project, workspace: workspace, path: path)
+            guard pendingFileReadRequests.contains(key) else { return }
+            pendingFileReadRequests.remove(key)
+
+            let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+            var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+            workspaceDocs[path] = EditorDocumentState(
+                path: path,
+                content: "",
+                originalContentHash: 0,
+                isDirty: false,
+                lastLoadedAt: Date(),
+                status: .error(failure.message),
+                conflictState: .none
+            )
+            editorDocumentsByWorkspace[globalKey] = workspaceDocs
         }
     }
 

@@ -1,4 +1,4 @@
-# TidyFlow Protocol v8
+# TidyFlow Protocol v9
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -11,10 +11,10 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 8`
-- 协议 schema 权威源：`schema/protocol/v8/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 9`
+- 协议 schema 权威源：`schema/protocol/v9/`
 
-## 消息模型（v8 包络，结构沿用 v6）
+## 消息模型（v9 包络，结构沿用 v6）
 
 - 客户端请求：
 - `ClientEnvelopeV6 { request_id, domain, action, payload, client_ts }`
@@ -53,6 +53,28 @@
 
 ## 读取 API（`/api/v1`）
 
+- Project / Settings / Terminal：
+  - `GET /api/v1/projects`
+  - `GET /api/v1/projects/:project/workspaces`
+  - `GET /api/v1/tasks`
+  - `GET /api/v1/client-settings`
+  - `GET /api/v1/templates`
+  - `GET /api/v1/templates/:template_id/export`
+  - `GET /api/v1/terminals`
+- File：
+  - `GET /api/v1/projects/:project/workspaces/:workspace/files?path=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/files/index?query=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/files/content?path=...`
+- Git：
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/status`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/diff?path=...&mode=...&base=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/branches`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/log?limit=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/commits/:sha`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/op-status`
+  - `GET /api/v1/projects/:project/git/integration-status`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/up-to-date`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/conflicts/detail?path=...&context=...`
 - AI：
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions`
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/messages`
@@ -174,6 +196,11 @@
 ## WS 读取动作移除
 
 - 以下 WS action 不再提供读取能力，服务端返回：`Error { code: "read_via_http_required" }`
+  - Project：`list_projects` `list_workspaces` `list_tasks` `list_templates` `export_template`
+  - Settings：`get_client_settings`
+  - Terminal：`term_list`
+  - File：`file_list` `file_index` `file_read`
+  - Git：`git_status` `git_diff` `git_branches` `git_log` `git_show` `git_op_status` `git_integration_status` `git_check_branch_up_to_date` `git_conflict_detail`
   - AI：`ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options`
   - Evolution：`evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`
   - Evidence：`evidence_get_snapshot` `evidence_get_rebuild_prompt` `evidence_read_item`
@@ -184,7 +211,7 @@
 
 ## HTTP/WS 一致性边界与多工作区字段约束
 
-本节为 `schema/protocol/v8/` 的人类可读说明，**两者必须保持一致**。
+本节为 `schema/protocol/v9/` 的人类可读说明，**两者必须保持一致**。
 
 ### 多工作区边界字段
 
@@ -238,7 +265,7 @@
 ## 兼容策略
 
 - 本版本不向后兼容 v6。
-- 客户端必须发送 v8 包络；服务端统一返回 v8 包络。
+- 客户端必须发送 v9 包络；服务端统一返回 v9 包络。
 - 终端输出事件统一为 `output_batch`，payload 为 `items: [{ term_id, data }]`。
 - AI 聊天流式事件已硬切旧协议：
   - 已移除：`ai_chat_message_updated`、`ai_chat_part_updated`、`ai_chat_part_delta`

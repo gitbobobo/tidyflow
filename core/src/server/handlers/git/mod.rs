@@ -6,6 +6,7 @@ use crate::server::protocol::ClientMessage;
 pub(crate) mod branch_commit;
 mod history;
 mod integration;
+pub(crate) mod query;
 mod route;
 mod stage_ops;
 mod status_diff;

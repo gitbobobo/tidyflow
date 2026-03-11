@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v8/action_rules.csv`
+//! 来源：`schema/protocol/v9/action_rules.csv`
 //! 生成命令：`./scripts/tools/gen_protocol_action_table.sh`
 
 pub const EXACT_RULES: &[(&str, &str)] = &[
@@ -11,6 +11,11 @@ pub const EXACT_RULES: &[(&str, &str)] = &[
     ("terminal", "resize"),
     ("file", "clipboard_image_upload"),
     ("git", "cancel_ai_task"),
+    ("project", "save_template"),
+    ("project", "delete_template"),
+    ("project", "export_template"),
+    ("project", "import_template"),
+    ("project", "templates"),
 ];
 
 pub const PREFIX_RULES: &[(&str, &str)] = &[
@@ -28,6 +33,7 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("project", "save_project_commands"),
     ("project", "run_project_command"),
     ("project", "cancel_project_command"),
+    ("project", "template_"),
     ("log", "log_"),
     ("ai", "ai_"),
     ("evidence", "evidence_"),

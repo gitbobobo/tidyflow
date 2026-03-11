@@ -38,8 +38,8 @@ pub(in crate::server::ws) async fn evolution_snapshot_handler(
     headers: HeaderMap,
     Query(query): Query<EvolutionSnapshotQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let handler_ctx = build_http_handler_context(&ctx);
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evolution::query_evolution_snapshot(
         query.project.as_deref(),
@@ -57,9 +57,9 @@ pub(in crate::server::ws) async fn evolution_agent_profile_handler(
     Path(path): Path<EvolutionWorkspacePath>,
     Query(query): Query<EvolutionTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evolution::query_evolution_agent_profile(
         &path.project,
@@ -77,9 +77,9 @@ pub(in crate::server::ws) async fn evolution_cycle_history_handler(
     Path(path): Path<EvolutionWorkspacePath>,
     Query(query): Query<EvolutionTokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let handler_ctx = build_http_handler_context(&ctx);
+    let handler_ctx = build_http_handler_context(&ctx, Some(&identity));
 
     let response = crate::server::handlers::evolution::query_evolution_cycle_history(
         &path.project,

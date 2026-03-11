@@ -13,6 +13,117 @@ pub async fn handle_standard_git_routes(
     app_state: &SharedAppState,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
+    match client_msg {
+        ClientMessage::GitStatus { project, workspace } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_status",
+                "/api/v1/projects/:project/workspaces/:workspace/git/status",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitDiff {
+            project, workspace, ..
+        } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_diff",
+                "/api/v1/projects/:project/workspaces/:workspace/git/diff",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitBranches { project, workspace } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_branches",
+                "/api/v1/projects/:project/workspaces/:workspace/git/branches",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitLog {
+            project, workspace, ..
+        } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_log",
+                "/api/v1/projects/:project/workspaces/:workspace/git/log",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitShow {
+            project, workspace, ..
+        } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_show",
+                "/api/v1/projects/:project/workspaces/:workspace/git/commits/:sha",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitOpStatus { project, workspace } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_op_status",
+                "/api/v1/projects/:project/workspaces/:workspace/git/op-status",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitIntegrationStatus { project } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_integration_status",
+                "/api/v1/projects/:project/git/integration-status",
+                Some(project.clone()),
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitCheckBranchUpToDate { project, workspace } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_check_branch_up_to_date",
+                "/api/v1/projects/:project/workspaces/:workspace/git/up-to-date",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitConflictDetail {
+            project, workspace, ..
+        } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_conflict_detail",
+                "/api/v1/projects/:project/workspaces/:workspace/git/conflicts/detail",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        _ => {}
+    }
+
     dispatch_handlers!(
         status_diff::handle_message(client_msg, socket, app_state),
         stage_ops::handle_message(client_msg, socket, app_state),

@@ -9,252 +9,223 @@ use super::auth::ensure_http_authorized;
 use super::common::{json_from_server_message, ApiError, WorkspaceQueryContext};
 
 #[derive(Debug, Deserialize)]
-pub(in crate::server::ws) struct AiWorkspacePath {
-    project: String,
-    workspace: String,
-    ai_tool: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub(in crate::server::ws) struct WorkspacePath {
     project: String,
     workspace: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(in crate::server::ws) struct AiSessionPath {
+pub(in crate::server::ws) struct ProjectPath {
+    project: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(in crate::server::ws) struct CommitPath {
     project: String,
     workspace: String,
-    ai_tool: String,
-    session_id: String,
+    sha: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub(in crate::server::ws) struct SessionListQuery {
-    #[serde(default)]
-    limit: Option<u32>,
-    #[serde(default)]
-    cursor: Option<String>,
-    #[serde(default)]
-    ai_tool: Option<String>,
+pub(in crate::server::ws) struct TokenQuery {
     #[serde(default)]
     token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub(in crate::server::ws) struct SessionMessagesQuery {
+pub(in crate::server::ws) struct GitDiffQuery {
+    path: String,
     #[serde(default)]
-    before_message_id: Option<String>,
+    mode: Option<String>,
     #[serde(default)]
-    limit: Option<i64>,
+    base: Option<String>,
     #[serde(default)]
     token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub(in crate::server::ws) struct OptionalSessionQuery {
+pub(in crate::server::ws) struct GitLogQuery {
     #[serde(default)]
-    session_id: Option<String>,
+    limit: Option<usize>,
     #[serde(default)]
     token: Option<String>,
 }
 
-pub(in crate::server::ws) async fn ai_sessions_handler(
+#[derive(Debug, Deserialize, Default)]
+pub(in crate::server::ws) struct GitConflictDetailQuery {
+    path: String,
+    context: String,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+fn map_git_error(qctx: &WorkspaceQueryContext, err: String) -> ApiError {
+    qctx.map_query_error(err)
+}
+
+pub(in crate::server::ws) async fn git_status_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
     headers: HeaderMap,
     Path(path): Path<WorkspacePath>,
-    Query(query): Query<SessionListQuery>,
+    Query(query): Query<TokenQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_session_list(
+    let response = crate::server::handlers::git::query::query_git_status(
         &ctx.app_state,
-        &ctx.ai_state,
         &path.project,
         &path.workspace,
-        query.ai_tool.as_deref(),
-        query.cursor.as_deref(),
-        query.limit,
     )
     .await
-    .map_err(|e| qctx.map_query_error(e))?;
+    .map_err(|e| map_git_error(&qctx, e))?;
     json_from_server_message(response)
 }
 
-pub(in crate::server::ws) async fn ai_session_messages_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiSessionPath>,
-    Query(query): Query<SessionMessagesQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx =
-        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
-    let response = crate::server::handlers::ai::session::query_ai_session_messages(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-        &path.session_id,
-        query.before_message_id,
-        query.limit,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_session_status_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiSessionPath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx =
-        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
-    let response = crate::server::handlers::ai::session::query_ai_session_status(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-        &path.session_id,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_provider_list_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiWorkspacePath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_provider_list(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_agent_list_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiWorkspacePath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_agent_list(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_session_slash_commands_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiWorkspacePath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_slash_commands(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-        query.session_id,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_session_config_options_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiWorkspacePath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_session_config_options(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-        query.session_id,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub(in crate::server::ws) struct ContextSnapshotListQuery {
-    #[serde(default)]
-    ai_tool: Option<String>,
-    #[serde(default)]
-    token: Option<String>,
-}
-
-pub(in crate::server::ws) async fn ai_session_context_snapshot_handler(
-    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
-    headers: HeaderMap,
-    Path(path): Path<AiSessionPath>,
-    Query(query): Query<OptionalSessionQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
-    let qctx =
-        WorkspaceQueryContext::new(&path.project, &path.workspace).with_session(&path.session_id);
-    let response = crate::server::handlers::ai::session::query_ai_session_context_snapshot(
-        &ctx.app_state,
-        &ctx.ai_state,
-        &path.project,
-        &path.workspace,
-        &path.ai_tool,
-        &path.session_id,
-    )
-    .await
-    .map_err(|e| qctx.map_query_error(e))?;
-    json_from_server_message(response)
-}
-
-pub(in crate::server::ws) async fn ai_cross_context_snapshots_handler(
+pub(in crate::server::ws) async fn git_diff_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
     headers: HeaderMap,
     Path(path): Path<WorkspacePath>,
-    Query(query): Query<ContextSnapshotListQuery>,
+    Query(query): Query<GitDiffQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
     let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
-    let response = crate::server::handlers::ai::session::query_ai_cross_context_snapshots(
+    let response = crate::server::handlers::git::query::query_git_diff(
         &ctx.app_state,
-        &ctx.ai_state,
         &path.project,
         &path.workspace,
-        query.ai_tool.as_deref(),
+        &query.path,
+        query.base,
+        query.mode.as_deref().unwrap_or("working"),
     )
     .await
-    .map_err(|e| qctx.map_query_error(e))?;
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_branches_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_branches(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_log_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<GitLogQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_log(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+        query.limit.unwrap_or(50),
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_commit_show_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<CommitPath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_show(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+        &path.sha,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_op_status_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_op_status(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_integration_status_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<ProjectPath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let response = crate::server::handlers::git::query::query_git_integration_status(
+        &ctx.app_state,
+        &path.project,
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_check_branch_up_to_date_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_check_branch_up_to_date(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_conflict_detail_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<GitConflictDetailQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_conflict_detail(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+        &query.path,
+        &query.context,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
     json_from_server_message(response)
 }

@@ -83,9 +83,7 @@ impl ServerGuard {
                 match reader.read_line(&mut line) {
                     Ok(0) => {
                         // EOF：服务器进程 stdout 已关闭，进程可能已退出
-                        let _ = tx.send(Err(
-                            "服务器进程 stdout 已关闭（进程可能已退出）".into(),
-                        ));
+                        let _ = tx.send(Err("服务器进程 stdout 已关闭（进程可能已退出）".into()));
                         return;
                     }
                     Ok(_) if line.contains("TIDYFLOW_BOOTSTRAP") => {
@@ -338,7 +336,7 @@ async fn test_project_domain_matrix() {
     let (mut write, mut read) = connect(port).await.expect("连接失败");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // list_projects -> projects
+    // list_projects 已迁移到 HTTP，WS 上应返回 read_via_http_required
     write
         .send(Message::Binary(encode_client_message(
             "project",
@@ -347,13 +345,13 @@ async fn test_project_domain_matrix() {
         )))
         .await
         .unwrap();
-    let projects = wait_for_action(&mut read, "projects")
+    let projects = wait_for_error_with_code(&mut read, "read_via_http_required")
         .await
-        .expect("无 projects");
-    assert_eq!(projects.domain, "project");
-    assert_eq!(projects.kind, "event"); // projects 是事件类型
+        .expect("list_projects 应返回 read_via_http_required");
+    assert_eq!(projects.action, "error");
+    assert_eq!(projects.kind, "error");
 
-    // list_workspaces -> error (项目不存在)
+    // list_workspaces 已迁移到 HTTP，WS 上也应返回同一门禁
     write
         .send(Message::Binary(encode_client_message(
             "project",
@@ -362,8 +360,14 @@ async fn test_project_domain_matrix() {
         )))
         .await
         .unwrap();
-    let err = wait_for_action(&mut read, "error").await.expect("无 error");
+    let err = wait_for_error_with_code(&mut read, "read_via_http_required")
+        .await
+        .expect("list_workspaces 应返回 read_via_http_required");
     assert_eq!(err.kind, "error");
+    assert_eq!(
+        err.payload["project"].as_str().unwrap_or(""),
+        "nonexistent_test_xyz"
+    );
 }
 
 /// 测试 file 域的消息路由
@@ -375,7 +379,7 @@ async fn test_file_domain_matrix() {
     let (mut write, mut read) = connect(port).await.expect("连接失败");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // file_list -> file_list_result (需要有效的项目和工作空间)
+    // file_list 已迁移到 HTTP，WS 上应返回 read_via_http_required
     write
         .send(Message::Binary(encode_client_message(
             "file",
@@ -384,9 +388,8 @@ async fn test_file_domain_matrix() {
         )))
         .await
         .unwrap();
-    // 应该收到 error（因为项目不存在）
-    let err = wait_for_action(&mut read, "error").await;
-    assert!(err.is_some(), "应该收到 error 响应");
+    let err = wait_for_error_with_code(&mut read, "read_via_http_required").await;
+    assert!(err.is_some(), "file_list 应返回 read_via_http_required");
 }
 
 /// 测试 git 域的消息路由
@@ -398,7 +401,7 @@ async fn test_git_domain_matrix() {
     let (mut write, mut read) = connect(port).await.expect("连接失败");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // git_status -> git_status_result (需要有效的项目和工作空间)
+    // git_status 已迁移到 HTTP，WS 上应返回 read_via_http_required
     write
         .send(Message::Binary(encode_client_message(
             "git",
@@ -407,8 +410,7 @@ async fn test_git_domain_matrix() {
         )))
         .await
         .unwrap();
-    // 应该收到 error
-    let result = wait_for_action(&mut read, "error").await;
+    let result = wait_for_error_with_code(&mut read, "read_via_http_required").await;
     assert!(result.is_some());
 }
 
@@ -421,7 +423,7 @@ async fn test_settings_domain_matrix() {
     let (mut write, mut read) = connect(port).await.expect("连接失败");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // get_client_settings -> client_settings_result
+    // get_client_settings 已迁移到 HTTP，WS 上应返回 read_via_http_required
     write
         .send(Message::Binary(encode_client_message(
             "settings",
@@ -430,10 +432,10 @@ async fn test_settings_domain_matrix() {
         )))
         .await
         .unwrap();
-    let settings = wait_for_action(&mut read, "client_settings_result")
+    let settings = wait_for_error_with_code(&mut read, "read_via_http_required")
         .await
-        .expect("无 client_settings_result");
-    assert_eq!(settings.domain, "settings");
+        .expect("get_client_settings 应返回 read_via_http_required");
+    assert_eq!(settings.action, "error");
 }
 
 /// 测试未知 domain 路由到 misc
@@ -615,6 +617,151 @@ async fn test_evidence_ws_read_via_http_required() {
         "default",
         "error payload 应携带 workspace 字段"
     );
+}
+
+/// 测试 v9 中所有已迁移查询入口在 WS 上统一返回 read_via_http_required。
+#[tokio::test]
+async fn test_v9_ws_query_surface_requires_http() {
+    let _lock = acquire_test_lock().await;
+    let server = ServerGuard::start().expect("启动服务器失败");
+    let port = server.port();
+    let (mut write, mut read) = connect(port).await.expect("连接失败");
+    let _ = wait_for_action(&mut read, "hello").await;
+
+    let cases: Vec<(&str, &str, Value, Option<&str>, Option<&str>)> = vec![
+        ("project", "list_projects", json!({}), None, None),
+        (
+            "project",
+            "list_workspaces",
+            json!({ "project": "testproject" }),
+            Some("testproject"),
+            None,
+        ),
+        ("project", "list_tasks", json!({}), None, None),
+        ("settings", "get_client_settings", json!({}), None, None),
+        ("project", "list_templates", json!({}), None, None),
+        (
+            "project",
+            "export_template",
+            json!({ "template_id": "template-1" }),
+            None,
+            None,
+        ),
+        ("terminal", "term_list", json!({}), None, None),
+        (
+            "file",
+            "file_list",
+            json!({ "project": "testproject", "workspace": "default", "path": "." }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "file",
+            "file_index",
+            json!({ "project": "testproject", "workspace": "default", "query": "src" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "file",
+            "file_read",
+            json!({ "project": "testproject", "workspace": "default", "path": "README.md" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_status",
+            json!({ "project": "testproject", "workspace": "default" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_diff",
+            json!({ "project": "testproject", "workspace": "default", "path": "README.md", "mode": "working" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_branches",
+            json!({ "project": "testproject", "workspace": "default" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_log",
+            json!({ "project": "testproject", "workspace": "default", "limit": 10 }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_show",
+            json!({ "project": "testproject", "workspace": "default", "sha": "abc123" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_op_status",
+            json!({ "project": "testproject", "workspace": "default" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_integration_status",
+            json!({ "project": "testproject" }),
+            Some("testproject"),
+            None,
+        ),
+        (
+            "git",
+            "git_check_branch_up_to_date",
+            json!({ "project": "testproject", "workspace": "default" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+        (
+            "git",
+            "git_conflict_detail",
+            json!({ "project": "testproject", "workspace": "default", "path": "README.md", "context": "workspace" }),
+            Some("testproject"),
+            Some("default"),
+        ),
+    ];
+
+    for (domain, action, payload, expected_project, expected_workspace) in cases {
+        write
+            .send(Message::Binary(encode_client_message(
+                domain, action, payload,
+            )))
+            .await
+            .unwrap();
+
+        let response = wait_for_error_with_code(&mut read, "read_via_http_required")
+            .await
+            .unwrap_or_else(|| panic!("{action} 应返回 read_via_http_required"));
+
+        assert_eq!(response.action, "error", "{action} 应返回 error envelope");
+        if let Some(project) = expected_project {
+            assert_eq!(
+                response.payload["project"].as_str().unwrap_or(""),
+                project,
+                "{action} 应携带 project 字段"
+            );
+        }
+        if let Some(workspace) = expected_workspace {
+            assert_eq!(
+                response.payload["workspace"].as_str().unwrap_or(""),
+                workspace,
+                "{action} 应携带 workspace 字段"
+            );
+        }
+    }
 }
 
 // ============================================================================

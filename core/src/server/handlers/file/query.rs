@@ -5,6 +5,35 @@ use crate::server::context::{resolve_workspace, SharedAppState};
 use crate::server::protocol::ClientMessage;
 use crate::server::ws::send_message;
 
+pub(crate) async fn query_file_list(
+    app_state: &SharedAppState,
+    project: &str,
+    workspace: &str,
+    path: &str,
+) -> Result<crate::server::protocol::ServerMessage, crate::server::protocol::ServerMessage> {
+    let ws_ctx = resolve_workspace(app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_server_error())?;
+    Ok(file_app::file_list_message(
+        &ws_ctx.root_path,
+        project,
+        workspace,
+        path,
+    ))
+}
+
+pub(crate) async fn query_file_index(
+    app_state: &SharedAppState,
+    project: &str,
+    workspace: &str,
+    query: Option<&str>,
+) -> Result<crate::server::protocol::ServerMessage, crate::server::protocol::ServerMessage> {
+    let ws_ctx = resolve_workspace(app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_server_error())?;
+    Ok(file_app::file_index_message(&ws_ctx.root_path, project, workspace, query).await)
+}
+
 pub async fn handle_query_message(
     client_msg: &ClientMessage,
     socket: &WebSocket,
@@ -15,42 +44,30 @@ pub async fn handle_query_message(
             project,
             workspace,
             path,
-        } => {
-            let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    send_message(socket, &e.to_server_error()).await?;
-                    return Ok(true);
-                }
-            };
-
-            let msg = file_app::file_list_message(&ws_ctx.root_path, project, workspace, path);
-            send_message(socket, &msg).await?;
-            Ok(true)
-        }
+        } => match query_file_list(app_state, project, workspace, path).await {
+            Ok(msg) => {
+                send_message(socket, &msg).await?;
+                Ok(true)
+            }
+            Err(err) => {
+                send_message(socket, &err).await?;
+                Ok(true)
+            }
+        },
         ClientMessage::FileIndex {
             project,
             workspace,
             query,
-        } => {
-            let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    send_message(socket, &e.to_server_error()).await?;
-                    return Ok(true);
-                }
-            };
-
-            let msg = file_app::file_index_message(
-                &ws_ctx.root_path,
-                project,
-                workspace,
-                query.as_deref(),
-            )
-            .await;
-            send_message(socket, &msg).await?;
-            Ok(true)
-        }
+        } => match query_file_index(app_state, project, workspace, query.as_deref()).await {
+            Ok(msg) => {
+                send_message(socket, &msg).await?;
+                Ok(true)
+            }
+            Err(err) => {
+                send_message(socket, &err).await?;
+                Ok(true)
+            }
+        },
         _ => Ok(false),
     }
 }

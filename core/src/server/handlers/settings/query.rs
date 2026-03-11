@@ -5,6 +5,12 @@ use crate::server::context::HandlerContext;
 use crate::server::protocol::ClientMessage;
 use crate::server::ws::send_message;
 
+pub(crate) async fn query_client_settings(
+    ctx: &HandlerContext,
+) -> crate::server::protocol::ServerMessage {
+    get_client_settings_message(&ctx.app_state).await
+}
+
 pub async fn handle_query_message(
     client_msg: &ClientMessage,
     socket: &WebSocket,
@@ -12,7 +18,7 @@ pub async fn handle_query_message(
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::GetClientSettings => {
-            let msg = get_client_settings_message(&ctx.app_state).await;
+            let msg = query_client_settings(ctx).await;
             send_message(socket, &msg).await?;
             Ok(true)
         }

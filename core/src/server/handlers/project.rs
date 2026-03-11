@@ -5,7 +5,7 @@ use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
 mod admin;
-mod query;
+pub(crate) mod query;
 mod runtime;
 
 /// 处理项目和工作空间相关的客户端消息
@@ -16,6 +16,65 @@ pub async fn handle_project_message(
     socket: &WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
+    match client_msg {
+        ClientMessage::ListProjects => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "list_projects",
+                "/api/v1/projects",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::ListWorkspaces { project } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "list_workspaces",
+                "/api/v1/projects/:project/workspaces",
+                Some(project.clone()),
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::ListTasks => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "list_tasks",
+                "/api/v1/tasks",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::ListTemplates => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "list_templates",
+                "/api/v1/templates",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::ExportTemplate { .. } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "export_template",
+                "/api/v1/templates/:template_id/export",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(true);
+        }
+        _ => {}
+    }
+
     dispatch_handlers!(
         query::handle_query_message(client_msg, socket, ctx),
         admin::handle_admin_message(client_msg, socket, ctx),

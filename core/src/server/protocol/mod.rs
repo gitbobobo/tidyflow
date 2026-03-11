@@ -16,8 +16,8 @@ mod action_table_test;
 #[cfg(test)]
 mod ai_session_update_test;
 
-/// Protocol version: 8 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 8;
+/// Protocol version: 9 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 9;
 
 // ============================================================================
 // 多工作区边界字段约束（v7 协议层权威声明）
@@ -2748,8 +2748,8 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v8() {
-        assert_eq!(PROTOCOL_VERSION, 8);
+    fn protocol_version_is_v9() {
+        assert_eq!(PROTOCOL_VERSION, 9);
     }
 
     #[test]
