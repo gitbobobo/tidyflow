@@ -420,6 +420,33 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
                        "forceReset 后不应接受任何事件")
     }
 
+    /// 回归：工具切换后旧工具的事件与订阅应被清理隔离。
+    func testToolSwitchIsolation() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        // codex 工具活跃
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("codex-session")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex))
+
+        // 切换到 claude_code（模拟 switchAIChatTool 的 clearAll + switchTool + ready）
+        store.clearAll()
+        lifecycle.apply(.switchTool(newTool: .claude_code))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("claude-session")
+
+        // 旧工具的事件应被拒绝
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex),
+                       "旧工具的事件应被舞台拒绝")
+        XCTAssertFalse(store.subscribedSessionIds.contains("codex-session"),
+                       "旧工具的会话 ID 不应在订阅集合中")
+        // 新工具的事件应被接受
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code))
+        XCTAssertTrue(store.subscribedSessionIds.contains("claude-session"))
+    }
+
     private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,

@@ -490,7 +490,9 @@ final class MobileAppState: ObservableObject {
         ))
         // 工作区切换时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
         if isSwitch {
-            aiChatStageLifecycle.apply(.forceReset)
+            forceResetAIChatStage()
+            // 清理旧工作区的 AI 上下文投影残留
+            cleanupOldAIContextProjection()
         }
     }
     /// 资源管理器预览请求（用于过滤过期回调）
@@ -2191,10 +2193,9 @@ final class MobileAppState: ObservableObject {
         let trimmedWorkspace = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedProject.isEmpty, !trimmedWorkspace.isEmpty else { return }
 
-        // 通知舞台状态机进入聊天上下文
-        let stageResult = aiChatStageLifecycle.apply(.enter(
-            project: trimmedProject, workspace: trimmedWorkspace, aiTool: aiChatTool
-        ))
+        // 通过统一生命周期入口进入聊天上下文
+        enterAIChatStage(project: trimmedProject, workspace: trimmedWorkspace)
+        let stageEnteredEntering = aiChatStageLifecycle.state.phase == .entering
 
         let contextChanged = aiActiveProject != trimmedProject || aiActiveWorkspace != trimmedWorkspace
         if contextChanged {
@@ -2224,22 +2225,94 @@ final class MobileAppState: ObservableObject {
         reloadCurrentAISessionIfNeeded()
 
         // 进入完成后标记就绪（如果舞台确实进入了 entering 阶段）
-        if case .transitioned = stageResult {
-            aiChatStageLifecycle.apply(.ready)
+        if stageEnteredEntering {
+            markAIChatStageReady()
         }
     }
 
     /// 离开 AI 聊天页面：通过共享生命周期契约关闭舞台
     func closeAIChat() {
-        aiChatStageLifecycle.apply(.close)
+        closeAIChatStage()
         saveCurrentAISnapshotIfNeeded()
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
     }
 
+    // MARK: - AI 聊天舞台生命周期入口（iOS，与 macOS AppState+AIActions 对称）
+
+    /// 进入 AI 聊天舞台。iOS 在打开聊天页面或选中工作区时调用。
+    func enterAIChatStage(project: String, workspace: String) {
+        let result = aiChatStageLifecycle.apply(.enter(
+            project: project, workspace: workspace, aiTool: aiChatTool
+        ))
+        if case .transitioned = result {
+            NSLog(
+                "[MobileAppState] AI chat stage entered: project=%@, workspace=%@, tool=%@",
+                project, workspace, aiChatTool.rawValue
+            )
+        }
+    }
+
+    /// AI 聊天舞台就绪（订阅确认已收到、消息加载完成）。
+    func markAIChatStageReady() {
+        aiChatStageLifecycle.apply(.ready)
+    }
+
+    /// 关闭 AI 聊天舞台。iOS 在离开聊天页面或切换工作区时调用。
+    func closeAIChatStage() {
+        let result = aiChatStageLifecycle.apply(.close)
+        if case .transitioned = result {
+            NSLog("[MobileAppState] AI chat stage closed")
+        }
+    }
+
+    /// 恢复 AI 聊天舞台会话（断线重连后补拉缺失消息）。
+    func resumeAIChatStage(sessionId: String) {
+        let result = aiChatStageLifecycle.apply(.resume(sessionId: sessionId))
+        if case .transitioned = result {
+            NSLog("[MobileAppState] AI chat stage resuming: sessionId=%@", sessionId)
+        }
+    }
+
+    /// AI 聊天舞台恢复完成（缺失消息补齐，流式状态同步）。
+    func markAIChatStageResumeCompleted() {
+        aiChatStageLifecycle.apply(.resumeCompleted)
+    }
+
+    /// 流式中断后通知 AI 聊天舞台。网络丢失或流异常时调用。
+    func streamInterruptedAIChatStage(sessionId: String) {
+        let result = aiChatStageLifecycle.apply(.streamInterrupted(sessionId: sessionId))
+        if case .transitioned = result {
+            NSLog("[MobileAppState] AI chat stage stream interrupted: sessionId=%@", sessionId)
+        }
+    }
+
+    /// 强制重置 AI 聊天舞台。断开连接或不可恢复场景时调用。
+    func forceResetAIChatStage() {
+        let result = aiChatStageLifecycle.apply(.forceReset)
+        if case .transitioned = result {
+            NSLog("[MobileAppState] AI chat stage force reset")
+        }
+    }
+
+    /// AI 聊天舞台加载已有会话。统一入口。
+    func loadSessionInStage(sessionId: String, aiTool: AIChatTool) {
+        aiChatStageLifecycle.apply(.loadSession(sessionId: sessionId, aiTool: aiTool))
+    }
+
+    /// AI 聊天舞台新建空会话。统一入口。
+    func newSessionInStage() {
+        aiChatStageLifecycle.apply(.newSession)
+    }
+
+    /// 判断当前舞台是否接受指定上下文的流式事件。
+    func aiChatStageAcceptsEvent(project: String, workspace: String, aiTool: AIChatTool) -> Bool {
+        aiChatStageLifecycle.acceptsStreamEvent(project: project, workspace: workspace, aiTool: aiTool)
+    }
+
     /// 新建空会话（本地清空态），通过共享生命周期契约通知舞台
     func createNewAISession() {
-        aiChatStageLifecycle.apply(.newSession)
+        newSessionInStage()
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
         aiCurrentSessionId = nil
@@ -2261,6 +2334,9 @@ final class MobileAppState: ObservableObject {
 
         aiChatStageLifecycle.apply(.switchTool(newTool: newTool))
 
+        // 切换工具时清理旧工具上下文的快照和投影
+        cleanupOldAIContextProjection()
+
         saveCurrentAISnapshotIfNeeded()
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
@@ -2280,7 +2356,7 @@ final class MobileAppState: ObservableObject {
         }
 
         // 切换完成后标记就绪
-        aiChatStageLifecycle.apply(.ready)
+        markAIChatStageReady()
     }
 
     /// 拉取当前工具的上下文资源；仅在进入聊天上下文时刷新会话列表。
@@ -2385,8 +2461,8 @@ final class MobileAppState: ObservableObject {
         let previousTool = aiChatTool
         let previousSessionId = aiCurrentSessionId
 
-        // 通知舞台状态机加载会话
-        aiChatStageLifecycle.apply(.loadSession(sessionId: session.id, aiTool: targetTool))
+        // 通过统一生命周期入口通知舞台状态机加载会话
+        loadSessionInStage(sessionId: session.id, aiTool: targetTool)
 
         if targetTool != aiChatTool {
             // 跨工具打开历史会话时，允许在“非流式/非待发/非停止中”条件下切换工具，
@@ -2830,12 +2906,19 @@ final class MobileAppState: ObservableObject {
     private func reloadAISessionDataAfterReconnect() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
 
+        // 重连后重新进入舞台（断连时已 forceReset 到 idle）
+        enterAIChatStage(project: aiActiveProject, workspace: aiActiveWorkspace)
+
         _ = requestAISessionList(for: sessionListFilter, force: true)
 
         // 若有选中会话，通过共享协调器重新订阅并补拉以恢复流式状态
         for tool in AIChatTool.allCases {
             guard let sessionId = (tool == aiChatTool ? aiCurrentSessionId : nil),
                   !sessionId.isEmpty else { continue }
+
+            // 通知舞台进入 resuming 状态，等待 ack 后 ready
+            resumeAIChatStage(sessionId: sessionId)
+
             let context = AISessionHistoryCoordinator.Context(
                 project: aiActiveProject,
                 workspace: aiActiveWorkspace,
@@ -4153,7 +4236,9 @@ final class MobileAppState: ObservableObject {
                 self.terminalSink?.focusTerminal()
             } else {
                 // 断连时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影残留
-                self.aiChatStageLifecycle.apply(.forceReset)
+                self.forceResetAIChatStage()
+                // 清理断连前的 AI 上下文投影残留
+                self.cleanupOldAIContextProjection()
 
                 self.connectionMessage = "连接断开"
                 if let phase = ConnectionPhase.evaluateDisconnect(
@@ -4924,6 +5009,8 @@ extension MobileAppState {
 
     func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
         _ = consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
+        // WI-003：四元组上下文校验 + 舞台生命周期防护
+        guard aiChatStageAcceptsEvent(project: ev.projectName, workspace: ev.workspaceName, aiTool: ev.aiTool) else { return }
         guard aiActiveProject == ev.projectName,
               aiActiveWorkspace == ev.workspaceName,
               aiChatTool == ev.aiTool else { return }
@@ -5059,7 +5146,9 @@ extension MobileAppState {
               aiActiveWorkspace == ev.workspaceName,
               aiChatTool == ev.aiTool else { return }
         aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
-        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        // WI-003：舞台生命周期 + 订阅双层防护
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId),
+              aiChatStageLifecycle.acceptsSessionEvent(sessionId: ev.sessionId) else { return }
         aiChatStore.handleChatDone(sessionId: ev.sessionId)
         applyAISessionSelectionHint(
             ev.selectionHint,
@@ -5096,7 +5185,9 @@ extension MobileAppState {
               aiActiveWorkspace == ev.workspaceName,
               aiChatTool == ev.aiTool else { return }
         aiChatStore.clearAbortPendingIfMatches(ev.sessionId)
-        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+        // WI-003：舞台生命周期 + 订阅双层防护
+        guard aiChatStore.subscribedSessionIds.contains(ev.sessionId),
+              aiChatStageLifecycle.acceptsSessionEvent(sessionId: ev.sessionId) else { return }
         aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
         // v1.42：存储路由决策（即使出错也记录，便于排查）
         upsertAISessionRouteDecision(
@@ -5322,6 +5413,90 @@ extension MobileAppState {
         aiSessionContextSnapshots[key] = snapshot
     }
 
+    // MARK: - AI 订阅确认处理（WI-002：与 macOS 对称）
+
+    /// 处理 `ai_session_subscribe_ack`：
+    /// - 仅在舞台处于 entering/resuming 且上下文匹配时驱动 `ready` 或 `resumeCompleted`。
+    /// - 迟到 ack、关闭后 ack 和 forceReset 后 ack 都会被忽略，不会把 idle 舞台错误拉回 active。
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {
+        // Evolution 回放订阅确认
+        if let replayRequest = evolutionReplayRequest,
+           replayRequest.sessionId == ev.sessionId {
+            if !ev.projectName.isEmpty, !ev.workspaceName.isEmpty {
+                guard ev.projectName == replayRequest.project,
+                      normalizeEvolutionWorkspaceName(ev.workspaceName) == normalizeEvolutionWorkspaceName(replayRequest.workspace) else {
+                    NSLog(
+                        "[MobileAppState] AI replay subscribe ack workspace mismatch: ack=(%@/%@) request=(%@/%@) session_id=%@",
+                        ev.projectName, ev.workspaceName, replayRequest.project, replayRequest.workspace, ev.sessionId
+                    )
+                    return
+                }
+            }
+        }
+
+        // 舞台生命周期防护：仅在 entering/resuming 阶段接受 ack
+        let stage = aiChatStageLifecycle.state
+        let stagePhase = stage.phase
+
+        guard stagePhase == .entering || stagePhase == .resuming || stagePhase == .active else {
+            NSLog(
+                "[MobileAppState] AI subscribe ack ignored: stage=%@, session_id=%@",
+                stagePhase.rawValue, ev.sessionId
+            )
+            return
+        }
+
+        // 多工作区上下文四元组防护
+        if !ev.projectName.isEmpty, !ev.workspaceName.isEmpty {
+            guard ev.projectName == aiActiveProject,
+                  ev.workspaceName == aiActiveWorkspace else {
+                NSLog(
+                    "[MobileAppState] AI subscribe ack workspace mismatch: ack=(%@/%@) active=(%@/%@) session_id=%@",
+                    ev.projectName, ev.workspaceName, aiActiveProject, aiActiveWorkspace, ev.sessionId
+                )
+                return
+            }
+        }
+
+        // 确认订阅
+        aiChatStore.addSubscription(ev.sessionId)
+        NSLog(
+            "[MobileAppState] AI subscribe ack: tool=%@, session_id=%@, stage=%@",
+            aiChatTool.rawValue, ev.sessionId, stagePhase.rawValue
+        )
+
+        // ack 确认后拉消息（确保 Core 已进入推送模式）
+        if aiCurrentSessionId == ev.sessionId {
+            wsClient.requestAISessionMessages(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                aiTool: aiChatTool,
+                sessionId: ev.sessionId,
+                limit: 50
+            )
+        }
+
+        // 根据当前舞台阶段驱动迁移
+        if stagePhase == .resuming {
+            // 重连恢复完成
+            markAIChatStageResumeCompleted()
+        } else if stagePhase == .entering {
+            // 初次进入就绪
+            markAIChatStageReady()
+        }
+    }
+
+    // MARK: - AI 上下文投影清理（WI-003：多工作区隔离）
+
+    /// 清理旧工作区/工具的 AI 上下文投影残留。
+    /// 在工作区切换、工具切换和断连重置后调用，防止 active/resuming 投影残留到新上下文。
+    func cleanupOldAIContextProjection() {
+        // 清空旧上下文的缓存快照
+        aiSessionContextSnapshots.removeAll()
+        // 清理 store 订阅状态
+        aiChatStore.clearAll()
+    }
+
     /// 处理 HTTP 读取失败（多工作区安全版本）。
     ///
     /// 与 macOS `handleHTTPReadFailure` 语义对齐：
@@ -5457,6 +5632,10 @@ final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
 
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
         dispatchToMain { $0.handleAISessionRenameResult(ev) }
+    }
+
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {
+        dispatchToMain { $0.handleAISessionSubscribeAck(ev) }
     }
 
     func handleAIContextSnapshotUpdated(_ json: [String: Any]) {

@@ -68,4 +68,88 @@ final class AISessionSubscribeAckDispatchTests: XCTestCase {
         let result = lifecycle.apply(.ready)
         XCTAssertEqual(result, .ignored, "forceReset 后的 ready 应被忽略")
     }
+
+    // MARK: - WI-002：断线重连恢复路径与 ack 交互
+
+    /// 验证断线重连完整路径：forceReset → enter → resume → ack(resumeCompleted) → active
+    func testReconnectLifecyclePath() {
+        let lifecycle = AIChatStageLifecycle()
+        let store = AIChatStore()
+
+        // 初始活跃状态
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        lifecycle.apply(.ready)
+        store.setCurrentSessionId("sess-1")
+        store.addSubscription("sess-1")
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        // 断线：forceReset + 清理
+        lifecycle.apply(.forceReset)
+        store.clearAll()
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        XCTAssertTrue(store.subscribedSessionIds.isEmpty)
+
+        // 重连：enter → resume
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .opencode))
+        XCTAssertEqual(lifecycle.state.phase, .entering)
+
+        lifecycle.apply(.resume(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+        XCTAssertEqual(lifecycle.state.activeSessionId, "sess-1")
+
+        // ack 到达 → resumeCompleted
+        store.addSubscription("sess-1")
+        lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+        XCTAssertTrue(store.subscribedSessionIds.contains("sess-1"))
+    }
+
+    /// 验证 resuming 阶段的 ack 驱动 resumeCompleted（而非 ready）。
+    func testStageResumingAckDrivesResumeCompleted() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.resume(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        // 模拟 iOS handleAISessionSubscribeAck 中的分支逻辑：
+        // resuming 阶段调用 resumeCompleted
+        let result = lifecycle.apply(.resumeCompleted)
+        XCTAssertNotEqual(result, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .active, "resuming 阶段的 ack 应通过 resumeCompleted 回到 active")
+    }
+
+    /// 验证 resuming → forceReset 后迟到的 resumeCompleted 被忽略。
+    func testStageIgnoresResumeCompletedAfterForceReset() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.resume(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+
+        let result = lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(result, .ignored, "forceReset 后的 resumeCompleted 应被忽略")
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+    }
+
+    /// 验证切换工具后 ack 对应的上下文与新工具匹配。
+    func testSwitchToolUpdatesStageContext() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.aiTool, .codex)
+
+        lifecycle.apply(.switchTool(newTool: .claude_code))
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.aiTool, .claude_code, "切换工具后舞台上下文应更新")
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex),
+                       "旧工具的事件应被拒绝")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code))
+    }
 }
