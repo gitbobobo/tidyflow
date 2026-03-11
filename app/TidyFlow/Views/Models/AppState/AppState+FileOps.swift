@@ -56,6 +56,12 @@ extension AppState {
 
     // MARK: - v1.22: 文件监控 API
 
+    /// 当前工作区的文件状态相位
+    var currentFilePhase: FileWorkspacePhase {
+        guard let key = currentGlobalWorkspaceKey else { return .idle }
+        return fileCache.phase(for: key)
+    }
+
     /// 订阅当前工作空间的文件监控
     func subscribeCurrentWorkspace() {
         guard let workspaceKey = selectedWorkspaceKey else { return }

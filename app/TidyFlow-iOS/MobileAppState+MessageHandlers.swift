@@ -82,6 +82,22 @@ final class MobileAppStateFileMessageHandlerAdapter: FileMessageHandler {
     func handleFileRenameResult(_ result: FileRenameResult) { dispatchToMain { $0.handleFileRenameResult(result) } }
     func handleFileDeleteResult(_ result: FileDeleteResult) { dispatchToMain { $0.handleFileDeleteResult(result) } }
     func handleFileWriteResult(_ result: FileWriteResult) { dispatchToMain { $0.handleFileWriteResult(result) } }
+    func handleWatchSubscribed(_ result: WatchSubscribedResult) {
+        dispatchToMain { state in
+            let key = state.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            state.setFileWorkspacePhase(.watching, for: key)
+        }
+    }
+    func handleWatchUnsubscribed() {
+        dispatchToMain { state in
+            guard let identity = state.selectedWorkspaceIdentity else { return }
+            let key = state.globalWorkspaceKey(
+                project: identity.projectName,
+                workspace: identity.workspaceName
+            )
+            state.setFileWorkspacePhase(.idle, for: key)
+        }
+    }
 }
 
 final class MobileAppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {

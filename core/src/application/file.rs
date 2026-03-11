@@ -6,8 +6,186 @@ use tracing::debug;
 
 use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
+use crate::server::protocol::file::FileWorkspacePhase;
 use crate::server::protocol::{FileEntryInfo, ServerMessage};
 use crate::workspace::cache_metrics;
+
+// ── 文件工作区相位追踪器 ──
+
+/// 工作区文件系统相位键：`"project:workspace"`。
+fn phase_key(project: &str, workspace: &str) -> String {
+    format!("{}:{}", project, workspace)
+}
+
+/// 全局文件工作区相位表。
+/// 按 `(project, workspace)` 隔离，运行时维护，不持久化。
+static FILE_WORKSPACE_PHASES: LazyLock<Mutex<HashMap<String, FileWorkspacePhase>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 文件工作区相位追踪器——统一的相位查询与迁移入口。
+///
+/// 所有相位迁移必须通过此模块的公开函数完成，不允许在 handler 或 watcher 中直接修改状态。
+pub struct FileWorkspacePhaseTracker;
+
+impl FileWorkspacePhaseTracker {
+    /// 查询指定工作区当前相位。不存在时返回 `Idle`。
+    pub fn current(project: &str, workspace: &str) -> FileWorkspacePhase {
+        let key = phase_key(project, workspace);
+        FILE_WORKSPACE_PHASES
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&key).copied())
+            .unwrap_or_default()
+    }
+
+    /// 在持有锁的情况下原子地完成「读取当前相位 → 守卫判断 → 写入新相位」。
+    /// 避免 check-then-set 之间被 `on_disconnect` 等全局操作插入导致状态丢失。
+    fn transition(
+        project: &str,
+        workspace: &str,
+        guard: impl FnOnce(FileWorkspacePhase) -> bool,
+        next: FileWorkspacePhase,
+    ) {
+        let key = phase_key(project, workspace);
+        if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
+            let current = map.get(&key).copied().unwrap_or_default();
+            if guard(current) {
+                map.insert(key.clone(), next);
+                if current != next {
+                    debug!(
+                        "FileWorkspacePhase transition: key={} {} -> {}",
+                        key, current, next
+                    );
+                }
+            }
+        }
+    }
+
+    /// 无条件设置相位并记录迁移日志。
+    fn set_unconditional(project: &str, workspace: &str, phase: FileWorkspacePhase) {
+        let key = phase_key(project, workspace);
+        if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
+            let prev = map.insert(key.clone(), phase).unwrap_or_default();
+            if prev != phase {
+                debug!(
+                    "FileWorkspacePhase transition: key={} {} -> {}",
+                    key, prev, phase
+                );
+            }
+        }
+    }
+
+    /// watcher 订阅成功时调用。
+    pub fn on_watch_subscribed(project: &str, workspace: &str) {
+        Self::set_unconditional(project, workspace, FileWorkspacePhase::Watching);
+    }
+
+    /// watcher 退订时调用。
+    pub fn on_watch_unsubscribed(project: &str, workspace: &str) {
+        Self::set_unconditional(project, workspace, FileWorkspacePhase::Idle);
+    }
+
+    /// 文件索引开始扫描时调用。
+    pub fn on_indexing_started(project: &str, workspace: &str) {
+        // 仅在 Idle 状态下迁移到 Indexing；Watching 状态下索引由缓存增量维护，不改变相位。
+        Self::transition(
+            project,
+            workspace,
+            |c| c == FileWorkspacePhase::Idle,
+            FileWorkspacePhase::Indexing,
+        );
+    }
+
+    /// 文件索引完成时调用。
+    pub fn on_indexing_completed(project: &str, workspace: &str) {
+        // 索引完成后若无 watcher，回到 Idle。
+        Self::transition(
+            project,
+            workspace,
+            |c| c == FileWorkspacePhase::Indexing,
+            FileWorkspacePhase::Idle,
+        );
+    }
+
+    /// watcher 遇到非致命错误时调用。
+    pub fn on_watcher_degraded(project: &str, workspace: &str) {
+        Self::transition(
+            project,
+            workspace,
+            |c| c == FileWorkspacePhase::Watching,
+            FileWorkspacePhase::Degraded,
+        );
+    }
+
+    /// 开始恢复时调用。
+    pub fn on_recovery_started(project: &str, workspace: &str) {
+        Self::transition(
+            project,
+            workspace,
+            |c| matches!(c, FileWorkspacePhase::Degraded | FileWorkspacePhase::Error),
+            FileWorkspacePhase::Recovering,
+        );
+    }
+
+    /// 恢复成功时调用。
+    pub fn on_recovery_succeeded(project: &str, workspace: &str) {
+        Self::transition(
+            project,
+            workspace,
+            |c| c == FileWorkspacePhase::Recovering,
+            FileWorkspacePhase::Watching,
+        );
+    }
+
+    /// 恢复失败时调用。
+    pub fn on_recovery_failed(project: &str, workspace: &str) {
+        Self::transition(
+            project,
+            workspace,
+            |c| c == FileWorkspacePhase::Recovering,
+            FileWorkspacePhase::Error,
+        );
+    }
+
+    /// 连接断开时重置所有工作区相位为 Idle。
+    pub fn on_disconnect() {
+        if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
+            for phase in map.values_mut() {
+                *phase = FileWorkspacePhase::Idle;
+            }
+            debug!("FileWorkspacePhase: all phases reset to idle on disconnect");
+        }
+    }
+
+    /// 指定项目的所有工作区相位重置为 Idle。
+    /// 用于项目级断连或清理场景，不影响其他项目的相位。
+    pub fn on_disconnect_project(project: &str) {
+        let prefix = format!("{}:", project);
+        if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
+            let mut count = 0usize;
+            for (key, phase) in map.iter_mut() {
+                if key.starts_with(&prefix) {
+                    *phase = FileWorkspacePhase::Idle;
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                debug!(
+                    "FileWorkspacePhase: reset {} entries for project '{}' on disconnect",
+                    count, project
+                );
+            }
+        }
+    }
+
+    /// 清除指定工作区的相位记录（工作区被删除时调用）。
+    pub fn remove(project: &str, workspace: &str) {
+        let key = phase_key(project, workspace);
+        if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
+            map.remove(&key);
+        }
+    }
+}
 
 const FILE_INDEX_CACHE_TTL_SECS: u64 = 15;
 
@@ -308,12 +486,18 @@ pub async fn file_index_message(
         };
     }
 
+    // 缓存未命中：触发全量索引，通知相位追踪器进入 Indexing
+    FileWorkspacePhaseTracker::on_indexing_started(project, workspace);
+
     let root_for_index = root.clone();
     let root_key = file_index_cache_key(&root);
     cache_metrics::record_file_cache_miss(&root_key);
     let walk_started = Instant::now();
     let result =
         tokio::task::spawn_blocking(move || file_index::index_files(&root_for_index)).await;
+
+    // 索引完成：通知相位追踪器
+    FileWorkspacePhaseTracker::on_indexing_completed(project, workspace);
 
     match result {
         Ok(Ok(mut index_result)) => {
@@ -491,6 +675,7 @@ pub fn file_move_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::protocol::file::{FileChangeKind, FileWorkspacePhase};
     use tempfile::TempDir;
 
     #[test]
@@ -501,5 +686,95 @@ mod tests {
             panic!("expected error message");
         };
         assert_eq!(code, "invalid_utf8");
+    }
+
+    // ── FileWorkspacePhase 基础语义 ──
+
+    #[test]
+    fn phase_default_is_idle() {
+        assert_eq!(FileWorkspacePhase::default(), FileWorkspacePhase::Idle);
+    }
+
+    #[test]
+    fn phase_is_ready_only_for_watching() {
+        assert!(!FileWorkspacePhase::Idle.is_ready());
+        assert!(!FileWorkspacePhase::Indexing.is_ready());
+        assert!(FileWorkspacePhase::Watching.is_ready());
+        assert!(!FileWorkspacePhase::Degraded.is_ready());
+        assert!(!FileWorkspacePhase::Error.is_ready());
+        assert!(!FileWorkspacePhase::Recovering.is_ready());
+    }
+
+    #[test]
+    fn phase_allows_write_except_error() {
+        assert!(FileWorkspacePhase::Idle.allows_write());
+        assert!(FileWorkspacePhase::Indexing.allows_write());
+        assert!(FileWorkspacePhase::Watching.allows_write());
+        assert!(FileWorkspacePhase::Degraded.allows_write());
+        assert!(!FileWorkspacePhase::Error.allows_write());
+        assert!(FileWorkspacePhase::Recovering.allows_write());
+    }
+
+    #[test]
+    fn phase_needs_attention_for_degraded_error_recovering() {
+        assert!(!FileWorkspacePhase::Idle.needs_attention());
+        assert!(!FileWorkspacePhase::Indexing.needs_attention());
+        assert!(!FileWorkspacePhase::Watching.needs_attention());
+        assert!(FileWorkspacePhase::Degraded.needs_attention());
+        assert!(FileWorkspacePhase::Error.needs_attention());
+        assert!(FileWorkspacePhase::Recovering.needs_attention());
+    }
+
+    #[test]
+    fn phase_display_matches_serde() {
+        assert_eq!(FileWorkspacePhase::Idle.to_string(), "idle");
+        assert_eq!(FileWorkspacePhase::Watching.to_string(), "watching");
+        assert_eq!(FileWorkspacePhase::Error.to_string(), "error");
+    }
+
+    #[test]
+    fn phase_serde_roundtrip() {
+        let phase = FileWorkspacePhase::Degraded;
+        let json = serde_json::to_string(&phase).unwrap();
+        assert_eq!(json, "\"degraded\"");
+        let parsed: FileWorkspacePhase = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, phase);
+    }
+
+    // ── FileChangeKind 基础语义 ──
+
+    #[test]
+    fn change_kind_from_watcher_str() {
+        assert_eq!(FileChangeKind::from_watcher_str("created"), FileChangeKind::Created);
+        assert_eq!(FileChangeKind::from_watcher_str("create"), FileChangeKind::Created);
+        assert_eq!(FileChangeKind::from_watcher_str("removed"), FileChangeKind::Removed);
+        assert_eq!(FileChangeKind::from_watcher_str("deleted"), FileChangeKind::Removed);
+        assert_eq!(FileChangeKind::from_watcher_str("renamed"), FileChangeKind::Renamed);
+        assert_eq!(FileChangeKind::from_watcher_str("modify"), FileChangeKind::Modified);
+        assert_eq!(FileChangeKind::from_watcher_str("unknown"), FileChangeKind::Modified);
+    }
+
+    #[test]
+    fn change_kind_as_str_roundtrip() {
+        let kinds = [
+            FileChangeKind::Created,
+            FileChangeKind::Modified,
+            FileChangeKind::Removed,
+            FileChangeKind::Renamed,
+        ];
+        for kind in &kinds {
+            let s = kind.as_str();
+            let parsed = FileChangeKind::from_watcher_str(s);
+            assert_eq!(*kind, parsed, "roundtrip failed for {}", s);
+        }
+    }
+
+    #[test]
+    fn change_kind_serde_roundtrip() {
+        let kind = FileChangeKind::Renamed;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, "\"renamed\"");
+        let parsed: FileChangeKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, kind);
     }
 }

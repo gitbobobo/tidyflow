@@ -7,6 +7,41 @@ import TidyFlowShared
 /// 仅 ExplorerView、CommandPaletteView 等文件相关视图需要观察此对象
 class FileCacheState: ObservableObject {
 
+    // MARK: - 文件工作区相位（统一状态机）
+
+    /// 按 (project, workspace) 隔离的文件工作区相位。
+    /// key: "project:workspace" 格式的全局键。
+    /// 相位由 Core 权威管理，客户端通过 WS 事件更新，不自行推导。
+    @Published private(set) var workspacePhases: [String: FileWorkspacePhase] = [:]
+
+    /// 查询指定工作区的当前文件相位。不存在时返回 `.idle`。
+    func phase(for globalKey: String) -> FileWorkspacePhase {
+        workspacePhases[globalKey] ?? .idle
+    }
+
+    /// 更新指定工作区的文件相位。
+    func setPhase(_ phase: FileWorkspacePhase, for globalKey: String) {
+        guard workspacePhases[globalKey] != phase else { return }
+        workspacePhases[globalKey] = phase
+    }
+
+    /// watcher 订阅成功时调用。
+    func onWatchSubscribed(globalKey: String) {
+        setPhase(.watching, for: globalKey)
+    }
+
+    /// watcher 退订时调用。
+    func onWatchUnsubscribed(globalKey: String) {
+        setPhase(.idle, for: globalKey)
+    }
+
+    /// 连接断开时重置所有相位为 idle。
+    func resetAllPhasesOnDisconnect() {
+        for key in workspacePhases.keys {
+            workspacePhases[key] = .idle
+        }
+    }
+
     // MARK: - @Published 属性（原 AppState 中的文件缓存相关属性）
 
     /// 文件索引缓存（workspace key -> FileIndexCache），用于 Quick Open 搜索

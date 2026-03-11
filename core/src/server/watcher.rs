@@ -4,6 +4,14 @@
 //! - 单工作空间监控（每个连接只监控一个工作空间）
 //! - 500ms 防抖聚合事件
 //! - 自动忽略 node_modules、.git/objects 等大目录
+//!
+//! ## 文件状态机集成
+//!
+//! watcher 的生命周期事件通过 `FileWorkspacePhaseTracker` 驱动相位迁移：
+//! - `subscribe` 成功 → `Watching`
+//! - `subscribe` 失败 → 保持 `Idle`（由调用方决定是否重试）
+//! - `unsubscribe` → `Idle`
+//! - watcher 运行时错误 → `Degraded`（通过 event loop 上报）
 
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
@@ -12,6 +20,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+use crate::application::file::FileWorkspacePhaseTracker;
+use crate::server::protocol::file::FileChangeKind;
 
 /// 文件变化事件类型
 #[derive(Debug, Clone)]
@@ -118,6 +129,9 @@ impl WorkspaceWatcher {
             Self::event_loop(rx, event_tx, project_clone, workspace_clone, path_clone);
         });
 
+        // 通知相位追踪器：watcher 就绪
+        FileWorkspacePhaseTracker::on_watch_subscribed(&project, &workspace);
+
         self.project = Some(project);
         self.workspace = Some(workspace);
         self.watch_path = Some(path);
@@ -128,11 +142,13 @@ impl WorkspaceWatcher {
 
     /// 取消订阅
     pub fn unsubscribe(&mut self) {
-        if let Some(ref project) = self.project {
+        if let (Some(ref project), Some(ref workspace)) = (&self.project, &self.workspace) {
             info!(
-                "Unsubscribing from workspace: project={}, workspace={:?}",
-                project, self.workspace
+                "Unsubscribing from workspace: project={}, workspace={}",
+                project, workspace
             );
+            // 通知相位追踪器：watcher 退订
+            FileWorkspacePhaseTracker::on_watch_unsubscribed(project, workspace);
         }
 
         // 丢弃 debouncer 会自动停止监控
@@ -170,6 +186,8 @@ impl WorkspaceWatcher {
                 }
                 Ok(Err(e)) => {
                     warn!("Watch error: {}", e);
+                    // watcher 运行时错误 → 通知相位追踪器降级
+                    FileWorkspacePhaseTracker::on_watcher_degraded(&project, &workspace);
                 }
                 Err(_) => {
                     // 通道关闭，退出循环
@@ -222,14 +240,16 @@ impl WorkspaceWatcher {
             }
         }
 
-        // 发送文件变化事件
+        // 发送文件变化事件（使用统一的 FileChangeKind）
         if !file_paths.is_empty() {
             let paths: Vec<String> = file_paths.into_iter().collect();
+            // notify-debouncer-mini 不区分事件类型，统一为 modified
+            let kind = FileChangeKind::Modified;
             let event = WatchEvent::FileChanged {
                 project: project.to_string(),
                 workspace: workspace.to_string(),
                 paths,
-                kind: "modify".to_string(),
+                kind: kind.as_str().to_string(),
             };
             if let Err(e) = event_tx.blocking_send(event) {
                 warn!("Failed to send file changed event: {}", e);

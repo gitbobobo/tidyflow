@@ -99,6 +99,17 @@ final class AppStateFileMessageHandlerAdapter: FileMessageHandler {
         appState?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
         appState?.notifyEditorFileChanged(notification: notification)
     }
+    func handleWatchSubscribed(_ result: WatchSubscribedResult) {
+        let globalKey = appState?.globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+        if let key = globalKey {
+            appState?.fileCache.onWatchSubscribed(globalKey: key)
+        }
+    }
+    func handleWatchUnsubscribed() {
+        if let key = appState?.currentGlobalWorkspaceKey {
+            appState?.fileCache.onWatchUnsubscribed(globalKey: key)
+        }
+    }
 }
 
 final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {

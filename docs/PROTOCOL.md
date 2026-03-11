@@ -280,6 +280,37 @@
 - Git 能力（状态、diff、stage/unstage、commit、branch、rebase、merge、log、show）
 - 客户端设置同步与文件系统监听
 
+## 文件系统统一状态机
+
+文件领域的状态管理遵循统一的相位模型（`FileWorkspacePhase`），按 `(project, workspace)` 隔离。
+相位由 Core 权威管理，客户端只消费、不推导。
+
+详细的相位枚举、状态迁移图与多工作区隔离约束见 `schema/protocol/v7/README.md` 的
+"文件系统统一状态机契约"章节。
+
+### 相位概览
+
+| 相位 | 含义 |
+|------|------|
+| `idle` | 未激活 |
+| `indexing` | 文件索引扫描中 |
+| `watching` | watcher 就绪，增量事件正常 |
+| `degraded` | watcher 异常，缓存可能过时 |
+| `error` | 致命错误 |
+| `recovering` | 恢复中 |
+
+### 文件变更事件类型
+
+`file_changed` 事件的 `kind` 字段使用统一的 `FileChangeKind` 枚举值：
+`created` / `modified` / `removed` / `renamed`。
+
+### 实现约束
+
+1. Core 在 `core/src/server/protocol/file.rs` 定义 `FileWorkspacePhase` 与 `FileChangeKind`。
+2. Core 在 `core/src/application/file.rs` 维护运行时相位追踪器（`FileWorkspacePhaseTracker`）。
+3. macOS 与 iOS 客户端共享同一组 `FileWorkspacePhase` 枚举定义（`TidyFlowShared`）。
+4. 文件操作的缓存失效、watcher 订阅/退订、错误恢复均通过相位迁移驱动，不在视图层自行拼装状态。
+
 ## 共享 AI 会话语义层（客户端实现约束）
 
 以下约束描述客户端如何统一处理 AI 会话标识与消息流，macOS 与 iOS 必须共享相同规则，不允许各自维护独立推导逻辑。

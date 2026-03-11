@@ -20,6 +20,12 @@
 //! - `Ready`：完全就绪，可以使用
 //! - `SetupFailed`：setup 失败，需要手动修复
 //! - `Destroying`：已标记删除，不应再接受新的操作
+//!
+//! ### 文件系统统一状态机（`FileWorkspacePhase`）
+//!
+//! 每个 `(project, workspace)` 还维护一个独立的文件子系统相位（运行时，不持久化），
+//! 由 `FileWorkspacePhaseTracker`（`application::file`）管理。
+//! 相位枚举与状态迁移详见 `server::protocol::file::FileWorkspacePhase`。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

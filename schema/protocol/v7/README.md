@@ -150,6 +150,65 @@ Creating → Initializing → Ready
   不允许仅凭工作区名称判断是否刷新当前界面。
 - `watch_subscribe` 订阅语义是"当前连接的单一活跃订阅"；切换工作区时必须先 `watch_unsubscribe` 再重新订阅。
 
+## 文件系统统一状态机契约
+
+每个 `(project, workspace)` 维护一个独立的**文件工作区相位**（`FileWorkspacePhase`），
+描述该工作区文件子系统的聚合就绪状态。相位由 Core 权威管理，客户端只消费、不推导。
+
+### 相位枚举
+
+| 相位 | 含义 | 文件操作可用性 |
+|------|------|----------------|
+| `idle` | 未激活，无 watcher、无索引 | 读写均可（按需触发） |
+| `indexing` | 文件索引扫描进行中 | 读写均可（缓存兜底） |
+| `watching` | watcher 就绪，增量事件正常投递 | 完全可用 |
+| `degraded` | watcher 遇非致命错误，缓存可能过时 | 读写可用（数据可能过时） |
+| `error` | 致命错误，文件操作不可用 | 读操作缓存兜底，写操作阻塞 |
+| `recovering` | 正在从 error/degraded 恢复 | 读写可用（恢复中） |
+
+### 状态迁移
+
+```text
+idle ──(watch_subscribe)──► watching
+idle ──(index_request)───► indexing
+indexing ──(complete)─────► idle（若无 watcher）
+indexing ──(complete)─────► watching（若 watcher 已就绪）
+watching ──(watcher_error)► degraded
+watching ──(unsubscribe)──► idle
+degraded ──(recover)──────► recovering
+recovering ──(success)────► watching
+recovering ──(fail)───────► error
+error ──(retry)───────────► recovering
+(任意) ──(disconnect)─────► idle
+(任意) ──(workspace_switch)► idle
+```
+
+### 文件变更事件类型（`FileChangeKind`）
+
+统一的文件变更事件类型，替代原先的字符串字面量：
+
+| 值 | 含义 |
+|----|------|
+| `created` | 文件或目录被创建 |
+| `modified` | 文件内容被修改 |
+| `removed` | 文件或目录被删除 |
+| `renamed` | 文件或目录被重命名 |
+
+不可识别的 kind 值统一回退为 `modified`。
+
+### 多工作区隔离约束
+
+1. 文件相位按 `(project, workspace)` 隔离，不同工作区的相位互不影响。
+2. 断线重连后，所有工作区的文件相位归位为 `idle`，由客户端按需重新订阅。
+3. 工作区切换时，旧工作区相位保持不变（可被后台缓存策略淘汰），新工作区按其已有相位继续。
+4. `watch_subscribe` 只影响目标 `(project, workspace)` 的相位，不改变其他工作区。
+
+### 权威源与验证
+
+- 协议类型定义：`core/src/server/protocol/file.rs`（`FileWorkspacePhase`、`FileChangeKind`）
+- 运行时状态追踪：`core/src/application/file.rs`（`FileWorkspacePhaseTracker`）
+- 协议一致性检查：`./scripts/tidyflow check`
+
 ## Evolution 读取补充（v7）
 
 Evolution 快照与循环历史结果不再暴露 `handoff` 字段。

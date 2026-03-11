@@ -39,6 +39,8 @@ extension AppState {
             } else {
                 // 断连时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影残留
                 self.forceResetAIChatStage()
+                // 断连时重置所有文件相位，避免残留的 watching/indexing 状态
+                self.fileCache.resetAllPhasesOnDisconnect()
 
                 if let phase = ConnectionPhase.evaluateDisconnect(
                     isIntentional: self.wsClient.isIntentionalDisconnect,

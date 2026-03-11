@@ -859,3 +859,174 @@ fn test_evolution_system_session_not_visible_in_default_list() {
     let j = serde_json::to_value(&s).unwrap();
     assert_eq!(j["session_origin"].as_str().unwrap(), "evolution_system");
 }
+
+// ============================================================================
+// 文件系统统一状态机：兼容性与相位迁移测试
+// ============================================================================
+
+#[test]
+fn test_file_workspace_phase_default_is_idle() {
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+    let phase = FileWorkspacePhase::default();
+    assert_eq!(phase, FileWorkspacePhase::Idle);
+    assert_eq!(phase.to_string(), "idle");
+}
+
+#[test]
+fn test_file_workspace_phase_all_variants_roundtrip() {
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+    let variants = [
+        ("idle", FileWorkspacePhase::Idle),
+        ("indexing", FileWorkspacePhase::Indexing),
+        ("watching", FileWorkspacePhase::Watching),
+        ("degraded", FileWorkspacePhase::Degraded),
+        ("error", FileWorkspacePhase::Error),
+        ("recovering", FileWorkspacePhase::Recovering),
+    ];
+    for (expected_str, variant) in &variants {
+        assert_eq!(&variant.to_string(), expected_str, "Display mismatch for {:?}", variant);
+        // serde roundtrip
+        let json = serde_json::to_value(variant).unwrap();
+        let parsed: FileWorkspacePhase = serde_json::from_value(json).unwrap();
+        assert_eq!(&parsed, variant, "serde roundtrip mismatch for {}", expected_str);
+    }
+}
+
+#[test]
+fn test_file_workspace_phase_from_str_unknown_returns_error() {
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+    let result: Result<FileWorkspacePhase, _> = serde_json::from_str("\"unknown\"");
+    assert!(result.is_err());
+    let result: Result<FileWorkspacePhase, _> = serde_json::from_str("\"\"");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_file_workspace_phase_allows_write_semantics() {
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+    // error 阶段不允许写操作
+    assert!(!FileWorkspacePhase::Error.allows_write());
+    // 其他阶段允许
+    assert!(FileWorkspacePhase::Idle.allows_write());
+    assert!(FileWorkspacePhase::Indexing.allows_write());
+    assert!(FileWorkspacePhase::Watching.allows_write());
+    assert!(FileWorkspacePhase::Degraded.allows_write());
+    assert!(FileWorkspacePhase::Recovering.allows_write());
+}
+
+#[test]
+fn test_file_change_kind_all_variants_roundtrip() {
+    use tidyflow_core::server::protocol::file::FileChangeKind;
+    let variants = [
+        ("created", FileChangeKind::Created),
+        ("modified", FileChangeKind::Modified),
+        ("removed", FileChangeKind::Removed),
+        ("renamed", FileChangeKind::Renamed),
+    ];
+    for (expected_str, variant) in &variants {
+        assert_eq!(variant.as_str(), *expected_str);
+    }
+}
+
+#[test]
+fn test_file_change_kind_from_watcher_str_aliases() {
+    use tidyflow_core::server::protocol::file::FileChangeKind;
+    // 标准值
+    assert_eq!(FileChangeKind::from_watcher_str("create"), FileChangeKind::Created);
+    assert_eq!(FileChangeKind::from_watcher_str("modify"), FileChangeKind::Modified);
+    assert_eq!(FileChangeKind::from_watcher_str("remove"), FileChangeKind::Removed);
+    assert_eq!(FileChangeKind::from_watcher_str("rename"), FileChangeKind::Renamed);
+    // 别名
+    assert_eq!(FileChangeKind::from_watcher_str("created"), FileChangeKind::Created);
+    assert_eq!(FileChangeKind::from_watcher_str("deleted"), FileChangeKind::Removed);
+    // 未知值回退为 Modified
+    assert_eq!(FileChangeKind::from_watcher_str("unknown"), FileChangeKind::Modified);
+    assert_eq!(FileChangeKind::from_watcher_str(""), FileChangeKind::Modified);
+}
+
+// 注意：FileWorkspacePhaseTracker 使用全局 HashMap，
+// 并行测试可能因 on_disconnect() 相互干扰。
+// 这些测试使用唯一键前缀并检查不变量而非全局状态。
+
+#[test]
+fn test_file_workspace_phase_subscribe_unsubscribe_cycle() {
+    use tidyflow_core::application::file::FileWorkspacePhaseTracker;
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+
+    let proj = "compat_cycle";
+    let ws = "ws_cycle";
+
+    // Idle → subscribe → Watching → unsubscribe → Idle
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Idle);
+    FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Watching);
+    FileWorkspacePhaseTracker::on_watch_unsubscribed(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Idle);
+
+    FileWorkspacePhaseTracker::remove(proj, ws);
+}
+
+#[test]
+fn test_file_workspace_phase_degraded_recovery_success() {
+    use tidyflow_core::application::file::FileWorkspacePhaseTracker;
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+
+    let proj = "compat_deg_ok";
+    let ws = "ws1";
+
+    // Watching → Degraded → Recovering → Watching
+    FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
+    FileWorkspacePhaseTracker::on_watcher_degraded(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Degraded);
+
+    FileWorkspacePhaseTracker::on_recovery_started(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Recovering);
+
+    FileWorkspacePhaseTracker::on_recovery_succeeded(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Watching);
+
+    FileWorkspacePhaseTracker::remove(proj, ws);
+}
+
+#[test]
+fn test_file_workspace_phase_degraded_recovery_failure() {
+    use tidyflow_core::application::file::FileWorkspacePhaseTracker;
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+
+    let proj = "compat_deg_fail";
+    let ws = "ws1";
+
+    // Watching → Degraded → Recovering → Error
+    FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
+    FileWorkspacePhaseTracker::on_watcher_degraded(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Degraded);
+
+    FileWorkspacePhaseTracker::on_recovery_started(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Recovering);
+
+    FileWorkspacePhaseTracker::on_recovery_failed(proj, ws);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Error);
+
+    FileWorkspacePhaseTracker::remove(proj, ws);
+}
+
+#[test]
+fn test_file_workspace_phase_disconnect_resets() {
+    use tidyflow_core::application::file::FileWorkspacePhaseTracker;
+    use tidyflow_core::server::protocol::file::FileWorkspacePhase;
+
+    let proj = "compat_dc";
+
+    FileWorkspacePhaseTracker::on_watch_subscribed(proj, "ws_dc_a");
+    FileWorkspacePhaseTracker::on_watch_subscribed(proj, "ws_dc_b");
+
+    // 使用项目级断连，避免全局重置干扰其他并行测试
+    FileWorkspacePhaseTracker::on_disconnect_project(proj);
+
+    // 断连后该项目的所有工作区相位都应为 Idle
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, "ws_dc_a"), FileWorkspacePhase::Idle);
+    assert_eq!(FileWorkspacePhaseTracker::current(proj, "ws_dc_b"), FileWorkspacePhase::Idle);
+
+    FileWorkspacePhaseTracker::remove(proj, "ws_dc_a");
+    FileWorkspacePhaseTracker::remove(proj, "ws_dc_b");
+}

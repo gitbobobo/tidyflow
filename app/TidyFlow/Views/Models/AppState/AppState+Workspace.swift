@@ -229,6 +229,11 @@ extension AppState {
             projectId: projectId
         ))
         if didChangeWorkspaceIdentity {
+            // 工作区真实切换时，重置旧工作区的文件相位，新相位将在 watch_subscribed 事件到达时设置
+            if let prevId = previousIdentity {
+                let prevKey = globalWorkspaceKey(projectName: prevId.projectName, workspaceName: prevId.workspaceName)
+                fileCache.onWatchUnsubscribed(globalKey: prevKey)
+            }
             // 工作区真实切换时，强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
             forceResetAIChatStage()
             // 工作区真实切换时，清理旧上下文终端生命周期投影，

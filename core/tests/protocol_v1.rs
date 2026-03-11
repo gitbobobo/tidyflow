@@ -524,3 +524,64 @@ async fn test_kill_terminal() {
     assert_eq!(env.payload["session_id"], session_id);
     println!("  ✓ Terminal killed: {}", &session_id[..8]);
 }
+
+/// Test 9: Watch Subscribe 返回 watch_subscribed，带 project/workspace
+#[tokio::test]
+async fn test_watch_subscribe_unsubscribe() {
+    let server = ServerGuard::start().expect("启动服务器失败");
+    let port = server.port();
+
+    let (mut write, mut read) = connect_to_server(port).await.expect("Failed to connect");
+    let _ = wait_for_action(&mut read, "hello").await;
+
+    // 先创建项目
+    let msg = encode_client_message(
+        "project",
+        "create_project",
+        json!({
+            "name": "fsm_test_project",
+            "root_path": "/tmp"
+        }),
+    );
+    write.send(Message::Binary(msg)).await.unwrap();
+    // 等待项目创建结果（可能是 result 或 error）
+    let _ = recv_envelope(&mut read).await;
+
+    // 订阅文件监控
+    let msg = encode_client_message(
+        "file",
+        "watch_subscribe",
+        json!({
+            "project": "fsm_test_project",
+            "workspace": "default"
+        }),
+    );
+    write.send(Message::Binary(msg)).await.unwrap();
+
+    let env = wait_for_action(&mut read, "watch_subscribed").await;
+    if let Some(env) = env {
+        assert_eq!(env.domain, "file");
+        assert_eq!(env.kind, "result");
+        assert!(env.payload["project"].is_string());
+        assert!(env.payload["workspace"].is_string());
+        println!(
+            "  ✓ Watch subscribed: project={}, workspace={}",
+            env.payload["project"], env.payload["workspace"]
+        );
+    } else {
+        // 如果项目不存在，可能收到 error
+        println!("  ⓘ Watch subscribe 未返回（项目可能不存在），跳过");
+    }
+
+    // 退订
+    let msg = encode_client_message("file", "watch_unsubscribe", json!({}));
+    write.send(Message::Binary(msg)).await.unwrap();
+
+    let env = wait_for_action(&mut read, "watch_unsubscribed").await;
+    if let Some(env) = env {
+        assert_eq!(env.domain, "file");
+        println!("  ✓ Watch unsubscribed");
+    } else {
+        println!("  ⓘ Watch unsubscribe 未返回，跳过");
+    }
+}

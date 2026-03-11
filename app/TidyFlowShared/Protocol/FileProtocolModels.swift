@@ -1,5 +1,65 @@
 import Foundation
 
+// MARK: - 文件系统统一状态机
+
+/// 文件工作区相位：描述某个 (project, workspace) 的文件子系统聚合就绪状态。
+///
+/// 与 Core 的 `FileWorkspacePhase` 枚举语义一致（`core/src/server/protocol/file.rs`）。
+/// macOS 与 iOS 共享此类型，不允许各自推导。
+public enum FileWorkspacePhase: String, Equatable, Sendable {
+    /// 文件子系统未激活
+    case idle
+    /// 文件索引扫描进行中
+    case indexing
+    /// watcher 已就绪，增量事件正常投递
+    case watching
+    /// watcher 遇到非致命错误，缓存可能过时
+    case degraded
+    /// 致命错误，文件操作不可用
+    case error
+    /// 正在从 error/degraded 恢复
+    case recovering
+
+    /// 是否允许执行文件写操作（仅 `error` 阶段阻塞写操作）
+    public var allowsWrite: Bool {
+        self != .error
+    }
+
+    /// 是否处于正常就绪状态
+    public var isReady: Bool {
+        self == .watching
+    }
+
+    /// 是否需要恢复关注
+    public var needsAttention: Bool {
+        switch self {
+        case .degraded, .error, .recovering: return true
+        default: return false
+        }
+    }
+}
+
+/// 文件变更事件类型。
+///
+/// 与 Core 的 `FileChangeKind` 枚举语义一致。
+/// 替代原先 `FileChangedNotification.kind` 中的字符串字面量。
+public enum FileChangeKind: String, Equatable, Sendable {
+    case created
+    case modified
+    case removed
+    case renamed
+
+    /// 从字符串解析，不可识别值回退为 `.modified`
+    public init(rawString: String) {
+        switch rawString {
+        case "created", "create": self = .created
+        case "removed", "deleted", "delete", "remove": self = .removed
+        case "renamed", "rename": self = .renamed
+        default: self = .modified
+        }
+    }
+}
+
 // MARK: - v1.22: File Watcher Protocol Models
 
 /// 文件读取结果

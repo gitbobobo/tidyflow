@@ -216,6 +216,8 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewPath: String?
     @Published var explorerPreviewContent: String = ""
     @Published var explorerPreviewError: String?
+    /// 按 (project, workspace) 隔离的文件工作区相位（统一状态机）
+    @Published private(set) var fileWorkspacePhases: [String: FileWorkspacePhase] = [:]
     @Published var mergeAIAgent: String?
     @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
     var clientFixedPort: Int = 0
@@ -4249,6 +4251,10 @@ final class MobileAppState: ObservableObject {
                 self.forceResetAIChatStage()
                 // 清理断连前的 AI 上下文投影残留
                 self.cleanupOldAIContextProjection()
+                // 断连时重置所有文件相位，避免残留的 watching/indexing 状态
+                for key in self.fileWorkspacePhases.keys {
+                    self.fileWorkspacePhases[key] = .idle
+                }
 
                 self.connectionMessage = "连接断开"
                 if let phase = ConnectionPhase.evaluateDisconnect(
@@ -4463,6 +4469,14 @@ final class MobileAppState: ObservableObject {
 
     func globalWorkspaceKey(project: String, workspace: String) -> String {
         WorkspaceKeySemantics.globalKey(project: project, workspace: workspace)
+    }
+
+    // MARK: - 文件工作区相位（统一状态机）
+
+    /// 设置指定工作区的文件相位（供 MessageHandler 适配器调用）。
+    func setFileWorkspacePhase(_ phase: FileWorkspacePhase, for globalKey: String) {
+        guard fileWorkspacePhases[globalKey] != phase else { return }
+        fileWorkspacePhases[globalKey] = phase
     }
 
     // MARK: - 资源管理：按工作区边界淘汰缓存
