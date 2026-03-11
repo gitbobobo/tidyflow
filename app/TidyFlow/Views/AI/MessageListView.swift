@@ -649,52 +649,58 @@ struct AIChatTranscriptContent: View {
     var body: some View {
         let renderRange = precomputeFullRenderRange(for: messages)
 
-        LazyVStack(spacing: 0) {
-            loadingOlderHeader
+        // 用 VStack 包裹，将底部锚点放在 LazyVStack 外部，确保无论滚到多远都能被 proxy.scrollTo 找到。
+        // 若锚点留在 LazyVStack 内部，惰性渲染会在远离底部时将其从视图树移除，导致 scrollTo 静默失败。
+        VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
+                loadingOlderHeader
 
-            let msgIndexMap = Dictionary(
-                uniqueKeysWithValues: messages.enumerated().map { ($1.id, $0) }
-            )
-            ForEach(messages) { message in
-                let index = msgIndexMap[message.id] ?? 0
-                AIChatMessageRow(
-                    message: message,
-                    prefersFullRender: virtualizationWindow.shouldFullyRender(
-                        index: index,
-                        isStreaming: message.isStreaming,
-                        fullRenderRange: renderRange,
-                        totalCount: messages.count
-                    ),
-                    pendingQuestionToken: pendingQuestionToken(for: message),
-                    pendingQuestions: pendingQuestions,
-                    sessionId: sessionId,
-                    questionRequestResolver: questionRequestResolver,
-                    onQuestionReply: onQuestionReply,
-                    onQuestionReject: onQuestionReject,
-                    onQuestionReplyAsMessage: onQuestionReplyAsMessage,
-                    onOpenLinkedSession: onOpenLinkedSession
+                let msgIndexMap = Dictionary(
+                    uniqueKeysWithValues: messages.enumerated().map { ($1.id, $0) }
                 )
-                .equatable()
-                .id(message.id)
-                .padding(.top, messageSpacing(at: index, in: messages))
-                .onAppear {
-                    onMessageAppear(message.id)
-                }
-                .onDisappear {
-                    onMessageDisappear(message.id)
+                ForEach(messages) { message in
+                    let index = msgIndexMap[message.id] ?? 0
+                    AIChatMessageRow(
+                        message: message,
+                        prefersFullRender: virtualizationWindow.shouldFullyRender(
+                            index: index,
+                            isStreaming: message.isStreaming,
+                            fullRenderRange: renderRange,
+                            totalCount: messages.count
+                        ),
+                        pendingQuestionToken: pendingQuestionToken(for: message),
+                        pendingQuestions: pendingQuestions,
+                        sessionId: sessionId,
+                        questionRequestResolver: questionRequestResolver,
+                        onQuestionReply: onQuestionReply,
+                        onQuestionReject: onQuestionReject,
+                        onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                        onOpenLinkedSession: onOpenLinkedSession
+                    )
+                    .equatable()
+                    .id(message.id)
+                    .padding(.top, messageSpacing(at: index, in: messages))
+                    .onAppear {
+                        onMessageAppear(message.id)
+                    }
+                    .onDisappear {
+                        onMessageDisappear(message.id)
+                    }
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
+            // 为底部悬浮遮罩（输入框）预留弹出空间，始终在 LazyVStack 外部渲染，不受惰性卸载影响。
             Color.clear
                 .frame(height: bottomOverlayInset)
 
+            // 底部滚动锚点，必须始终存在于视图树中，供 proxy.scrollTo 可靠定位。
             Color.clear
                 .frame(height: 1)
                 .id(AIChatTranscriptContainer.bottomAnchorId)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
