@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
+use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
@@ -24,6 +25,7 @@ pub struct HubEvent {
 pub struct OpenCodeEventHub {
     sender: broadcast::Sender<HubEvent>,
     started: Arc<Mutex<bool>>,
+    worker: Arc<Mutex<Option<JoinHandle<()>>>>,
     manager: Arc<OpenCodeManager>,
 }
 
@@ -34,6 +36,7 @@ impl OpenCodeEventHub {
         Self {
             sender,
             started: Arc::new(Mutex::new(false)),
+            worker: Arc::new(Mutex::new(None)),
             manager,
         }
     }
@@ -55,7 +58,7 @@ impl OpenCodeEventHub {
         let sender = self.sender.clone();
         let manager = self.manager.clone();
 
-        tokio::spawn(async move {
+        let worker = tokio::spawn(async move {
             // 无限循环：断线重连
             let mut backoff_ms: u64 = 200;
             loop {
@@ -101,7 +104,27 @@ impl OpenCodeEventHub {
             }
         });
 
+        let mut worker_slot = self.worker.lock().await;
+        *worker_slot = Some(worker);
         *started = true;
         Ok(())
+    }
+
+    /// 停止后台 SSE 重连任务，避免 shutdown 期间重新拉起 opencode serve。
+    pub async fn shutdown(&self) {
+        {
+            let mut started = self.started.lock().await;
+            *started = false;
+        }
+
+        let handle = {
+            let mut worker = self.worker.lock().await;
+            worker.take()
+        };
+
+        if let Some(handle) = handle {
+            handle.abort();
+            let _ = handle.await;
+        }
     }
 }

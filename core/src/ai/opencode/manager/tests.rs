@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai::event_hub::OpenCodeEventHub;
 use std::sync::Arc;
 
 #[test]
@@ -184,5 +185,29 @@ async fn test_drop_cleans_up_spawned_server() {
     panic!(
         "OpenCode child process should exit after manager drop, pid={}",
         pid
+    );
+}
+
+#[tokio::test]
+async fn test_event_hub_shutdown_does_not_respawn_server() {
+    if OpenCodeManager::resolve_opencode_path().is_none() {
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(OpenCodeManager::new(temp_dir.path().to_path_buf()));
+    let hub = OpenCodeEventHub::new(manager.clone());
+
+    hub.ensure_started().await.expect("start event hub");
+    assert!(manager.is_running().await, "hub 启动后应已拉起 serve");
+
+    hub.shutdown().await;
+    manager.stop_server().await.expect("stop server");
+
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+
+    assert!(
+        !manager.is_running().await,
+        "event hub shutdown 后不应重新拉起 opencode serve"
     );
 }

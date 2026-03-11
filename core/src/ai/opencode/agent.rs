@@ -75,6 +75,7 @@ impl AiAgent for OpenCodeAgent {
     }
 
     async fn stop(&self) -> Result<(), String> {
+        self.hub.shutdown().await;
         self.manager.stop_server().await
     }
 
