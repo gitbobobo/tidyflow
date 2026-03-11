@@ -36,9 +36,8 @@ final class AIChatMessageVisibilitySemanticsTests: XCTestCase {
 
         let nodes = AIChatMessageLayoutSemantics.displayNodes(for: message, pendingQuestions: [:])
         XCTAssertEqual(nodes.count, 1)
-        guard case .textGroup = nodes[0] else {
-            return XCTFail("commentary 文本现在应进入普通文本文档链路")
-        }
+        XCTAssertEqual(nodes[0].part.id, "t1")
+        XCTAssertEqual(nodes[0].part.kind, .text)
     }
 
     func testAnsweredQuestionToolPartReturnsToTranscript() {
@@ -93,9 +92,6 @@ final class AIChatMessageVisibilitySemanticsTests: XCTestCase {
 
         let nodes = AIChatMessageLayoutSemantics.displayNodes(for: message, pendingQuestions: [:])
         XCTAssertEqual(nodes.count, 1)
-        guard case .part(let part) = nodes[0] else {
-            return XCTFail("已完成的 question 应回到消息流")
-        }
-        XCTAssertEqual(part.kind, .tool)
+        XCTAssertEqual(nodes[0].part.kind, .tool)
     }
 }

@@ -44,7 +44,7 @@ private enum StreamingMarkdownRenderPolicy {
     }
 }
 
-/// 聊天消息 Markdown 渲染器：每个连续文本文档块对应一个 StructuredText。
+/// 聊天消息 Markdown 渲染器：每个可见文本 part 对应一个 StructuredText。
 /// 流式输出期间按文本体积自适应降频，减少全量 Markdown 解析开销。
 struct MarkdownTextView: View {
     let text: String

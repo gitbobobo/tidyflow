@@ -1021,14 +1021,14 @@ private struct AIChatMessageBody: View {
     /// - 其余组合保持 10pt 阅读节奏
     private func spacingBeforeNode(at index: Int) -> CGFloat {
         guard index > 0 else { return 0 }
-        let previousNode = nodes[index - 1]
-        let currentNode = nodes[index]
-        switch (previousNode, currentNode) {
-        case (.part(let lhs), .part(let rhs)) where lhs.kind == .tool && rhs.kind == .tool:
+        let previousPart = nodes[index - 1].part
+        let currentPart = nodes[index].part
+        switch (previousPart.kind, currentPart.kind) {
+        case (.tool, .tool):
             return 8
-        case (.part(let lhs), .textGroup) where lhs.kind == .tool || lhs.kind == .plan:
+        case (.tool, .text), (.tool, .reasoning), (.plan, .text), (.plan, .reasoning):
             return 12
-        case (.textGroup, .part(let rhs)) where rhs.kind == .tool:
+        case (.text, .tool), (.reasoning, .tool):
             return 12
         default:
             return 10
@@ -1037,34 +1037,21 @@ private struct AIChatMessageBody: View {
 
     @ViewBuilder
     private func displayNodeView(_ node: AIChatMessageDisplayNode) -> some View {
-        switch node {
-        case .textGroup(let group):
-            textGroupView(group)
-        case .part(let part):
-            partContentView(part)
-        }
-    }
-
-    @ViewBuilder
-    private func textGroupView(_ group: AIChatTextRunGroup) -> some View {
-        if let markdownText = normalizedMarkdownDisplayText(
-            group.markdownText(renderReasoningAsBlockQuote: !isUser),
-            keepOriginalForUser: isUser
-        ) {
-            MarkdownTextView(
-                text: markdownText,
-                role: isUser ? .user : .assistant,
-                baseFontSize: 13,
-                isStreaming: message.isStreaming
-            )
-        }
+        partContentView(node.part)
     }
 
     @ViewBuilder
     private func partContentView(_ part: AIChatPart) -> some View {
         switch part.kind {
         case .text, .reasoning:
-            EmptyView()
+            if let markdownText = markdownText(for: part) {
+                MarkdownTextView(
+                    text: markdownText,
+                    role: isUser ? .user : .assistant,
+                    baseFontSize: 13,
+                    isStreaming: message.isStreaming
+                )
+            }
         case .file:
             filePartView(part)
         case .plan:
@@ -1136,31 +1123,27 @@ private struct AIChatMessageBody: View {
     private var compactSummaryText: String {
         var lines: [String] = []
         for node in nodes {
-            switch node {
-            case .textGroup(let group):
-                let text = group.combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let part = node.part
+            switch part.kind {
+            case .text, .reasoning:
+                let text = (part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty {
                     lines.append(text)
                 }
-            case .part(let part):
-                switch part.kind {
-                case .file:
-                    let name = part.filename ?? "attachment"
-                    lines.append("[附件] \(name)")
-                case .plan:
-                    if let payload = AIPlanCardPayload.from(source: part.source) {
-                        lines.append(payload.summaryLine)
-                    } else {
-                        lines.append("[计划] 已更新")
-                    }
-                case .compaction:
-                    lines.append("[系统] 上下文压缩中")
-                case .tool:
-                    let toolName = part.toolName ?? "tool"
-                    lines.append("[工具] \(toolName)")
-                case .text, .reasoning:
-                    break
+            case .file:
+                let name = part.filename ?? "attachment"
+                lines.append("[附件] \(name)")
+            case .plan:
+                if let payload = AIPlanCardPayload.from(source: part.source) {
+                    lines.append(payload.summaryLine)
+                } else {
+                    lines.append("[计划] 已更新")
                 }
+            case .compaction:
+                lines.append("[系统] 上下文压缩中")
+            case .tool:
+                let toolName = part.toolName ?? "tool"
+                lines.append("[工具] \(toolName)")
             }
         }
         return lines.joined(separator: "\n")
@@ -1188,6 +1171,26 @@ private struct AIChatMessageBody: View {
         var text = raw.replacingOccurrences(of: "\r\n", with: "\n")
         text = text.replacingOccurrences(of: "\r", with: "\n")
         return text
+    }
+
+    private func markdownText(for part: AIChatPart) -> String? {
+        guard let raw = part.text else { return nil }
+        let displayText: String
+        if part.kind == .reasoning, !isUser {
+            displayText = blockQuoteMarkdown(for: raw)
+        } else {
+            displayText = raw
+        }
+        return normalizedMarkdownDisplayText(displayText, keepOriginalForUser: isUser)
+    }
+
+    private func blockQuoteMarkdown(for text: String) -> String {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                line.isEmpty ? ">" : "> \(line)"
+            }
+            .joined(separator: "\n")
     }
 
     @ViewBuilder
