@@ -646,6 +646,11 @@ struct AIChatTranscriptContent: View {
     let onMessageAppear: (String) -> Void
     let onMessageDisappear: (String) -> Void
 
+    private var showsStreamingFooter: Bool {
+        guard let lastMessage = messages.last else { return false }
+        return lastMessage.role == .assistant && lastMessage.isStreaming
+    }
+
     var body: some View {
         let renderRange = precomputeFullRenderRange(for: messages)
 
@@ -690,7 +695,17 @@ struct AIChatTranscriptContent: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+
+            if showsStreamingFooter {
+                AIChatStreamingStatusFooter()
+                    .padding(.horizontal, 24)
+                    .padding(.top, messages.isEmpty ? 0 : 6)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            } else {
+                Color.clear
+                    .frame(height: 10)
+            }
 
             // 为底部悬浮遮罩（输入框）预留弹出空间，始终在 LazyVStack 外部渲染，不受惰性卸载影响。
             Color.clear
@@ -829,6 +844,21 @@ struct AIChatTranscriptContent: View {
     }
 }
 
+private struct AIChatStreamingStatusFooter: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("思考中")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .shimmering(
+                    active: true,
+                    animation: .linear(duration: 1.4).repeatForever(autoreverses: false)
+                )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct MessageListScrollMetrics: Equatable {
     let distanceToBottom: CGFloat
     let canScrollVertically: Bool
@@ -924,7 +954,6 @@ private struct AIChatMessageBody: View {
     private var bubbleCornerRadius: CGFloat { 12 }
     private var primaryTextColor: Color { .primary }
     private var secondaryTextColor: Color { .secondary }
-    private var showsStreamingStatus: Bool { !isUser && message.isStreaming }
 
     var body: some View {
         Group {
@@ -946,10 +975,6 @@ private struct AIChatMessageBody: View {
                         .padding(.top, spacingBeforeNode(at: index))
                         .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
                 }
-            }
-            if showsStreamingStatus {
-                streamingStatusIndicator(nodesEmpty: nodes.isEmpty)
-                    .transition(.opacity)
             }
         }
         .animation(message.isStreaming ? nil : .easeOut(duration: 0.18), value: nodes.count)
@@ -1105,17 +1130,6 @@ private struct AIChatMessageBody: View {
             toolMessageId: question.toolMessageID ?? message.messageId ?? part.id,
             toolCallId: part.toolCallId
         )
-    }
-
-    /// 流式状态指示器，接收预计算的 nodesEmpty，避免重复调用 displayNodes。
-    private func streamingStatusIndicator(nodesEmpty: Bool) -> some View {
-        HStack(spacing: 0) {
-            Text("思考中")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .shimmering(active: true, animation: .linear(duration: 1.4).repeatForever(autoreverses: false))
-        }
-        .padding(.top, nodesEmpty ? 0 : 4)
     }
 
     private var compactSummaryText: String {
