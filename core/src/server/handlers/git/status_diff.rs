@@ -1,5 +1,4 @@
 use crate::server::ws::OutboundTx as WebSocket;
-use tracing::warn;
 
 use crate::server::context::{resolve_workspace, SharedAppState};
 use crate::server::git;
@@ -25,40 +24,9 @@ pub async fn handle_message(
             let root = ws_ctx.root_path;
             let default_branch = ws_ctx.default_branch;
 
-            // Run git status + branch divergence in blocking task
-            let result = tokio::task::spawn_blocking(move || {
-                let mut status = git::git_status(&root)?;
-                let current_branch = match git::git_current_branch(&root) {
-                    Ok(branch) => branch,
-                    Err(e) => {
-                        warn!("Failed to get current branch: {}", e);
-                        None
-                    }
-                };
-
-                let divergence = if let Some(branch) = current_branch.as_deref() {
-                    match git::check_branch_divergence_local(&root, branch, &default_branch) {
-                        Ok(result) => Some(result),
-                        Err(e) => {
-                            warn!(
-                                "Failed to compute local branch divergence for '{}' vs '{}': {}",
-                                branch, default_branch, e
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                status.current_branch = current_branch;
-                status.default_branch = Some(default_branch);
-                status.ahead_by = divergence.as_ref().map(|d| d.ahead_by);
-                status.behind_by = divergence.as_ref().map(|d| d.behind_by);
-                status.compared_branch = divergence.map(|d| d.compared_branch);
-                Ok::<_, git::GitError>(status)
-            })
-            .await;
+            // git_status 现在一次性产出 status items、current_branch 和 divergence
+            let result =
+                tokio::task::spawn_blocking(move || git::git_status(&root, &default_branch)).await;
 
             match result {
                 Ok(Ok(status_result)) => {

@@ -9,22 +9,92 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{LazyLock, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tracing::debug;
+use tracing::warn;
 
 use super::utils::*;
+use crate::server::perf as perf_counters;
 use crate::workspace::cache_metrics;
 
-/// 缓存条目
+// ── 指纹类型 ──
+
+/// 单个文件的 mtime + len 指纹（不感知内容，仅感知是否被修改过）
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileFingerprint {
+    mtime_ns: u64,
+    len: u64,
+}
+
+impl FileFingerprint {
+    fn from_path(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        let mtime_ns = meta
+            .modified()
+            .ok()?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_nanos() as u64;
+        Some(FileFingerprint {
+            mtime_ns,
+            len: meta.len(),
+        })
+    }
+}
+
+/// Git 状态缓存命中判定指纹。
+///
+/// 持有 `.git/index`、`.git/HEAD` 和当前分支 ref 文件的 mtime+len 指纹。
+/// 任一文件变化时指纹不匹配，触发重建。
+/// detached HEAD 或无法定位分支 ref 文件时，`branch_ref_fp` 为 None，
+/// 此时仍可依赖 `index_fp` 和 `head_fp` 进行命中判定。
+#[derive(Debug, Clone, PartialEq)]
+struct GitStatusFingerprint {
+    index_fp: Option<FileFingerprint>,
+    head_fp: Option<FileFingerprint>,
+    branch_ref_fp: Option<FileFingerprint>,
+}
+
+impl GitStatusFingerprint {
+    /// 计算当前工作区的 Git 文件指纹。无需打开仓库，仅 stat 3 个文件。
+    fn compute(workspace_root: &Path) -> Self {
+        let git_dir = workspace_root.join(".git");
+        let index_fp = FileFingerprint::from_path(&git_dir.join("index"));
+        let head_fp = FileFingerprint::from_path(&git_dir.join("HEAD"));
+
+        // 从 HEAD 内容解析当前分支 ref，找到对应 ref 文件
+        let branch_ref_fp = std::fs::read_to_string(git_dir.join("HEAD"))
+            .ok()
+            .and_then(|content| content.strip_prefix("ref: ").map(|s| s.trim().to_string()))
+            .and_then(|ref_name| FileFingerprint::from_path(&git_dir.join(&ref_name)));
+
+        GitStatusFingerprint {
+            index_fp,
+            head_fp,
+            branch_ref_fp,
+        }
+    }
+
+    /// 如果至少有一个文件指纹可采样，则可用于命中判定
+    fn is_sampable(&self) -> bool {
+        self.index_fp.is_some() || self.head_fp.is_some()
+    }
+}
+
+// ── 缓存结构 ──
+
+/// 缓存条目（含指纹，用于精确命中判定）
 struct CacheEntry {
     result: GitStatusResult,
+    fingerprint: GitStatusFingerprint,
     created_at: Instant,
 }
 
-/// 缓存 TTL（5 秒），文件监控事件会主动失效缓存
-const CACHE_TTL_SECS: u64 = 5;
+/// 缓存 TTL 从 5s 升级到 30s，仅作为 watcher 丢事件时的保底淘汰。
+/// 主命中判定依赖指纹（index / HEAD / 分支 ref mtime+len），TTL 不再是主策略。
+const CACHE_TTL_SECS: u64 = 30;
 
-/// 全局 git status 缓存
+/// 全局 git status 缓存（key 包含 default_branch 以隔离不同分支配置）
 static GIT_STATUS_CACHE: LazyLock<Mutex<HashMap<String, CacheEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -126,30 +196,63 @@ fn sort_status_items(items: &mut [GitStatusEntry]) {
     });
 }
 
-/// Get git status for a workspace
-pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
-    let key = workspace_root.to_string_lossy().to_string();
+/// Get git status for a workspace.
+///
+/// 缓存命中策略（优先级从高到低）：
+/// 1. 指纹命中（.git/index + HEAD + 分支 ref 均未变化）→ 直接返回
+/// 2. TTL 兜底（30s，用于 watcher 丢事件时的保底淘汰）→ 重建
+/// 3. 首次调用 → 全量重建（冷路径）
+///
+/// 冷路径一次性产出 status items、current_branch 和 divergence，
+/// 避免 query 层再次打开仓库。
+pub fn git_status(
+    workspace_root: &Path,
+    default_branch: &str,
+) -> Result<GitStatusResult, GitError> {
+    let key = format!("{}#{}", workspace_root.to_string_lossy(), default_branch);
+    let refresh_started = Instant::now();
+
+    // 先计算指纹（不持锁，stat 3 个文件）
+    let current_fp = GitStatusFingerprint::compute(workspace_root);
 
     if let Ok(cache) = GIT_STATUS_CACHE.lock() {
         if let Some(entry) = cache.get(&key) {
-            if entry.created_at.elapsed().as_secs() < CACHE_TTL_SECS {
-                cache_metrics::record_git_cache_hit(&key);
-                return Ok(entry.result.clone());
+            let elapsed = entry.created_at.elapsed().as_secs();
+            if elapsed < CACHE_TTL_SECS {
+                let hit = if current_fp.is_sampable() {
+                    current_fp == entry.fingerprint
+                } else {
+                    // 无法采样指纹（非 git 目录或 .git 不可读），退化为 TTL
+                    true
+                };
+                if hit {
+                    perf_counters::record_workspace_git_status_refresh(
+                        refresh_started.elapsed().as_millis() as u64,
+                    );
+                    cache_metrics::record_git_cache_hit(&key);
+                    return Ok(entry.result.clone());
+                } else {
+                    cache_metrics::record_git_cache_eviction(&key, "fingerprint_changed");
+                }
+            } else {
+                cache_metrics::record_git_cache_eviction(&key, "ttl_expired");
             }
-            // TTL 过期，将在下方重建
-            cache_metrics::record_git_cache_eviction(&key, "ttl_expired");
         }
     }
 
+    // 缓存未命中：冷路径全量重建
     cache_metrics::record_git_cache_miss(&key);
-    let result = git_status_uncached(workspace_root)?;
+    let result = git_status_uncached(workspace_root, default_branch)?;
     let item_count = result.items.len();
+    let refresh_ms = refresh_started.elapsed().as_millis() as u64;
+    perf_counters::record_workspace_git_status_refresh(refresh_ms);
 
     if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
         cache.insert(
             key.clone(),
             CacheEntry {
                 result: result.clone(),
+                fingerprint: current_fp,
                 created_at: Instant::now(),
             },
         );
@@ -239,18 +342,78 @@ pub fn check_branch_divergence_local(
     })
 }
 
-/// 使指定工作区的 git status 缓存失效
+/// 使指定工作区的 git status 缓存失效（清除所有 default_branch 变体）
 pub fn invalidate_git_status_cache(workspace_root: &Path) {
-    let key = workspace_root.to_string_lossy().to_string();
+    let root_prefix = format!("{}#", workspace_root.to_string_lossy());
     if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
-        if cache.remove(&key).is_some() {
+        let keys_to_remove: Vec<String> = cache
+            .keys()
+            .filter(|k| k.starts_with(&root_prefix))
+            .cloned()
+            .collect();
+        for key in keys_to_remove {
+            cache.remove(&key);
             cache_metrics::record_git_cache_eviction(&key, "invalidated");
         }
     }
 }
 
-/// 实际执行 git status 查询（无缓存）
-fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
+/// 复用已打开仓库计算分支分歧（避免重复打开仓库）
+fn compute_divergence_from_repo(
+    repo: &gix::Repository,
+    current_branch: &str,
+    default_branch: &str,
+) -> Result<BranchDivergenceResult, GitError> {
+    if current_branch == default_branch || default_branch.is_empty() {
+        return Err(GitError::CommandFailed("same or empty branch".to_string()));
+    }
+    let current_ref = format!("refs/heads/{}", current_branch);
+    let default_ref = format!("refs/heads/{}", default_branch);
+
+    let mut current = repo
+        .try_find_reference(&current_ref)
+        .map_err(|e| GitError::CommandFailed(format!("Failed to find branch: {}", e)))?
+        .ok_or_else(|| {
+            GitError::CommandFailed(format!("Local branch '{}' not found", current_branch))
+        })?;
+
+    let mut default = repo
+        .try_find_reference(&default_ref)
+        .map_err(|e| GitError::CommandFailed(format!("Failed to find branch: {}", e)))?
+        .ok_or_else(|| {
+            GitError::CommandFailed(format!(
+                "Local default branch '{}' not found",
+                default_branch
+            ))
+        })?;
+
+    let current_id = current
+        .peel_to_id()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to resolve current branch: {}", e)))?
+        .detach();
+    let default_id = default
+        .peel_to_id()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to resolve default branch: {}", e)))?
+        .detach();
+
+    let ahead_by = count_ahead_behind(repo, current_id, default_id)?;
+    let behind_by = count_ahead_behind(repo, default_id, current_id)?;
+
+    Ok(BranchDivergenceResult {
+        ahead_by,
+        behind_by,
+        compared_branch: default_branch.to_string(),
+    })
+}
+
+/// 实际执行 git status 查询（无缓存）。
+///
+/// 冷路径一次性产出 items、current_branch 和 divergence，
+/// 复用同一个已打开的仓库，避免重复 `gix::discover`。
+fn git_status_uncached(
+    workspace_root: &Path,
+    default_branch: &str,
+) -> Result<GitStatusResult, GitError> {
     let repo = match gix::discover(workspace_root) {
         Ok(repo) => repo,
         Err(_) => {
@@ -260,7 +423,11 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
                 has_staged_changes: false,
                 staged_count: 0,
                 current_branch: None,
-                default_branch: None,
+                default_branch: if default_branch.is_empty() {
+                    None
+                } else {
+                    Some(default_branch.to_string())
+                },
                 ahead_by: None,
                 behind_by: None,
                 compared_branch: None,
@@ -296,23 +463,49 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
     }
 
     // 不写回 index，避免触发 .git/index 变更事件造成状态刷新风暴。
-    // gix 的状态扫描在不写回的情况下功能是完整的，只是少了性能缓存优化。
-
     sort_status_items(&mut items);
 
     let staged_count = items.iter().filter(|item| item.staged).count();
     let has_staged_changes = staged_count > 0;
+
+    // 从同一已打开仓库获取当前分支（复用 gix::discover 结果）
+    let current_branch = repo
+        .head_name()
+        .ok()
+        .flatten()
+        .map(|name| name.shorten().to_string());
+
+    // 从同一已打开仓库计算本地分歧信息
+    let divergence = if let Some(branch) = current_branch.as_deref() {
+        match compute_divergence_from_repo(&repo, branch, default_branch) {
+            Ok(result) => Some(result),
+            Err(e) => {
+                // 分歧计算失败（本地无对应分支等）时静默忽略
+                warn!(
+                    "git_status divergence skipped: branch={} default={} err={}",
+                    branch, default_branch, e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     Ok(GitStatusResult {
         repo_root,
         items,
         has_staged_changes,
         staged_count,
-        current_branch: None,
-        default_branch: None,
-        ahead_by: None,
-        behind_by: None,
-        compared_branch: None,
+        current_branch,
+        default_branch: if default_branch.is_empty() {
+            None
+        } else {
+            Some(default_branch.to_string())
+        },
+        ahead_by: divergence.as_ref().map(|d| d.ahead_by),
+        behind_by: divergence.as_ref().map(|d| d.behind_by),
+        compared_branch: divergence.map(|d| d.compared_branch),
     })
 }
 
@@ -737,5 +930,79 @@ mod tests {
         };
         assert_eq!(renamed.status, "R");
         assert_eq!(renamed.old_path, Some("old.txt".to_string()));
+    }
+
+    // ── 热点路径定向测试（WI-005 / CHK-002）──
+
+    #[test]
+    fn hotspot_perf_git_fingerprint_is_sampable_on_nonexistent_path() {
+        // 非 Git 仓库或路径不存在时，指纹应标记为 not sampable，不 panic
+        let root = std::path::Path::new("/nonexistent/no_such_repo");
+        let fp = GitStatusFingerprint::compute(root);
+        assert!(!fp.is_sampable(), "non-existent path must not be sampable");
+    }
+
+    #[test]
+    fn hotspot_perf_git_status_non_git_dir_returns_empty() {
+        // 对非 Git 目录调用 git_status 应返回空结果，不 panic 或返回错误串
+        let tmp = std::env::temp_dir().join("hotspot_non_git_dir_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let result = git_status(&tmp, "main");
+        // 非 git 目录应返回空结果（而非 Err 传播到调用方造成 panic）
+        match result {
+            Ok(r) => {
+                assert!(r.items.is_empty(), "non-git dir should yield empty status");
+                assert!(r.current_branch.is_none() || r.current_branch.as_deref() == Some(""));
+            }
+            Err(_) => {
+                // 返回 Err 也可接受——关键是不 panic
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn hotspot_perf_invalidate_clears_all_branch_variants() {
+        // 验证 invalidate 按前缀匹配清除所有关联 key（多分支场景）
+        use std::path::Path;
+        let root = Path::new("/tmp/hotspot_invalidate_test");
+        let key_main = format!("{}#main", root.to_string_lossy());
+        let key_feat = format!("{}#feature/foo", root.to_string_lossy());
+
+        // 直接向缓存插入两个变体
+        {
+            let mut cache = GIT_STATUS_CACHE.lock().unwrap();
+            let make_entry = || CacheEntry {
+                result: GitStatusResult {
+                    repo_root: root.to_string_lossy().to_string(),
+                    items: vec![],
+                    has_staged_changes: false,
+                    staged_count: 0,
+                    current_branch: None,
+                    default_branch: None,
+                    ahead_by: None,
+                    behind_by: None,
+                    compared_branch: None,
+                },
+                created_at: std::time::Instant::now(),
+                fingerprint: GitStatusFingerprint::compute(root),
+            };
+            cache.insert(key_main.clone(), make_entry());
+            cache.insert(key_feat.clone(), make_entry());
+        }
+
+        // 调用 invalidate 清除
+        invalidate_git_status_cache(root);
+
+        // 两个 key 都应被清除
+        let cache = GIT_STATUS_CACHE.lock().unwrap();
+        assert!(
+            !cache.contains_key(&key_main),
+            "main variant should be cleared"
+        );
+        assert!(
+            !cache.contains_key(&key_feat),
+            "feature variant should be cleared"
+        );
     }
 }

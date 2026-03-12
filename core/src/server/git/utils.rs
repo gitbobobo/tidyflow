@@ -339,7 +339,7 @@ pub fn is_merging(workspace_root: &Path) -> bool {
 
 /// Get list of conflicted files
 pub fn get_conflict_files(workspace_root: &Path) -> Vec<String> {
-    let status = crate::server::git::status::git_status(workspace_root);
+    let status = crate::server::git::status::git_status(workspace_root, "");
     match status {
         Ok(result) => result
             .items

@@ -6,7 +6,6 @@ use crate::server::protocol::{
     ConflictFileEntryInfo, GitBranchInfo, GitLogEntryInfo, GitShowFileInfo, GitStatusEntry,
     ServerMessage,
 };
-use tracing::warn;
 
 pub(crate) async fn query_git_status(
     app_state: &SharedAppState,
@@ -19,41 +18,12 @@ pub(crate) async fn query_git_status(
     let root = ws_ctx.root_path;
     let default_branch = ws_ctx.default_branch;
 
-    let status_result = tokio::task::spawn_blocking(move || {
-        let mut status = git::git_status(&root)?;
-        let current_branch = match git::git_current_branch(&root) {
-            Ok(branch) => branch,
-            Err(e) => {
-                warn!("Failed to get current branch: {}", e);
-                None
-            }
-        };
-
-        let divergence = if let Some(branch) = current_branch.as_deref() {
-            match git::check_branch_divergence_local(&root, branch, &default_branch) {
-                Ok(result) => Some(result),
-                Err(e) => {
-                    warn!(
-                        "Failed to compute local branch divergence for '{}' vs '{}': {}",
-                        branch, default_branch, e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        status.current_branch = current_branch;
-        status.default_branch = Some(default_branch);
-        status.ahead_by = divergence.as_ref().map(|d| d.ahead_by);
-        status.behind_by = divergence.as_ref().map(|d| d.behind_by);
-        status.compared_branch = divergence.map(|d| d.compared_branch);
-        Ok::<_, git::GitError>(status)
-    })
-    .await
-    .map_err(|e| format!("Git status task failed: {}", e))?
-    .map_err(|e| format!("Git status failed: {}", e))?;
+    // git_status 现在一次性产出 status items、current_branch 和 divergence（复用同一 repo 对象）
+    let status_result =
+        tokio::task::spawn_blocking(move || git::git_status(&root, &default_branch))
+            .await
+            .map_err(|e| format!("Git status task failed: {}", e))?
+            .map_err(|e| format!("Git status failed: {}", e))?;
 
     let items: Vec<GitStatusEntry> = status_result
         .items
