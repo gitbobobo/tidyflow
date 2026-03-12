@@ -157,16 +157,6 @@ pub async fn handle_git_ai_merge(
             }
         };
 
-        // 发送给发起者
-        if let Err(e) = cmd_output_tx.send(msg.clone()).await {
-            error!("Failed to send AI merge result to WS: {}", e);
-        }
-        // 广播给其他连接
-        let _ = crate::server::context::send_task_broadcast_message(
-            &task_broadcast_tx,
-            &origin_conn_id,
-            msg.clone(),
-        );
         // 更新任务历史
         if let ServerMessage::GitAIMergeResult {
             success,
@@ -191,6 +181,15 @@ pub async fn handle_git_ai_merge(
             &workspace_for_task,
         )
         .await;
+        // 先清理运行态再发送完成结果，避免客户端立刻刷新侧边栏时读到旧 task_icon。
+        if let Err(e) = cmd_output_tx.send(msg.clone()).await {
+            error!("Failed to send AI merge result to WS: {}", e);
+        }
+        let _ = crate::server::context::send_task_broadcast_message(
+            &task_broadcast_tx,
+            &origin_conn_id,
+            msg,
+        );
     });
 
     // 注册到 AI 任务注册表

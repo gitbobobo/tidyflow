@@ -218,6 +218,14 @@ pub(super) async fn handle_message(
                     commits,
                 };
 
+                running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
+                crate::application::sidebar_status::notify_workspace_sidebar_changed(
+                    &ctx_for_task,
+                    &project_for_task,
+                    &workspace_for_task,
+                )
+                .await;
+
                 if let Err(err) = ctx_for_task.cmd_output_tx.send(msg.clone()).await {
                     warn!(
                         "Failed to send EvoAutoCommitResult to initiator: conn_id={}, project={}, workspace={}, error={}",
@@ -230,14 +238,6 @@ pub(super) async fn handle_message(
                     origin_conn_id,
                     msg,
                 );
-
-                running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
-                crate::application::sidebar_status::notify_workspace_sidebar_changed(
-                    &ctx_for_task,
-                    &project_for_task,
-                    &workspace_for_task,
-                )
-                .await;
             });
 
             running_ai_tasks.lock().await.insert(

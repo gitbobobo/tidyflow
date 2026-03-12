@@ -226,6 +226,7 @@ pub async fn run_project_command(
     let broadcast_tx = ctx.task_broadcast_tx.clone();
     let origin_conn_id = ctx.conn_meta.conn_id.clone();
     let task_history = ctx.task_history.clone();
+    let ctx_for_sidebar = ctx.clone();
     let p = project.to_string();
     let w = workspace.to_string();
     let c = command_id.to_string();
@@ -351,8 +352,8 @@ pub async fn run_project_command(
                 .await;
                 broadcast_tasks_snapshot_with(&task_history, &broadcast_tx, &origin_conn_id).await;
                 let msg = ServerMessage::ProjectCommandCompleted {
-                    project: p,
-                    workspace: w,
+                    project: p.clone(),
+                    workspace: w.clone(),
                     command_id: c,
                     task_id: tid,
                     ok: false,
@@ -364,6 +365,12 @@ pub async fn run_project_command(
                     &origin_conn_id,
                     msg,
                 );
+                crate::application::sidebar_status::notify_workspace_sidebar_changed(
+                    &ctx_for_sidebar,
+                    &p,
+                    &w,
+                )
+                .await;
                 return;
             }
             None => return,
@@ -392,8 +399,8 @@ pub async fn run_project_command(
             &broadcast_tx,
             &origin_conn_id,
             ServerMessage::ProjectCommandCompleted {
-                project: p,
-                workspace: w,
+                project: p.clone(),
+                workspace: w.clone(),
                 command_id: c,
                 task_id: tid.clone(),
                 ok,
@@ -403,6 +410,12 @@ pub async fn run_project_command(
         let status = if ok { "completed" } else { "failed" };
         update_task_history(&task_history, &tid, status, Some(message)).await;
         broadcast_tasks_snapshot_with(&task_history, &broadcast_tx, &origin_conn_id).await;
+        crate::application::sidebar_status::notify_workspace_sidebar_changed(
+            &ctx_for_sidebar,
+            &p,
+            &w,
+        )
+        .await;
     });
 
     HandlerReply {
@@ -507,6 +520,8 @@ pub async fn cancel_project_command(
         &ctx.conn_meta.conn_id,
     )
     .await;
+    crate::application::sidebar_status::notify_workspace_sidebar_changed(ctx, project, workspace)
+        .await;
 
     HandlerReply {
         response: cancelled_msg.clone(),
