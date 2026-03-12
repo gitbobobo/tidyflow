@@ -290,6 +290,48 @@ impl WorkspaceRecoveryMeta {
     }
 }
 
+/// 终端恢复元数据条目（按工作区持久化，供 Core 重启后恢复使用）
+///
+/// 按 `(project, workspace, term_id)` 三元组严格隔离，不允许跨工作区共享。
+/// 只存储最小必要字段：工作区归属、终端身份、展示字段、恢复状态。
+/// 不存储 scrollback、订阅计数等运行时易变数据。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceTerminalRecoveryEntry {
+    /// 终端 ID（Core 生成的 UUID）
+    pub term_id: String,
+    /// 所属工作区路径（验证归属）
+    pub workspace_path: String,
+    /// 终端工作目录（用于重建 PTY）
+    pub cwd: String,
+    /// Shell 名称（如 "zsh", "bash"）
+    pub shell: String,
+    /// 用户自定义展示名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 用户自定义图标
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// 恢复状态：`pending` | `recovering` | `recovered` | `failed`
+    pub recovery_state: String,
+    /// 恢复失败原因（仅 recovery_state=failed 时有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_reason: Option<String>,
+    /// 记录时间（用于清理过期恢复记录）
+    pub recorded_at: DateTime<Utc>,
+}
+
+impl WorkspaceTerminalRecoveryEntry {
+    /// 是否需要执行恢复（pending 或 recovering 状态）
+    pub fn needs_recovery(&self) -> bool {
+        matches!(self.recovery_state.as_str(), "pending" | "recovering")
+    }
+
+    /// 是否恢复失败
+    pub fn is_failed(&self) -> bool {
+        self.recovery_state == "failed"
+    }
+}
+
 /// Workspace metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {

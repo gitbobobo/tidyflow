@@ -17,7 +17,7 @@ use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
     TemplateCommand, WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus,
-    WorkspaceTodoItem,
+    WorkspaceTodoItem, WorkspaceTerminalRecoveryEntry,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -1023,6 +1023,22 @@ impl StateStore {
                 PRIMARY KEY (id)
             )
             "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS terminal_recovery (
+                term_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                workspace TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                shell TEXT NOT NULL,
+                name TEXT,
+                icon TEXT,
+                recovery_state TEXT NOT NULL DEFAULT 'pending',
+                failed_reason TEXT,
+                recorded_at TEXT NOT NULL,
+                PRIMARY KEY (term_id)
+            )
+            "#,
         ];
 
         for sql in schema_sql {
@@ -1076,6 +1092,135 @@ impl StateStore {
                 }
             }
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // 终端恢复元数据持久化（WI-002）
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// 保存终端恢复元数据列表（Core 关闭前快照活跃终端信息，下次启动用于恢复）
+    ///
+    /// 按 (project, workspace, term_id) 三元组严格隔离，先清空指定工作区旧记录再写入新记录。
+    pub async fn save_terminal_recovery_entries(
+        &self,
+        project: &str,
+        workspace: &str,
+        entries: &[WorkspaceTerminalRecoveryEntry],
+    ) -> Result<(), StateError> {
+        // 清除该工作区的旧恢复记录
+        sqlx::query("DELETE FROM terminal_recovery WHERE project = ? AND workspace = ?")
+            .bind(project)
+            .bind(workspace)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        for entry in entries {
+            sqlx::query(r#"
+                INSERT INTO terminal_recovery
+                    (term_id, project, workspace, workspace_path, cwd, shell, name, icon,
+                     recovery_state, failed_reason, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#)
+            .bind(&entry.term_id)
+            .bind(project)
+            .bind(workspace)
+            .bind(&entry.workspace_path)
+            .bind(&entry.cwd)
+            .bind(&entry.shell)
+            .bind(&entry.name)
+            .bind(&entry.icon)
+            .bind(&entry.recovery_state)
+            .bind(&entry.failed_reason)
+            .bind(entry.recorded_at.to_rfc3339())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// 加载所有终端恢复元数据，按 (project, workspace) 分组返回
+    pub async fn load_terminal_recovery_entries(
+        &self,
+    ) -> Result<Vec<(String, String, WorkspaceTerminalRecoveryEntry)>, StateError> {
+        let rows = sqlx::query(
+            r#"SELECT term_id, project, workspace, workspace_path, cwd, shell,
+                      name, icon, recovery_state, failed_reason, recorded_at
+               FROM terminal_recovery
+               WHERE recovery_state IN ('pending', 'recovering')
+               ORDER BY project, workspace, term_id"#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let recorded_at_str: String = row.try_get("recorded_at").unwrap_or_default();
+            let recorded_at = parse_rfc3339_utc(&recorded_at_str)
+                .unwrap_or_else(chrono::Utc::now);
+            let project: String = row.try_get("project").unwrap_or_default();
+            let workspace: String = row.try_get("workspace").unwrap_or_default();
+            let entry = WorkspaceTerminalRecoveryEntry {
+                term_id: row.try_get("term_id").unwrap_or_default(),
+                workspace_path: row.try_get("workspace_path").unwrap_or_default(),
+                cwd: row.try_get("cwd").unwrap_or_default(),
+                shell: row.try_get("shell").unwrap_or_default(),
+                name: row.try_get("name").ok().flatten(),
+                icon: row.try_get("icon").ok().flatten(),
+                recovery_state: row.try_get("recovery_state").unwrap_or_else(|_| "pending".to_string()),
+                failed_reason: row.try_get("failed_reason").ok().flatten(),
+                recorded_at,
+            };
+            result.push((project, workspace, entry));
+        }
+        Ok(result)
+    }
+
+    /// 更新指定终端的恢复状态（恢复成功或失败时调用）
+    pub async fn update_terminal_recovery_state(
+        &self,
+        term_id: &str,
+        recovery_state: &str,
+        failed_reason: Option<&str>,
+    ) -> Result<(), StateError> {
+        sqlx::query(
+            "UPDATE terminal_recovery SET recovery_state = ?, failed_reason = ? WHERE term_id = ?",
+        )
+        .bind(recovery_state)
+        .bind(failed_reason)
+        .bind(term_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 清除已完成恢复（recovered/failed）的终端记录
+    pub async fn clear_completed_terminal_recovery_entries(&self) -> Result<(), StateError> {
+        sqlx::query(
+            "DELETE FROM terminal_recovery WHERE recovery_state IN ('recovered', 'failed')",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 清除指定工作区的所有终端恢复记录（工作区删除时调用）
+    pub async fn clear_terminal_recovery_for_workspace(
+        &self,
+        project: &str,
+        workspace: &str,
+    ) -> Result<(), StateError> {
+        sqlx::query("DELETE FROM terminal_recovery WHERE project = ? AND workspace = ?")
+            .bind(project)
+            .bind(workspace)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        Ok(())
     }
 }
 
