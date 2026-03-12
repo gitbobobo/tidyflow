@@ -1104,6 +1104,30 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    /// 当前工作区终端恢复入口（与 macOS recoverCurrentWorkspaceTerminals 语义对齐，WI-004）。
+    ///
+    /// 根据 Core 权威的 term_list recovery_phase 字段同步本地状态，
+    /// 不向 Core 发送任何指令。
+    func recoverWorkspaceTerminals(project: String, workspace: String, items: [TerminalSessionInfo]) {
+        terminalSessionStore.applyRecoveryPhases(from: items, makeKey: { "\($0):\($1)" })
+        let wsKey = "\(project):\(workspace)"
+        let recovering = items.filter {
+            "\($0.project):\($0.workspace)" == wsKey
+                && ($0.recoveryPhase == "recovering" || $0.recoveryPhase == "recovery_failed")
+        }
+        if !recovering.isEmpty {
+            TFLog.app.info(
+                "[Mobile] 终端恢复状态同步: workspace=\(wsKey, privacy: .public) count=\(recovering.count, privacy: .public)"
+            )
+        }
+    }
+
+    /// 工作区是否有终端正处于 Core 权威恢复中
+    func hasTerminalRecovery(project: String, workspace: String) -> Bool {
+        let wsKey = "\(project):\(workspace)"
+        return terminalSessionStore.hasRecovery(for: wsKey)
+    }
+
     /// 从共享语义快照派生工作区 Git 摘要，消除 workspaceGitSummary 的独立状态维护
     func gitSummaryForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitSummary {
         let snapshot = gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot

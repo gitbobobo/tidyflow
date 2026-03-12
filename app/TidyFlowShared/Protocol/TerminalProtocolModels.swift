@@ -23,13 +23,22 @@ public struct TerminalSessionInfo {
     public let cwd: String
     public let shell: String
     public let status: String
-    /// Core 权威生命周期相位："entering"/"active"/"resuming"/"idle"
+    /// Core 权威生命周期相位："entering"/"active"/"resuming"/"idle"/"recovering"/"recovery_failed"
     public let lifecyclePhase: String
     public let name: String?
     public let icon: String?
+    /// Core 重启恢复相位（仅 lifecycle_phase=recovering/recovery_failed 时非 nil）
+    /// 客户端必须以此字段为权威来源，不得自行推导恢复状态
+    public let recoveryPhase: String?
+    /// 恢复失败原因（仅 recoveryPhase=recovery_failed 时有值）
+    public let recoveryFailedReason: String?
     public let remoteSubscribers: [RemoteSubscriberDetail]
 
     public var isRunning: Bool { status == "running" }
+    /// 是否处于 Core 重启恢复中（区别于 WS 断连重附着的 resuming）
+    public var isRecovering: Bool { lifecyclePhase == "recovering" }
+    /// 是否恢复失败
+    public var isRecoveryFailed: Bool { lifecyclePhase == "recovery_failed" }
 
     public static func from(json: [String: Any]) -> TerminalSessionInfo? {
         guard let termId = json["term_id"] as? String,
@@ -43,6 +52,8 @@ public struct TerminalSessionInfo {
         let lifecyclePhase = json["lifecycle_phase"] as? String ?? "active"
         let name = json["name"] as? String
         let icon = json["icon"] as? String
+        let recoveryPhase = json["recovery_phase"] as? String
+        let recoveryFailedReason = json["recovery_failed_reason"] as? String
         var subscribers: [RemoteSubscriberDetail] = []
         if let arr = json["remote_subscribers"] as? [[String: Any]] {
             subscribers = arr.compactMap { RemoteSubscriberDetail.from(json: $0) }
@@ -57,11 +68,16 @@ public struct TerminalSessionInfo {
             lifecyclePhase: lifecyclePhase,
             name: name,
             icon: icon,
+            recoveryPhase: recoveryPhase,
+            recoveryFailedReason: recoveryFailedReason,
             remoteSubscribers: subscribers
         )
     }
 
-    public init(termId: String, project: String, workspace: String, cwd: String, shell: String, status: String, lifecyclePhase: String = "active", name: String?, icon: String?, remoteSubscribers: [RemoteSubscriberDetail]) {
+    public init(termId: String, project: String, workspace: String, cwd: String, shell: String,
+                status: String, lifecyclePhase: String = "active", name: String?, icon: String?,
+                recoveryPhase: String? = nil, recoveryFailedReason: String? = nil,
+                remoteSubscribers: [RemoteSubscriberDetail]) {
         self.termId = termId
         self.project = project
         self.workspace = workspace
@@ -71,6 +87,8 @@ public struct TerminalSessionInfo {
         self.lifecyclePhase = lifecyclePhase
         self.name = name
         self.icon = icon
+        self.recoveryPhase = recoveryPhase
+        self.recoveryFailedReason = recoveryFailedReason
         self.remoteSubscribers = remoteSubscribers
     }
 }

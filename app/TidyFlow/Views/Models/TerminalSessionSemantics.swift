@@ -25,6 +25,10 @@ enum TerminalLifecyclePhase: String, Equatable, Sendable {
     case active
     /// 恢复中：断线重连后正在重新 attach 与回放 scrollback
     case resuming
+    /// Core 重启后持久化恢复中（Core 权威，区别于客户端 resuming）
+    case recovering
+    /// Core 持久化恢复失败（终端不可用，需用户手动重建）
+    case recoveryFailed
 
     /// 从 Core 协议字符串恢复相位，无法识别的值回退到 idle
     static func from(serverValue: String) -> TerminalLifecyclePhase {
@@ -32,9 +36,21 @@ enum TerminalLifecyclePhase: String, Equatable, Sendable {
         case "entering": return .entering
         case "active": return .active
         case "resuming": return .resuming
+        case "recovering": return .recovering
+        case "recovery_failed": return .recoveryFailed
         case "idle": return .idle
         default: return .idle
         }
+    }
+
+    /// 是否为终端不可交互的过渡态
+    var isTransient: Bool {
+        self == .entering || self == .resuming || self == .recovering
+    }
+
+    /// 是否为 Core 权威恢复态（recovering 或 recoveryFailed）
+    var isCoreRecovery: Bool {
+        self == .recovering || self == .recoveryFailed
     }
 }
 
@@ -53,6 +69,12 @@ enum TerminalLifecycleInput: Equatable, Sendable {
     case resume(termId: String)
     /// 恢复完成
     case resumeCompleted(termId: String)
+    /// Core 重启后持久化恢复中（由 term_list recovery_phase="recovering" 驱动）
+    case coreRecovering(project: String, workspace: String, termId: String)
+    /// Core 持久化恢复成功（变为 active）
+    case coreRecoverySucceeded(termId: String)
+    /// Core 持久化恢复失败（终端不可用）
+    case coreRecoveryFailed(termId: String, reason: String)
     /// 终端关闭（收到 term_closed 或用户主动关闭）
     case close(termId: String)
     /// 断连（WebSocket 断开）
@@ -157,6 +179,30 @@ final class TerminalLifecycleStateMachine: @unchecked Sendable {
             state = next
             return .transitioned(next)
 
+        case .coreRecovering(let project, let workspace, let termId):
+            // Core 权威恢复中：无论当前相位，覆盖为 recovering
+            let next = TerminalLifecycleState(
+                phase: .recovering, project: project, workspace: workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .coreRecoverySucceeded(let termId):
+            guard state.phase == .recovering, state.activeTermId == termId else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .active, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
+        case .coreRecoveryFailed(let termId, _):
+            guard state.phase == .recovering, state.activeTermId == termId else { return .ignored }
+            let next = TerminalLifecycleState(
+                phase: .recoveryFailed, project: state.project, workspace: state.workspace, activeTermId: termId
+            )
+            state = next
+            return .transitioned(next)
+
         case .close(let termId):
             // 只关闭匹配的终端，不影响其它终端上下文
             guard state.activeTermId == termId, state.phase != .idle else { return .ignored }
@@ -189,15 +235,15 @@ final class TerminalLifecycleStateMachine: @unchecked Sendable {
     }
 
     /// 判断当前状态机是否接受来自指定上下文的终端事件。
-    /// 只有 active 或 resuming 阶段且上下文匹配时才接受。
+    /// active、resuming 或 recovering 阶段且上下文匹配时才接受。
     func acceptsEvent(project: String, workspace: String, termId: String) -> Bool {
-        guard state.phase == .active || state.phase == .resuming else { return false }
+        guard state.phase == .active || state.phase == .resuming || state.phase == .recovering else { return false }
         return state.project == project && state.workspace == workspace && state.activeTermId == termId
     }
 
     /// 判断当前状态机是否接受指定 termId 的事件。
     func acceptsTermEvent(termId: String) -> Bool {
-        guard state.phase == .active || state.phase == .resuming else { return false }
+        guard state.phase == .active || state.phase == .resuming || state.phase == .recovering else { return false }
         return state.activeTermId == termId || state.activeTermId == nil
     }
 }

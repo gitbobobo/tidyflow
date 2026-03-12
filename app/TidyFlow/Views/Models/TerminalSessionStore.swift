@@ -282,6 +282,49 @@ final class TerminalSessionStore: ObservableObject {
         detachRequestedAt[termId] = Date()
     }
 
+    // MARK: - 工作区级恢复状态追踪（WI-004）
+
+    /// 按工作区键（"project:workspace"）追踪 Core 权威恢复状态
+    /// key: "project:workspace"，value: (termId → recoveryPhase)
+    @Published private(set) var recoveryPhaseByWorkspaceKey: [String: [String: String]] = [:]
+
+    /// 工作区是否有终端处于 Core 恢复中（recovering 或 recovery_failed）
+    func hasRecovery(for workspaceKey: String) -> Bool {
+        guard let phases = recoveryPhaseByWorkspaceKey[workspaceKey] else { return false }
+        return phases.values.contains { $0 == "recovering" || $0 == "recovery_failed" }
+    }
+
+    /// 从 term_list 批量更新工作区恢复状态（WI-004）
+    func applyRecoveryPhases(from items: [TerminalSessionInfo], makeKey: (String, String) -> String) {
+        var updated: [String: [String: String]] = [:]
+        for term in items {
+            guard let phase = term.recoveryPhase, !phase.isEmpty else { continue }
+            let key = makeKey(term.project, term.workspace)
+            var map = updated[key] ?? [:]
+            map[term.termId] = phase
+            updated[key] = map
+            // 同步驱动生命周期状态机
+            let lifecycle = lifecycleFor(termId: term.termId)
+            switch phase {
+            case "recovering":
+                lifecycle.apply(.coreRecovering(project: term.project, workspace: term.workspace, termId: term.termId))
+            case "recovery_failed":
+                lifecycle.apply(.coreRecoveryFailed(termId: term.termId, reason: term.recoveryFailedReason ?? "unknown"))
+            default:
+                break
+            }
+        }
+        // 合并：保留无恢复状态的工作区键不变
+        for (key, phases) in updated {
+            recoveryPhaseByWorkspaceKey[key] = phases
+        }
+    }
+
+    /// 清除工作区的恢复状态（工作区删除或所有终端恢复完成时调用）
+    func clearRecoveryPhases(forWorkspaceKey key: String) {
+        recoveryPhaseByWorkspaceKey.removeValue(forKey: key)
+    }
+
     // MARK: - 终端生命周期状态机管理
 
     /// 获取或创建指定 termId 的生命周期状态机

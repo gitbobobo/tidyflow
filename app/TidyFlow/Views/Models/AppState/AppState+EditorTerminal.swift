@@ -437,6 +437,27 @@ extension AppState {
         }
     }
 
+    /// 当前工作区恢复入口：根据 Core 权威恢复状态驱动本地终端生命周期（WI-004）。
+    ///
+    /// 调用方：term_list 回调处理后、工作区切回前台时。
+    /// 不向 Core 发送任何指令，只根据已收到的 term_list 中 recovery_phase 字段同步本地状态。
+    func recoverCurrentWorkspaceTerminals(items: [TerminalSessionInfo]) {
+        guard let currentWorkspace = selectedWorkspaceKey, !currentWorkspace.isEmpty else { return }
+        let currentKey = "\(selectedProjectName):\(currentWorkspace)"
+        // 批量更新恢复状态
+        terminalSessionStore.applyRecoveryPhases(from: items, makeKey: { "\($0):\($1)" })
+        // 记录日志：仅当前工作区
+        let recovering = items.filter {
+            "\($0.project):\($0.workspace)" == currentKey
+                && ($0.recoveryPhase == "recovering" || $0.recoveryPhase == "recovery_failed")
+        }
+        if !recovering.isEmpty {
+            TFLog.app.info(
+                "终端恢复状态同步: workspace=\(currentKey, privacy: .public) count=\(recovering.count, privacy: .public)"
+            )
+        }
+    }
+
     /// Check if a terminal tab needs respawn
     func terminalNeedsRespawn(_ tabId: UUID) -> Bool {
         return staleTerminalTabs.contains(tabId) || terminalSessionByTabId[tabId] == nil
