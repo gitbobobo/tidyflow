@@ -133,10 +133,7 @@ mod tests {
         let ai_state = build_shared_ai_state();
         let ai = ai_state.lock().await;
 
-        assert!(
-            ai.agents.is_empty(),
-            "Core bootstrap 不应预热任何 AI 代理"
-        );
+        assert!(ai.agents.is_empty(), "Core bootstrap 不应预热任何 AI 代理");
         assert!(
             !ai.maintenance_started,
             "仅初始化 bootstrap 上下文时不应提前启动 maintenance"

@@ -303,7 +303,8 @@ async fn build_workspace_items_and_metrics(
                 status: "ready".to_string(),
                 sidebar_status: Default::default(),
             };
-            let coordinator_ai_default = build_coordinator_ai_dto(&session_statuses, &project_name, DEFAULT_WORKSPACE_NAME);
+            let coordinator_ai_default =
+                build_coordinator_ai_dto(&session_statuses, &project_name, DEFAULT_WORKSPACE_NAME);
             items.push(build_workspace_item_with_recovery_and_coordinator(
                 project_name.clone(),
                 default_info,
@@ -343,7 +344,8 @@ async fn build_workspace_items_and_metrics(
                     .recovery_meta
                     .as_ref()
                     .and_then(|m| m.recovery_cursor.clone());
-                let coordinator_ai = build_coordinator_ai_dto(&session_statuses, &project_name, &ws.name);
+                let coordinator_ai =
+                    build_coordinator_ai_dto(&session_statuses, &project_name, &ws.name);
                 items.push(build_workspace_item_with_recovery_and_coordinator(
                     project_name.clone(),
                     info,
@@ -381,7 +383,9 @@ fn build_coordinator_ai_dto(
     );
     // 仅在有会话记录时才携带（避免每个工作区都传送空状态）
     if ai_state.total_session_count > 0 {
-        Some(crate::server::protocol::CoordinatorAiDomainStateDto::from(&ai_state))
+        Some(crate::server::protocol::CoordinatorAiDomainStateDto::from(
+            &ai_state,
+        ))
     } else {
         None
     }
@@ -969,7 +973,10 @@ mod tests {
 
         // core_memory 结构必须包含预期字段
         let core_mem = &json["core_memory"];
-        assert!(core_mem.get("resident_bytes").is_some(), "core_memory.resident_bytes 必须存在");
+        assert!(
+            core_mem.get("resident_bytes").is_some(),
+            "core_memory.resident_bytes 必须存在"
+        );
         assert!(
             core_mem.get("phys_footprint_bytes").is_some(),
             "core_memory.phys_footprint_bytes 必须存在"
@@ -977,9 +984,18 @@ mod tests {
 
         // ws_pipeline_latency 结构必须包含预期字段
         let ws_lat = &json["ws_pipeline_latency"];
-        assert!(ws_lat.get("last_ms").is_some(), "ws_pipeline_latency.last_ms 必须存在");
-        assert!(ws_lat.get("p95_ms").is_some(), "ws_pipeline_latency.p95_ms 必须存在");
-        assert!(ws_lat.get("sample_count").is_some(), "ws_pipeline_latency.sample_count 必须存在");
+        assert!(
+            ws_lat.get("last_ms").is_some(),
+            "ws_pipeline_latency.last_ms 必须存在"
+        );
+        assert!(
+            ws_lat.get("p95_ms").is_some(),
+            "ws_pipeline_latency.p95_ms 必须存在"
+        );
+        assert!(
+            ws_lat.get("sample_count").is_some(),
+            "ws_pipeline_latency.sample_count 必须存在"
+        );
     }
 
     /// 定向测试：performance_observability 可正确序列化为 JSON（协议 v9 稳定字段名验证）
@@ -989,12 +1005,18 @@ mod tests {
         let json = serde_json::to_value(&obs).expect("should serialize");
 
         // 确认字段使用 snake_case 命名
-        assert!(json.get("core_memory").is_some(), "core_memory 字段命名必须为 snake_case");
+        assert!(
+            json.get("core_memory").is_some(),
+            "core_memory 字段命名必须为 snake_case"
+        );
         assert!(
             json.get("ws_pipeline_latency").is_some(),
             "ws_pipeline_latency 字段命名必须为 snake_case"
         );
-        assert!(json.get("snapshot_at").is_some(), "snapshot_at 字段必须存在");
+        assert!(
+            json.get("snapshot_at").is_some(),
+            "snapshot_at 字段必须存在"
+        );
 
         // workspace_metrics / client_metrics / diagnoses 在空时应被省略（skip_serializing_if）
         // 验证这一行为符合协议约定

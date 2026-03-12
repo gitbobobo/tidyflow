@@ -1146,9 +1146,9 @@ fn compute_health_score(
 // ============================================================================
 
 use crate::server::protocol::health::{
-    ClientPerformanceReport, CoreRuntimeMemorySnapshot, LatencyMetricWindow,
-    PerformanceDiagnosis, PerformanceDiagnosisReason, PerformanceDiagnosisScope,
-    PerformanceDiagnosisSeverity, PerformanceObservabilitySnapshot, WorkspacePerformanceSnapshot,
+    ClientPerformanceReport, CoreRuntimeMemorySnapshot, LatencyMetricWindow, PerformanceDiagnosis,
+    PerformanceDiagnosisReason, PerformanceDiagnosisScope, PerformanceDiagnosisSeverity,
+    PerformanceObservabilitySnapshot, WorkspacePerformanceSnapshot,
 };
 
 const LATENCY_WINDOW_SIZE: usize = 128;
@@ -1164,7 +1164,12 @@ pub struct LatencyWindow {
 
 impl Default for LatencyWindow {
     fn default() -> Self {
-        Self { samples: [0u64; 128], write_pos: 0, count: 0, max: 0 }
+        Self {
+            samples: [0u64; 128],
+            write_pos: 0,
+            count: 0,
+            max: 0,
+        }
     }
 }
 
@@ -1342,9 +1347,8 @@ pub fn sample_core_memory() -> CoreRuntimeMemorySnapshot {
         }
 
         const TASK_VM_INFO: u32 = 22;
-        let task_vm_info_count = (mem::size_of::<TaskVmInfo>()
-            / mem::size_of::<natural_t>())
-            as mach_msg_type_number_t;
+        let task_vm_info_count =
+            (mem::size_of::<TaskVmInfo>() / mem::size_of::<natural_t>()) as mach_msg_type_number_t;
 
         let mut info = TaskVmInfo::default();
         let mut count = task_vm_info_count;
@@ -1412,7 +1416,11 @@ pub fn build_performance_observability_snapshot() -> PerformanceObservabilitySna
             .iter()
             .map(|((p, w), acc)| acc.to_snapshot(p, w))
             .collect();
-        metrics.sort_by(|a, b| a.project.cmp(&b.project).then(a.workspace.cmp(&b.workspace)));
+        metrics.sort_by(|a, b| {
+            a.project
+                .cmp(&b.project)
+                .then(a.workspace.cmp(&b.workspace))
+        });
         metrics
     };
 
@@ -1639,9 +1647,15 @@ pub fn build_performance_diagnoses(
     // 5. 客户端性能诊断
     for client in &snapshot.client_metrics {
         let (mem_warning, mem_critical) = if client.platform == "ios" {
-            (IOS_CLIENT_MEMORY_WARNING_BYTES, IOS_CLIENT_MEMORY_CRITICAL_BYTES)
+            (
+                IOS_CLIENT_MEMORY_WARNING_BYTES,
+                IOS_CLIENT_MEMORY_CRITICAL_BYTES,
+            )
         } else {
-            (MACOS_CLIENT_MEMORY_WARNING_BYTES, MACOS_CLIENT_MEMORY_CRITICAL_BYTES)
+            (
+                MACOS_CLIENT_MEMORY_WARNING_BYTES,
+                MACOS_CLIENT_MEMORY_CRITICAL_BYTES,
+            )
         };
         let ctx = HealthContext::for_workspace(&client.project, &client.workspace);
 
@@ -1733,10 +1747,7 @@ pub fn build_performance_diagnoses(
                     "[{}] AI 会话列表请求 p95={}ms",
                     client.client_instance_id, ai_p95
                 ),
-                evidence: vec![format!(
-                    "client.ai_session_list_request.p95_ms={}",
-                    ai_p95
-                )],
+                evidence: vec![format!("client.ai_session_list_request.p95_ms={}", ai_p95)],
                 recommended_action: "检查 AI 会话列表数据量和 Core 处理延迟".to_string(),
                 context: ctx.clone(),
                 client_instance_id: Some(client.client_instance_id.clone()),
@@ -1761,10 +1772,7 @@ pub fn build_performance_diagnoses(
                     "[{}] AI 消息尾部刷新 p95={}ms",
                     client.client_instance_id, flush_p95
                 ),
-                evidence: vec![format!(
-                    "client.ai_message_tail_flush.p95_ms={}",
-                    flush_p95
-                )],
+                evidence: vec![format!("client.ai_message_tail_flush.p95_ms={}", flush_p95)],
                 recommended_action: "检查消息批量写入频率和 WS 管线吞吐量".to_string(),
                 context: ctx.clone(),
                 client_instance_id: Some(client.client_instance_id.clone()),
@@ -1800,10 +1808,7 @@ pub fn build_performance_diagnoses(
                     ),
                     evidence: vec![
                         format!("client.file_tree_request.p95_ms={}", client_ft_p95),
-                        format!(
-                            "core.workspace_file_index_refresh.p95_ms={}",
-                            core_ft_p95
-                        ),
+                        format!("core.workspace_file_index_refresh.p95_ms={}", core_ft_p95),
                     ],
                     recommended_action: "检查客户端文件树渲染性能和状态更新机制".to_string(),
                     context: ctx,
@@ -2230,12 +2235,18 @@ mod perf_observability_tests {
     fn performance_observability_snapshot_serializes_stable_json_fields() {
         let snap = empty_obs();
         let json = serde_json::to_value(&snap).expect("should serialize");
-        assert!(json.get("core_memory").is_some(), "core_memory 字段必须存在");
+        assert!(
+            json.get("core_memory").is_some(),
+            "core_memory 字段必须存在"
+        );
         assert!(
             json.get("ws_pipeline_latency").is_some(),
             "ws_pipeline_latency 字段必须存在"
         );
-        assert!(json.get("snapshot_at").is_some(), "snapshot_at 字段必须存在");
+        assert!(
+            json.get("snapshot_at").is_some(),
+            "snapshot_at 字段必须存在"
+        );
     }
 
     #[test]
@@ -2295,7 +2306,11 @@ mod perf_observability_tests {
             .iter()
             .filter(|d| d.reason == PerformanceDiagnosisReason::FileTreeLatencyHigh)
             .collect();
-        assert_eq!(ft.len(), 1, "只有 proj_a/default 应触发 file_tree_latency_high");
+        assert_eq!(
+            ft.len(),
+            1,
+            "只有 proj_a/default 应触发 file_tree_latency_high"
+        );
         assert_eq!(ft[0].context.project.as_deref(), Some("proj_a"));
         assert_eq!(ft[0].context.workspace.as_deref(), Some("default"));
         assert_eq!(ft[0].scope, PerformanceDiagnosisScope::Workspace);
@@ -2576,6 +2591,9 @@ mod perf_observability_tests {
             diag.diagnosis_id
         );
         assert!(!diag.summary.is_empty(), "summary 不能为空");
-        assert!(!diag.recommended_action.is_empty(), "recommended_action 不能为空");
+        assert!(
+            !diag.recommended_action.is_empty(),
+            "recommended_action 不能为空"
+        );
     }
 }

@@ -414,7 +414,13 @@ mod tests {
         {
             inject_session(&store, "proj-a", "default", "s1", AiSessionStatus::Running);
             inject_session(&store, "proj-a", "default", "s2", AiSessionStatus::Running);
-            inject_session(&store, "proj-a", "default", "s3", AiSessionStatus::AwaitingInput);
+            inject_session(
+                &store,
+                "proj-a",
+                "default",
+                "s3",
+                AiSessionStatus::AwaitingInput,
+            );
 
             let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
             assert_eq!(
@@ -444,7 +450,13 @@ mod tests {
             store.remove_status("codex", "/tmp/proj-a/default", "s2");
 
             inject_session(&store, "proj-a", "default", "t1", AiSessionStatus::Success);
-            inject_session(&store, "proj-a", "default", "t2", AiSessionStatus::Cancelled);
+            inject_session(
+                &store,
+                "proj-a",
+                "default",
+                "t2",
+                AiSessionStatus::Cancelled,
+            );
             inject_session(
                 &store,
                 "proj-a",
@@ -490,7 +502,13 @@ mod tests {
         // ── 场景 6：cancelled 优先于 success ────────────────────────────────────
         {
             inject_session(&store, "proj-a", "default", "c1", AiSessionStatus::Success);
-            inject_session(&store, "proj-a", "default", "c2", AiSessionStatus::Cancelled);
+            inject_session(
+                &store,
+                "proj-a",
+                "default",
+                "c2",
+                AiSessionStatus::Cancelled,
+            );
             // 移除 failure 会话
             store.remove_status("codex", "/tmp/proj-a/default", "t3");
 

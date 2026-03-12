@@ -468,10 +468,7 @@ mod tests {
         evolving.insert(id_a1.global_key(), live_state.clone());
 
         let snap_v3 = CoordinatorSnapshot::capture(&evolving);
-        let snap_entry = snap_v3
-            .workspaces
-            .get(&id_a1.global_key())
-            .expect("应存在");
+        let snap_entry = snap_v3.workspaces.get(&id_a1.global_key()).expect("应存在");
         assert_eq!(snap_entry.persistable.version, v3, "快照应保存最新版本号");
 
         // ── 版本单调性：旧快照版本不覆盖新版本 ────────────────────────────────
@@ -482,8 +479,10 @@ mod tests {
             [(id_a1.global_key(), old_state)].into_iter().collect();
         let old_snap = CoordinatorSnapshot::capture(&old_snap_map);
 
-        let new_results = restore_from_snapshot(&snap_v3, &CoordinatorScope::workspace("proj-a", "default"));
-        let old_results = restore_from_snapshot(&old_snap, &CoordinatorScope::workspace("proj-a", "default"));
+        let new_results =
+            restore_from_snapshot(&snap_v3, &CoordinatorScope::workspace("proj-a", "default"));
+        let old_results =
+            restore_from_snapshot(&old_snap, &CoordinatorScope::workspace("proj-a", "default"));
 
         let new_ver = new_results[0].recovered_state.as_ref().unwrap().version;
         let old_ver = old_results[0].recovered_state.as_ref().unwrap().version;
@@ -498,7 +497,9 @@ mod tests {
         let all_results = restore_from_snapshot(&parsed, &CoordinatorScope::system());
         assert_eq!(all_results.len(), 4);
         assert!(
-            all_results.iter().all(|r| r.status == RecoveryStatus::Restored),
+            all_results
+                .iter()
+                .all(|r| r.status == RecoveryStatus::Restored),
             "全量恢复应全部成功"
         );
 
@@ -512,9 +513,18 @@ mod tests {
             .expect("proj-b:default 应在恢复结果中");
 
         // proj-a:default 恢复后 AI Active；proj-b:default 恢复后 AI Idle
-        assert_eq!(restored_a1.recovered_state.as_ref().unwrap().ai.phase, AiDomainPhase::Active);
-        assert_eq!(restored_b1.recovered_state.as_ref().unwrap().ai.phase, AiDomainPhase::Idle);
+        assert_eq!(
+            restored_a1.recovered_state.as_ref().unwrap().ai.phase,
+            AiDomainPhase::Active
+        );
+        assert_eq!(
+            restored_b1.recovered_state.as_ref().unwrap().ai.phase,
+            AiDomainPhase::Idle
+        );
         // proj-b:default 恢复后 file Error
-        assert_eq!(restored_b1.recovered_state.as_ref().unwrap().file.phase, FileDomainPhase::Error);
+        assert_eq!(
+            restored_b1.recovered_state.as_ref().unwrap().file.phase,
+            FileDomainPhase::Error
+        );
     }
 }

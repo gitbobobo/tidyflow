@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::coordinator::model::{
-    AiDisplayStatus, AiDomainPhase, AiDomainState,
-};
+use crate::coordinator::model::{AiDisplayStatus, AiDomainPhase, AiDomainState};
 
 /// AI 会话统一状态（用于客户端决定是否需要"订阅/恢复"流式更新）
 ///
