@@ -323,6 +323,26 @@ domains:
     # - 工作区删除时，客户端应调用本地缓存的 removeWorkspace 清除对应条目
     # - coordinator_* 种子字段与 coordinator_snapshot 使用同一版本语义；旧版本快照不应覆盖新状态
     # - 客户端只消费 coordinator 文件域状态，不应在本地重建健康语义（Core 是权威源）
+
+# TerminalInfo 生命周期相位契约（WI-002/WI-003）
+# term_list 返回的每条 TerminalInfo 携带以下生命周期字段：
+#   lifecycle_phase: string — 终端生命周期相位（权威枚举见下）
+#   recovery_phase:  string? — 仅 lifecycle_phase=recovering/recovery_failed 时非 nil
+#   recovery_failed_reason: string? — 仅 recovery_phase=recovery_failed 时有值
+#
+# lifecycle_phase 枚举值：
+#   idle           — 空闲，终端未活跃
+#   entering       — 创建中，等待 PTY spawn 完成
+#   active         — 活跃，输出正常流转
+#   resuming       — 客户端断线重连后重新 attach 中（客户端发起）
+#   recovering     — Core 重启后持久化恢复中（Core 发起，区别于 resuming）
+#   recovery_failed — Core 持久化恢复失败，终端不可用，需用户手动重建
+#
+# 关键约束：
+#   - resuming 与 recovering 语义正交，不可混用
+#   - recovery_failed 是明确失败态，永不静默回退到 idle
+#   - 客户端不得自行推导恢复状态，必须以 lifecycle_phase 字段为唯一权威来源
+#   - 恢复元数据按 (project, workspace, term_id) 三元组隔离，跨工作区不共享
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved

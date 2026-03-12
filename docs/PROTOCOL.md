@@ -1744,3 +1744,88 @@ Core 自动分析快照并产出诊断：
 - `system`：全局系统级（WS 管线延迟、队列积压、Core 内存压力）
 - `workspace`：工作区级（文件索引/Git 状态刷新延迟）
 - `client_instance`：客户端实例级（客户端内存、工作区切换、AI/文件延迟、跨层失配）
+
+---
+
+## 终端会话恢复（WI-002/WI-003）
+
+### 设计概述
+
+TidyFlow Core 在正常关闭或意外重启后，能从持久化存储恢复终端会话元数据，
+并通过 `term_list` 向客户端暴露权威恢复状态，让客户端无需自行推导恢复结果。
+
+### 生命周期相位
+
+| 相位 | 值 | 触发方 | 说明 |
+|------|-----|--------|------|
+| 空闲 | `idle` | — | 终端未活跃 |
+| 创建中 | `entering` | 客户端 | 正在 spawn PTY |
+| 活跃 | `active` | Core | 输出正常流转 |
+| 重附着中 | `resuming` | 客户端 | WS 断线后重新 attach |
+| Core 恢复中 | `recovering` | Core | 进程重启后从持久化元数据恢复 |
+| 恢复失败 | `recovery_failed` | Core | 持久化恢复失败，终端不可用 |
+
+**重要区分：**
+`resuming` 与 `recovering` 语义正交：
+- `resuming`：WS 连接级别的暂时断线，PTY 进程仍在运行，客户端重新 attach 即可恢复输出
+- `recovering`：Core 进程重启，PTY 已不存在，需从持久化元数据重建
+
+### 持久化模型
+
+恢复元数据保存在 SQLite `terminal_recovery` 表中，关键字段：
+
+| 字段 | 说明 |
+|------|------|
+| `term_id` | 终端唯一 ID（Core 生成） |
+| `project` | 所属项目名 |
+| `workspace` | 所属工作区名 |
+| `workspace_path` | 工作区绝对路径 |
+| `cwd` | 终端工作目录 |
+| `shell` | Shell 名称 |
+| `name` | 用户自定义名称（可选） |
+| `icon` | 用户自定义图标（可选） |
+| `recovery_state` | `pending` / `recovering` / `recovered` / `failed` |
+| `failed_reason` | 失败原因（仅 failed 时有值） |
+| `recorded_at` | 记录时间（RFC3339） |
+
+**不持久化：** scrollback、订阅计数、流控状态等易变运行时数据。
+
+### 恢复生命周期
+
+```
+Core 启动
+  └─ load_terminal_recovery_entries()  →  pending/recovering 条目
+       └─ 每条终端在 registry 中设置 TerminalRecoveryMeta
+            └─ mark_recovering()  →  lifecycle_phase = "recovering"
+                 └─ 客户端通过 term_list 看到 recovering 状态
+                      └─ 恢复成功：mark_recovery_succeeded()  →  active
+                         恢复失败：mark_recovery_failed()     →  recovery_failed
+```
+
+### 清理规则
+
+| 场景 | 操作 |
+|------|------|
+| 终端主动关闭（`term_close` / `kill_terminal`） | 更新 `recovery_state = recovered` |
+| 工作区删除 | `clear_terminal_recovery_for_workspace()` |
+| 恢复成功 | 更新为 `recovered`，最终由 `clear_completed` 清理 |
+| 恢复失败 | 更新为 `failed`，健康探针报出 `Critical` incident |
+
+### 客户端消费约束
+
+1. 客户端只消费 `lifecycle_phase` 字段，不在本地推导恢复状态
+2. `recovering` 态的终端不接受用户输入，应显示恢复进度指示器
+3. `recovery_failed` 是明确终态，不静默回退为 `idle`，应提示用户手动重建
+4. 恢复状态按 `(project, workspace, term_id)` 隔离，旧工作区终端不会在重连后串入当前工作区
+
+### 性能回归守卫（WI-001）
+
+多工作区高负载场景已纳入热点性能守卫，三个新增场景：
+
+| 场景 ID | 说明 |
+|---------|------|
+| `file_index.high_load_workspace_fanout_8x16` | 8 项目 × 16 工作区 fan-out |
+| `git_status.high_load_same_name_cross_project_isolation` | 高同名工作区隔离压力 |
+| `ai_context.high_load_rebuild_pressure` | AI 上下文高重建压力 |
+
+运行：`./scripts/tidyflow perf-regression`

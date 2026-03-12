@@ -69,3 +69,17 @@
 
 - [ ] 执行：`./scripts/tidyflow release --upload-release`
 - [ ] 上传后核对 Release 资产与 SHA256 文件
+
+## 3.7. 终端会话恢复验证（WI-002/WI-003）
+
+- [ ] Rust Core 测试：`./scripts/tidyflow test` 通过（含 terminal_recovery SQLite 持久化层）
+- [ ] 协议检查：`./scripts/tidyflow check` 通过（schema、协议版本与客户端规则同步）
+- [ ] 性能回归：`./scripts/tidyflow perf-regression` 通过（含 3 个高负载多工作区新场景）
+- [ ] Apple 定向测试（macOS build + 手工执行）：
+  - [ ] `TerminalWorkspaceIsolationTests` — 恢复成功、恢复失败、同名工作区隔离三场景全绿
+  - [ ] `WorkspaceSharedStateSemanticsTests` — 恢复语义回归全绿
+- [ ] macOS Build：`xcodebuild -scheme TidyFlow -destination 'platform=macOS' SKIP_CORE_BUILD=1 build` 无错误
+- [ ] iOS Simulator Build：`xcodebuild -scheme TidyFlow -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' SKIP_CORE_BUILD=1 build` 无错误
+- [ ] 验证 `recovery_failed` 状态：健康面板显示 Critical incident，终端不可用提示正确
+- [ ] 验证 Core 重启后恢复流程：启动日志中出现 `Loaded terminal recovery entries on startup`
+- [ ] 验证同名工作区隔离：不同 project 下同名 workspace 的终端恢复记录互不干扰
