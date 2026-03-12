@@ -599,4 +599,70 @@ final class TerminalListDisplayPhaseTests: XCTestCase {
         )
         XCTAssertEqual(stale, ["t2"], "只有不在存活列表中的终端是过期的")
     }
+
+    // MARK: - WI-004: 终端恢复场景覆盖
+
+    /// 恢复成功：receiving → active（Core 权威驱动）
+    func testRecovery_coreRecovering_then_succeeded_transitionsToActive() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.coreRecovering(project: "p", workspace: "w", termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .recovering, "驱动 coreRecovering 后应为 recovering")
+
+        machine.apply(.coreRecoverySucceeded(termId: "t1"))
+        XCTAssertEqual(machine.state.phase, .active, "恢复成功后应迁移到 active")
+    }
+
+    /// 恢复失败：recovering → recoveryFailed
+    func testRecovery_coreRecovering_then_failed_transitionsToRecoveryFailed() {
+        let machine = TerminalLifecycleStateMachine()
+        machine.apply(.coreRecovering(project: "p", workspace: "w", termId: "t1"))
+        machine.apply(.coreRecoveryFailed(termId: "t1", reason: "pty_spawn_error"))
+        XCTAssertEqual(machine.state.phase, .recoveryFailed, "恢复失败后应迁移到 recoveryFailed")
+    }
+
+    /// 同名工作区隔离：不同 project 的相同 workspace 恢复不互串
+    func testRecovery_sameWorkspaceName_differentProjects_isolated() {
+        let store = TerminalSessionStore()
+        let termA = TerminalSessionInfo(
+            termId: "t-proj-a", project: "proj-a", workspace: "main",
+            cwd: "/a", shell: "zsh", status: "running",
+            lifecyclePhase: "recovering", name: "Shell A", icon: nil,
+            recoveryPhase: "recovering", remoteSubscribers: []
+        )
+        let termB = TerminalSessionInfo(
+            termId: "t-proj-b", project: "proj-b", workspace: "main",
+            cwd: "/b", shell: "zsh", status: "running",
+            lifecyclePhase: "active", name: "Shell B", icon: nil,
+            recoveryPhase: nil, remoteSubscribers: []
+        )
+
+        store.applyRecoveryPhases(from: [termA, termB], makeKey: { "\($0):\($1)" })
+
+        XCTAssertTrue(store.hasRecovery(for: "proj-a:main"),
+                      "proj-a/main 应有恢复中的终端")
+        XCTAssertFalse(store.hasRecovery(for: "proj-b:main"),
+                       "proj-b/main 不应有恢复中的终端（不应被 proj-a 污染）")
+    }
+
+    /// 工作区切换时旧工作区终端不串入新工作区
+    func testRecovery_workspaceSwitch_oldTerminalsCleared() {
+        let store = TerminalSessionStore()
+        // 在 ws-old 中创建一个恢复中的终端
+        let termOld = TerminalSessionInfo(
+            termId: "t-old", project: "p", workspace: "ws-old",
+            cwd: "/old", shell: "zsh", status: "running",
+            lifecyclePhase: "recovering", name: "Old Shell", icon: nil,
+            recoveryPhase: "recovering", remoteSubscribers: []
+        )
+        store.applyRecoveryPhases(from: [termOld], makeKey: { "\($0):\($1)" })
+
+        // 切换到 ws-new 后清除 ws-old 的状态
+        store.clearWorkspaceDisplayInfo(project: "p", workspace: "ws-old")
+        store.clearRecoveryPhases(forWorkspaceKey: "p:ws-old")
+
+        XCTAssertFalse(store.hasRecovery(for: "p:ws-old"),
+                       "清理工作区后不应有残留恢复记录")
+        XCTAssertFalse(store.hasRecovery(for: "p:ws-new"),
+                       "新工作区不应有来自旧工作区的恢复状态")
+    }
 }

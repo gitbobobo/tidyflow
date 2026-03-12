@@ -76,6 +76,8 @@ mod tests {
             lifecycle_phase: "active".to_string(),
             name: None,
             icon: None,
+            recovery_phase: None,
+            recovery_failed_reason: None,
             remote_subscribers: vec![],
         };
         let b = TerminalInfo {
@@ -88,6 +90,8 @@ mod tests {
             lifecycle_phase: "active".to_string(),
             name: None,
             icon: None,
+            recovery_phase: None,
+            recovery_failed_reason: None,
             remote_subscribers: vec![],
         };
 

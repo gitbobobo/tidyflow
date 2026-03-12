@@ -431,5 +431,47 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
             }
         )
     }
+
+    // MARK: - WI-004: 终端恢复语义回归测试
+
+    /// 恢复相位从 Core term_list 正确映射到 TerminalLifecyclePhase
+    func testTerminalRecoveryPhase_mappedCorrectly() {
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "recovering"), .recovering)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "recovery_failed"), .recoveryFailed)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "active"), .active)
+        XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "unknown_value"), .idle,
+                       "未知值应回退到 idle")
+    }
+
+    /// isCoreRecovery 属性在 recovering/recoveryFailed 时为 true
+    func testTerminalLifecyclePhase_isCoreRecovery() {
+        XCTAssertTrue(TerminalLifecyclePhase.recovering.isCoreRecovery)
+        XCTAssertTrue(TerminalLifecyclePhase.recoveryFailed.isCoreRecovery)
+        XCTAssertFalse(TerminalLifecyclePhase.resuming.isCoreRecovery,
+                       "resuming 是客户端断连重连，不属于 Core 权威恢复")
+        XCTAssertFalse(TerminalLifecyclePhase.active.isCoreRecovery)
+    }
+
+    /// TerminalSessionStore 的恢复状态在多工作区下不跨工作区污染
+    func testTerminalStore_recoveryState_multiWorkspace_noLeak() {
+        let store = TerminalSessionStore()
+        let t1 = TerminalSessionInfo(
+            termId: "t1", project: "p", workspace: "ws-a",
+            cwd: "/", shell: "zsh", status: "running",
+            lifecyclePhase: "recovering", name: nil, icon: nil,
+            recoveryPhase: "recovering", remoteSubscribers: []
+        )
+        let t2 = TerminalSessionInfo(
+            termId: "t2", project: "p", workspace: "ws-b",
+            cwd: "/", shell: "zsh", status: "running",
+            lifecyclePhase: "active", name: nil, icon: nil,
+            recoveryPhase: nil, remoteSubscribers: []
+        )
+        store.applyRecoveryPhases(from: [t1, t2], makeKey: { "\($0):\($1)" })
+
+        XCTAssertTrue(store.hasRecovery(for: "p:ws-a"))
+        XCTAssertFalse(store.hasRecovery(for: "p:ws-b"),
+                       "ws-b 无恢复中的终端，不应被 ws-a 的状态污染")
+    }
 }
 #endif
