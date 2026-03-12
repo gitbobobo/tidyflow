@@ -354,7 +354,6 @@ impl Default for AiSessionStateStore {
 #[derive(Debug)]
 struct SessionEntry {
     status: AiSessionStatus,
-    error_message: Option<String>,
     updated_at_ms: i64,
 }
 
@@ -387,13 +386,8 @@ pub fn aggregate_workspace_ai_domain_state(
                 if meta.project_name != project_name || meta.workspace_name != workspace_name {
                     return None;
                 }
-                let error_message = match status {
-                    AiSessionStatus::Failure { message } => Some(message.clone()),
-                    _ => None,
-                };
                 Some(SessionEntry {
                     status: status.clone(),
-                    error_message,
                     updated_at_ms: now_ms,
                 })
             })

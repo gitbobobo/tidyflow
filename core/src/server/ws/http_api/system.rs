@@ -413,25 +413,6 @@ fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetr
     }
 }
 
-fn build_workspace_item(
-    project: String,
-    workspace: WorkspaceInfo,
-    evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
-) -> SystemSnapshotWorkspaceItem {
-    build_workspace_item_with_recovery_and_coordinator(project, workspace, evo_index, None, None, None)
-}
-
-/// 构建工作区快照条目，附带恢复状态字段（按 (project, workspace) 隔离）
-fn build_workspace_item_with_recovery(
-    project: String,
-    workspace: WorkspaceInfo,
-    evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
-    recovery_state: Option<String>,
-    recovery_cursor: Option<String>,
-) -> SystemSnapshotWorkspaceItem {
-    build_workspace_item_with_recovery_and_coordinator(project, workspace, evo_index, recovery_state, recovery_cursor, None)
-}
-
 /// 构建工作区快照条目（完整版，含恢复状态与 Coordinator AI 种子）
 fn build_workspace_item_with_recovery_and_coordinator(
     project: String,

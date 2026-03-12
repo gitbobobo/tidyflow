@@ -32,10 +32,6 @@ pub(crate) use utils::{
 
 pub type SharedAIState = Arc<Mutex<AIState>>;
 
-pub async fn preload_agents_on_startup(ai_state: &SharedAIState) {
-    utils::preload_agents_on_startup(ai_state).await;
-}
-
 pub async fn shutdown_agents(ai_state: &SharedAIState) {
     utils::shutdown_agents(ai_state).await;
 }

@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::server::context::{
     SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx,
 };
-use crate::server::handlers::ai::{preload_agents_on_startup, AIState, SharedAIState};
+use crate::server::handlers::ai::{AIState, SharedAIState};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_idle_reaper, spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
@@ -64,6 +64,10 @@ fn log_bootstrap_config(expected_ws_token: Option<&str>, bind_addr: &str) {
     info!("Binding on {}", bind_addr);
 }
 
+fn build_shared_ai_state() -> SharedAIState {
+    Arc::new(Mutex::new(AIState::new()))
+}
+
 pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let state_store = Arc::new(
         StateStore::open_default()
@@ -96,8 +100,7 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let running_ai_tasks: SharedRunningAITasks = Arc::new(Mutex::new(HashMap::new()));
     let task_history: SharedTaskHistory = Arc::new(Mutex::new(Vec::new()));
 
-    let ai_state: SharedAIState = Arc::new(Mutex::new(AIState::new()));
-    preload_agents_on_startup(&ai_state).await;
+    let ai_state = build_shared_ai_state();
 
     let ctx = AppContext {
         app_state: shared_state.clone(),
@@ -119,4 +122,24 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     };
 
     (ctx, bind_addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_shared_ai_state;
+
+    #[tokio::test]
+    async fn bootstrap_ai_state_should_start_without_preloaded_agents() {
+        let ai_state = build_shared_ai_state();
+        let ai = ai_state.lock().await;
+
+        assert!(
+            ai.agents.is_empty(),
+            "Core bootstrap 不应预热任何 AI 代理"
+        );
+        assert!(
+            !ai.maintenance_started,
+            "仅初始化 bootstrap 上下文时不应提前启动 maintenance"
+        );
+    }
 }

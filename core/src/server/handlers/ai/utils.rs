@@ -15,8 +15,6 @@ use crate::server::protocol::ServerMessage;
 
 pub(crate) const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAINTENANCE_INTERVAL_SECS: u64 = 60;
-pub(crate) const PRELOAD_AI_TOOLS: [&str; 5] =
-    ["opencode", "codex", "copilot", "kimi", "claude_code"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
@@ -1214,17 +1212,6 @@ pub(crate) async fn ensure_agent(
     // start() 幂等：内部会 health check，失败才 spawn；event hub 也会 ensure_started。
     agent.start().await?;
     Ok(agent)
-}
-
-pub(crate) async fn preload_agents_on_startup(ai_state: &SharedAIState) {
-    ensure_maintenance(ai_state).await;
-
-    for tool in PRELOAD_AI_TOOLS {
-        match ensure_agent(ai_state, tool).await {
-            Ok(_) => info!("AI startup preload succeeded: tool={}", tool),
-            Err(e) => warn!("AI startup preload failed: tool={}, error={}", tool, e),
-        }
-    }
 }
 
 pub(crate) async fn shutdown_agents(ai_state: &SharedAIState) {
@@ -2626,13 +2613,64 @@ pub(crate) fn normalize_ai_audio_parts(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_ai_session_messages_update, emit_ops_for_cache_op,
+        build_ai_session_messages_update, emit_ops_for_cache_op, ensure_agent,
         infer_selection_hint_from_messages, normalize_ai_tool, normalize_part_for_wire,
         should_broadcast_stream_message, should_cleanup_stream_snapshot, AiStreamSnapshot,
         AI_STREAM_SNAPSHOT_STALE_TTL_MS, AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS,
         MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES,
     };
+    use crate::server::handlers::ai::{AIState, SharedAIState};
     use crate::server::protocol::ServerMessage;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn fresh_ai_state() -> SharedAIState {
+        Arc::new(Mutex::new(AIState::new()))
+    }
+
+    #[tokio::test]
+    async fn ensure_agent_should_create_only_requested_tool_on_first_use() {
+        let ai_state = fresh_ai_state();
+
+        let agent = ensure_agent(&ai_state, "claude_code")
+            .await
+            .expect("首次按需创建 claude_code 代理应成功");
+
+        let ai = ai_state.lock().await;
+        assert_eq!(ai.agents.len(), 1, "首次按需创建后只应存在一个代理实例");
+        assert!(
+            ai.agents.contains_key("claude_code"),
+            "首次按需创建后应仅注册被请求的工具"
+        );
+        assert!(
+            Arc::ptr_eq(
+                ai.agents
+                    .get("claude_code")
+                    .expect("claude_code 代理应已注册"),
+                &agent
+            ),
+            "ensure_agent 返回值应与状态池中的实例一致"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_agent_should_reuse_existing_instance_for_same_tool() {
+        let ai_state = fresh_ai_state();
+
+        let first = ensure_agent(&ai_state, "claude_code")
+            .await
+            .expect("首次创建 claude_code 代理应成功");
+        let second = ensure_agent(&ai_state, "claude_code")
+            .await
+            .expect("重复获取 claude_code 代理应成功");
+
+        let ai = ai_state.lock().await;
+        assert_eq!(ai.agents.len(), 1, "重复获取同一工具不应新增代理实例");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "重复 ensure_agent 同一工具应复用同一个 Arc 实例"
+        );
+    }
 
     #[test]
     fn infer_selection_hint_prefers_last_user_message_metadata() {
