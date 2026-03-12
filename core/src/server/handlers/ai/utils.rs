@@ -1391,8 +1391,7 @@ fn first_non_empty_input_string(
     input: &HashMap<String, serde_json::Value>,
     keys: &[&str],
 ) -> Option<String> {
-    keys.iter()
-        .find_map(|key| value_as_string(input.get(*key)))
+    keys.iter().find_map(|key| value_as_string(input.get(*key)))
 }
 
 fn first_non_empty_input_array_string(
@@ -1401,7 +1400,9 @@ fn first_non_empty_input_array_string(
 ) -> Option<String> {
     keys.iter().find_map(|key| {
         input.get(*key).and_then(|value| match value {
-            serde_json::Value::Array(items) => items.iter().find_map(|item| value_as_string(Some(item))),
+            serde_json::Value::Array(items) => {
+                items.iter().find_map(|item| value_as_string(Some(item)))
+            }
             _ => None,
         })
     })
@@ -1412,16 +1413,29 @@ fn tool_content_display_title(
     input: &HashMap<String, serde_json::Value>,
 ) -> Option<String> {
     match tool_id {
-        "read" | "edit" => first_non_empty_input_string(
-            input,
-            &["path", "file", "filePath", "file_path"],
-        )
-        .or_else(|| first_non_empty_input_array_string(input, &["paths", "files"])),
+        "read" | "edit" | "write" => {
+            first_non_empty_input_string(input, &["path", "file", "filePath", "file_path"])
+                .or_else(|| first_non_empty_input_array_string(input, &["paths", "files"]))
+        }
         "search" | "websearch" => {
             first_non_empty_input_string(input, &["pattern", "query", "search"])
         }
         _ => None,
     }
+}
+
+fn todo_items_from_value(
+    value: Option<&serde_json::Value>,
+) -> Vec<serde_json::Map<String, serde_json::Value>> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_object().cloned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn value_as_f64(value: Option<&serde_json::Value>) -> Option<f64> {
@@ -1678,7 +1692,10 @@ fn semantic_tool_id_for_view(tool_name: Option<&str>, tool_kind: Option<&str>) -
     match normalized_name.as_str() {
         "bash" => "terminal".to_string(),
         "websearch" => "websearch".to_string(),
+        "create" => "write".to_string(),
         "grep" | "glob" | "list" | "codesearch" | "webfetch" => "search".to_string(),
+        "update_todo" => "todowrite".to_string(),
+        "read_todo" => "todoread".to_string(),
         other => other.to_string(),
     }
 }
@@ -2238,18 +2255,25 @@ fn build_tool_sections(
             }
         }
         "todowrite" | "todoread" => {
-            let todo_items = metadata
-                .and_then(|map| {
-                    map.get("todos")
-                        .or_else(|| map.get("items"))
-                        .or_else(|| map.get("tasks"))
+            let todo_items = ["todos", "items", "tasks"]
+                .iter()
+                .find_map(|key| {
+                    let items = todo_items_from_value(metadata.and_then(|map| map.get(*key)));
+                    if items.is_empty() {
+                        None
+                    } else {
+                        Some(items)
+                    }
                 })
-                .and_then(|value| value.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_object().cloned())
-                        .collect::<Vec<_>>()
+                .or_else(|| {
+                    ["todos", "items", "tasks"].iter().find_map(|key| {
+                        let items = todo_items_from_value(input.get(*key));
+                        if items.is_empty() {
+                            None
+                        } else {
+                            Some(items)
+                        }
+                    })
                 })
                 .unwrap_or_default();
             if !todo_items.is_empty() {
@@ -2401,7 +2425,10 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     };
     let display_title = tool_content_display_title(&tool_id, &input).unwrap_or_else(|| {
         title.unwrap_or_else(|| {
-            if matches!(tool_id.as_str(), "read" | "edit" | "terminal" | "switch_mode") {
+            if matches!(
+                tool_id.as_str(),
+                "read" | "edit" | "terminal" | "switch_mode"
+            ) {
                 tool_display_name(&tool_id)
             } else {
                 part.tool_kind
@@ -3101,6 +3128,29 @@ mod tests {
     }
 
     #[test]
+    fn normalize_part_for_wire_write_title_prefers_target_path() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-write".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("write".to_string()),
+            tool_kind: Some("create".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "title": "Creating ../src/lib.rs",
+                "input": {
+                    "path": "/tmp/src/lib.rs",
+                    "content": "fn main() {}"
+                }
+            })),
+            ..Default::default()
+        });
+
+        assert_eq!(part.tool_kind.as_deref(), Some("write"));
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.display_title, "/tmp/src/lib.rs");
+    }
+
+    #[test]
     fn normalize_part_for_wire_search_title_prefers_query_text() {
         let part = normalize_part_for_wire(crate::ai::AiPart {
             id: "tool-search".to_string(),
@@ -3119,6 +3169,41 @@ mod tests {
 
         let tool_view = part.tool_view.expect("tool_view should exist");
         assert_eq!(tool_view.display_title, "TODO");
+    }
+
+    #[test]
+    fn normalize_part_for_wire_todowrite_can_read_items_from_input() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-todo".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("todowrite".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "running",
+                "input": {
+                    "todos": [
+                        {
+                            "content": "补测试",
+                            "status": "in_progress"
+                        },
+                        {
+                            "content": "验证 UI",
+                            "status": "pending"
+                        }
+                    ]
+                }
+            })),
+            ..Default::default()
+        });
+
+        assert_eq!(part.tool_kind.as_deref(), Some("todowrite"));
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(
+            tool_view.summary.as_deref(),
+            Some("2 项任务 · 进行中 1 · 待处理 1")
+        );
+        assert!(tool_view.sections.iter().any(|section| {
+            section.id == "todo-items" && section.content.contains("补测试")
+        }));
     }
 
     #[test]

@@ -91,11 +91,38 @@ fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
 
     if matches!(
         normalized.as_str(),
-        "write" | "writing" | "writefile" | "overwrite" | "createfile"
+        "write"
+            | "writing"
+            | "writefile"
+            | "overwrite"
+            | "createfile"
+            | "create"
+            | "creating"
+            | "newfile"
+            | "newdocument"
     ) || normalized.starts_with("write")
+        || normalized.starts_with("create")
         || normalized.starts_with("createfile")
     {
         return Some("write");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "todowrite" | "todo_write" | "writetodo" | "writetodos" | "updatetodo" | "updatetodos"
+    ) {
+        return Some("todowrite");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "todoread" | "todo_read" | "readtodo" | "readtodos"
+    ) {
+        return Some("todoread");
+    }
+
+    if matches!(normalized.as_str(), "switchmode" | "mode_switch") {
+        return Some("switch_mode");
     }
 
     if matches!(
@@ -147,6 +174,17 @@ fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
     let has_edit_payload = ["old_str", "oldStr", "new_str", "newStr", "diff", "patch"]
         .iter()
         .any(|key| input.get(*key).is_some());
+    let has_write_payload = [
+        "content",
+        "contents",
+        "text",
+        "new_text",
+        "newText",
+        "fileText",
+        "file_text",
+    ]
+    .iter()
+    .any(|key| input.get(*key).is_some());
     let has_command = [
         "command",
         "cmd",
@@ -165,11 +203,20 @@ fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
     if has_edit_payload && has_path {
         return Some("edit");
     }
+    if has_write_payload && has_path {
+        return Some("write");
+    }
     if has_view_range && has_path {
         return Some("read");
     }
     if has_command {
         return Some("terminal");
+    }
+    if ["todos", "items", "tasks"]
+        .iter()
+        .any(|key| input.get(*key).and_then(|value| value.as_array()).is_some())
+    {
+        return Some("todowrite");
     }
     if has_query {
         return Some("search");
@@ -194,6 +241,9 @@ fn normalize_tool_name(
     }
 
     if let Some(kind) = tool_kind.and_then(normalize_non_empty_token) {
+        if let Some(mapped) = tool_kind_semantic_id(Some(&kind)) {
+            return mapped.to_string();
+        }
         return kind;
     }
 
@@ -219,7 +269,11 @@ pub(crate) fn tool_kind_semantic_id(raw: Option<&str>) -> Option<&'static str> {
         Some("execute") | Some("terminal") | Some("bash") => Some("terminal"),
         Some("search") => Some("search"),
         Some("read") | Some("fetch") => Some("read"),
+        Some("create") | Some("create_file") | Some("createfile") | Some("write")
+        | Some("write_file") | Some("writefile") => Some("write"),
         Some("edit") | Some("delete") | Some("move") => Some("edit"),
+        Some("update_todo") | Some("todowrite") | Some("todo_write") => Some("todowrite"),
+        Some("read_todo") | Some("todoread") | Some("todo_read") => Some("todoread"),
         Some("think") | Some("other") => Some("generic"),
         Some("switch_mode") => Some("switch_mode"),
         _ => None,
@@ -1382,6 +1436,30 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_name_from_creating_title_and_write_payload() {
+        let update = json!({
+            "status": "completed",
+            "title": "Creating ../src/new.rs",
+            "toolCallId": "create-1",
+            "rawInput": {
+                "path": "/tmp/src/new.rs",
+                "content": "fn main() {}"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "write");
+        assert_eq!(
+            parsed
+                .locations
+                .as_ref()
+                .and_then(|items| items.first())
+                .and_then(|item| item.path.as_deref()),
+            Some("/tmp/src/new.rs")
+        );
+    }
+
+    #[test]
     fn test_tool_name_from_command_style_alias_and_descriptive_title() {
         let update = json!({
             "status": "completed",
@@ -1490,5 +1568,39 @@ mod tests {
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
         assert_eq!(parsed.tool_name, "search");
+    }
+
+    #[test]
+    fn test_explicit_update_todo_tool_name_should_normalize_to_todowrite() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "update_todo",
+            "toolCallId": "todo-write-1",
+            "rawInput": {
+                "todos": [
+                    {
+                        "content": "补测试",
+                        "status": "in_progress"
+                    },
+                    {
+                        "content": "更新文档",
+                        "status": "pending"
+                    }
+                ]
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "todowrite");
+    }
+
+    #[test]
+    fn test_tool_kind_create_should_map_to_write_semantic_id() {
+        assert_eq!(tool_kind_semantic_id(Some("create")), Some("write"));
+        assert_eq!(tool_kind_semantic_id(Some("write_file")), Some("write"));
+        assert_eq!(
+            tool_kind_semantic_id(Some("update_todo")),
+            Some("todowrite")
+        );
     }
 }
