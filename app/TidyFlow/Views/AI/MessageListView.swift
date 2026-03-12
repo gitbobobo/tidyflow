@@ -357,7 +357,6 @@ struct AIChatTranscriptContainer: View {
                     }
                 )
             }
-            .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(
                 for: MessageListScrollMetrics.self,
                 of: { geometry in
@@ -373,9 +372,7 @@ struct AIChatTranscriptContainer: View {
             .onAppear {
                 refreshDisplayMessagesCache()
                 initializeScrollPolicyStateIfNeeded()
-                // defaultScrollAnchor(.bottom) 处理初始定位，
-                // 但仍需手动滚动以确保在已有消息时精确定位底部。
-                executeScrollCommand(.scrollToBottom(.none), proxy: proxy)
+                scheduleScrollCommand(.scrollToBottom(.none), proxy: proxy)
             }
             .onChange(of: messages.count) { oldCount, newCount in
                 refreshDisplayMessagesCache()
@@ -390,7 +387,7 @@ struct AIChatTranscriptContainer: View {
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
-                executeScrollCommand(.scrollToBottom(.jumpToBottom), proxy: proxy)
+                scheduleScrollCommand(.scrollToBottom(.jumpToBottom), proxy: proxy)
             }
             .onChange(of: bottomOverlayInset) { oldValue, newValue in
                 // 输入框高度增加时（多行输入、待处理交互等），dock 向上扩展覆盖更多视口，
@@ -489,7 +486,7 @@ struct AIChatTranscriptContainer: View {
         pendingPrependAnchorID = nil
         guard displayMessages.contains(where: { $0.id == prependAnchor }) else { return }
         let decision = scrollPolicy.reduce(event: .historyPrepended(anchorID: prependAnchor))
-        executeScrollCommand(decision.command, proxy: proxy)
+        scheduleScrollCommand(decision.command, proxy: proxy)
     }
 
     private func tailChangeEvent() -> ChatScrollEvent {
@@ -510,7 +507,7 @@ struct AIChatTranscriptContainer: View {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.command != .noOp else { return }
         guard scrollExecutionGate.consumeAutoScrollRequest() else { return }
-        executeScrollCommand(decision.command, proxy: proxy)
+        scheduleScrollCommand(decision.command, proxy: proxy)
     }
 
     /// 按钮显隐只取决于是否在底部附近：到达底部时立即隐藏，无论 autoFollow 状态如何。
@@ -531,6 +528,7 @@ struct AIChatTranscriptContainer: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.primary)
                 .frame(width: 38, height: 38)
+                .contentShape(Circle())
                 .modifier(AIChatFloatingButtonStyle())
         }
         .buttonStyle(.plain)
@@ -555,6 +553,13 @@ struct AIChatTranscriptContainer: View {
             scrollToBottom(proxy: proxy, animation: animation)
         case .preserveVisibleContentAfterPrepend(let anchorID):
             preserveVisibleContent(proxy: proxy, anchorID: anchorID)
+        }
+    }
+
+    private func scheduleScrollCommand(_ command: ChatScrollCommand, proxy: ScrollViewProxy) {
+        guard command != .noOp else { return }
+        DispatchQueue.main.async {
+            executeScrollCommand(command, proxy: proxy)
         }
     }
 
