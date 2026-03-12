@@ -17,6 +17,7 @@
 "common.refresh" = "刷新";
 "common.paste" = "粘贴";
 "common.copy" = "复制";
+"common.cut" = "剪切";
 "common.rename" = "重命名";
 "common.loading" = "加载中";
 

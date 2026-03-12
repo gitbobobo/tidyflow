@@ -17,6 +17,7 @@
 "common.refresh" = "Refresh";
 "common.paste" = "Paste";
 "common.copy" = "Copy";
+"common.cut" = "Cut";
 "common.rename" = "Rename";
 "common.loading" = "Loading";
 

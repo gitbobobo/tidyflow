@@ -5,6 +5,17 @@ import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
+
+private struct AIChatInputPasteHandlerKey: FocusedValueKey {
+    typealias Value = () -> Bool
+}
+
+extension FocusedValues {
+    var aiChatInputPasteHandler: (() -> Bool)? {
+        get { self[AIChatInputPasteHandlerKey.self] }
+        set { self[AIChatInputPasteHandlerKey.self] = newValue }
+    }
+}
 #endif
 
 #if os(iOS)
@@ -51,6 +62,7 @@ struct ChatInputView: View {
 
     @State private var textSelection: TextSelection?
     @FocusState private var inputFocused: Bool
+    @State private var lastKnownInputOffset = 0
 
     #if os(iOS)
     private enum IOSInputPanelSheet: String, Identifiable {
@@ -96,6 +108,9 @@ struct ChatInputView: View {
             )
             #endif
             .accessibilityIdentifier("tf.ai.input.container")
+            #if os(macOS)
+            .focusedSceneValue(\.aiChatInputPasteHandler, inputFocused ? handleFocusedPaste : nil)
+            #endif
             .onAppear {
                 guard autoFocusOnAppear else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -103,11 +118,10 @@ struct ChatInputView: View {
                 }
             }
             .onChange(of: textSelection) { _, selection in
-                onInputContextChange?(selection?.utf16InsertionOffset(in: text) ?? text.utf16.count, false)
+                publishInputContextChange(text: text, selection: selection)
             }
             .onChange(of: text) { _, newText in
-                let location = min(textSelection?.utf16InsertionOffset(in: newText) ?? newText.utf16.count, newText.utf16.count)
-                onInputContextChange?(location, false)
+                publishInputContextChange(text: newText, selection: textSelection)
             }
     }
 
@@ -483,6 +497,7 @@ struct ChatInputView: View {
                     let clampedLocation = min(max(0, location), text.utf16.count)
                     let index = String.Index(utf16Offset: clampedLocation, in: text)
                     textSelection = TextSelection(insertionPoint: index)
+                    lastKnownInputOffset = clampedLocation
                     onInputContextChange?(location, false)
                 },
                 onPasteProviders: handlePastedImageProviders
@@ -1255,8 +1270,46 @@ struct ChatInputView: View {
     private func updateSelectionToEnd() {
         let endIndex = text.endIndex
         textSelection = TextSelection(insertionPoint: endIndex)
+        lastKnownInputOffset = text.utf16.count
         onInputContextChange?(text.utf16.count, false)
     }
+
+    private func publishInputContextChange(text: String, selection: TextSelection?) {
+        let location = resolvedInputOffset(in: text, selection: selection)
+        lastKnownInputOffset = location
+        onInputContextChange?(location, false)
+    }
+
+    private func resolvedInputOffset(in text: String, selection: TextSelection?) -> Int {
+        #if os(macOS)
+        if let currentOffset = currentFocusedTextViewSelectionOffset(in: text) {
+            return currentOffset
+        }
+        return min(lastKnownInputOffset, text.utf16.count)
+        #else
+        return min(selection?.utf16InsertionOffset(in: text) ?? text.utf16.count, text.utf16.count)
+        #endif
+    }
+
+    #if os(macOS)
+    private func currentFocusedTextViewSelectionOffset(in text: String) -> Int? {
+        let candidateWindows = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 }
+        for window in candidateWindows {
+            guard let textView = window.firstResponder as? NSTextView else { continue }
+            return min(max(0, textView.selectedRange().location), text.utf16.count)
+        }
+        return nil
+    }
+    #endif
+
+    #if os(macOS)
+    private func handleFocusedPaste() -> Bool {
+        let attachments = Self.makeImageAttachments(from: .general)
+        guard !attachments.isEmpty else { return false }
+        appendImageAttachments(attachments)
+        return true
+    }
+    #endif
 }
 
 #if os(iOS)
