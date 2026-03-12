@@ -104,7 +104,6 @@ struct EvolutionPipelineView: View {
     private var blockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
     private var runningAgents: [EvolutionAgentInfoV2] { projection.runningAgents }
-    private var standbyAgents: [PipelineStandbyAgent] { projection.standbyAgents }
     private var openableRunningStages: Set<String> {
         guard let item = currentItem else { return [] }
         return Set(
@@ -461,7 +460,6 @@ struct EvolutionPipelineView: View {
                     openStageSession(stage: stage)
                 }
             )
-            EvolutionStandbySectionView(standbyAgents: standbyAgents)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -2296,65 +2294,6 @@ struct PipelineCycleDetailPayload: Identifiable, Equatable {
     let timelineEntries: [PipelineCycleTimelineEntry]
 }
 
-// MARK: - 横向换行布局（待命胶囊专用）
-
-/// 简易 Flow Layout：子视图横向排列，空间不足时自动换行
-struct StandbyFlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = computeRows(proposal: proposal, subviews: subviews)
-        guard !rows.isEmpty else { return .zero }
-        let height = rows.reduce(CGFloat(0)) { $0 + $1.height } + CGFloat(rows.count - 1) * spacing
-        return CGSize(width: proposal.width ?? 0, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let rows = computeRows(proposal: proposal, subviews: subviews)
-        var y = bounds.minY
-        for row in rows {
-            var x = bounds.minX
-            for item in row.items {
-                subviews[item.index].place(
-                    at: CGPoint(x: x, y: y),
-                    anchor: .topLeading,
-                    proposal: ProposedViewSize(item.size)
-                )
-                x += item.size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct RowItem {
-        let index: Int
-        let size: CGSize
-    }
-    private struct Row {
-        var items: [RowItem] = []
-        var height: CGFloat = 0
-    }
-
-    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
-        let maxWidth = proposal.width ?? .infinity
-        var rows: [Row] = [Row()]
-        var currentWidth: CGFloat = 0
-
-        for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            let needed = currentWidth == 0 ? size.width : currentWidth + spacing + size.width
-            if needed > maxWidth && currentWidth > 0 {
-                rows.append(Row())
-                currentWidth = 0
-            }
-            rows[rows.count - 1].items.append(RowItem(index: index, size: size))
-            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
-            currentWidth = currentWidth == 0 ? size.width : currentWidth + spacing + size.width
-        }
-        return rows.filter { !$0.items.isEmpty }
-    }
-}
-
 // MARK: - 进度条（从 EvolutionPipelineView 提升为顶层，供子视图共享）
 
 struct PipelineProgressBar: View {
@@ -2546,70 +2485,6 @@ private struct SharedElapsedTimeText: View {
         return EvolutionPipelineDateFormatting.formatDuration(
             max(0, now.timeIntervalSince(startedAtDate))
         )
-    }
-}
-
-// MARK: - 待命代理区（独立子视图，隔离失效域）
-
-/// 待命代理胶囊区，接收预计算的 Equatable 数据，仅在 standbyAgents 实际变化时刷新
-struct EvolutionStandbySectionView: View {
-    let standbyAgents: [PipelineStandbyAgent]
-
-    var body: some View {
-        if !standbyAgents.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
-
-                StandbyFlowLayout(spacing: 6) {
-                    ForEach(standbyAgents, id: \.stage) { agent in
-                        standbyCapsule(agent)
-                            .transition(.opacity.combined(with: .scale))
-                    }
-                }
-            }
-            .animation(.easeInOut(duration: 0.3), value: standbyAgents.map(\.stage))
-        }
-    }
-
-    private func standbyCapsule(_ agent: PipelineStandbyAgent) -> some View {
-        let color = EvolutionStageSemantics.stageColor(agent.stage)
-        return HStack(spacing: 4) {
-            Image(systemName: EvolutionStageSemantics.iconName(for: agent.stage))
-                .font(.system(size: 10))
-
-            Text(EvolutionStageSemantics.displayName(for: agent.stage))
-                .font(.system(size: 10))
-                .lineLimit(1)
-
-            if agent.isLoopable {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 8))
-                    .foregroundColor(color.opacity(0.7))
-            }
-        }
-        .foregroundColor(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.12))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(color.opacity(0.25), lineWidth: 0.5)
-        )
-    }
-
-    private func sectionLabel(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(color)
-            Text(text)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
-        }
-        .padding(.bottom, 4)
     }
 }
 
