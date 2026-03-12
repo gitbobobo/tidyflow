@@ -542,6 +542,112 @@ struct AIChatMessage: Identifiable {
     }
 }
 
+enum AIChatPerfFixtureFactory {
+    private static let fixtureHistoryMessageCount = 48
+
+    static func makeSeedMessages(
+        project: String,
+        workspace: String,
+        sessionId: String,
+        messageId: String,
+        partId: String,
+        longMarkdown: String
+    ) -> [AIChatMessage] {
+        let history = makeHistoryMessages(count: fixtureHistoryMessageCount)
+        let assistantSeed = AIChatMessage(
+            id: "fixture-local-\(messageId)",
+            messageId: messageId,
+            role: .assistant,
+            parts: [
+                AIChatPart(
+                    id: partId,
+                    kind: .text,
+                    text: longMarkdown,
+                    source: [
+                        "fixture": true,
+                        "project": project,
+                        "workspace": workspace,
+                        "session_id": sessionId
+                    ]
+                ),
+                AIChatPart(
+                    id: "\(partId)-reasoning",
+                    kind: .reasoning,
+                    text: """
+                    - 目标：稳定回放 300 次 delta
+                    - 约束：不依赖真实服务端
+                    - 观测：尾消息刷新与内存快照
+                    """
+                ),
+                AIChatPart(
+                    id: "\(partId)-plan",
+                    kind: .plan,
+                    text: """
+                    1. 预装轻量历史消息
+                    2. 注入基线文本
+                    3. 追加 300 次 delta
+                    """
+                )
+            ],
+            isStreaming: true,
+            renderRevision: 1,
+            timestamp: Date()
+        )
+        return history + [assistantSeed]
+    }
+
+    static func makeHistoryMessages(count: Int) -> [AIChatMessage] {
+        (0..<count).map { index in
+            let isUser = index.isMultiple(of: 2)
+            let role: AIChatRole = isUser ? .user : .assistant
+            let kind: AIChatPartKind = isUser ? .text : .reasoning
+            let text: String = isUser
+                ? "历史问题 #\(index + 1)：请总结项目 \(index % 5) 的上下文切换成本，并给出下一步建议。"
+                : "历史回答 #\(index + 1)：已记录工作区边界、消息列表热路径与滚动状态。"
+            return AIChatMessage(
+                id: "fixture-history-\(index)",
+                messageId: "fixture-history-msg-\(index)",
+                role: role,
+                parts: [
+                    AIChatPart(
+                        id: "fixture-history-part-\(index)",
+                        kind: kind,
+                        text: text
+                    )
+                ],
+                isStreaming: false,
+                renderRevision: 1,
+                timestamp: Date().addingTimeInterval(Double(index - count))
+            )
+        }
+    }
+
+    static func longMarkdownBlock() -> String {
+        """
+        # Streaming Fixture
+
+        用于聊天流式热路径观测的基线文本。
+
+        - 历史消息窗口稳定性
+        - delta 追加耗时
+        - 完成态切换时序
+
+        ```swift
+        struct PerfFixtureToken: Sendable {
+            let index: Int
+            let flush: Int
+        }
+        ```
+        """
+    }
+
+    static func makeDeltaFlushes(count: Int) -> [String] {
+        (0..<count).map { index in
+            " [\(index + 1)]"
+        }
+    }
+}
+
 struct AIAssistantTailPartMeta: Equatable {
     let messageId: String?
     let localMessageId: String
@@ -685,6 +791,60 @@ private enum AIChatStreamEvent {
     case partDelta(messageId: String, partId: String, partType: String, field: String, delta: String)
 }
 
+// MARK: - Prepared Snapshot
+
+/// snapshot 分支的后台预处理结果；在后台线程构建，在主线程一次性提交。
+/// 各端各路径共用同一类型，revision gate 由调用方在主线程执行，不在此方法内校验。
+struct AIChatPreparedSnapshot {
+    let messages: [AIChatMessage]
+    let pendingQuestionRequests: [AIQuestionRequestInfo]
+    let effectiveSelectionHint: AISessionSelectionHint?
+    let isStreaming: Bool
+    let fromRevision: UInt64
+    let toRevision: UInt64
+}
+
+/// 在后台线程将协议消息归一化为 [AIChatMessage]，供所有 snapshot 分支共享。
+/// 等价于 replaceMessagesFromSessionCache 内部的 role 映射 + part 去重逻辑。
+enum AIChatPreparedSnapshotBuilder {
+    static func build(
+        protocolMessages: [AIProtocolMessageInfo],
+        pendingQuestionRequests: [AIQuestionRequestInfo],
+        effectiveSelectionHint: AISessionSelectionHint?,
+        isStreaming: Bool,
+        fromRevision: UInt64,
+        toRevision: UInt64
+    ) -> AIChatPreparedSnapshot {
+        AIChatPreparedSnapshot(
+            messages: normalizeMessages(protocolMessages),
+            pendingQuestionRequests: pendingQuestionRequests,
+            effectiveSelectionHint: effectiveSelectionHint,
+            isStreaming: isStreaming,
+            fromRevision: fromRevision,
+            toRevision: toRevision
+        )
+    }
+
+    /// 将协议消息列表归一化为视图层 AIChatMessage 列表，与 replaceMessagesFromSessionCache 内部逻辑等价。
+    static func normalizeMessages(_ protocolMessages: [AIProtocolMessageInfo]) -> [AIChatMessage] {
+        protocolMessages.map { message in
+            let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
+            var dedupedParts: [AIChatPart] = []
+            var seenPartIds: [String: Int] = [:]
+            for protoPart in message.parts {
+                let chatPart = AIChatPartNormalization.makeChatPart(from: protoPart)
+                if let existing = seenPartIds[chatPart.id] {
+                    dedupedParts[existing] = chatPart
+                } else {
+                    seenPartIds[chatPart.id] = dedupedParts.count
+                    dedupedParts.append(chatPart)
+                }
+            }
+            return AIChatMessage(messageId: message.id, role: role, parts: dedupedParts, isStreaming: false)
+        }
+    }
+}
+
 /// AI 聊天状态域：隔离高频流式更新，避免全局 AppState 频繁刷新。
 /// 使用 @Observable 实现按属性粒度的变更追踪，流式场景下仅读取变化属性的视图才重渲染。
 @Observable
@@ -708,6 +868,9 @@ final class AIChatStore {
     private(set) var tailRevision: UInt64 = 0
     /// 最新 assistant 尾部 part 摘要，供上层做轻量判定，不必每次遍历整份消息。
     private(set) var latestAssistantPartMeta: AIAssistantTailPartMeta?
+    /// pendingToolQuestions 的单调版本号；每次 question 集合变化时递增，
+    /// 避免根视图读取整份字典来判断是否需要刷新投影。
+    private(set) var pendingQuestionVersion: UInt64 = 0
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
@@ -869,6 +1032,27 @@ final class AIChatStore {
         publishTailSignals()
     }
 
+    func applyPerfFixtureScenario(_ scenario: AIChatPerfFixtureScenario) {
+        currentSessionId = scenario.sessionId
+        subscribedSessionIds = [scenario.sessionId]
+        messages = scenario.seedMessages
+        historyHasMore = false
+        historyNextBeforeMessageId = nil
+        recentHistoryIsLoading = false
+        historyIsLoading = false
+        abortPendingSessionId = nil
+        awaitingUserEcho = false
+        hasPendingFirstContent = false
+        lastUserEchoMessageId = nil
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
+        pendingQuestionVersion = 0
+        isStreaming = true
+        streamingAssistantIndex = messages.indices.last
+        rebuildIndexes()
+        publishTailSignals()
+    }
+
     func replaceMessagesFromSessionCache(
         _ protocolMessages: [AIProtocolMessageInfo],
         isStreaming: Bool
@@ -896,6 +1080,19 @@ final class AIChatStore {
             markOnlyStreamingAssistant(at: assistantIndex)
         }
         recomputeIsStreaming()
+        publishTailSignals()
+    }
+
+    /// 主线程提交后台预处理的 snapshot 结果。
+    /// revision gate 由调用方在主线程执行，不在此方法内校验。
+    func applyPreparedSnapshot(_ snapshot: AIChatPreparedSnapshot) {
+        replaceMessages(snapshot.messages)
+        if snapshot.isStreaming,
+           let assistantIndex = messages.indices.reversed().first(where: { messages[$0].role == .assistant }) {
+            markOnlyStreamingAssistant(at: assistantIndex)
+        }
+        recomputeIsStreaming()
+        replaceQuestionRequests(snapshot.pendingQuestionRequests)
         publishTailSignals()
     }
 
@@ -1204,27 +1401,32 @@ final class AIChatStore {
         // 优先使用 toolCallId 作为 key（与 tool part 的 callID 匹配）
         if let callId = request.toolCallId, !callId.isEmpty {
             pendingToolQuestions[callId] = request
+            pendingQuestionVersion += 1
             questionRequestToCallId[request.id] = callId
             return
         }
         // 其次使用 toolMessageId 作为 key
         if let messageId = request.toolMessageId, !messageId.isEmpty {
             pendingToolQuestions[messageId] = request
+            pendingQuestionVersion += 1
             questionRequestToCallId[request.id] = messageId
             return
         }
         // 最后使用 request.id 作为 key，确保 question 总是被存储
         pendingToolQuestions[request.id] = request
+        pendingQuestionVersion += 1
         questionRequestToCallId[request.id] = request.id
     }
 
     func clearQuestionRequest(requestId: String) {
         if let callId = questionRequestToCallId.removeValue(forKey: requestId) {
             pendingToolQuestions.removeValue(forKey: callId)
+            pendingQuestionVersion += 1
             return
         }
         if let matched = pendingToolQuestions.first(where: { $0.value.id == requestId }) {
             pendingToolQuestions.removeValue(forKey: matched.key)
+            pendingQuestionVersion += 1
         }
     }
 
@@ -1259,6 +1461,7 @@ final class AIChatStore {
     func replaceQuestionRequests(_ requests: [AIQuestionRequestInfo]) {
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
+        pendingQuestionVersion += 1
         for request in requests {
             upsertQuestionRequest(request)
         }
@@ -1337,6 +1540,12 @@ final class AIChatStore {
         enqueuePreparedStreamEvents([
             .partDelta(messageId: messageId, partId: partId, partType: partType, field: field, delta: delta)
         ])
+    }
+
+    /// 向指定 part 追加文本 delta，供性能 fixture 测试使用。
+    func appendStreamDelta(partId: String, messageId: String, delta: String) {
+        enqueuePartDelta(messageId: messageId, partId: partId, partType: "text", field: "text", delta: delta)
+        flushPendingStreamEvents()
     }
 
     func flushPendingStreamEvents() {

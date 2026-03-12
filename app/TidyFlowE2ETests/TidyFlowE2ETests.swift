@@ -714,6 +714,81 @@ final class TidyFlowE2ETests: XCTestCase {
         )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页不存在，无法进入终端交互场景")
     }
+
+    // MARK: - WI-004 聊天流式性能基线 fixture
+
+    /// iPhone 聊天流式性能基线场景：
+    /// 在 UI_TEST_MODE + TF_PERF_CHAT_SCENARIO=stream_heavy 下验证：
+    /// 1. 直接进入 fixture 聊天页（tf.ios.ai.chat-area）
+    /// 2. 场景开始/结束状态可见（tf.perf.chat.status）
+    /// 3. 记录关键日志定位键，供外部脚本抓取 swiftui_hotspot / aiMessageTailFlush / memory_snapshot
+    func testAC_CHAT_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_CHAT_SCENARIO"] = "stream_heavy"
+        app.launch()
+
+        let scenario = "AC-CHAT-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
+
+        // 等待应用进入 fixture 聊天页
+        let chatArea = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.ai.chat-area").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.chat.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.chat.completed").firstMatch
+
+        let chatAreaVisible = chatArea.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureStarted = waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 30)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 聊天流式 perf fixture 初始状态",
+            description: """
+            执行动作：以 UI_TEST_MODE=1 TF_PERF_CHAT_SCENARIO=stream_heavy 启动 iPhone 应用；\
+            关键观察：聊天区（tf.ios.ai.chat-area）与 fixture 状态条（tf.perf.chat.status）是否可见；\
+            证据用途：验证 perf fixture 场景入口已落位，\
+            配合 swiftui_hotspot ios_ai_chat 与 aiMessageTailFlush 日志做基线。
+            """,
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 聊天流式 perf fixture 断言结果",
+            description: """
+            UI_TEST_MODE + TF_PERF_CHAT_SCENARIO=stream_heavy 下应用直接进入聊天场景；\
+            fixture 状态条从 running 进入 completed；\
+            日志抓取脚本可据此定位 swiftui_hotspot、aiMessageTailFlush 与 memory_snapshot。
+            """,
+            body: """
+            scenario=stream_heavy
+            chat_area.visible=\(chatAreaVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            hotspot_key=ios_ai_chat
+            hotspot_key_secondary=mac_ai_chat
+            tail_flush_event=aiMessageTailFlush
+            memory_snapshot_key=memory_snapshot
+            """,
+            workspaceContext: wsCtx
+        )
+
+        XCTAssertTrue(chatAreaVisible, "stream_heavy perf fixture 场景未进入聊天区")
+        XCTAssertTrue(statusVisible, "stream_heavy perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "stream_heavy perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "stream_heavy perf fixture 未完成 300 次 flush")
+    }
 }
 
 private extension XCUIElement {
@@ -726,4 +801,26 @@ private extension XCUIElement {
         }
         typeText(text)
     }
+}
+
+private func waitForElementContaining(label element: XCUIElement, substring: String, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if element.exists, element.label.contains(substring) {
+            return true
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+    return element.exists && element.label.contains(substring)
+}
+
+private func waitUntilExists(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if element.exists {
+            return true
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+    return element.exists
 }

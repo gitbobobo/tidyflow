@@ -290,3 +290,214 @@ final class TFClientPerfReporter: ObservableObject {
         return kr == KERN_SUCCESS ? info.phys_footprint : 0
     }
 }
+
+// MARK: - 聊天流式性能 Fixture（WI-004）
+
+/// 聊天流式性能测试场景定义，与 UI_TEST_MODE 环境变量配合使用。
+struct AIChatPerfFixtureScenario {
+    let id: String
+    let project: String
+    let workspace: String
+    let sessionId: String
+    let messageId: String
+    let partId: String
+    let flushCount: Int
+    let flushIntervalMs: Double
+    let seedMessages: [AIChatMessage]
+    let deltaFlushes: [String]
+
+    static let streamHeavy: AIChatPerfFixtureScenario = {
+        let project = "PerfLab"
+        let workspace = "stream-heavy"
+        let sessionId = "fixture-stream-heavy"
+        let messageId = "fixture-msg-0"
+        let partId = "fixture-part-0"
+        let longMarkdown = AIChatPerfFixtureFactory.longMarkdownBlock()
+        return AIChatPerfFixtureScenario(
+            id: "stream_heavy",
+            project: project,
+            workspace: workspace,
+            sessionId: sessionId,
+            messageId: messageId,
+            partId: partId,
+            flushCount: 300,
+            flushIntervalMs: 0,
+            seedMessages: AIChatPerfFixtureFactory.makeSeedMessages(
+                project: project,
+                workspace: workspace,
+                sessionId: sessionId,
+                messageId: messageId,
+                partId: partId,
+                longMarkdown: longMarkdown
+            ),
+            deltaFlushes: AIChatPerfFixtureFactory.makeDeltaFlushes(count: 300)
+        )
+    }()
+
+    static func current() -> AIChatPerfFixtureScenario? {
+        guard ProcessInfo.processInfo.environment["UI_TEST_MODE"] == "1" else { return nil }
+        let value = ProcessInfo.processInfo.environment["TF_PERF_CHAT_SCENARIO"] ?? ""
+        switch value {
+        case streamHeavy.id:
+            return .streamHeavy
+        default:
+            return nil
+        }
+    }
+}
+
+/// 聊天流式性能夹具执行器；
+/// 在 UI_TEST_MODE 下直接加载本地确定性场景，不依赖真实服务端。
+final class AIChatPerfFixtureRunner: ObservableObject {
+    private static let flushLogStride = 25
+
+    @Published private(set) var isRunning: Bool = false
+    @Published private(set) var isCompleted: Bool = false
+    @Published private(set) var statusText: String = "idle"
+
+    private let scenario: AIChatPerfFixtureScenario
+    private var task: Task<Void, Never>?
+    private(set) var progress: Int = 0
+
+    init(scenario: AIChatPerfFixtureScenario = .current() ?? .streamHeavy) {
+        self.scenario = scenario
+    }
+
+    /// 启动 fixture 场景，复用现有 aiMessageTailFlush 观测链路。
+    func run(store: AIChatStore, perfReporter: TFClientPerfReporter?) {
+        if isRunning {
+            TFLog.perf.info(
+                "perf chat_perf_fixture_run_ignored scenario=\(self.scenario.id, privacy: .public) reason=already_running progress=\(self.progress, privacy: .public)"
+            )
+            return
+        }
+        isRunning = true
+        isCompleted = false
+        progress = 0
+        statusText = "preparing"
+        let deltaCount = scenario.deltaFlushes.count
+        TFLog.perf.info(
+            "perf chat_perf_fixture_prepare scenario=\(self.scenario.id, privacy: .public) configured_flush_count=\(self.scenario.flushCount, privacy: .public) generated_delta_flushes=\(deltaCount, privacy: .public) interval_ms=\(self.scenario.flushIntervalMs, privacy: .public)"
+        )
+        if deltaCount != scenario.flushCount {
+            TFLog.perf.error(
+                "perf chat_perf_fixture_delta_mismatch scenario=\(self.scenario.id, privacy: .public) configured_flush_count=\(self.scenario.flushCount, privacy: .public) generated_delta_flushes=\(deltaCount, privacy: .public)"
+            )
+        }
+        store.applyPerfFixtureScenario(scenario)
+
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let clock = ContinuousClock()
+            let startInstant = clock.now
+            self.logHotspot(phase: "begin")
+            let beginMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.perf.info(
+                "perf chat_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
+            )
+            NSLog(
+                "[PerfFixture] start scenario=%@ flush_count=%d delta_flushes=%d",
+                self.scenario.id,
+                self.scenario.flushCount,
+                self.scenario.deltaFlushes.count
+            )
+            TFLog.perf.info(
+                "perf memory_snapshot phase=fixture_begin scenario=\(self.scenario.id, privacy: .public) bytes=\(beginMemBytes, privacy: .public)"
+            )
+            self.statusText = "running"
+            for (index, delta) in self.scenario.deltaFlushes.enumerated() {
+                if Task.isCancelled {
+                    TFLog.perf.info(
+                        "perf chat_perf_fixture_cancelled scenario=\(self.scenario.id, privacy: .public) progress=\(self.progress, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public)"
+                    )
+                    self.task = nil
+                    self.isRunning = false
+                    self.isCompleted = false
+                    self.statusText = "cancelled \(self.progress)/\(self.scenario.flushCount)"
+                    NSLog(
+                        "[PerfFixture] cancelled scenario=%@ progress=%d flush_count=%d",
+                        self.scenario.id,
+                        self.progress,
+                        self.scenario.flushCount
+                    )
+                    return
+                }
+                let startMs = CFAbsoluteTimeGetCurrent() * 1000
+                store.appendStreamDelta(
+                    partId: self.scenario.partId,
+                    messageId: self.scenario.messageId,
+                    delta: delta
+                )
+
+                let durationMs = CFAbsoluteTimeGetCurrent() * 1000 - startMs
+                perfReporter?.record(event: .aiMessageTailFlush, durationMs: durationMs)
+
+                self.progress = index + 1
+                if index == 0 || (index + 1).isMultiple(of: 10) || index + 1 == self.scenario.flushCount {
+                    self.statusText = "running \(index + 1)/\(self.scenario.flushCount)"
+                }
+                if self.shouldEmitFlushLog(sampleIndex: index + 1) {
+                    let durationText = String(format: "%.2f", durationMs)
+                    TFLog.perf.info(
+                        "perf aiMessageTailFlush scenario=\(self.scenario.id, privacy: .public) sample_index=\(index + 1, privacy: .public) duration_ms=\(durationText, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
+                    )
+                }
+                if (index + 1).isMultiple(of: 50) || index + 1 == self.scenario.flushCount {
+                    NSLog(
+                        "[PerfFixture] progress scenario=%@ progress=%d flush_count=%d",
+                        self.scenario.id,
+                        index + 1,
+                        self.scenario.flushCount
+                    )
+                }
+                let nextTick = startInstant.advanced(
+                    by: .milliseconds(Int(self.scenario.flushIntervalMs * Double(index + 1)))
+                )
+                try? await clock.sleep(until: nextTick, tolerance: .milliseconds(2))
+            }
+            TFLog.perf.info(
+                "perf chat_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public)"
+            )
+            let memBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.perf.info(
+                "perf memory_snapshot phase=fixture_end scenario=\(self.scenario.id, privacy: .public) bytes=\(memBytes, privacy: .public)"
+            )
+            self.logHotspot(phase: "end")
+            self.task = nil
+            self.isRunning = false
+            self.isCompleted = true
+            self.statusText = "completed \(self.scenario.flushCount)/\(self.scenario.flushCount)"
+            NSLog(
+                "[PerfFixture] completed scenario=%@ flush_count=%d",
+                self.scenario.id,
+                self.scenario.flushCount
+            )
+        }
+    }
+
+    func cancel() {
+        guard let task else { return }
+        TFLog.perf.info(
+            "perf chat_perf_fixture_cancel_requested scenario=\(self.scenario.id, privacy: .public) progress=\(self.progress, privacy: .public) is_running=\(self.isRunning, privacy: .public)"
+        )
+        task.cancel()
+        self.task = nil
+        if isRunning {
+            isRunning = false
+            isCompleted = false
+            statusText = "cancelled \(progress)/\(scenario.flushCount)"
+        }
+    }
+
+    private func logHotspot(phase: String) {
+        let payload = "scenario=\(scenario.id) project=\(scenario.project) workspace=\(scenario.workspace)"
+        TFLog.perf.info("perf swiftui_hotspot hotspot=ios_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
+        TFLog.perf.info("perf swiftui_hotspot hotspot=mac_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
+    }
+
+    private func shouldEmitFlushLog(sampleIndex: Int) -> Bool {
+        sampleIndex == 1 ||
+        sampleIndex == scenario.flushCount ||
+        sampleIndex.isMultiple(of: Self.flushLogStride)
+    }
+}
