@@ -245,6 +245,19 @@ domains:
       ai_phase:
         values: [idle, active, faulted]
         description: "AI 领域相位；active 表示至少一个会话正在执行"
+      ai_display_status:
+        values: [idle, running, awaiting_input, success, failure, cancelled]
+        description: "AI 领域终端标签栏展示六态（v1.46）；由 Core aggregate_workspace_ai_domain_state 纯函数聚合，客户端直接消费不自行推导"
+        note: "优先级：awaiting_input > running > terminal 状态（failure > cancelled > success，同优先级按 timestamp 取最新）"
+      ai_active_tool_name:
+        type: optional_string
+        description: "当前运行中工具名（仅 ai_display_status=running 时存在）"
+      ai_last_error_message:
+        type: optional_string
+        description: "最近失败的错误摘要（仅 ai_display_status=failure 时存在）"
+      ai_display_updated_at:
+        type: int64
+        description: "AI 展示状态最近变化的 Unix ms 时间戳（v1.46，兼作版本标识）"
       terminal_phase:
         values: [idle, active, faulted]
         description: "终端领域相位；active 表示至少一个终端正在运行"
@@ -257,10 +270,18 @@ domains:
       version:
         type: uint64
         description: "状态版本号（单调递增），用于增量更新判断，不回退"
+    system_snapshot_seed_fields:
+      description: >
+        v1.46：system_snapshot.workspace_items 中每个工作区条目携带 coordinator_ai 种子字段（可选）。
+        重连后客户端通过此字段一次性恢复所有工作区的 coordinator AI 状态，无需等待增量事件补全。
+      coordinator_ai:
+        description: "AiDomainState 展平为 DTO（含展示六态字段），等同于 coordinator_snapshot 中的 ai 字段"
+        type: optional_object
     # 多工作区边界约束：
     # - 每条 coordinator_snapshot 消息只携带一个工作区的状态（非全局快照）
     # - 客户端按 "project:workspace" 全局键维护本地缓存，不允许只用 workspace 名称路由
     # - 工作区删除时，客户端应调用本地缓存的 removeWorkspace 清除对应条目
+    # - coordinator_ai 与 coordinator_snapshot 使用同一版本语义；旧版本不应覆盖新状态
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved

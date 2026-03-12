@@ -417,4 +417,156 @@ final class TerminalSessionSemanticLayerTests: XCTestCase {
         XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "ACTIVE"), .active)
         XCTAssertEqual(TerminalLifecyclePhase.from(serverValue: "unknown"), .idle, "未知值应回退到 idle")
     }
+
+    // MARK: - v1.46 Coordinator 投影函数
+
+    private func makeWorkspaceState(
+        project: String = "proj",
+        workspace: String = "ws",
+        displayStatus: AiDisplayStatus,
+        activeToolName: String? = nil,
+        lastErrorMessage: String? = nil
+    ) -> WorkspaceCoordinatorState {
+        let id = CoordinatorWorkspaceId(project: project, workspace: workspace)
+        let ai = AiDomainState(
+            phase: displayStatus == .idle ? .idle : .active,
+            activeSessionCount: displayStatus == .idle ? 0 : 1,
+            totalSessionCount: 1,
+            displayStatus: displayStatus,
+            activeToolName: activeToolName,
+            lastErrorMessage: lastErrorMessage,
+            displayUpdatedAt: 0
+        )
+        return WorkspaceCoordinatorState(id: id, ai: ai, version: 1)
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_idle() {
+        let state = makeWorkspaceState(displayStatus: .idle)
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        XCTAssertEqual(result, .idle)
+        XCTAssertFalse(result.isVisible)
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_running() {
+        let state = makeWorkspaceState(displayStatus: .running, activeToolName: "Codex")
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        XCTAssertEqual(result, .running(toolName: "Codex"))
+        XCTAssertTrue(result.isVisible)
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_runningNilTool() {
+        let state = makeWorkspaceState(displayStatus: .running, activeToolName: nil)
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        if case .running(let toolName) = result {
+            XCTAssertNil(toolName)
+        } else {
+            XCTFail("Expected .running")
+        }
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_awaitingInput() {
+        let state = makeWorkspaceState(displayStatus: .awaitingInput)
+        XCTAssertEqual(TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state), .awaitingInput)
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_success() {
+        let state = makeWorkspaceState(displayStatus: .success)
+        XCTAssertEqual(TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state), .success)
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_failure() {
+        let state = makeWorkspaceState(displayStatus: .failure, lastErrorMessage: "OOM")
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        if case .failure(let msg) = result {
+            XCTAssertEqual(msg, "OOM")
+        } else {
+            XCTFail("Expected .failure")
+        }
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_cancelled() {
+        let state = makeWorkspaceState(displayStatus: .cancelled)
+        XCTAssertEqual(TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state), .cancelled)
+    }
+
+    func testTerminalAIStatus_fromCache_noCacheReturnsIdle() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id)
+        XCTAssertEqual(result, .idle)
+    }
+
+    func testTerminalAIStatus_fromCache_returnsLiveState() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        let ai = AiDomainState(displayStatus: .awaitingInput)
+        let state = WorkspaceCoordinatorState(id: id, ai: ai, version: 1)
+        cache.apply(.updateWorkspace(state))
+
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id)
+        XCTAssertEqual(result, .awaitingInput)
+    }
+
+    func testTerminalAIStatus_fromCache_multiWorkspaceIsolation() {
+        let cache = CoordinatorStateCache()
+        let id1 = CoordinatorWorkspaceId(project: "proj", workspace: "ws1")
+        let id2 = CoordinatorWorkspaceId(project: "proj", workspace: "ws2")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id1, ai: AiDomainState(displayStatus: .running), version: 1
+        )))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id2, ai: AiDomainState(displayStatus: .success), version: 1
+        )))
+
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id1),
+            .running(toolName: nil),
+            "ws1 状态不应受 ws2 影响"
+        )
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id2),
+            .success,
+            "ws2 状态不应受 ws1 影响"
+        )
+    }
+
+    func testTerminalAIStatus_fromCache_afterClearReturnsIdle() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id, ai: AiDomainState(displayStatus: .failure), version: 1
+        )))
+        cache.apply(.clear)
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id),
+            .idle,
+            "清除缓存后应返回 idle"
+        )
+    }
+
+    func testTerminalAIStatus_fromCache_sameWorkspaceKeyDifferentProjects() {
+        // 验证不同项目下同名工作区不混淆（多项目隔离核心约束）
+        let cache = CoordinatorStateCache()
+        let idA = CoordinatorWorkspaceId(project: "proj-a", workspace: "default")
+        let idB = CoordinatorWorkspaceId(project: "proj-b", workspace: "default")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: idA, ai: AiDomainState(displayStatus: .running), version: 1
+        )))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: idB, ai: AiDomainState(displayStatus: .idle), version: 1
+        )))
+
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: idA),
+            .running(toolName: nil),
+            "proj-a/default 应为 running"
+        )
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: idB),
+            .idle,
+            "proj-b/default 同名工作区不应共享状态"
+        )
+    }
 }

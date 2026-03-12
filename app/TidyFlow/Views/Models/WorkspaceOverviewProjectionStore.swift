@@ -47,7 +47,12 @@ final class WorkspaceOverviewProjectionStore {
 
     func refresh(appState: MobileAppState, project: String, workspace: String) {
         let terminals = appState.terminalsForWorkspace(project: project, workspace: workspace)
-        let aiStatus = appState.terminalAIStatus(projectName: project, workspaceName: workspace)
+        // v1.46: 从 Coordinator 缓存投影 AI 展示状态，同工作区所有终端展示同一状态
+        let wsId = CoordinatorWorkspaceId(project: project, workspace: workspace)
+        let aiStatus = TerminalSessionSemantics.terminalAIStatus(
+            fromCache: appState.coordinatorStateCache,
+            workspaceId: wsId
+        )
         let terminalProjections = terminals.enumerated().map { index, term in
             let presentation = appState.terminalPresentation(for: term.termId)
             return WorkspaceTerminalProjection(
@@ -123,6 +128,12 @@ final class WorkspaceOverviewProjectionStore {
         let integrationKey = "\(project):integration"
         let tabs = appState.workspaceTabs[globalKey] ?? []
         let terminalTabs = tabs.filter { $0.kind == .terminal }
+        // v1.46: 从 Coordinator 缓存投影 AI 展示状态，同工作区所有终端 tab 展示同一状态
+        let wsId = CoordinatorWorkspaceId(project: project, workspace: workspace)
+        let aiStatus = TerminalSessionSemantics.terminalAIStatus(
+            fromCache: appState.coordinatorStateCache,
+            workspaceId: wsId
+        )
         let terminalProjections = terminalTabs.enumerated().map { index, tab in
             WorkspaceTerminalProjection(
                 id: tab.id.uuidString,
@@ -131,7 +142,7 @@ final class WorkspaceOverviewProjectionStore {
                 shortId: String(tab.id.uuidString.prefix(8)),
                 iconName: tab.commandIcon ?? "terminal",
                 isPinned: tab.isPinned,
-                aiStatus: .idle,
+                aiStatus: aiStatus.toSharedProjection(),
                 hasTerminalsToRight: index < terminalTabs.count - 1
             )
         }

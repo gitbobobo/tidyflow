@@ -23,8 +23,9 @@ pub use consistency::{
 };
 pub use identity::{CoordinatorScope, WorkspaceCoordinatorId};
 pub use model::{
-    AiDomainPhase, AiDomainState, CoordinatorHealth, FileDomainPhase, FileDomainState,
-    StatePersistence, TerminalDomainPhase, TerminalDomainState, WorkspaceCoordinatorState,
+    AiDisplayStatus, AiDomainPhase, AiDomainState, CoordinatorHealth, FileDomainPhase,
+    FileDomainState, StatePersistence, TerminalDomainPhase, TerminalDomainState,
+    WorkspaceCoordinatorState,
 };
 pub use snapshot::{
     restore_from_snapshot, CoordinatorSnapshot, PersistableCoordinatorMeta, RecoveryStatus,

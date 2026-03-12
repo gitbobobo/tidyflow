@@ -99,6 +99,9 @@ pub(in crate::server::ws) struct SystemSnapshotWorkspaceItem {
     /// 恢复游标（上次已知执行位置）
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery_cursor: Option<String>,
+    /// Coordinator AI 聚合状态种子（重连后快速恢复工作区展示状态）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coordinator_ai: Option<crate::server::protocol::CoordinatorAiDomainStateDto>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +123,7 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
     // 提取调度器信息（避免重复查询）
     let (evo_scheduler_info, evo_index) = evolution_index_and_scheduler_from_message(evo_snapshot)?;
     let (workspace_items, cache_metrics) =
-        build_workspace_items_and_metrics(&ctx.app_state, &evo_index).await;
+        build_workspace_items_and_metrics(&ctx.app_state, &evo_index, &ctx.ai_state).await;
 
     // 聚合健康快照（含调度优化建议和预测异常）
     let health_snapshot = {
@@ -266,10 +269,17 @@ fn evolution_index_from_items(
 async fn build_workspace_items_and_metrics(
     app_state: &SharedAppState,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
+    ai_state: &crate::server::handlers::ai::SharedAIState,
 ) -> (
     Vec<SystemSnapshotWorkspaceItem>,
     Vec<WorkspaceCacheMetricsInfo>,
 ) {
+    // 提取 AI session status store（只加锁一次）
+    let session_statuses = {
+        let guard = ai_state.lock().await;
+        guard.session_statuses.clone()
+    };
+
     let mut items = Vec::new();
     let mut cache_metrics_list = Vec::new();
 
@@ -287,10 +297,14 @@ async fn build_workspace_items_and_metrics(
                 status: "ready".to_string(),
                 sidebar_status: Default::default(),
             };
-            items.push(build_workspace_item(
+            let coordinator_ai_default = build_coordinator_ai_dto(&session_statuses, &project_name, DEFAULT_WORKSPACE_NAME);
+            items.push(build_workspace_item_with_recovery_and_coordinator(
                 project_name.clone(),
                 default_info,
                 evo_index,
+                None,
+                None,
+                coordinator_ai_default,
             ));
             cache_metrics_list.push(snapshot_to_metrics_info(
                 &WorkspaceCacheSnapshot::from_counters(
@@ -323,12 +337,14 @@ async fn build_workspace_items_and_metrics(
                     .recovery_meta
                     .as_ref()
                     .and_then(|m| m.recovery_cursor.clone());
-                items.push(build_workspace_item_with_recovery(
+                let coordinator_ai = build_coordinator_ai_dto(&session_statuses, &project_name, &ws.name);
+                items.push(build_workspace_item_with_recovery_and_coordinator(
                     project_name.clone(),
                     info,
                     evo_index,
                     recovery_state,
                     recovery_cursor,
+                    coordinator_ai,
                 ));
                 cache_metrics_list.push(snapshot_to_metrics_info(
                     &WorkspaceCacheSnapshot::from_counters(&project_name, &ws.name, &root),
@@ -344,6 +360,25 @@ async fn build_workspace_items_and_metrics(
         (a.project.clone(), a.workspace.clone()).cmp(&(b.project.clone(), b.workspace.clone()))
     });
     (items, cache_metrics_list)
+}
+
+/// 为指定工作区构建 Coordinator AI 展示状态 DTO（仅在有会话时返回）
+fn build_coordinator_ai_dto(
+    session_statuses: &std::sync::Arc<crate::ai::session_status::AiSessionStateStore>,
+    project_name: &str,
+    workspace_name: &str,
+) -> Option<crate::server::protocol::CoordinatorAiDomainStateDto> {
+    let ai_state = crate::ai::session_status::aggregate_workspace_ai_domain_state(
+        session_statuses,
+        project_name,
+        workspace_name,
+    );
+    // 仅在有会话记录时才携带（避免每个工作区都传送空状态）
+    if ai_state.total_session_count > 0 {
+        Some(crate::server::protocol::CoordinatorAiDomainStateDto::from(&ai_state))
+    } else {
+        None
+    }
 }
 
 fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetricsInfo {
@@ -377,7 +412,7 @@ fn build_workspace_item(
     workspace: WorkspaceInfo,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
 ) -> SystemSnapshotWorkspaceItem {
-    build_workspace_item_with_recovery(project, workspace, evo_index, None, None)
+    build_workspace_item_with_recovery_and_coordinator(project, workspace, evo_index, None, None, None)
 }
 
 /// 构建工作区快照条目，附带恢复状态字段（按 (project, workspace) 隔离）
@@ -387,6 +422,18 @@ fn build_workspace_item_with_recovery(
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
     recovery_state: Option<String>,
     recovery_cursor: Option<String>,
+) -> SystemSnapshotWorkspaceItem {
+    build_workspace_item_with_recovery_and_coordinator(project, workspace, evo_index, recovery_state, recovery_cursor, None)
+}
+
+/// 构建工作区快照条目（完整版，含恢复状态与 Coordinator AI 种子）
+fn build_workspace_item_with_recovery_and_coordinator(
+    project: String,
+    workspace: WorkspaceInfo,
+    evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
+    recovery_state: Option<String>,
+    recovery_cursor: Option<String>,
+    coordinator_ai: Option<crate::server::protocol::CoordinatorAiDomainStateDto>,
 ) -> SystemSnapshotWorkspaceItem {
     let evo = evo_index.get(&(project.clone(), workspace.name.clone()));
     let evolution_status = evo
@@ -408,6 +455,7 @@ fn build_workspace_item_with_recovery(
         failure_reason,
         recovery_state,
         recovery_cursor,
+        coordinator_ai,
     }
 }
 
@@ -620,9 +668,12 @@ mod tests {
     async fn title_should_be_propagated_when_present() {
         let items = vec![test_item("cycle-2", Some("本轮标题"), None, None, None)];
         let idx = evolution_index_from_items(&items);
+        let ai_state: crate::server::handlers::ai::SharedAIState =
+            Arc::new(tokio::sync::Mutex::new(AIState::new()));
         let (result, _) = build_workspace_items_and_metrics(
             &Arc::new(tokio::sync::RwLock::new(make_test_state())),
             &idx,
+            &ai_state,
         )
         .await;
         let default_item = result
@@ -636,9 +687,12 @@ mod tests {
     #[tokio::test]
     async fn workspace_items_should_include_default_and_not_started_when_no_evolution() {
         let state = make_test_state();
+        let ai_state: crate::server::handlers::ai::SharedAIState =
+            Arc::new(tokio::sync::Mutex::new(AIState::new()));
         let (items, cache_metrics) = build_workspace_items_and_metrics(
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
+            &ai_state,
         )
         .await;
         let default_item = items
@@ -675,17 +729,19 @@ mod tests {
             workspaces: HashMap::new(),
             commands: Vec::new(),
         });
+        let ai_state: crate::server::handlers::ai::SharedAIState =
+            Arc::new(tokio::sync::Mutex::new(AIState::new()));
         let (items, _) = build_workspace_items_and_metrics(
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
+            &ai_state,
         )
         .await;
-        let keys = items
-            .into_iter()
-            .map(|it| format!("{}/{}", it.project, it.workspace))
-            .collect::<Vec<_>>();
         assert_eq!(
-            keys,
+            items
+                .iter()
+                .map(|i| format!("{}/{}", i.project, i.workspace))
+                .collect::<Vec<_>>(),
             vec!["alpha/default".to_string(), "zeta/default".to_string()]
         );
     }
@@ -804,9 +860,12 @@ mod tests {
             commands: Vec::new(),
         });
 
+        let ai_state_4: crate::server::handlers::ai::SharedAIState =
+            Arc::new(tokio::sync::Mutex::new(AIState::new()));
         let (items, _) = build_workspace_items_and_metrics(
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
+            &ai_state_4,
         )
         .await;
 

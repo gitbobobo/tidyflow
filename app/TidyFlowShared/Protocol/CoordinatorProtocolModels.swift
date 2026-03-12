@@ -90,23 +90,74 @@ public enum CoordinatorHealth: String, Equatable, Hashable, Sendable, Codable {
 
 // MARK: - 领域子状态
 
+/// AI 领域展示六态（v1.46，标签栏专用）
+///
+/// 由 Core 聚合计算，客户端直接消费，不自行推导。
+/// 与 Core 的 `AiDisplayStatus` 枚举保持语义一致。
+public enum AiDisplayStatus: String, Equatable, Hashable, Sendable, Codable {
+    /// 无活跃 AI 执行，空闲
+    case idle
+    /// AI 正在执行（工具调用中）
+    case running
+    /// AI 等待用户输入
+    case awaitingInput = "awaiting_input"
+    /// AI 成功完成
+    case success
+    /// AI 执行失败
+    case failure
+    /// AI 被取消
+    case cancelled
+}
+
 /// AI 领域子状态
 public struct AiDomainState: Equatable, Sendable {
     public let phase: AiDomainPhase
     public let activeSessionCount: Int
     public let totalSessionCount: Int
+    /// 标签栏展示六态（v1.46）
+    public let displayStatus: AiDisplayStatus
+    /// 当前运行中的工具名（仅 running 状态时存在）
+    public let activeToolName: String?
+    /// 最近失败的错误摘要（仅 failure 状态时存在）
+    public let lastErrorMessage: String?
+    /// 展示状态最近变化的时间戳（Unix ms，v1.46）
+    public let displayUpdatedAt: Int64
 
-    public init(phase: AiDomainPhase = .idle, activeSessionCount: Int = 0, totalSessionCount: Int = 0) {
+    public init(
+        phase: AiDomainPhase = .idle,
+        activeSessionCount: Int = 0,
+        totalSessionCount: Int = 0,
+        displayStatus: AiDisplayStatus = .idle,
+        activeToolName: String? = nil,
+        lastErrorMessage: String? = nil,
+        displayUpdatedAt: Int64 = 0
+    ) {
         self.phase = phase
         self.activeSessionCount = activeSessionCount
         self.totalSessionCount = totalSessionCount
+        self.displayStatus = displayStatus
+        self.activeToolName = activeToolName
+        self.lastErrorMessage = lastErrorMessage
+        self.displayUpdatedAt = displayUpdatedAt
     }
 
     public static func from(json: [String: Any]) -> AiDomainState {
         let phase = AiDomainPhase(rawValue: json["phase"] as? String ?? "idle") ?? .idle
         let active = json["active_session_count"] as? Int ?? 0
         let total = json["total_session_count"] as? Int ?? 0
-        return AiDomainState(phase: phase, activeSessionCount: active, totalSessionCount: total)
+        let displayStatus = AiDisplayStatus(rawValue: json["display_status"] as? String ?? "idle") ?? .idle
+        let activeToolName = json["active_tool_name"] as? String
+        let lastErrorMessage = json["last_error_message"] as? String
+        let displayUpdatedAt = json["display_updated_at"] as? Int64 ?? 0
+        return AiDomainState(
+            phase: phase,
+            activeSessionCount: active,
+            totalSessionCount: total,
+            displayStatus: displayStatus,
+            activeToolName: activeToolName,
+            lastErrorMessage: lastErrorMessage,
+            displayUpdatedAt: displayUpdatedAt
+        )
     }
 }
 
@@ -284,6 +335,64 @@ public struct CoordinatorConsistencyResult: Equatable, Sendable {
             inconsistencies: inconsistencies,
             recoveryDecisions: decisions,
             isConsistent: isConsistent
+        )
+    }
+}
+
+// MARK: - coordinator_snapshot 增量消息（v1.46）
+
+/// Core 推送的工作区级 Coordinator 快照增量消息载荷。
+///
+/// 对应 Rust `ServerMessage::CoordinatorSnapshot`，每条消息对应一个工作区。
+/// 客户端收到后通过 `CoordinatorStateCache.apply(.updateWorkspace(...))` 更新缓存。
+public struct CoordinatorWorkspaceSnapshotPayload: Sendable {
+    public let project: String
+    public let workspace: String
+    public let ai: AiDomainState
+    public let version: UInt64
+    public let generatedAt: String
+
+    public init(project: String, workspace: String, ai: AiDomainState, version: UInt64, generatedAt: String) {
+        self.project = project
+        self.workspace = workspace
+        self.ai = ai
+        self.version = version
+        self.generatedAt = generatedAt
+    }
+
+    public var workspaceId: CoordinatorWorkspaceId {
+        CoordinatorWorkspaceId(project: project, workspace: workspace)
+    }
+
+    /// 解析为 `WorkspaceCoordinatorState`（仅含 AI 域，其余保留默认）
+    public func toWorkspaceCoordinatorState(existing: WorkspaceCoordinatorState?) -> WorkspaceCoordinatorState {
+        // 版本号回退检测：旧快照不应覆盖更新的状态
+        if let existing, existing.version >= version {
+            return existing
+        }
+        return WorkspaceCoordinatorState(
+            id: workspaceId,
+            ai: ai,
+            terminal: existing?.terminal ?? TerminalDomainState(),
+            file: existing?.file ?? FileDomainState(),
+            health: existing?.health ?? .healthy,
+            generatedAt: generatedAt,
+            version: version
+        )
+    }
+
+    public static func from(json: [String: Any]) -> CoordinatorWorkspaceSnapshotPayload? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else { return nil }
+        let ai = AiDomainState.from(json: json["ai"] as? [String: Any] ?? [:])
+        let version = json["version"] as? UInt64 ?? 0
+        let generatedAt = json["generated_at"] as? String ?? ""
+        return CoordinatorWorkspaceSnapshotPayload(
+            project: project,
+            workspace: workspace,
+            ai: ai,
+            version: version,
+            generatedAt: generatedAt
         )
     }
 }

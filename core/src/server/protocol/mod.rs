@@ -1879,11 +1879,67 @@ pub enum ServerMessage {
     HealthRepairResult {
         audit: health::RepairAuditEntry,
     },
+
+    // v1.46: Core 推送工作区 Coordinator 聚合状态快照（增量更新，每条消息对应一个工作区）
+    #[serde(rename = "coordinator_snapshot")]
+    CoordinatorSnapshot {
+        /// 所属项目名称
+        project: String,
+        /// 所属工作区名称
+        workspace: String,
+        /// AI 领域聚合子状态（含展示状态 display_status）
+        ai: CoordinatorAiDomainStateDto,
+        /// 状态版本号（单调递增，客户端可用于冲突检测）
+        version: u64,
+        /// 状态生成时间（ISO 8601）
+        generated_at: String,
+    },
 }
 
 // ============================================================================
 // v1 Data Types
 // ============================================================================
+
+/// Coordinator AI 领域子状态 DTO（协议传输用）
+///
+/// 对应 `coordinator::model::AiDomainState`，展平为协议可序列化结构。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinatorAiDomainStateDto {
+    /// 聚合相位（治理用）: "idle" | "active" | "faulted"
+    pub phase: String,
+    /// 活跃会话数
+    pub active_session_count: u32,
+    /// 总会话数
+    pub total_session_count: u32,
+    /// 展示状态（标签栏六态）: "idle" | "running" | "awaiting_input" | "success" | "failure" | "cancelled"
+    pub display_status: String,
+    /// 当前运行会话使用的工具名（仅 running 时存在）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tool_name: Option<String>,
+    /// 最近失败的错误摘要（仅 failure 时存在）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+    /// 最近展示状态变化时间戳（Unix ms）
+    pub display_updated_at: i64,
+}
+
+impl From<&crate::coordinator::model::AiDomainState> for CoordinatorAiDomainStateDto {
+    fn from(s: &crate::coordinator::model::AiDomainState) -> Self {
+        Self {
+            phase: match s.phase {
+                crate::coordinator::model::AiDomainPhase::Idle => "idle".to_string(),
+                crate::coordinator::model::AiDomainPhase::Active => "active".to_string(),
+                crate::coordinator::model::AiDomainPhase::Faulted => "faulted".to_string(),
+            },
+            active_session_count: s.active_session_count,
+            total_session_count: s.total_session_count,
+            display_status: s.display_status.as_str().to_string(),
+            active_tool_name: s.active_tool_name.clone(),
+            last_error_message: s.last_error_message.clone(),
+            display_updated_at: s.display_updated_at,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectInfo {

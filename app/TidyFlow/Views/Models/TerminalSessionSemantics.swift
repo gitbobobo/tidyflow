@@ -345,7 +345,42 @@ enum TerminalSessionSemantics {
         }
     }
 
-    // MARK: - 工作区终端排序
+    /// 从 Coordinator 工作区状态投影为 TerminalAIStatus（v1.46）。
+    ///
+    /// 优先使用 Core 聚合的 `AiDisplayStatus`，不再依赖客户端自行推导。
+    /// macOS 与 iOS 双端共用此投影函数，确保标签栏展示语义一致。
+    static func terminalAIStatus(
+        fromCoordinatorState state: WorkspaceCoordinatorState
+    ) -> TerminalAIStatus {
+        let ai = state.ai
+        switch ai.displayStatus {
+        case .idle:
+            return .idle
+        case .running:
+            return .running(toolName: ai.activeToolName)
+        case .awaitingInput:
+            return .awaitingInput
+        case .success:
+            return .success
+        case .failure:
+            return .failure(message: ai.lastErrorMessage)
+        case .cancelled:
+            return .cancelled
+        }
+    }
+
+    /// 从 Coordinator 缓存投影指定工作区的 TerminalAIStatus（v1.46）。
+    ///
+    /// 当缓存无记录时返回 `.idle`。
+    static func terminalAIStatus(
+        fromCache cache: CoordinatorStateCache,
+        workspaceId: CoordinatorWorkspaceId
+    ) -> TerminalAIStatus {
+        guard let state = cache.state(for: workspaceId) else { return .idle }
+        return terminalAIStatus(fromCoordinatorState: state)
+    }
+
+
 
     /// 对指定工作区的终端列表进行排序：
     /// 1. 置顶终端排在前面；

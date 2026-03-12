@@ -40,7 +40,11 @@ struct MobileTerminalView: View {
         .toolbar {
             // 终端视图内 AI 状态指示器，非空闲时在导航栏右侧显示
             ToolbarItem(placement: .navigationBarTrailing) {
-                let aiStatus = appState.terminalAIStatus(projectName: project, workspaceName: workspace)
+                let wsId = CoordinatorWorkspaceId(project: project, workspace: workspace)
+                let aiStatus = TerminalSessionSemantics.terminalAIStatus(
+                    fromCache: appState.coordinatorStateCache,
+                    workspaceId: wsId
+                )
                 if aiStatus.isVisible {
                     Label(aiStatus.hint, systemImage: aiStatus.iconName)
                         .labelStyle(.iconOnly)

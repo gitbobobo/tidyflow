@@ -85,24 +85,15 @@ struct TabStripView: View {
         }
     }
 
-    /// 从当前活跃 AI 会话推导工作区级状态令牌，空闲时返回 nil。
+    /// 从 Coordinator 缓存推导工作区级 AI 状态令牌，空闲时返回 nil。
+    ///
+    /// v1.46：不再读 AI 会话快照，由 Core 聚合后的 coordinator 状态决定展示态。
     private func aiStatus() -> TerminalAIStatus? {
-        guard let workspaceKey = appState.selectedWorkspaceKey,
-              let sessionId = appState.aiStore(for: appState.aiChatTool).currentSessionId else { return nil }
-        let session = AISessionInfo(
-            projectName: appState.selectedProjectName,
-            workspaceName: workspaceKey,
-            aiTool: appState.aiChatTool,
-            id: sessionId,
-            title: "",
-            updatedAt: 0
-        )
-        guard let snapshot = appState.aiSessionStatus(for: session) else { return nil }
+        guard let globalKey = appState.currentGlobalWorkspaceKey,
+              let wsId = CoordinatorWorkspaceId.fromGlobalKey(globalKey) else { return nil }
         let status = TerminalSessionSemantics.terminalAIStatus(
-            from: snapshot.normalizedStatus,
-            errorMessage: snapshot.errorMessage,
-            toolName: nil,
-            aiToolDisplayName: appState.aiChatTool.displayName
+            fromCache: appState.coordinatorStateCache,
+            workspaceId: wsId
         )
         return status.isVisible ? status : nil
     }

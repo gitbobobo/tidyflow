@@ -4401,6 +4401,17 @@ final class MobileAppState: ObservableObject {
                 }
             }
         }
+
+        // v1.46: coordinator_snapshot 增量更新 + system_snapshot 种子恢复（iOS 端）
+        wsClient.onCoordinatorSnapshot = { [weak self] payload in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let id = payload.workspaceId
+                let existing = self.coordinatorStateCache.state(for: id)
+                let updated = payload.toWorkspaceCoordinatorState(existing: existing)
+                self.coordinatorStateCache.apply(.updateWorkspace(updated))
+            }
+        }
     }
 
     private func resolveDefaultAgentName() -> String {

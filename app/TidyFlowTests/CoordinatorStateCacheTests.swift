@@ -331,4 +331,160 @@ final class CoordinatorStateCacheTests: XCTestCase {
         XCTAssertEqual(summary1.health, .degraded)
         XCTAssertEqual(summary2.health, .healthy)
     }
+
+    // MARK: - v1.46 AI 展示六态投影
+
+    func testAiDisplayStatus_defaultIsIdle() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "default")
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .idle, "无缓存时应返回 idle")
+        XCTAssertEqual(cache.aiDisplayStatus(forGlobalKey: "proj:default"), .idle)
+    }
+
+    func testAiDisplayStatus_reflectsRunning() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        let aiState = AiDomainState(
+            phase: .active, activeSessionCount: 1, totalSessionCount: 1,
+            displayStatus: .running, activeToolName: "Codex", lastErrorMessage: nil, displayUpdatedAt: 1000
+        )
+        let state = WorkspaceCoordinatorState(id: id, ai: aiState, version: 1000)
+        cache.apply(.updateWorkspace(state))
+
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .running)
+    }
+
+    func testAiDisplayStatus_reflectsAwaitingInput() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        let aiState = AiDomainState(displayStatus: .awaitingInput)
+        let state = WorkspaceCoordinatorState(id: id, ai: aiState, version: 2000)
+        cache.apply(.updateWorkspace(state))
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .awaitingInput)
+    }
+
+    func testAiDisplayStatus_isolatedByWorkspace() {
+        let cache = CoordinatorStateCache()
+        let id1 = CoordinatorWorkspaceId(project: "proj", workspace: "ws1")
+        let id2 = CoordinatorWorkspaceId(project: "proj", workspace: "ws2")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id1,
+            ai: AiDomainState(displayStatus: .running),
+            version: 1
+        )))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id2,
+            ai: AiDomainState(displayStatus: .success),
+            version: 1
+        )))
+
+        XCTAssertEqual(cache.aiDisplayStatus(for: id1), .running, "ws1 状态不应被 ws2 影响")
+        XCTAssertEqual(cache.aiDisplayStatus(for: id2), .success, "ws2 状态不应被 ws1 影响")
+    }
+
+    func testAiDisplayStatus_clearedAfterClear() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id, ai: AiDomainState(displayStatus: .failure), version: 1
+        )))
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .failure)
+        cache.apply(.clear)
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .idle, "清除后应回退到 idle")
+    }
+
+    // MARK: - v1.46 CoordinatorWorkspaceSnapshotPayload 种子/增量解析
+
+    func testSnapshotPayloadParsing_basic() {
+        let json: [String: Any] = [
+            "project": "proj",
+            "workspace": "ws",
+            "ai": [
+                "phase": "active",
+                "active_session_count": 2,
+                "total_session_count": 3,
+                "display_status": "running",
+                "active_tool_name": "Codex",
+                "display_updated_at": Int64(1_741_800_000_000),
+            ] as [String: Any],
+            "version": UInt64(1_741_800_000_000),
+            "generated_at": "2026-03-12T12:00:00Z",
+        ]
+        let payload = CoordinatorWorkspaceSnapshotPayload.from(json: json)
+        XCTAssertNotNil(payload)
+        XCTAssertEqual(payload?.project, "proj")
+        XCTAssertEqual(payload?.workspace, "ws")
+        XCTAssertEqual(payload?.ai.displayStatus, .running)
+        XCTAssertEqual(payload?.ai.activeToolName, "Codex")
+        XCTAssertEqual(payload?.version, 1_741_800_000_000)
+    }
+
+    func testSnapshotPayloadParsing_missingProjectReturnNil() {
+        let json: [String: Any] = ["workspace": "ws", "ai": [:] as [String: Any]]
+        XCTAssertNil(CoordinatorWorkspaceSnapshotPayload.from(json: json))
+    }
+
+    func testSnapshotPayload_noOlderVersionOverwrite() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+
+        // 写入 version=5000 的状态
+        let newer = CoordinatorWorkspaceSnapshotPayload(
+            project: "proj", workspace: "ws",
+            ai: AiDomainState(displayStatus: .success), version: 5000, generatedAt: ""
+        )
+        let state5000 = newer.toWorkspaceCoordinatorState(existing: nil)
+        cache.apply(.updateWorkspace(state5000))
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .success)
+
+        // 尝试写入 version=3000 的旧状态（不应覆盖）
+        let older = CoordinatorWorkspaceSnapshotPayload(
+            project: "proj", workspace: "ws",
+            ai: AiDomainState(displayStatus: .running), version: 3000, generatedAt: ""
+        )
+        let existing = cache.state(for: id)
+        let staleState = older.toWorkspaceCoordinatorState(existing: existing)
+        cache.apply(.updateWorkspace(staleState))
+
+        XCTAssertEqual(cache.aiDisplayStatus(for: id), .success, "旧版本快照不应覆盖新状态")
+    }
+
+    // MARK: - v1.46 AiDisplayStatus 协议解析
+
+    func testAiDisplayStatusParsing_allValues() {
+        let cases: [(String, AiDisplayStatus)] = [
+            ("idle", .idle),
+            ("running", .running),
+            ("awaiting_input", .awaitingInput),
+            ("success", .success),
+            ("failure", .failure),
+            ("cancelled", .cancelled),
+        ]
+        for (raw, expected) in cases {
+            let parsed = AiDisplayStatus(rawValue: raw)
+            XCTAssertEqual(parsed, expected, "raw=\(raw) 解析不符预期")
+        }
+    }
+
+    func testAiDisplayStatusParsing_unknownFallsBackToIdle() {
+        let parsed = AiDisplayStatus(rawValue: "unknown_state")
+        XCTAssertNil(parsed, "未知值应解析为 nil，由调用方提供默认值")
+    }
+
+    func testAiDomainStateFromJson_withDisplayFields() {
+        let json: [String: Any] = [
+            "phase": "active",
+            "active_session_count": 1,
+            "total_session_count": 2,
+            "display_status": "failure",
+            "last_error_message": "OOM",
+            "display_updated_at": Int64(9_999),
+        ]
+        let state = AiDomainState.from(json: json)
+        XCTAssertEqual(state.displayStatus, .failure)
+        XCTAssertEqual(state.lastErrorMessage, "OOM")
+        XCTAssertEqual(state.displayUpdatedAt, 9999)
+        XCTAssertNil(state.activeToolName)
+    }
 }

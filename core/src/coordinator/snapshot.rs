@@ -192,6 +192,10 @@ pub fn restore_from_snapshot(
                 phase: entry.persistable.ai_phase,
                 active_session_count: 0,
                 total_session_count: 0,
+                display_status: crate::coordinator::model::AiDisplayStatus::Idle,
+                active_tool_name: None,
+                last_error_message: None,
+                display_updated_at: 0,
             };
             state.terminal = TerminalDomainState {
                 phase: entry.persistable.terminal_phase,
@@ -232,6 +236,7 @@ mod tests {
             phase: AiDomainPhase::Active,
             active_session_count: 2,
             total_session_count: 5,
+            ..Default::default()
         });
         states.insert(id_a.global_key(), state_a);
 
@@ -336,11 +341,180 @@ mod tests {
             phase: AiDomainPhase::Active,
             active_session_count: 3,
             total_session_count: 10,
+            ..Default::default()
         });
 
         let meta = PersistableCoordinatorMeta::from(&state);
         assert_eq!(meta.ai_phase, AiDomainPhase::Active);
         // 注意：meta 中不保存 active_session_count（瞬时数据）
         // 这个设计确保恢复时不会使用过时的计数值
+    }
+
+    /// 验证快照 roundtrip 与多工作区隔离：
+    ///
+    /// - system_snapshot coordinator_state 序列化和反序列化 roundtrip
+    /// - 至少 3 次连续增量 coordinator_snapshot 更新（版本单调递增）
+    /// - 旧版本不覆盖新版本（版本单调性）
+    /// - 至少 2 个项目各自拥有同名 default 工作区，互不串状态
+    #[test]
+    fn coordinator_snapshot_roundtrip_preserves_project_workspace_isolation() {
+        // ── 构建多项目同名工作区状态 ───────────────────────────────────────────
+        let mut states: HashMap<String, WorkspaceCoordinatorState> = HashMap::new();
+
+        // proj-a:default — AI active
+        let id_a1 = WorkspaceCoordinatorId::new("proj-a", "default");
+        let mut s_a1 = WorkspaceCoordinatorState::new(id_a1.clone());
+        s_a1.update_ai(AiDomainState {
+            phase: AiDomainPhase::Active,
+            active_session_count: 2,
+            total_session_count: 3,
+            ..Default::default()
+        });
+        states.insert(id_a1.global_key(), s_a1);
+
+        // proj-a:feature — idle
+        let id_a2 = WorkspaceCoordinatorId::new("proj-a", "feature");
+        let s_a2 = WorkspaceCoordinatorState::new(id_a2.clone());
+        states.insert(id_a2.global_key(), s_a2);
+
+        // proj-b:default — file error（与 proj-a:default 同名但不同项目）
+        let id_b1 = WorkspaceCoordinatorId::new("proj-b", "default");
+        let mut s_b1 = WorkspaceCoordinatorState::new(id_b1.clone());
+        s_b1.update_file(FileDomainState {
+            phase: FileDomainPhase::Error,
+            watcher_active: false,
+            indexing_in_progress: false,
+        });
+        states.insert(id_b1.global_key(), s_b1);
+
+        // proj-b:feature — terminal active
+        let id_b2 = WorkspaceCoordinatorId::new("proj-b", "feature");
+        let mut s_b2 = WorkspaceCoordinatorState::new(id_b2.clone());
+        s_b2.update_terminal(TerminalDomainState {
+            phase: TerminalDomainPhase::Active,
+            alive_count: 3,
+            total_count: 5,
+        });
+        states.insert(id_b2.global_key(), s_b2);
+
+        // ── Roundtrip：序列化再反序列化，工作区数量与相位不变 ───────────────────
+        let snapshot = CoordinatorSnapshot::capture(&states);
+        assert_eq!(snapshot.workspace_count(), 4);
+
+        let json = snapshot.to_json().expect("序列化不应失败");
+        let parsed = CoordinatorSnapshot::from_json(&json).expect("反序列化不应失败");
+        assert_eq!(parsed.workspace_count(), 4);
+        assert_eq!(parsed.snapshot_version, SNAPSHOT_VERSION);
+
+        // 验证各工作区相位在 roundtrip 后保持一致
+        let entry_a1 = parsed
+            .workspaces
+            .get(&id_a1.global_key())
+            .expect("proj-a:default 应存在");
+        assert_eq!(entry_a1.persistable.ai_phase, AiDomainPhase::Active);
+
+        let entry_b1 = parsed
+            .workspaces
+            .get(&id_b1.global_key())
+            .expect("proj-b:default 应存在");
+        assert_eq!(entry_b1.persistable.file_phase, FileDomainPhase::Error);
+
+        // ── 多项目同名工作区隔离：proj-a:default 和 proj-b:default 相位不同 ──────
+        assert_ne!(
+            entry_a1.persistable.ai_phase,
+            AiDomainPhase::Idle,
+            "proj-a:default 应为 Active"
+        );
+        assert_eq!(
+            entry_b1.persistable.ai_phase,
+            AiDomainPhase::Idle,
+            "proj-b:default AI 应为 Idle，不受 proj-a 影响"
+        );
+
+        // ── 增量 coordinator_snapshot 更新（至少 3 次连续更新）──────────────────
+        let mut live_state = WorkspaceCoordinatorState::new(id_a1.clone());
+        let v0 = live_state.version;
+
+        // 更新 1
+        live_state.update_ai(AiDomainState {
+            phase: AiDomainPhase::Active,
+            active_session_count: 1,
+            total_session_count: 1,
+            ..Default::default()
+        });
+        let v1 = live_state.version;
+        assert!(v1 > v0, "更新 1 后版本应递增");
+
+        // 更新 2
+        live_state.update_terminal(TerminalDomainState {
+            phase: TerminalDomainPhase::Active,
+            alive_count: 2,
+            total_count: 2,
+        });
+        let v2 = live_state.version;
+        assert!(v2 > v1, "更新 2 后版本应继续递增");
+
+        // 更新 3
+        live_state.update_file(FileDomainState {
+            phase: FileDomainPhase::Ready,
+            watcher_active: true,
+            indexing_in_progress: false,
+        });
+        let v3 = live_state.version;
+        assert!(v3 > v2, "更新 3 后版本应继续递增");
+
+        // 连续更新快照，版本单调性：新版本快照不会丢失更新
+        let mut evolving = HashMap::new();
+        evolving.insert(id_a1.global_key(), live_state.clone());
+
+        let snap_v3 = CoordinatorSnapshot::capture(&evolving);
+        let snap_entry = snap_v3
+            .workspaces
+            .get(&id_a1.global_key())
+            .expect("应存在");
+        assert_eq!(snap_entry.persistable.version, v3, "快照应保存最新版本号");
+
+        // ── 版本单调性：旧快照版本不覆盖新版本 ────────────────────────────────
+        // 构造旧快照（版本 = v1）和新快照（版本 = v3），恢复后应用新版本
+        let mut old_state = WorkspaceCoordinatorState::new(id_a1.clone());
+        old_state.update_ai(AiDomainState::default()); // version = 2 < v3
+        let old_snap_map: HashMap<String, WorkspaceCoordinatorState> =
+            [(id_a1.global_key(), old_state)].into_iter().collect();
+        let old_snap = CoordinatorSnapshot::capture(&old_snap_map);
+
+        let new_results = restore_from_snapshot(&snap_v3, &CoordinatorScope::workspace("proj-a", "default"));
+        let old_results = restore_from_snapshot(&old_snap, &CoordinatorScope::workspace("proj-a", "default"));
+
+        let new_ver = new_results[0].recovered_state.as_ref().unwrap().version;
+        let old_ver = old_results[0].recovered_state.as_ref().unwrap().version;
+        assert!(
+            new_ver > old_ver,
+            "新快照版本 ({}) 应大于旧快照版本 ({})",
+            new_ver,
+            old_ver
+        );
+
+        // ── 恢复后跨项目 default 工作区互不串状态 ────────────────────────────
+        let all_results = restore_from_snapshot(&parsed, &CoordinatorScope::system());
+        assert_eq!(all_results.len(), 4);
+        assert!(
+            all_results.iter().all(|r| r.status == RecoveryStatus::Restored),
+            "全量恢复应全部成功"
+        );
+
+        let restored_a1 = all_results
+            .iter()
+            .find(|r| r.id.project == "proj-a" && r.id.workspace == "default")
+            .expect("proj-a:default 应在恢复结果中");
+        let restored_b1 = all_results
+            .iter()
+            .find(|r| r.id.project == "proj-b" && r.id.workspace == "default")
+            .expect("proj-b:default 应在恢复结果中");
+
+        // proj-a:default 恢复后 AI Active；proj-b:default 恢复后 AI Idle
+        assert_eq!(restored_a1.recovered_state.as_ref().unwrap().ai.phase, AiDomainPhase::Active);
+        assert_eq!(restored_b1.recovered_state.as_ref().unwrap().ai.phase, AiDomainPhase::Idle);
+        // proj-b:default 恢复后 file Error
+        assert_eq!(restored_b1.recovered_state.as_ref().unwrap().file.phase, FileDomainPhase::Error);
     }
 }

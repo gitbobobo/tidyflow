@@ -88,18 +88,91 @@ impl Default for FileDomainPhase {
 }
 
 // ============================================================================
+// AI 展示状态（终端标签栏六态）
+// ============================================================================
+
+/// AI 展示状态——终端标签栏可感知的六态枚举。
+///
+/// 由 Core 聚合后写入 `AiDomainState.display_status`，
+/// 客户端直接消费，不在视图层重新推导。
+///
+/// 多会话并发时的聚合优先级（固化在 Core）：
+/// 1. 若存在 `awaiting_input` 会话 → `awaiting_input`
+/// 2. 若存在 `running` 会话 → `running`
+/// 3. 取最近终态：`failure > cancelled > success`（按 `display_updated_at` 决胜）
+/// 4. 无会话记录 → `idle`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiDisplayStatus {
+    /// 无活跃或近期 AI 会话
+    Idle,
+    /// 正在执行任务
+    Running,
+    /// 等待用户输入（如 question tool）
+    AwaitingInput,
+    /// 任务执行成功
+    Success,
+    /// 任务执行失败
+    Failure,
+    /// 任务被取消
+    Cancelled,
+}
+
+impl Default for AiDisplayStatus {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl AiDisplayStatus {
+    /// 是否为活跃中间态
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Running | Self::AwaitingInput)
+    }
+
+    /// 是否为终态
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Success | Self::Failure | Self::Cancelled)
+    }
+
+    /// 协议字符串（与 AiSessionStatus 保持一致）
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::AwaitingInput => "awaiting_input",
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+// ============================================================================
 // 领域子状态
 // ============================================================================
 
 /// AI 领域子状态
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiDomainState {
-    /// 聚合相位
+    /// 聚合相位（治理/健康语义）
     pub phase: AiDomainPhase,
     /// 活跃会话数（running + awaiting_input）
     pub active_session_count: u32,
     /// 总会话数（含已终止）
     pub total_session_count: u32,
+    /// 工作区级展示状态（终端标签栏直接消费）
+    #[serde(default)]
+    pub display_status: AiDisplayStatus,
+    /// 当前运行中会话使用的工具名（仅 running 时有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tool_name: Option<String>,
+    /// 最近一次失败的错误摘要（仅 failure 时有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+    /// 最近一次驱动展示状态变化的时间戳（Unix ms），用于多会话聚合择优
+    #[serde(default)]
+    pub display_updated_at: i64,
 }
 
 impl Default for AiDomainState {
@@ -108,6 +181,10 @@ impl Default for AiDomainState {
             phase: AiDomainPhase::Idle,
             active_session_count: 0,
             total_session_count: 0,
+            display_status: AiDisplayStatus::Idle,
+            active_tool_name: None,
+            last_error_message: None,
+            display_updated_at: 0,
         }
     }
 }
@@ -288,7 +365,144 @@ impl WorkspaceCoordinatorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
     use crate::coordinator::identity::WorkspaceCoordinatorId;
+
+    /// 辅助：向指定工作区注入一条 AI 会话状态
+    fn inject_session(
+        store: &AiSessionStateStore,
+        project: &str,
+        workspace: &str,
+        session_id: &str,
+        status: AiSessionStatus,
+    ) {
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: project.to_string(),
+                workspace_name: workspace.to_string(),
+                ai_tool: "codex".to_string(),
+                directory: format!("/tmp/{}/{}", project, workspace),
+                session_id: session_id.to_string(),
+            },
+            status,
+        );
+    }
+
+    /// 验证 Coordinator AI 展示聚合优先级：
+    /// awaiting_input > running > 终态（failure > cancelled > success）> idle
+    ///
+    /// 覆盖场景：
+    /// - 多会话并发（至少 3 个会话同时存在）
+    /// - awaiting_input 优先于 running
+    /// - 终态按严重度聚合
+    /// - 无会话时为 idle
+    /// - 同名工作区跨项目隔离（proj-a:default 不受 proj-b:default 影响）
+    #[test]
+    fn coordinator_ai_display_status_prioritizes_awaiting_input() {
+        use crate::ai::session_status::aggregate_workspace_ai_domain_state;
+
+        let store = AiSessionStateStore::new();
+
+        // ── 场景 1：无会话时为 idle ──────────────────────────────────────────────
+        {
+            let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            assert_eq!(state.display_status, AiDisplayStatus::Idle);
+            assert_eq!(state.total_session_count, 0);
+        }
+
+        // ── 场景 2：3 个并发会话，awaiting_input 优先于 running ──────────────────
+        {
+            inject_session(&store, "proj-a", "default", "s1", AiSessionStatus::Running);
+            inject_session(&store, "proj-a", "default", "s2", AiSessionStatus::Running);
+            inject_session(&store, "proj-a", "default", "s3", AiSessionStatus::AwaitingInput);
+
+            let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            assert_eq!(
+                state.display_status,
+                AiDisplayStatus::AwaitingInput,
+                "awaiting_input 应优先于 running（3 会话并发）"
+            );
+            assert_eq!(state.active_session_count, 3);
+            assert_eq!(state.total_session_count, 3);
+            assert_eq!(state.phase, AiDomainPhase::Active);
+        }
+
+        // ── 场景 3：移除 awaiting_input，running 胜出 ────────────────────────────
+        {
+            store.remove_status("codex", "/tmp/proj-a/default", "s3");
+            let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            assert_eq!(
+                state.display_status,
+                AiDisplayStatus::Running,
+                "无 awaiting_input 时 running 应胜出"
+            );
+        }
+
+        // ── 场景 4：终态聚合——failure > cancelled > success ──────────────────────
+        {
+            store.remove_status("codex", "/tmp/proj-a/default", "s1");
+            store.remove_status("codex", "/tmp/proj-a/default", "s2");
+
+            inject_session(&store, "proj-a", "default", "t1", AiSessionStatus::Success);
+            inject_session(&store, "proj-a", "default", "t2", AiSessionStatus::Cancelled);
+            inject_session(
+                &store,
+                "proj-a",
+                "default",
+                "t3",
+                AiSessionStatus::Failure {
+                    message: "OOM".to_string(),
+                },
+            );
+
+            let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            assert_eq!(
+                state.display_status,
+                AiDisplayStatus::Failure,
+                "failure 应优先于 cancelled 和 success"
+            );
+            assert_eq!(state.last_error_message.as_deref(), Some("OOM"));
+            assert_eq!(state.phase, AiDomainPhase::Faulted);
+        }
+
+        // ── 场景 5：同名工作区跨项目隔离 ─────────────────────────────────────────
+        {
+            // proj-b:default 有 running 会话
+            inject_session(&store, "proj-b", "default", "b1", AiSessionStatus::Running);
+
+            // proj-a:default 状态不变（仍是终态 failure）
+            let state_a = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            assert_eq!(
+                state_a.display_status,
+                AiDisplayStatus::Failure,
+                "proj-b 的 running 不应影响 proj-a:default"
+            );
+
+            // proj-b:default 返回 running
+            let state_b = aggregate_workspace_ai_domain_state(&store, "proj-b", "default");
+            assert_eq!(
+                state_b.display_status,
+                AiDisplayStatus::Running,
+                "proj-b:default 应独立返回 running"
+            );
+        }
+
+        // ── 场景 6：cancelled 优先于 success ────────────────────────────────────
+        {
+            inject_session(&store, "proj-a", "default", "c1", AiSessionStatus::Success);
+            inject_session(&store, "proj-a", "default", "c2", AiSessionStatus::Cancelled);
+            // 移除 failure 会话
+            store.remove_status("codex", "/tmp/proj-a/default", "t3");
+
+            let state = aggregate_workspace_ai_domain_state(&store, "proj-a", "default");
+            // 仍有 t1(success), t2(cancelled), c1(success), c2(cancelled)
+            assert_eq!(
+                state.display_status,
+                AiDisplayStatus::Cancelled,
+                "cancelled 应优先于 success"
+            );
+        }
+    }
 
     #[test]
     fn new_state_is_healthy_and_idle() {
@@ -319,6 +533,7 @@ mod tests {
             phase: AiDomainPhase::Faulted,
             active_session_count: 0,
             total_session_count: 3,
+            ..Default::default()
         });
         assert_eq!(state.health, CoordinatorHealth::Faulted);
     }

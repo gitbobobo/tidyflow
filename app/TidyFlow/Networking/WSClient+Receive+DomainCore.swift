@@ -35,6 +35,23 @@ extension WSClient {
                 if !recoverySummaries.isEmpty {
                     onWorkspaceRecoverySummaries?(recoverySummaries)
                 }
+                // v1.46: 从 workspace_items 提取 coordinator_ai 种子，按工作区分发
+                for item in workspaceItems {
+                    guard let project = item["project"] as? String,
+                          let workspace = item["workspace"] as? String,
+                          let aiJson = item["coordinator_ai"] as? [String: Any] else { continue }
+                    let ai = AiDomainState.from(json: aiJson)
+                    let version = aiJson["display_updated_at"] as? UInt64 ?? 0
+                    let generatedAt = item["coordinator_ai_generated_at"] as? String ?? ""
+                    let payload = CoordinatorWorkspaceSnapshotPayload(
+                        project: project,
+                        workspace: workspace,
+                        ai: ai,
+                        version: version,
+                        generatedAt: generatedAt
+                    )
+                    onCoordinatorSnapshot?(payload)
+                }
             }
             return true
         default:
@@ -429,6 +446,20 @@ extension WSClient {
             if let auditJson = json["audit"] as? [String: Any],
                let audit = RepairAuditEntry.from(json: auditJson) {
                 onHealthRepairResult?(audit)
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Coordinator 域处理（v1.46）
+
+    func handleCoordinatorDomain(_ action: String, json: [String: Any]) -> Bool {
+        switch action {
+        case "coordinator_snapshot":
+            if let payload = CoordinatorWorkspaceSnapshotPayload.from(json: json) {
+                onCoordinatorSnapshot?(payload)
             }
             return true
         default:

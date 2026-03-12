@@ -64,6 +64,8 @@ extension WSClient {
         "project:tasks_snapshot",
         "health:health_snapshot",
         "health:health_repair_result",
+        // v1.46: Coordinator 域（工作区级 AI 聚合状态增量快照）
+        "coordinator:coordinator_snapshot",
     ]
 
     private static let fallbackActionCatalog: Set<String> = ["clipboard_image_set", "error"]
@@ -96,6 +98,8 @@ extension WSClient {
             return handleEvolutionDomain(action, json: json)
         case "health":
             return handleHealthDomain(action, json: json)
+        case "coordinator":
+            return handleCoordinatorDomain(action, json: json)
         default:
             return false
         }

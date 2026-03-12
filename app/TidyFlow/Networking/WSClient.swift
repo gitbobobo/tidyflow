@@ -201,6 +201,8 @@ class WSClient: NSObject, ObservableObject {
     var onHealthRepairResult: ((RepairAuditEntry) -> Void)?
     /// 工作区恢复状态摘要（从 system_snapshot workspace_items 提取，按 (project, workspace) 隔离）
     var onWorkspaceRecoverySummaries: (([WorkspaceRecoverySummary]) -> Void)?
+    /// v1.46: Core 推送工作区级 Coordinator AI 状态增量快照
+    var onCoordinatorSnapshot: ((CoordinatorWorkspaceSnapshotPayload) -> Void)?
 
     func emitClientError(_ message: String) {
         if let handler = errorMessageHandler {

@@ -43,6 +43,10 @@ pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
     if action.starts_with("health_") {
         return "health".to_string();
     }
+    // v1.46: Coordinator 域（工作区级 AI 聚合状态快照）
+    if action == "coordinator_snapshot" {
+        return "coordinator".to_string();
+    }
     "misc".to_string()
 }
 
@@ -79,4 +83,6 @@ pub(in crate::server::ws) fn is_event_action(action: &str) -> bool {
         // 系统健康推送事件（v1.41）
         || action == "health_snapshot"
         || action == "health_repair_result"
+        // Coordinator 状态快照事件（v1.46：工作区级实时 AI 展示状态聚合）
+        || action == "coordinator_snapshot"
 }

@@ -143,6 +143,19 @@ extension AppState {
             }
         }
 
+        // v1.46: coordinator_snapshot 增量更新 + system_snapshot 种子恢复
+        // 两路均复用同一 callback，WSClient 在 system_snapshot 解析时也会为每个 workspace_item 触发此回调
+        wsClient.onCoordinatorSnapshot = { [weak self] payload in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let id = payload.workspaceId
+                let existing = self.coordinatorStateCache.state(for: id)
+                let updated = payload.toWorkspaceCoordinatorState(existing: existing)
+                self.coordinatorStateCache.apply(.updateWorkspace(updated))
+            }
+        }
+
         if configuredWSConnectionTarget == targetIdentity,
            wsClient.currentURL == AppConfig.makeWsURL(port: port, token: authToken),
            (wsClient.isConnected || wsClient.isConnecting) {

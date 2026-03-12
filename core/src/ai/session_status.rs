@@ -2,6 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::coordinator::model::{
+    AiDisplayStatus, AiDomainPhase, AiDomainState,
+};
+
 /// AI 会话统一状态（用于客户端决定是否需要"订阅/恢复"流式更新）
 ///
 /// 状态定义（v2，用于标签栏可感知化）：
@@ -339,6 +343,152 @@ impl AiSessionStateStore {
 impl Default for AiSessionStateStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// 工作区级 AI 展示状态聚合（Core 权威，不依赖客户端事件顺序）
+// ============================================================================
+
+/// 聚合后的会话条目（内部用）
+#[derive(Debug)]
+struct SessionEntry {
+    status: AiSessionStatus,
+    error_message: Option<String>,
+    updated_at_ms: i64,
+}
+
+/// 为指定 `(project_name, workspace_name)` 聚合工作区级 AI 领域子状态。
+///
+/// 优先级规则（在 Core 固化，客户端直接消费 `display_status`）：
+/// 1. 若存在任一 `awaiting_input` 会话 → `awaiting_input`
+/// 2. 若存在任一 `running` 会话 → `running`
+/// 3. 若仅有终态会话 → 取 `failure > cancelled > success`，`display_updated_at` 决胜
+/// 4. 无会话记录 → `idle`
+pub fn aggregate_workspace_ai_domain_state(
+    store: &AiSessionStateStore,
+    project_name: &str,
+    workspace_name: &str,
+) -> AiDomainState {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    let entries: Vec<SessionEntry> = {
+        let Ok(statuses) = store.statuses.read() else {
+            return AiDomainState::default();
+        };
+        let Ok(metas) = store.metas.read() else {
+            return AiDomainState::default();
+        };
+
+        statuses
+            .iter()
+            .filter_map(|(key, status)| {
+                let meta = metas.get(key)?;
+                if meta.project_name != project_name || meta.workspace_name != workspace_name {
+                    return None;
+                }
+                let error_message = match status {
+                    AiSessionStatus::Failure { message } => Some(message.clone()),
+                    _ => None,
+                };
+                Some(SessionEntry {
+                    status: status.clone(),
+                    error_message,
+                    updated_at_ms: now_ms,
+                })
+            })
+            .collect()
+    };
+
+    let total_session_count = entries.len() as u32;
+    if total_session_count == 0 {
+        return AiDomainState::default();
+    }
+
+    let active_count = entries.iter().filter(|e| e.status.is_active()).count() as u32;
+    let any_faulted = entries
+        .iter()
+        .any(|e| matches!(e.status, AiSessionStatus::Failure { .. }));
+    let phase = if active_count > 0 {
+        AiDomainPhase::Active
+    } else if any_faulted {
+        AiDomainPhase::Faulted
+    } else {
+        AiDomainPhase::Idle
+    };
+
+    // 优先级 1: awaiting_input
+    if entries
+        .iter()
+        .any(|e| matches!(e.status, AiSessionStatus::AwaitingInput))
+    {
+        return AiDomainState {
+            phase,
+            active_session_count: active_count,
+            total_session_count,
+            display_status: AiDisplayStatus::AwaitingInput,
+            active_tool_name: None,
+            last_error_message: None,
+            display_updated_at: now_ms,
+        };
+    }
+
+    // 优先级 2: running
+    if active_count > 0 {
+        return AiDomainState {
+            phase,
+            active_session_count: active_count,
+            total_session_count,
+            display_status: AiDisplayStatus::Running,
+            active_tool_name: None,
+            last_error_message: None,
+            display_updated_at: now_ms,
+        };
+    }
+
+    // 优先级 3: 取最近终态（failure > cancelled > success 严重度，再按 updated_at）
+    let terminal_entries: Vec<&SessionEntry> =
+        entries.iter().filter(|e| e.status.is_terminal()).collect();
+    if terminal_entries.is_empty() {
+        return AiDomainState {
+            phase,
+            active_session_count: active_count,
+            total_session_count,
+            display_status: AiDisplayStatus::Idle,
+            active_tool_name: None,
+            last_error_message: None,
+            display_updated_at: now_ms,
+        };
+    }
+
+    let severity = |e: &SessionEntry| match e.status {
+        AiSessionStatus::Failure { .. } => 2u8,
+        AiSessionStatus::Cancelled => 1,
+        _ => 0,
+    };
+    let best = terminal_entries
+        .iter()
+        .max_by(|a, b| {
+            severity(a)
+                .cmp(&severity(b))
+                .then(a.updated_at_ms.cmp(&b.updated_at_ms))
+        })
+        .expect("non-empty");
+
+    let (display_status, last_error) = match &best.status {
+        AiSessionStatus::Failure { message } => (AiDisplayStatus::Failure, Some(message.clone())),
+        AiSessionStatus::Cancelled => (AiDisplayStatus::Cancelled, None),
+        _ => (AiDisplayStatus::Success, None),
+    };
+
+    AiDomainState {
+        phase,
+        active_session_count: active_count,
+        total_session_count,
+        display_status,
+        active_tool_name: None,
+        last_error_message: last_error,
+        display_updated_at: best.updated_at_ms,
     }
 }
 

@@ -623,6 +623,7 @@ mod tests {
             phase: AiDomainPhase::Active,
             active_session_count: 3,
             total_session_count: 10,
+            ..Default::default()
         });
         state.update_terminal(TerminalDomainState {
             phase: TerminalDomainPhase::Active,

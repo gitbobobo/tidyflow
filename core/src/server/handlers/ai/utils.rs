@@ -2490,12 +2490,14 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
     }
 
     let tx = tx.clone();
+    // Clone the Arc for use inside the coordinator snapshot closure
+    let store_for_coordinator = store.clone();
     store.set_on_change(std::sync::Arc::new(move |change| {
         let Some(meta) = change.meta.clone() else {
             return;
         };
 
-        // 避免在“首次初始化为 idle”时刷屏推送。
+        // 避免在"首次初始化为 idle"时刷屏推送。
         if change.old_status.is_none() && matches!(change.new_status, AiSessionStatus::Idle) {
             return;
         }
@@ -2518,6 +2520,29 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
                 // 状态更新希望所有连接都收到（包括触发变更的连接）。
                 origin_conn_id: "".to_string(),
                 message: msg,
+                target_conn_ids: None,
+                skip_when_single_receiver: false,
+            },
+        );
+
+        // 同步发送工作区级 Coordinator 聚合快照（低延迟增量更新）
+        let ai_domain_state = crate::ai::session_status::aggregate_workspace_ai_domain_state(
+            &store_for_coordinator,
+            &meta.project_name,
+            &meta.workspace_name,
+        );
+        let coordinator_msg = ServerMessage::CoordinatorSnapshot {
+            project: meta.project_name.clone(),
+            workspace: meta.workspace_name.clone(),
+            ai: crate::server::protocol::CoordinatorAiDomainStateDto::from(&ai_domain_state),
+            version: ai_domain_state.display_updated_at as u64,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = crate::server::context::send_task_broadcast_event(
+            &tx,
+            TaskBroadcastEvent {
+                origin_conn_id: "".to_string(),
+                message: coordinator_msg,
                 target_conn_ids: None,
                 skip_when_single_receiver: false,
             },

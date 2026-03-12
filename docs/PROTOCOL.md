@@ -1437,6 +1437,32 @@ idle → entering → active ⇄ resuming
 - `active`：至少一个会话正在执行
 - `faulted`：存在失败会话且无活跃会话
 
+#### AI 展示六态（AiDisplayStatus，v1.46）
+
+终端标签栏专用显示状态，由 Core `aggregate_workspace_ai_domain_state()` 纯函数聚合计算，客户端直接消费不自行推导。
+
+| 状态 | 含义 |
+|------|------|
+| `idle` | 无活跃 AI 执行，空闲 |
+| `running` | AI 正在执行（工具调用中），附带 `active_tool_name` |
+| `awaiting_input` | AI 等待用户输入 |
+| `success` | AI 成功完成 |
+| `failure` | AI 执行失败，附带 `last_error_message` |
+| `cancelled` | AI 被取消 |
+
+**聚合优先级**（多会话并发时）：`awaiting_input` > `running` > `failure` > `cancelled` > `success` > `idle`。
+- 同级别取 `display_updated_at` 最大（最新）的会话。
+- 聚合为纯函数，不依赖客户端事件顺序，重连后可重算。
+
+`AiDomainState` 展示字段（v1.46 新增）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `display_status` | `string` | 六态枚举 |
+| `active_tool_name` | `string?` | 仅 `running` 时存在 |
+| `last_error_message` | `string?` | 仅 `failure` 时存在 |
+| `display_updated_at` | `i64` | Unix ms，展示状态最近变化时间 |
+
 **TerminalDomainPhase**：`idle` | `active` | `faulted`
 - `idle`：无存活终端
 - `active`：至少一个终端正在运行
@@ -1495,9 +1521,59 @@ Core 对工作区协调状态执行以下校验规则：
    - 不允许仅用 workspace 名称作为键（避免不同项目同名工作区混淆）。
 2. **状态更新入口**：所有状态变更通过 `CoordinatorStateCache.apply(_:)` 驱动，不允许直接修改内部字段。
 3. **断线清除规则**：WebSocket 断开时，客户端必须调用 `apply(.clear)` 清除所有缓存。
-   - 重连后通过 `coordinator_snapshot` 事件重建缓存。
 4. **工作区删除规则**：收到工作区删除通知时，调用 `apply(.removeWorkspace(id))` 清除对应条目。
 5. **项目删除规则**：项目删除时通过 `removeProject(_:)` 批量清除该项目下所有工作区状态。
+
+#### system_snapshot 种子恢复（v1.46）
+
+`GET /system_snapshot` 的 `workspace_items` 数组中，每个条目携带可选字段 `coordinator_ai`（类型同 `coordinator_snapshot` 中的 `ai` 字段）：
+
+```json
+{
+  "workspace_items": [
+    {
+      "project": "my-proj",
+      "workspace": "default",
+      "coordinator_ai": {
+        "phase": "active",
+        "active_session_count": 1,
+        "total_session_count": 2,
+        "display_status": "running",
+        "active_tool_name": "Codex",
+        "last_error_message": null,
+        "display_updated_at": 1741800000000
+      }
+    }
+  ]
+}
+```
+
+客户端在收到 `system_snapshot` 时，对每个携带 `coordinator_ai` 的条目调用与 `coordinator_snapshot` 相同的写入逻辑（`apply(.updateWorkspace(...))`），实现重连后的一次性状态恢复。
+
+#### coordinator_snapshot 增量事件（v1.46）
+
+Core 在 AI 会话状态实际变化时，通过 WebSocket 推送 `coordinator_snapshot` 增量事件（domain: `coordinator`）：
+
+```json
+{
+  "type": "coordinator_snapshot",
+  "project": "my-proj",
+  "workspace": "default",
+  "ai": {
+    "phase": "idle",
+    "active_session_count": 0,
+    "total_session_count": 1,
+    "display_status": "success",
+    "active_tool_name": null,
+    "last_error_message": null,
+    "display_updated_at": 1741800001000
+  },
+  "version": 1741800001000,
+  "generated_at": "2026-03-12T12:00:01Z"
+}
+```
+
+**种子与增量版本语义一致**：`version` 字段来自 `display_updated_at`（Unix ms），单调递增。客户端仅在新版本 ≥ 当前缓存版本时更新，避免乱序覆盖。
 
 #### 多域聚合投影（WorkspaceAggregatedSummary）
 

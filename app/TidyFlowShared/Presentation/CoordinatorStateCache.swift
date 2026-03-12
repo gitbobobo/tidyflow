@@ -200,6 +200,19 @@ public final class CoordinatorStateCache: @unchecked Sendable {
             terminalAliveCount: state.terminal.aliveCount
         )
     }
+
+    /// 获取指定工作区的 AI 展示状态（标签栏六态）。
+    ///
+    /// v1.46：由 Core 聚合后下发，客户端直接消费，不自行推导。
+    /// - Returns: `AiDisplayStatus` 枚举值，无缓存时返回 `.idle`
+    public func aiDisplayStatus(for id: CoordinatorWorkspaceId) -> AiDisplayStatus {
+        state(for: id)?.ai.displayStatus ?? .idle
+    }
+
+    /// 获取指定工作区（globalKey 格式）的 AI 展示状态。
+    public func aiDisplayStatus(forGlobalKey key: String) -> AiDisplayStatus {
+        state(forGlobalKey: key)?.ai.displayStatus ?? .idle
+    }
 }
 
 // MARK: - 状态输入事件

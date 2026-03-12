@@ -145,7 +145,12 @@ private struct BottomPanelInstanceItemView: View {
     @State private var isHovered: Bool = false
 
     private var aiStatus: TerminalAIStatus {
-        tab.kind == .terminal ? (appState.terminalStore.terminalAIStatusByTabId[tab.id] ?? .idle) : .idle
+        guard tab.kind == .terminal else { return .idle }
+        guard let wsId = CoordinatorWorkspaceId.fromGlobalKey(workspaceKey) else { return .idle }
+        return TerminalSessionSemantics.terminalAIStatus(
+            fromCache: appState.coordinatorStateCache,
+            workspaceId: wsId
+        )
     }
 
     private var backgroundColor: Color {
