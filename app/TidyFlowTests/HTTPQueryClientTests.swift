@@ -116,7 +116,7 @@ final class HTTPQueryClientTests: XCTestCase {
             "is_git_repo": true
         ])
 
-        wsClient.httpReadFetcherOverride = { _, _, _, _ in
+        wsClient.httpReadFetcherOverride = { _, _, _, _, _, _ in
             await counter.increment()
             return payload
         }
@@ -170,7 +170,7 @@ final class HTTPQueryClientTests: XCTestCase {
         let fileCounter = HTTPFetchCounter()
         let aiCounter = HTTPFetchCounter()
 
-        wsClient.httpReadFetcherOverride = { _, path, _, _ in
+        wsClient.httpReadFetcherOverride = { _, path, _, _, _, _ in
             if path.contains("/files") {
                 await fileCounter.increment()
                 return try self.makeJSONData([

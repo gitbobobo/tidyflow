@@ -257,11 +257,19 @@ extension AppState {
                     messages: messages,
                     primarySelectionHint: ev.selectionHint
                 )
+                let preparedSnapshot = AIChatPreparedSnapshotBuilder.build(
+                    protocolMessages: messages,
+                    pendingQuestionRequests: normalized.pendingQuestionRequests,
+                    effectiveSelectionHint: normalized.effectiveSelectionHint,
+                    isStreaming: ev.isStreaming,
+                    fromRevision: ev.fromRevision,
+                    toRevision: ev.toRevision
+                )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     guard store.shouldApplySessionCacheRevision(
-                        fromRevision: ev.fromRevision,
-                        toRevision: ev.toRevision,
+                        fromRevision: preparedSnapshot.fromRevision,
+                        toRevision: preparedSnapshot.toRevision,
                         sessionId: ev.sessionId
                     ) else {
                         TFLog.app.debug(
@@ -269,19 +277,18 @@ extension AppState {
                         )
                         return
                     }
-                    store.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-                    store.replaceQuestionRequests(normalized.pendingQuestionRequests)
+                    store.applyPreparedSnapshot(preparedSnapshot)
                     self.sendAISelectionPipelineLog(
                         event: "session_messages_update_snapshot_received",
                         tool: ev.aiTool,
                         sessionId: ev.sessionId,
                         primaryHint: ev.selectionHint,
                         inferredHint: nil,
-                        effectiveHint: normalized.effectiveSelectionHint,
+                        effectiveHint: preparedSnapshot.effectiveSelectionHint,
                         messagesCount: messages.count
                     )
                     self.applyAISessionSelectionHint(
-                        normalized.effectiveSelectionHint,
+                        preparedSnapshot.effectiveSelectionHint,
                         sessionId: ev.sessionId,
                         for: ev.aiTool,
                         trigger: "session_messages_update_snapshot"

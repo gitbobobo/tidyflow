@@ -66,7 +66,7 @@ final class SharedNetworkAbstractionTests: XCTestCase {
             (.connected, true),
             (.reconnecting(attempt: 1, maxAttempts: 5), false),
             (.reconnectFailed, false),
-            (.pairingFailed(reason: "test"), false),
+            (.authenticationFailed(reason: "test"), false),
             (.intentionallyDisconnected, false),
         ]
         for (phase, expected) in phasesAndExpected {

@@ -17,7 +17,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
             .connecting,
             .reconnecting(attempt: 1, maxAttempts: 5),
             .reconnectFailed,
-            .pairingFailed(reason: "token_expired"),
+            .authenticationFailed(reason: "token_expired"),
             .intentionallyDisconnected
         ]
         for phase in phases {
@@ -34,7 +34,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
             .connecting,
             .connected,
             .reconnectFailed,
-            .pairingFailed(reason: "expired"),
+            .authenticationFailed(reason: "expired"),
             .intentionallyDisconnected
         ]
         for phase in phases {
@@ -47,7 +47,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
     }
 
     func testNeedsManualRecoveryForPairingFailed() {
-        XCTAssertTrue(ConnectionPhase.pairingFailed(reason: "invalid_token").needsManualRecovery)
+        XCTAssertTrue(ConnectionPhase.authenticationFailed(reason: "invalid_token").needsManualRecovery)
     }
 
     func testNeedsManualRecoveryFalseForOtherPhases() {
@@ -74,7 +74,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
             .connecting,
             .reconnecting(attempt: 1, maxAttempts: 5),
             .reconnectFailed,
-            .pairingFailed(reason: "bad_code"),
+            .authenticationFailed(reason: "bad_code"),
             .intentionallyDisconnected
         ]
         for phase in phases {
@@ -116,7 +116,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
     }
 
     func testToReconnectStateIdleForPairingFailed() {
-        XCTAssertEqual(ConnectionPhase.pairingFailed(reason: "test").toReconnectState, ReconnectState.idle)
+        XCTAssertEqual(ConnectionPhase.authenticationFailed(reason: "test").toReconnectState, ReconnectState.idle)
     }
     #endif
 
@@ -205,15 +205,15 @@ final class ConnectionSemanticLayerTests: XCTestCase {
 
     func testPairingFailedEquality() {
         XCTAssertEqual(
-            ConnectionPhase.pairingFailed(reason: "expired"),
-            ConnectionPhase.pairingFailed(reason: "expired")
+            ConnectionPhase.authenticationFailed(reason: "expired"),
+            ConnectionPhase.authenticationFailed(reason: "expired")
         )
     }
 
     func testPairingFailedInequalityOnReason() {
         XCTAssertNotEqual(
-            ConnectionPhase.pairingFailed(reason: "a"),
-            ConnectionPhase.pairingFailed(reason: "b")
+            ConnectionPhase.authenticationFailed(reason: "a"),
+            ConnectionPhase.authenticationFailed(reason: "b")
         )
     }
 
@@ -227,7 +227,7 @@ final class ConnectionSemanticLayerTests: XCTestCase {
             .connected,
             .reconnecting(attempt: 1, maxAttempts: 5),
             .reconnectFailed,
-            .pairingFailed(reason: "test"),
+            .authenticationFailed(reason: "test"),
             .intentionallyDisconnected
         ]
         // 所有阶段都可以独立创建，证明无 project/workspace 耦合
@@ -260,8 +260,8 @@ final class ConnectionSemanticLayerTests: XCTestCase {
 
     func testAllowsAutoReconnectFalseForPairingFailed() {
         XCTAssertFalse(
-            ConnectionPhase.pairingFailed(reason: "invalid_token").allowsAutoReconnect,
-            "pairingFailed 应拒绝自动重连，需重新配对"
+            ConnectionPhase.authenticationFailed(reason: "invalid_token").allowsAutoReconnect,
+            "authenticationFailed 应拒绝自动重连，需重新认证"
         )
     }
 

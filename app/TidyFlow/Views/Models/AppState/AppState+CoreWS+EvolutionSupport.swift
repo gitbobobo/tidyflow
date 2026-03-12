@@ -772,19 +772,40 @@ extension AppState {
         }
 
         if let messages = ev.messages {
-            evolutionReplayStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
-                sessionId: ev.sessionId,
-                messages: messages
-            )
-            evolutionReplayStore.replaceQuestionRequests(restoredQuestions)
+            let isStreaming = ev.isStreaming
+            let sessionId = ev.sessionId
+            let fromRevision = ev.fromRevision
+            let toRevision = ev.toRevision
+            // 后台构建 prepared snapshot，主线程提交
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
+                    sessionId: sessionId,
+                    messages: messages
+                )
+                let preparedSnapshot = AIChatPreparedSnapshotBuilder.build(
+                    protocolMessages: messages,
+                    pendingQuestionRequests: restoredQuestions,
+                    effectiveSelectionHint: nil,
+                    isStreaming: isStreaming,
+                    fromRevision: fromRevision,
+                    toRevision: toRevision
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.evolutionReplayStore.applyPreparedSnapshot(preparedSnapshot)
+                    self.evolutionReplayLoading = false
+                    self.evolutionReplayError = nil
+                }
+            }
         } else if let ops = ev.ops {
             evolutionReplayStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+            evolutionReplayLoading = false
+            evolutionReplayError = nil
         } else if !ev.isStreaming {
             evolutionReplayStore.applySessionCacheOps([], isStreaming: false)
+            evolutionReplayLoading = false
+            evolutionReplayError = nil
         }
-        evolutionReplayLoading = false
-        evolutionReplayError = nil
         return true
     }
 
@@ -862,19 +883,40 @@ extension AppState {
         }
 
         if let messages = ev.messages {
-            subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
-                sessionId: ev.sessionId,
-                messages: messages
-            )
-            subAgentViewerStore.replaceQuestionRequests(restoredQuestions)
+            let isStreaming = ev.isStreaming
+            let sessionId = ev.sessionId
+            let fromRevision = ev.fromRevision
+            let toRevision = ev.toRevision
+            // 后台构建 prepared snapshot，主线程提交
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
+                    sessionId: sessionId,
+                    messages: messages
+                )
+                let preparedSnapshot = AIChatPreparedSnapshotBuilder.build(
+                    protocolMessages: messages,
+                    pendingQuestionRequests: restoredQuestions,
+                    effectiveSelectionHint: nil,
+                    isStreaming: isStreaming,
+                    fromRevision: fromRevision,
+                    toRevision: toRevision
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.subAgentViewerStore.applyPreparedSnapshot(preparedSnapshot)
+                    self.subAgentViewerLoading = false
+                    self.subAgentViewerError = nil
+                }
+            }
         } else if let ops = ev.ops {
             subAgentViewerStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+            subAgentViewerLoading = false
+            subAgentViewerError = nil
         } else if !ev.isStreaming {
             subAgentViewerStore.applySessionCacheOps([], isStreaming: false)
+            subAgentViewerLoading = false
+            subAgentViewerError = nil
         }
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
         return true
     }
 
