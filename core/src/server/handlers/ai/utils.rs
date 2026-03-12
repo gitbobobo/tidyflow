@@ -1640,6 +1640,12 @@ fn structured_content_to_tool_sections(
 }
 
 fn semantic_tool_id_for_view(tool_name: Option<&str>, tool_kind: Option<&str>) -> String {
+    let normalized_kind = tool_kind
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if matches!(normalized_kind.as_deref(), Some("websearch")) {
+        return "websearch".to_string();
+    }
     if let Some(mapped) = crate::ai::acp::tool_call::tool_kind_semantic_id(tool_kind) {
         return mapped.to_string();
     }
@@ -1650,9 +1656,55 @@ fn semantic_tool_id_for_view(tool_name: Option<&str>, tool_kind: Option<&str>) -
         .unwrap_or_else(|| "unknown".to_string());
     match normalized_name.as_str() {
         "bash" => "terminal".to_string(),
-        "grep" | "glob" | "list" | "websearch" | "codesearch" | "webfetch" => "search".to_string(),
+        "websearch" => "websearch".to_string(),
+        "grep" | "glob" | "list" | "codesearch" | "webfetch" => "search".to_string(),
         other => other.to_string(),
     }
+}
+
+fn is_web_search_tool(
+    tool_name: Option<&str>,
+    tool_kind: Option<&str>,
+    input: &HashMap<String, serde_json::Value>,
+) -> bool {
+    let normalized_kind = tool_kind
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if matches!(normalized_kind.as_deref(), Some("websearch")) {
+        return true;
+    }
+
+    let normalized_name = tool_name
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if matches!(normalized_name.as_deref(), Some("websearch")) {
+        return true;
+    }
+
+    matches!(normalized_kind.as_deref(), Some("search"))
+        && input
+            .get("query")
+            .and_then(|value| value_as_string(Some(value)))
+            .is_some()
+        && input
+            .get("pattern")
+            .and_then(|value| value_as_string(Some(value)))
+            .is_none()
+        && input
+            .get("path")
+            .and_then(|value| value_as_string(Some(value)))
+            .is_none()
+}
+
+fn normalized_tool_kind_for_wire(
+    tool_name: Option<&str>,
+    tool_kind: Option<&str>,
+    input: &HashMap<String, serde_json::Value>,
+) -> Option<String> {
+    if is_web_search_tool(tool_name, tool_kind, input) {
+        return Some("websearch".to_string());
+    }
+    tool_kind.map(|value| value.to_string())
 }
 
 fn extract_session_id_recursive(
@@ -2253,7 +2305,12 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     }
     let state_obj = part.tool_state.as_ref().and_then(|value| value.as_object());
     let input = parse_input_map(state_obj.and_then(|obj| obj.get("input")));
-    let tool_id = semantic_tool_id_for_view(part.tool_name.as_deref(), part.tool_kind.as_deref());
+    let tool_id =
+        if is_web_search_tool(part.tool_name.as_deref(), part.tool_kind.as_deref(), &input) {
+            "websearch".to_string()
+        } else {
+            semantic_tool_id_for_view(part.tool_name.as_deref(), part.tool_kind.as_deref())
+        };
     let metadata = state_obj
         .and_then(|obj| obj.get("metadata"))
         .and_then(|value| value.as_object());
@@ -2314,10 +2371,25 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
         None
     };
     let display_title = title.unwrap_or_else(|| {
-        if tool_id == "search" {
+        if tool_id == "websearch" {
+            input
+                .get("query")
+                .and_then(|value| value_as_string(Some(value)))
+                .unwrap_or_else(|| {
+                    part.tool_kind
+                        .clone()
+                        .or_else(|| part.tool_name.clone())
+                        .unwrap_or_else(|| tool_display_name(&tool_id))
+                })
+        } else if tool_id == "search" {
             input
                 .get("pattern")
                 .and_then(|value| value_as_string(Some(value)))
+                .or_else(|| {
+                    input
+                        .get("query")
+                        .and_then(|value| value_as_string(Some(value)))
+                })
                 .map(|pattern| format!("grep({})", pattern))
                 .unwrap_or_else(|| {
                     part.tool_kind
@@ -2331,21 +2403,6 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
             part.tool_kind
                 .clone()
                 .unwrap_or_else(|| tool_display_name(&tool_id))
-        } else if part
-            .tool_name
-            .as_deref()
-            .is_some_and(|name| name.eq_ignore_ascii_case("websearch"))
-        {
-            input
-                .get("query")
-                .and_then(|value| value_as_string(Some(value)))
-                .map(|query| format!("websearch({})", query))
-                .unwrap_or_else(|| {
-                    part.tool_kind
-                        .clone()
-                        .or_else(|| part.tool_name.clone())
-                        .unwrap_or_else(|| tool_display_name(&tool_id))
-                })
         } else {
             part.tool_kind
                 .clone()
@@ -2380,6 +2437,10 @@ pub(crate) fn normalize_part_for_wire(
     {
         tool_name = Some("unknown".to_string());
     }
+    let state_obj = part.tool_state.as_ref().and_then(|value| value.as_object());
+    let input = parse_input_map(state_obj.and_then(|obj| obj.get("input")));
+    let normalized_tool_kind =
+        normalized_tool_kind_for_wire(part.tool_name.as_deref(), part.tool_kind.as_deref(), &input);
     let tool_view = build_tool_view(&part);
 
     crate::server::protocol::ai::PartInfo {
@@ -2394,7 +2455,7 @@ pub(crate) fn normalize_part_for_wire(
         source: part.source,
         tool_name,
         tool_call_id: part.tool_call_id,
-        tool_kind: part.tool_kind,
+        tool_kind: normalized_tool_kind,
         tool_view,
     }
 }
@@ -2891,6 +2952,31 @@ mod tests {
                 crate::server::protocol::ai::ToolViewSectionStyle::Diff
             ) && section.content.contains("--- /tmp/demo.txt")
         }));
+    }
+
+    #[test]
+    fn normalize_part_for_wire_promotes_web_search_to_dedicated_card_kind() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-web-search".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("search".to_string()),
+            tool_kind: Some("search".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "input": {
+                    "query": "https://moonshotai.github.io/kimi-cli/zh/customization/wire-mode.html"
+                },
+                "output": "[]"
+            })),
+            ..Default::default()
+        });
+
+        assert_eq!(part.tool_kind.as_deref(), Some("websearch"));
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(
+            tool_view.display_title,
+            "https://moonshotai.github.io/kimi-cli/zh/customization/wire-mode.html"
+        );
     }
 
     #[test]
