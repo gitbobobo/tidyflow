@@ -193,10 +193,6 @@ pub(super) fn write_jsonc_text(path: &Path, content: &str) -> Result<(), String>
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-pub(super) fn write_text(path: &Path, content: &str) -> Result<(), String> {
-    std::fs::write(path, content).map_err(|e| e.to_string())
-}
-
 pub(super) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let path = normalized_jsonc_path(path);
     let content = std::fs::read_to_string(&path)

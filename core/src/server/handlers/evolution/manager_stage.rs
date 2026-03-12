@@ -30,7 +30,6 @@ use super::profile::profile_for_stage;
 use super::utils::{
     cycle_dir_path, inject_stage_artifact_updated_at, read_json, read_text,
     sanitize_validation_attempt, sanitize_validation_attempts, write_json, write_jsonc_text,
-    write_text,
 };
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
@@ -42,12 +41,6 @@ const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
 const PLAN_MARKDOWN_FILE: &str = "plan.md";
-const PLAN_MD_SECTION_GOAL: &str = "# 本轮目标";
-const PLAN_MD_SECTION_DIRECTION: &str = "## 方向摘要";
-const PLAN_MD_SECTION_WORK_ITEMS: &str = "## 工作项分配";
-const PLAN_MD_SECTION_ORDER: &str = "## 执行顺序";
-const PLAN_MD_SECTION_CHECKS: &str = "## 验证计划";
-const PLAN_MD_SECTION_RISKS: &str = "## 风险与边界";
 
 async fn touch_session_index_updated_at_for_evolution(
     ctx: &HandlerContext,
@@ -935,10 +928,7 @@ fn merge_adjacent_implementation_stage_instances(
     merged
 }
 
-fn validate_plan_markdown_artifact(
-    cycle_dir: &Path,
-    _plan_value: &serde_json::Value,
-) -> Result<(), String> {
+fn validate_plan_markdown_artifact(cycle_dir: &Path) -> Result<(), String> {
     read_text_file(cycle_dir, PLAN_MARKDOWN_FILE).map(|_| ())
 }
 
@@ -1714,49 +1704,6 @@ fn plan_stage_template(cycle_id: &str) -> String {
     )
 }
 
-fn plan_markdown_template(cycle_id: &str) -> String {
-    format!(
-        r#"{goal}
-- 循环 ID：{cycle_id}
-- 本轮目标：
-
-{direction}
-- 方向句：
-- 计划阶段将在此处补充验收标准：
-
-{work_items}
-### WI-001 占位标题
-- 负责代理：
-- 目标文件：
-- 完成定义：
-- 关联检查：
-- 风险：
-
-{order}
-1. 先完成方向对应的核心工作项。
-2. 再按依赖顺序推进其余工作项。
-3. 最后集中执行验证计划。
-
-{checks}
-### CHK-001 占位检查
-- 执行方式：
-- 预期结果：
-- 覆盖工作项：
-
-{risks}
-- 风险：
-- 非目标：
-"#,
-        goal = PLAN_MD_SECTION_GOAL,
-        cycle_id = cycle_id,
-        direction = PLAN_MD_SECTION_DIRECTION,
-        work_items = PLAN_MD_SECTION_WORK_ITEMS,
-        order = PLAN_MD_SECTION_ORDER,
-        checks = PLAN_MD_SECTION_CHECKS,
-        risks = PLAN_MD_SECTION_RISKS,
-    )
-}
-
 fn implement_stage_template(
     stage: &str,
     cycle_id: &str,
@@ -2028,7 +1975,7 @@ impl EvolutionManager {
                 ctx.stage_started_at,
             ));
         }
-        report.capture(validate_plan_markdown_artifact(cycle_dir, &value));
+        report.capture(validate_plan_markdown_artifact(cycle_dir));
 
         report.into_error("artifact_contract_violation")
     }
@@ -3322,14 +3269,6 @@ impl EvolutionManager {
             .map_err(|e| format!("写入 JSONC 模板失败 ({}): {}", target.display(), e))
     }
 
-    fn ensure_text_template(path: &Path, content: &str) -> Result<(), String> {
-        if path.exists() {
-            return Ok(());
-        }
-        write_text(path, content)
-            .map_err(|e| format!("写入文本模板失败 ({}): {}", path.display(), e))
-    }
-
     fn ensure_stage_templates(
         stage: &str,
         cycle_dir: &Path,
@@ -3357,10 +3296,6 @@ impl EvolutionManager {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("plan.jsonc"),
                     &plan_stage_template(&cycle_id),
-                )?;
-                Self::ensure_text_template(
-                    &cycle_dir.join(PLAN_MARKDOWN_FILE),
-                    &plan_markdown_template(&cycle_id),
                 )?;
             }
             _ if is_runtime_verify_stage(stage) => {
@@ -5826,8 +5761,8 @@ mod tests {
     use super::{
         auto_commit_stage_template, check_workspace_boundary, direction_stage_template,
         ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
-        log_evolution_error, parse_adjudication_result_from_json, plan_markdown_template,
-        plan_stage_template, reimplement_stage_template, should_force_advanced_reimplementation,
+        log_evolution_error, parse_adjudication_result_from_json, plan_stage_template,
+        reimplement_stage_template, should_force_advanced_reimplementation,
         should_start_next_round, verify_stage_template, ArtifactValidationError, EvolutionManager,
         ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
     };
@@ -5870,9 +5805,9 @@ mod tests {
     }
 
     fn write_plan_markdown(dir: &Path) {
-        super::write_text(
-            &dir.join(PLAN_MARKDOWN_FILE),
-            &plan_markdown_template("c-1"),
+        std::fs::write(
+            dir.join(PLAN_MARKDOWN_FILE),
+            "# Plan\n\nManual plan content\n",
         )
         .expect("write plan markdown failed");
     }
@@ -6371,14 +6306,6 @@ mod tests {
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
         assert!(plan.contains("// 验收标准与检查项的映射，必须完整覆盖 plan.acceptance_criteria"));
 
-        let plan_markdown = plan_markdown_template("c-42");
-        assert!(plan_markdown.contains("# 本轮目标"));
-        assert!(plan_markdown.contains("- 方向句："));
-        assert!(plan_markdown.contains("## 工作项分配"));
-        assert!(plan_markdown.contains("### WI-001 占位标题"));
-        assert!(plan_markdown.contains("## 验证计划"));
-        assert!(plan_markdown.contains("### CHK-001 占位检查"));
-
         let implement = implement_stage_template("implement.general.1", "c-42", 1, 2);
         assert!(implement.contains("\"work_item_results\""));
         assert!(implement.contains(
@@ -6403,7 +6330,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_stage_templates_should_create_plan_jsonc_and_plan_markdown() {
+    fn ensure_stage_templates_should_create_plan_jsonc_only() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("cycle.jsonc"),
@@ -6418,11 +6345,10 @@ mod tests {
         let plan_json = dir.path().join("plan.jsonc");
         let plan_markdown = dir.path().join(PLAN_MARKDOWN_FILE);
         assert!(plan_json.exists(), "plan.jsonc should exist");
-        assert!(plan_markdown.exists(), "plan.md should exist");
-
-        let markdown = std::fs::read_to_string(&plan_markdown).expect("plan.md should be readable");
-        assert!(markdown.contains("# 本轮目标"));
-        assert!(markdown.contains("### WI-001 占位标题"));
+        assert!(
+            !plan_markdown.exists(),
+            "plan.md should not be auto-created"
+        );
     }
 
     #[test]
