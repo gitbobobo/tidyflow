@@ -60,7 +60,20 @@ print_usage() {
         - TidyFlowTests/TerminalWorkspaceIsolationTests
         - TidyFlowTests/WorkspaceSharedStateSemanticsTests
         - TidyFlowTests/EvolutionReplaySessionIsolationTests
-      回归目标：验证工作区切换、终端隔离、AI 会话缓存和演化回放不会跨 project/workspace 串台。
+        - TidyFlowTests/PerformanceObservabilitySemanticsTests
+        - TidyFlowTests/SystemHealthSemanticsTests
+      回归目标：验证工作区切换、终端隔离、AI 会话缓存、演化回放与性能可观测语义不会退化。
+
+  perf-test
+      运行 Core 性能可观测定向测试（CHK-003 / CHK-004）：
+        - cargo test system_snapshot_should_include_perf（system_snapshot 协议字段验证）
+        - cargo test perf（Core 性能注册表、诊断阈值、工作区/客户端隔离）
+
+  apple-perf-test
+      运行 Apple 性能可观测共享语义定向测试（CHK-005）：
+        - TidyFlowTests/PerformanceObservabilitySemanticsTests
+        - TidyFlowTests/SystemHealthSemanticsTests
+      仅运行 macOS 平台，SKIP_CORE_BUILD=1。
 
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）
@@ -138,6 +151,32 @@ case "$cmd" in
             test \
             cargo test --manifest-path core/Cargo.toml --jobs "$ncpu" "$@"
         ;;
+    perf-test)
+        # Core 性能可观测定向测试（CHK-003 / CHK-004）
+        # 等价于 CHK-003: cargo test system_snapshot_should_include_perf -- --nocapture
+        # 等价于 CHK-004: cargo test perf -- --nocapture
+        echo "[tidyflow] 运行 Core 性能可观测定向测试..."
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml system_snapshot_should_include_perf -- --nocapture
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml perf -- --nocapture
+        ;;
+    apple-perf-test)
+        # Apple 性能可观测共享语义定向测试（CHK-005）
+        echo "[tidyflow] 运行 Apple 性能可观测共享语义测试（macOS）..."
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$PROJECT_ROOT/build/perf-tests" \
+            SKIP_CORE_BUILD=1 \
+            -only-testing:TidyFlowTests/PerformanceObservabilitySemanticsTests \
+            -only-testing:TidyFlowTests/SystemHealthSemanticsTests \
+            test
+        ;;
     coverage)
         exec ./scripts/tools/coverage.sh "$@"
         ;;
@@ -201,6 +240,8 @@ case "$cmd" in
             "-only-testing:TidyFlowTests/TerminalWorkspaceIsolationTests"
             "-only-testing:TidyFlowTests/WorkspaceSharedStateSemanticsTests"
             "-only-testing:TidyFlowTests/EvolutionReplaySessionIsolationTests"
+            "-only-testing:TidyFlowTests/PerformanceObservabilitySemanticsTests"
+            "-only-testing:TidyFlowTests/SystemHealthSemanticsTests"
         )
         if [[ $ios_only -eq 0 ]]; then
             echo "[tidyflow] 运行 macOS 多工作区定向回归..."

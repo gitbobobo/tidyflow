@@ -187,6 +187,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011A /* AppState+CoreWS+AIReconnect.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
+		SHP00001 /* SystemHealthPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHP00011 /* SystemHealthPopoverView.swift */; };
 		RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00011 /* RemoteTerminalIndicatorView.swift */; };
 		RMT00002 /* AppState+RemoteTerminals.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00012 /* AppState+RemoteTerminals.swift */; };
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
@@ -241,6 +242,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			CSTH0002 /* CoreShutdownTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSTH0001 /* CoreShutdownTestSupport.swift */; };
 			EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
 		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
+		POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = POBS0011 /* PerformanceObservabilitySemanticsTests.swift */; };
+		SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SYHS0011 /* SystemHealthSemanticsTests.swift */; };
 /* End PBXBuildFile section */
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
@@ -496,6 +499,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+EvolutionSupport.swift"; sourceTree = "<group>"; };
 		MDL00011A /* AppState+CoreWS+AIReconnect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIReconnect.swift"; sourceTree = "<group>"; };
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
+		SHP00011 /* SystemHealthPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemHealthPopoverView.swift; sourceTree = "<group>"; };
 		RMT00011 /* RemoteTerminalIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTerminalIndicatorView.swift; sourceTree = "<group>"; };
 		RMT00012 /* AppState+RemoteTerminals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+RemoteTerminals.swift"; sourceTree = "<group>"; };
 		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -552,6 +556,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			CSTH0001 /* CoreShutdownTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreShutdownTestSupport.swift; sourceTree = "<group>"; };
 			EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
 		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
+		POBS0011 /* PerformanceObservabilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceObservabilitySemanticsTests.swift; sourceTree = "<group>"; };
+		SYHS0011 /* SystemHealthSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemHealthSemanticsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -667,6 +673,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				UX100013 /* ProjectConfigView.swift */,
 				UX100011 /* ProjectsSidebarView.swift */,
 				QAV00011 /* QuickActionsView.swift */,
+				SHP00011 /* SystemHealthPopoverView.swift */,
 				RMT00011 /* RemoteTerminalIndicatorView.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
 				SET00011 /* SettingsView.swift */,
@@ -834,6 +841,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 					AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
 					CSTH0001 /* CoreShutdownTestSupport.swift */,
 					EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
+					POBS0011 /* PerformanceObservabilitySemanticsTests.swift */,
+					SYHS0011 /* SystemHealthSemanticsTests.swift */,
 				HQTC0011 /* HTTPQueryClientTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				SHR0100A /* SharedProtocolModelsTests.swift */,
@@ -1302,6 +1311,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				EVO00001 /* EvolutionDefaultConfigSection.swift in Sources */,
 				EVO00002 /* EvolutionPipelineView.swift in Sources */,
 				QAV00001 /* QuickActionsView.swift in Sources */,
+				SHP00001 /* SystemHealthPopoverView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				SPL00004 /* WSClient+Send.swift in Sources */,
 				SPL00005 /* WSClient+Receive.swift in Sources */,
@@ -1378,6 +1388,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
 					CSTH0002 /* CoreShutdownTestSupport.swift in Sources */,
 					EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
+					POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */,
+					SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */,
 				HQTC0001 /* HTTPQueryClientTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				TST10040 /* AIChatTextRunGroupingTests.swift in Sources */,
