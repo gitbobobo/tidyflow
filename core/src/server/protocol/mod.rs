@@ -1892,6 +1892,12 @@ pub enum ServerMessage {
         workspace: String,
         /// AI 领域聚合子状态（含展示状态 display_status）
         ai: CoordinatorAiDomainStateDto,
+        /// 终端领域聚合子状态（v1.47）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal: Option<CoordinatorTerminalDomainStateDto>,
+        /// 文件领域聚合子状态（v1.47）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file: Option<CoordinatorFileDomainStateDto>,
         /// 状态版本号（单调递增，客户端可用于冲突检测）
         version: u64,
         /// 状态生成时间（ISO 8601）
@@ -1941,6 +1947,81 @@ impl From<&crate::coordinator::model::AiDomainState> for CoordinatorAiDomainStat
             last_error_message: s.last_error_message.clone(),
             display_updated_at: s.display_updated_at,
         }
+    }
+}
+
+/// Coordinator 终端领域子状态 DTO（v1.47，协议传输用）
+///
+/// 对应 `coordinator::model::TerminalDomainState`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinatorTerminalDomainStateDto {
+    /// 聚合相位: "idle" | "active" | "faulted"
+    pub phase: String,
+    /// 存活终端数
+    pub alive_count: u32,
+    /// 总终端数（含已退出）
+    pub total_count: u32,
+}
+
+impl From<&crate::coordinator::model::TerminalDomainState> for CoordinatorTerminalDomainStateDto {
+    fn from(s: &crate::coordinator::model::TerminalDomainState) -> Self {
+        Self {
+            phase: match s.phase {
+                crate::coordinator::model::TerminalDomainPhase::Idle => "idle".to_string(),
+                crate::coordinator::model::TerminalDomainPhase::Active => "active".to_string(),
+                crate::coordinator::model::TerminalDomainPhase::Faulted => "faulted".to_string(),
+            },
+            alive_count: s.alive_count,
+            total_count: s.total_count,
+        }
+    }
+}
+
+/// Coordinator 文件领域子状态 DTO（v1.47，协议传输用）
+///
+/// 对应 `coordinator::model::FileDomainState`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinatorFileDomainStateDto {
+    /// 聚合相位: "idle" | "ready" | "degraded" | "error"
+    pub phase: String,
+    /// watcher 是否活跃
+    pub watcher_active: bool,
+    /// 是否正在索引中
+    pub indexing_in_progress: bool,
+}
+
+impl From<&crate::coordinator::model::FileDomainState> for CoordinatorFileDomainStateDto {
+    fn from(s: &crate::coordinator::model::FileDomainState) -> Self {
+        Self {
+            phase: match s.phase {
+                crate::coordinator::model::FileDomainPhase::Idle => "idle".to_string(),
+                crate::coordinator::model::FileDomainPhase::Ready => "ready".to_string(),
+                crate::coordinator::model::FileDomainPhase::Degraded => "degraded".to_string(),
+                crate::coordinator::model::FileDomainPhase::Error => "error".to_string(),
+            },
+            watcher_active: s.watcher_active,
+            indexing_in_progress: s.indexing_in_progress,
+        }
+    }
+}
+
+/// 从 `FileWorkspacePhase` 构建文件领域 DTO（用于 system_snapshot 种子和 coordinator 广播）
+pub fn coordinator_file_dto_from_phase(
+    phase: crate::server::protocol::file::FileWorkspacePhase,
+) -> CoordinatorFileDomainStateDto {
+    use crate::server::protocol::file::FileWorkspacePhase;
+    let (coordinator_phase, watcher_active, indexing_in_progress) = match phase {
+        FileWorkspacePhase::Idle => ("idle", false, false),
+        FileWorkspacePhase::Indexing => ("ready", false, true),
+        FileWorkspacePhase::Watching => ("ready", true, false),
+        FileWorkspacePhase::Degraded => ("degraded", false, false),
+        FileWorkspacePhase::Recovering => ("degraded", false, false),
+        FileWorkspacePhase::Error => ("error", false, false),
+    };
+    CoordinatorFileDomainStateDto {
+        phase: coordinator_phase.to_string(),
+        watcher_active,
+        indexing_in_progress,
     }
 }
 

@@ -273,15 +273,33 @@ domains:
     system_snapshot_seed_fields:
       description: >
         v1.46：system_snapshot.workspace_items 中每个工作区条目携带 coordinator_ai 种子字段（可选）。
-        重连后客户端通过此字段一次性恢复所有工作区的 coordinator AI 状态，无需等待增量事件补全。
+        v1.47：新增 coordinator_terminal 与 coordinator_file 种子字段，涵盖完整文件域与终端域协调状态。
+        重连后客户端通过这些字段一次性恢复所有工作区的 coordinator 三域状态，无需等待增量事件补全。
       coordinator_ai:
         description: "AiDomainState 展平为 DTO（含展示六态字段），等同于 coordinator_snapshot 中的 ai 字段"
         type: optional_object
+      coordinator_terminal:
+        description: "终端域状态种子：alive_count / total_count / phase（等同于 coordinator_snapshot 中的 terminal 字段）"
+        type: optional_object
+        fields:
+          alive_count: { type: uint, description: "当前活跃终端数" }
+          total_count: { type: uint, description: "全部终端数（含已关闭）" }
+          phase: { type: string, enum: [idle, active, degraded, error], description: "终端域运行阶段" }
+          version: { type: uint64, description: "快照版本（毫秒级 Unix 时间戳），用于乐观并发保护" }
+      coordinator_file:
+        description: "文件域状态种子：对应 FileWorkspacePhaseTracker 当前阶段（等同于 coordinator_snapshot 中的 file 字段）"
+        type: optional_object
+        fields:
+          phase: { type: string, enum: [idle, ready, degraded, error], description: "文件域运行阶段" }
+          indexing_in_progress: { type: bool, description: "仅当 phase=ready 时有效：是否正在增量索引" }
+          watcher_active: { type: bool, description: "仅当 phase=ready 时有效：文件系统 watcher 是否运行" }
+          version: { type: uint64, description: "快照版本（毫秒级 Unix 时间戳），用于乐观并发保护" }
     # 多工作区边界约束：
     # - 每条 coordinator_snapshot 消息只携带一个工作区的状态（非全局快照）
     # - 客户端按 "project:workspace" 全局键维护本地缓存，不允许只用 workspace 名称路由
     # - 工作区删除时，客户端应调用本地缓存的 removeWorkspace 清除对应条目
-    # - coordinator_ai 与 coordinator_snapshot 使用同一版本语义；旧版本不应覆盖新状态
+    # - coordinator_* 种子字段与 coordinator_snapshot 使用同一版本语义；旧版本快照不应覆盖新状态
+    # - 客户端只消费 coordinator 文件域状态，不应在本地重建健康语义（Core 是权威源）
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved

@@ -141,6 +141,11 @@ extension AppState {
             return
         }
 
+        // 关闭 editor Tab 时释放该文档的撤销/重做历史记录
+        if tab.kind == .editor {
+            editorStore.releaseDocumentUndoHistory(workspaceKey: workspaceKey, path: tab.payload)
+        }
+
         performCloseTab(workspaceKey: workspaceKey, tabId: tabId)
     }
 
@@ -194,9 +199,37 @@ extension AppState {
         for tab in tabs {
             performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
+        // 释放该工作区所有文档的撤销/重做历史记录
+        editorStore.releaseAllDocumentUndoHistory(workspaceKey: workspaceKey)
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
         activeBottomPanelCategoryByWorkspace.removeValue(forKey: workspaceKey)
         lastActiveTabIdByWorkspaceByCategory.removeValue(forKey: workspaceKey)
+    }
+
+    /// 工作区级未保存保护入口。
+    ///
+    /// 在关闭工作区、切换工作区等场景中调用，若存在未保存文档则触发确认对话框。
+    /// 返回 true 表示可以继续关闭，false 表示已触发确认对话框、操作已挂起。
+    ///
+    /// - Parameters:
+    ///   - workspaceKey: 目标工作区 key
+    ///   - onConfirmed: 用户确认后执行的动作（放弃更改或保存后）
+    @discardableResult
+    func requestWorkspaceCloseWithUnsavedGuard(
+        workspaceKey: String,
+        onConfirmed: (() -> Void)? = nil
+    ) -> Bool {
+        guard editorStore.hasDirtyDocuments(workspaceKey: workspaceKey) else {
+            // 无未保存文档，直接执行
+            onConfirmed?()
+            return true
+        }
+        // 有未保存文档：触发工作区级确认对话框
+        // 设置 pendingCloseWorkspaceKey 但不设置 pendingCloseTabId（工作区级）
+        pendingCloseWorkspaceKey = workspaceKey
+        pendingCloseTabId = nil
+        showUnsavedChangesAlert = true
+        return false
     }
 
     /// 实际执行关闭 Tab（跳过 dirty 检查）

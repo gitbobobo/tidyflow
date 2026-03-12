@@ -339,23 +339,38 @@ public struct CoordinatorConsistencyResult: Equatable, Sendable {
     }
 }
 
-// MARK: - coordinator_snapshot 增量消息（v1.46）
+// MARK: - coordinator_snapshot 增量消息（v1.46/v1.47）
 
 /// Core 推送的工作区级 Coordinator 快照增量消息载荷。
 ///
 /// 对应 Rust `ServerMessage::CoordinatorSnapshot`，每条消息对应一个工作区。
+/// v1.47 新增 `terminal` 和 `file` 领域子状态，保持向前兼容（未提供时使用 existing 中的值）。
 /// 客户端收到后通过 `CoordinatorStateCache.apply(.updateWorkspace(...))` 更新缓存。
 public struct CoordinatorWorkspaceSnapshotPayload: Sendable {
     public let project: String
     public let workspace: String
     public let ai: AiDomainState
+    /// 终端领域子状态（v1.47，可选；nil 表示本条消息不更新终端域）
+    public let terminal: TerminalDomainState?
+    /// 文件领域子状态（v1.47，可选；nil 表示本条消息不更新文件域）
+    public let file: FileDomainState?
     public let version: UInt64
     public let generatedAt: String
 
-    public init(project: String, workspace: String, ai: AiDomainState, version: UInt64, generatedAt: String) {
+    public init(
+        project: String,
+        workspace: String,
+        ai: AiDomainState,
+        terminal: TerminalDomainState? = nil,
+        file: FileDomainState? = nil,
+        version: UInt64,
+        generatedAt: String
+    ) {
         self.project = project
         self.workspace = workspace
         self.ai = ai
+        self.terminal = terminal
+        self.file = file
         self.version = version
         self.generatedAt = generatedAt
     }
@@ -364,7 +379,10 @@ public struct CoordinatorWorkspaceSnapshotPayload: Sendable {
         CoordinatorWorkspaceId(project: project, workspace: workspace)
     }
 
-    /// 解析为 `WorkspaceCoordinatorState`（仅含 AI 域，其余保留默认）
+    /// 将增量 payload 合并到现有状态，产生新状态。
+    ///
+    /// 版本号回退检测：旧快照不应覆盖更新的状态。
+    /// 未提供的域保留 existing 中的值，避免无意清零其他域状态。
     public func toWorkspaceCoordinatorState(existing: WorkspaceCoordinatorState?) -> WorkspaceCoordinatorState {
         // 版本号回退检测：旧快照不应覆盖更新的状态
         if let existing, existing.version >= version {
@@ -373,8 +391,8 @@ public struct CoordinatorWorkspaceSnapshotPayload: Sendable {
         return WorkspaceCoordinatorState(
             id: workspaceId,
             ai: ai,
-            terminal: existing?.terminal ?? TerminalDomainState(),
-            file: existing?.file ?? FileDomainState(),
+            terminal: terminal ?? existing?.terminal ?? TerminalDomainState(),
+            file: file ?? existing?.file ?? FileDomainState(),
             health: existing?.health ?? .healthy,
             generatedAt: generatedAt,
             version: version
@@ -385,12 +403,21 @@ public struct CoordinatorWorkspaceSnapshotPayload: Sendable {
         guard let project = json["project"] as? String,
               let workspace = json["workspace"] as? String else { return nil }
         let ai = AiDomainState.from(json: json["ai"] as? [String: Any] ?? [:])
+        // v1.47: 可选终端/文件域（向前兼容，旧协议不含这些字段时为 nil）
+        let terminal: TerminalDomainState? = (json["terminal"] as? [String: Any]).map {
+            TerminalDomainState.from(json: $0)
+        }
+        let file: FileDomainState? = (json["file"] as? [String: Any]).map {
+            FileDomainState.from(json: $0)
+        }
         let version = json["version"] as? UInt64 ?? 0
         let generatedAt = json["generated_at"] as? String ?? ""
         return CoordinatorWorkspaceSnapshotPayload(
             project: project,
             workspace: workspace,
             ai: ai,
+            terminal: terminal,
+            file: file,
             version: version,
             generatedAt: generatedAt
         )

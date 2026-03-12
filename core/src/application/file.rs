@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 use tracing::debug;
 
@@ -22,6 +22,14 @@ fn phase_key(project: &str, workspace: &str) -> String {
 static FILE_WORKSPACE_PHASES: LazyLock<Mutex<HashMap<String, FileWorkspacePhase>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// 文件相位变化回调类型：(project, workspace, new_phase)
+type FilePhaseChangeCallback = Arc<dyn Fn(&str, &str, FileWorkspacePhase) + Send + Sync>;
+
+/// 全局文件相位变化回调（由 AI 初始化模块注册，用于驱动 Coordinator 广播）。
+/// 仅在状态实际变化时触发，避免无效广播推高 WS 管线延迟。
+static FILE_PHASE_CHANGE_CALLBACK: LazyLock<Mutex<Option<FilePhaseChangeCallback>>> =
+    LazyLock::new(|| Mutex::new(None));
+
 /// 文件工作区相位追踪器——统一的相位查询与迁移入口。
 ///
 /// 所有相位迁移必须通过此模块的公开函数完成，不允许在 handler 或 watcher 中直接修改状态。
@@ -38,7 +46,24 @@ impl FileWorkspacePhaseTracker {
             .unwrap_or_default()
     }
 
-    /// 在持有锁的情况下原子地完成「读取当前相位 → 守卫判断 → 写入新相位」。
+    /// 注册文件相位变化回调（由 AI 初始化模块在服务启动时调用）。
+    /// 相位实际变化时调用，不因无变化触发，避免无效广播推高 WS 管线延迟。
+    pub fn set_on_phase_change(callback: FilePhaseChangeCallback) {
+        if let Ok(mut cb) = FILE_PHASE_CHANGE_CALLBACK.lock() {
+            *cb = Some(callback);
+        }
+    }
+
+    /// 触发相位变化回调（仅在相位实际变化时调用）。
+    fn fire_change(project: &str, workspace: &str, new_phase: FileWorkspacePhase) {
+        if let Ok(cb) = FILE_PHASE_CHANGE_CALLBACK.lock() {
+            if let Some(callback) = cb.as_ref() {
+                callback(project, workspace, new_phase);
+            }
+        }
+    }
+
+    /// 在持有锁的情况下原子地完成「读取当前相位 → 守卫判断 → 写入新相位 → 触发回调」。
     /// 避免 check-then-set 之间被 `on_disconnect` 等全局操作插入导致状态丢失。
     fn transition(
         project: &str,
@@ -47,6 +72,7 @@ impl FileWorkspacePhaseTracker {
         next: FileWorkspacePhase,
     ) {
         let key = phase_key(project, workspace);
+        let mut phase_changed = false;
         if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
             let current = map.get(&key).copied().unwrap_or_default();
             if guard(current) {
@@ -56,14 +82,19 @@ impl FileWorkspacePhaseTracker {
                         "FileWorkspacePhase transition: key={} {} -> {}",
                         key, current, next
                     );
+                    phase_changed = true;
                 }
             }
         }
+        if phase_changed {
+            Self::fire_change(project, workspace, next);
+        }
     }
 
-    /// 无条件设置相位并记录迁移日志。
+    /// 无条件设置相位并记录迁移日志，相位变化时触发回调。
     fn set_unconditional(project: &str, workspace: &str, phase: FileWorkspacePhase) {
         let key = phase_key(project, workspace);
+        let mut phase_changed = false;
         if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {
             let prev = map.insert(key.clone(), phase).unwrap_or_default();
             if prev != phase {
@@ -71,7 +102,11 @@ impl FileWorkspacePhaseTracker {
                     "FileWorkspacePhase transition: key={} {} -> {}",
                     key, prev, phase
                 );
+                phase_changed = true;
             }
+        }
+        if phase_changed {
+            Self::fire_change(project, workspace, phase);
         }
     }
 

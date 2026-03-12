@@ -258,6 +258,10 @@ extension AppState {
             updatedAt: Date()
         )
         fileListCache[key] = cache
+        // 关闭挂起中的文件树性能追踪
+        if let traceId = pendingFileListTraceIds.removeValue(forKey: key) {
+            performanceTracer.end(traceId)
+        }
     }
 
     /// 获取目录文件列表
@@ -307,10 +311,9 @@ extension AppState {
         fileListCache[key] = cache
         fileListRequestLastSentAt[key] = now
 
-        // 发送请求（追踪 ID 随请求上下文传递，handleFileListResult 中结束追踪）
+        // 发送请求，暂存追踪 ID，待 handleFileListResult 到达后关闭
         wsClient.requestFileList(project: project, workspace: workspaceKey, path: path, cacheMode: cacheMode)
-        // 请求发出即视为本轮追踪结束（实际网络延迟在 Core 端日志体现）
-        performanceTracer.end(perfTraceId)
+        pendingFileListTraceIds[key] = perfTraceId
     }
 
     /// 获取目录文件列表（便捷重载，隐式使用当前 `selectedProjectName`）。

@@ -104,6 +104,12 @@ pub(in crate::server::ws) struct SystemSnapshotWorkspaceItem {
     /// Coordinator AI 聚合状态种子（重连后快速恢复工作区展示状态）
     #[serde(skip_serializing_if = "Option::is_none")]
     coordinator_ai: Option<crate::server::protocol::CoordinatorAiDomainStateDto>,
+    /// Coordinator 终端领域状态种子（v1.47，重连后快速恢复终端域状态）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coordinator_terminal: Option<crate::server::protocol::CoordinatorTerminalDomainStateDto>,
+    /// Coordinator 文件领域状态种子（v1.47，重连后快速恢复文件域状态）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coordinator_file: Option<crate::server::protocol::CoordinatorFileDomainStateDto>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,8 +130,18 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
             .map_err(map_query_error)?;
     // 提取调度器信息（避免重复查询）
     let (evo_scheduler_info, evo_index) = evolution_index_and_scheduler_from_message(evo_snapshot)?;
+
+    // 终端资源快照（提前提取，复用于 coordinator 种子和 terminal_resource 字段）
+    let (terminal_resource, terminal_registry_info) = {
+        let reg = ctx.terminal_registry.lock().await;
+        let info = reg.resource_info();
+        let perf = crate::server::perf::snapshot_terminal_perf();
+        let resource = build_terminal_resource_snapshot(info.clone(), perf);
+        (resource, info)
+    };
+
     let (workspace_items, cache_metrics) =
-        build_workspace_items_and_metrics(&ctx.app_state, &evo_index, &ctx.ai_state).await;
+        build_workspace_items_and_metrics(&ctx.app_state, &evo_index, &ctx.ai_state, &terminal_registry_info).await;
 
     // 聚合健康快照（含调度优化建议和预测异常）
     let health_snapshot = {
@@ -151,14 +167,6 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
             evo_scheduler_info.0,
             evo_scheduler_info.1,
         )
-    };
-
-    // 终端资源快照
-    let terminal_resource = {
-        let reg = ctx.terminal_registry.lock().await;
-        let info = reg.resource_info();
-        let perf = crate::server::perf::snapshot_terminal_perf();
-        build_terminal_resource_snapshot(info, perf)
     };
 
     // 统一性能指标快照
@@ -276,6 +284,7 @@ async fn build_workspace_items_and_metrics(
     app_state: &SharedAppState,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
     ai_state: &crate::server::handlers::ai::SharedAIState,
+    terminal_info: &crate::server::terminal_registry::TerminalResourceInfo,
 ) -> (
     Vec<SystemSnapshotWorkspaceItem>,
     Vec<WorkspaceCacheMetricsInfo>,
@@ -285,6 +294,12 @@ async fn build_workspace_items_and_metrics(
         let guard = ai_state.lock().await;
         guard.session_statuses.clone()
     };
+
+    // 按 (project, workspace) 构建终端域聚合索引，复用已提取的 terminal_info
+    let terminal_map: HashMap<(String, String), &crate::server::terminal_registry::WorkspaceTerminalInfo> =
+        terminal_info.per_workspace.iter()
+            .map(|wi| ((wi.project.clone(), wi.workspace.clone()), wi))
+            .collect();
 
     let mut items = Vec::new();
     let mut cache_metrics_list = Vec::new();
@@ -305,13 +320,19 @@ async fn build_workspace_items_and_metrics(
             };
             let coordinator_ai_default =
                 build_coordinator_ai_dto(&session_statuses, &project_name, DEFAULT_WORKSPACE_NAME);
-            items.push(build_workspace_item_with_recovery_and_coordinator(
+            let coordinator_terminal_default = build_coordinator_terminal_dto(
+                terminal_map.get(&(project_name.clone(), DEFAULT_WORKSPACE_NAME.to_string())),
+            );
+            let coordinator_file_default = build_coordinator_file_dto(&project_name, DEFAULT_WORKSPACE_NAME);
+            items.push(build_workspace_item_with_coordinator(
                 project_name.clone(),
                 default_info,
                 evo_index,
                 None,
                 None,
                 coordinator_ai_default,
+                coordinator_terminal_default,
+                coordinator_file_default,
             ));
             cache_metrics_list.push(snapshot_to_metrics_info(
                 &WorkspaceCacheSnapshot::from_counters(
@@ -346,13 +367,19 @@ async fn build_workspace_items_and_metrics(
                     .and_then(|m| m.recovery_cursor.clone());
                 let coordinator_ai =
                     build_coordinator_ai_dto(&session_statuses, &project_name, &ws.name);
-                items.push(build_workspace_item_with_recovery_and_coordinator(
+                let coordinator_terminal = build_coordinator_terminal_dto(
+                    terminal_map.get(&(project_name.clone(), ws.name.clone())),
+                );
+                let coordinator_file = build_coordinator_file_dto(&project_name, &ws.name);
+                items.push(build_workspace_item_with_coordinator(
                     project_name.clone(),
                     info,
                     evo_index,
                     recovery_state,
                     recovery_cursor,
                     coordinator_ai,
+                    coordinator_terminal,
+                    coordinator_file,
                 ));
                 cache_metrics_list.push(snapshot_to_metrics_info(
                     &WorkspaceCacheSnapshot::from_counters(&project_name, &ws.name, &root),
@@ -391,6 +418,38 @@ fn build_coordinator_ai_dto(
     }
 }
 
+/// 为指定工作区构建 Coordinator 终端领域状态 DTO（v1.47）
+fn build_coordinator_terminal_dto(
+    ws_terminal: Option<&&crate::server::terminal_registry::WorkspaceTerminalInfo>,
+) -> Option<crate::server::protocol::CoordinatorTerminalDomainStateDto> {
+    let info = ws_terminal?;
+    // 仅在有终端时才携带种子
+    if info.terminal_count == 0 {
+        return None;
+    }
+    let alive = info.terminal_count as u32;
+    let phase = if alive > 0 { "active" } else { "idle" };
+    Some(crate::server::protocol::CoordinatorTerminalDomainStateDto {
+        phase: phase.to_string(),
+        alive_count: alive,
+        total_count: alive,
+    })
+}
+
+/// 为指定工作区构建 Coordinator 文件领域状态 DTO（v1.47）
+fn build_coordinator_file_dto(
+    project: &str,
+    workspace: &str,
+) -> Option<crate::server::protocol::CoordinatorFileDomainStateDto> {
+    use crate::server::protocol::file::FileWorkspacePhase;
+    let phase = crate::application::file::FileWorkspacePhaseTracker::current(project, workspace);
+    // 仅在非 Idle 时才携带种子（避免每个工作区都传送初始空状态）
+    if phase == FileWorkspacePhase::Idle {
+        return None;
+    }
+    Some(crate::server::protocol::coordinator_file_dto_from_phase(phase))
+}
+
 fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetricsInfo {
     WorkspaceCacheMetricsInfo {
         project: snap.project.clone(),
@@ -417,14 +476,16 @@ fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetr
     }
 }
 
-/// 构建工作区快照条目（完整版，含恢复状态与 Coordinator AI 种子）
-fn build_workspace_item_with_recovery_and_coordinator(
+/// 构建工作区快照条目（完整版，含恢复状态与三域 Coordinator 种子）
+fn build_workspace_item_with_coordinator(
     project: String,
     workspace: WorkspaceInfo,
     evo_index: &HashMap<(String, String), EvolutionWorkspaceSummary>,
     recovery_state: Option<String>,
     recovery_cursor: Option<String>,
     coordinator_ai: Option<crate::server::protocol::CoordinatorAiDomainStateDto>,
+    coordinator_terminal: Option<crate::server::protocol::CoordinatorTerminalDomainStateDto>,
+    coordinator_file: Option<crate::server::protocol::CoordinatorFileDomainStateDto>,
 ) -> SystemSnapshotWorkspaceItem {
     let evo = evo_index.get(&(project.clone(), workspace.name.clone()));
     let evolution_status = evo
@@ -447,6 +508,8 @@ fn build_workspace_item_with_recovery_and_coordinator(
         recovery_state,
         recovery_cursor,
         coordinator_ai,
+        coordinator_terminal,
+        coordinator_file,
     }
 }
 
@@ -614,6 +677,17 @@ mod tests {
         }
     }
 
+    /// 空终端注册信息（测试用）
+    fn empty_terminal_info() -> crate::server::terminal_registry::TerminalResourceInfo {
+        crate::server::terminal_registry::TerminalResourceInfo {
+            total_terminal_count: 0,
+            total_scrollback_bytes: 0,
+            global_budget_bytes: 64 * 1024 * 1024,
+            budget_used_percent: 0,
+            per_workspace: vec![],
+        }
+    }
+
     #[test]
     fn failure_reason_priority_should_be_terminal_then_rate_limit_then_code() {
         let a = test_item(
@@ -665,6 +739,7 @@ mod tests {
             &Arc::new(tokio::sync::RwLock::new(make_test_state())),
             &idx,
             &ai_state,
+            &empty_terminal_info(),
         )
         .await;
         let default_item = result
@@ -684,6 +759,7 @@ mod tests {
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
             &ai_state,
+            &empty_terminal_info(),
         )
         .await;
         let default_item = items
@@ -726,6 +802,7 @@ mod tests {
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
             &ai_state,
+            &empty_terminal_info(),
         )
         .await;
         assert_eq!(
@@ -857,6 +934,7 @@ mod tests {
             &Arc::new(tokio::sync::RwLock::new(state)),
             &HashMap::new(),
             &ai_state_4,
+            &empty_terminal_info(),
         )
         .await;
 

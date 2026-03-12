@@ -47,4 +47,36 @@ final class AIChatTranscriptDisplayCacheSemanticsTests: XCTestCase {
         XCTAssertEqual(snapshot.messages.first?.parts.first?.text, "最终回复")
         XCTAssertFalse(snapshot.messages.first?.isStreaming == true)
     }
+
+    func testSynchronizeAfterTailChangeReplacesCachedStreamingTailInsteadOfAppendingDuplicate() {
+        let localMessageID = "local-stream"
+        let cachedTail = AIChatMessage(
+            id: localMessageID,
+            messageId: "m-stream",
+            role: .assistant,
+            parts: [
+                AIChatPart(id: "p-stream", kind: .text, text: "第一段")
+            ],
+            isStreaming: true
+        )
+        let updatedTail = AIChatMessage(
+            id: localMessageID,
+            messageId: "m-stream",
+            role: .assistant,
+            parts: [
+                AIChatPart(id: "p-stream", kind: .text, text: "第一段第二段")
+            ],
+            isStreaming: true
+        )
+
+        let snapshot = AIChatTranscriptDisplayCacheSemantics.synchronizeAfterTailChange(
+            sourceMessages: [updatedTail],
+            pendingQuestions: [:],
+            cachedDisplayMessages: [cachedTail],
+            cachedSourceCount: 1
+        )
+
+        XCTAssertEqual(snapshot.messages.count, 1, "同一尾消息更新时应原位替换，不应重复追加")
+        XCTAssertEqual(snapshot.messages.first?.parts.first?.text, "第一段第二段")
+    }
 }

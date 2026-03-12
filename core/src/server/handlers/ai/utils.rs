@@ -2504,6 +2504,8 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
     }
 
     let tx = tx.clone();
+    // 提前克隆 tx，供文件相位回调使用（必须在 AI 闭包消费 tx 之前克隆）
+    let tx_for_file = tx.clone();
     // Clone the Arc for use inside the coordinator snapshot closure
     let store_for_coordinator = store.clone();
     store.set_on_change(std::sync::Arc::new(move |change| {
@@ -2540,6 +2542,7 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
         );
 
         // 同步发送工作区级 Coordinator 聚合快照（低延迟增量更新）
+        // v1.47：快照包含 AI 域；终端/文件域由各自变化事件独立驱动，此处不重复聚合。
         let ai_domain_state = crate::ai::session_status::aggregate_workspace_ai_domain_state(
             &store_for_coordinator,
             &meta.project_name,
@@ -2549,6 +2552,8 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
             project: meta.project_name.clone(),
             workspace: meta.workspace_name.clone(),
             ai: crate::server::protocol::CoordinatorAiDomainStateDto::from(&ai_domain_state),
+            terminal: None, // AI 变化时不覆盖终端域，客户端保留现有终端状态
+            file: None,     // AI 变化时不覆盖文件域，客户端保留现有文件状态
             version: ai_domain_state.display_updated_at as u64,
             generated_at: chrono::Utc::now().to_rfc3339(),
         };
@@ -2562,6 +2567,42 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
             },
         );
     }));
+
+    // v1.47: 注册文件相位变化回调，驱动文件域 Coordinator 快照广播。
+    // 仅在文件相位实际变化时触发，避免无效广播推高 WS 管线延迟。
+    crate::application::file::FileWorkspacePhaseTracker::set_on_phase_change(
+        std::sync::Arc::new(move |project, workspace, new_phase| {
+            use crate::server::protocol::coordinator_file_dto_from_phase;
+            let file_dto = coordinator_file_dto_from_phase(new_phase);
+            let coordinator_msg = ServerMessage::CoordinatorSnapshot {
+                project: project.to_string(),
+                workspace: workspace.to_string(),
+                // 文件相位变化时只更新文件域，AI/终端域由客户端保留现有值
+                ai: crate::server::protocol::CoordinatorAiDomainStateDto {
+                    phase: "idle".to_string(),
+                    active_session_count: 0,
+                    total_session_count: 0,
+                    display_status: "idle".to_string(),
+                    active_tool_name: None,
+                    last_error_message: None,
+                    display_updated_at: 0,
+                },
+                terminal: None,
+                file: Some(file_dto),
+                version: chrono::Utc::now().timestamp_millis() as u64,
+                generated_at: chrono::Utc::now().to_rfc3339(),
+            };
+            let _ = crate::server::context::send_task_broadcast_event(
+                &tx_for_file,
+                TaskBroadcastEvent {
+                    origin_conn_id: "".to_string(),
+                    message: coordinator_msg,
+                    target_conn_ids: None,
+                    skip_when_single_receiver: false,
+                },
+            );
+        }),
+    );
 }
 
 pub(crate) async fn normalize_ai_image_parts(

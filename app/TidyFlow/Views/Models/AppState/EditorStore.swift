@@ -85,10 +85,14 @@ class EditorStore: ObservableObject {
 
     // MARK: - 撤销/重做状态
 
-    /// 当前编辑器是否可撤销
+    /// 当前活跃编辑器是否可撤销（最近一次 updateUndoRedoState 的值）
     @Published var canUndo: Bool = false
-    /// 当前编辑器是否可重做
+    /// 当前活跃编辑器是否可重做（最近一次 updateUndoRedoState 的值）
     @Published var canRedo: Bool = false
+
+    /// 按文档键记录的撤销/重做能力（key: globalWorkspaceKey:path）。
+    /// 用于在多文档场景中判断特定文档的历史状态，不作为 UI 驱动主来源。
+    private var documentUndoRedoState: [String: (canUndo: Bool, canRedo: Bool)] = [:]
 
     // MARK: - 新建文件状态
 
@@ -167,6 +171,55 @@ class EditorStore: ObservableObject {
     func updateUndoRedoState(canUndo: Bool, canRedo: Bool) {
         self.canUndo = canUndo
         self.canRedo = canRedo
+    }
+
+    /// 更新指定文档的撤销/重做状态（多文档场景，按 workspaceKey:path 记录）
+    func updateUndoRedoState(canUndo: Bool, canRedo: Bool, workspaceKey: String, path: String) {
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+        let docKey = "\(workspaceKey):\(path)"
+        documentUndoRedoState[docKey] = (canUndo: canUndo, canRedo: canRedo)
+    }
+
+    /// 查询指定文档的撤销能力（关闭文档后释放记录）
+    func canUndo(workspaceKey: String, path: String) -> Bool {
+        documentUndoRedoState["\(workspaceKey):\(path)"]?.canUndo ?? false
+    }
+
+    /// 查询指定文档的重做能力
+    func canRedo(workspaceKey: String, path: String) -> Bool {
+        documentUndoRedoState["\(workspaceKey):\(path)"]?.canRedo ?? false
+    }
+
+    /// 释放指定文档的撤销/重做历史记录（关闭 Tab 或强制重载时调用）
+    func releaseDocumentUndoHistory(workspaceKey: String, path: String) {
+        documentUndoRedoState.removeValue(forKey: "\(workspaceKey):\(path)")
+    }
+
+    /// 释放指定工作区下所有文档的撤销/重做历史记录（关闭工作区时调用）
+    func releaseAllDocumentUndoHistory(workspaceKey: String) {
+        let prefix = "\(workspaceKey):"
+        documentUndoRedoState = documentUndoRedoState.filter { !$0.key.hasPrefix(prefix) }
+    }
+
+    // MARK: - 工作区级未保存状态查询
+
+    /// 指定工作区内是否存在未保存的文档（工作区级关闭保护入口）
+    func hasDirtyDocuments(workspaceKey: String) -> Bool {
+        guard let docs = editorDocumentsByWorkspace[workspaceKey] else { return false }
+        return docs.values.contains { $0.isDirty }
+    }
+
+    /// 指定工作区内未保存文档数量
+    func dirtyDocumentCount(workspaceKey: String) -> Int {
+        guard let docs = editorDocumentsByWorkspace[workspaceKey] else { return 0 }
+        return docs.values.filter { $0.isDirty }.count
+    }
+
+    /// 指定工作区内所有未保存文档的路径列表
+    func dirtyDocumentPaths(workspaceKey: String) -> [String] {
+        guard let docs = editorDocumentsByWorkspace[workspaceKey] else { return [] }
+        return docs.values.filter { $0.isDirty }.map { $0.path }
     }
 
     // MARK: - 新建文件方法

@@ -41,18 +41,28 @@ extension WSClient {
                 if !recoverySummaries.isEmpty {
                     onWorkspaceRecoverySummaries?(recoverySummaries)
                 }
-                // v1.46: 从 workspace_items 提取 coordinator_ai 种子，按工作区分发
+                // v1.46/v1.47: 从 workspace_items 提取 coordinator 三域种子，按工作区分发
+                // v1.47 新增 terminal/file 域；v1.46 兼容（coordinator_ai 有值即构建 payload）
                 for item in workspaceItems {
                     guard let project = item["project"] as? String,
-                          let workspace = item["workspace"] as? String,
-                          let aiJson = item["coordinator_ai"] as? [String: Any] else { continue }
-                    let ai = AiDomainState.from(json: aiJson)
-                    let version = aiJson["display_updated_at"] as? UInt64 ?? 0
+                          let workspace = item["workspace"] as? String else { continue }
+                    let aiJson = item["coordinator_ai"] as? [String: Any]
+                    let terminalJson = item["coordinator_terminal"] as? [String: Any]
+                    let fileJson = item["coordinator_file"] as? [String: Any]
+                    // 至少一个域有种子才构建 payload（避免为每个工作区生成全空快照）
+                    guard aiJson != nil || terminalJson != nil || fileJson != nil else { continue }
+                    let ai = AiDomainState.from(json: aiJson ?? [:])
+                    let terminal: TerminalDomainState? = terminalJson.map { TerminalDomainState.from(json: $0) }
+                    let file: FileDomainState? = fileJson.map { FileDomainState.from(json: $0) }
+                    // version 优先使用 AI 展示状态时间戳，兜底用当前 Unix ms
+                    let version = (aiJson?["display_updated_at"] as? UInt64) ?? UInt64(Date().timeIntervalSince1970 * 1000)
                     let generatedAt = item["coordinator_ai_generated_at"] as? String ?? ""
                     let payload = CoordinatorWorkspaceSnapshotPayload(
                         project: project,
                         workspace: workspace,
                         ai: ai,
+                        terminal: terminal,
+                        file: file,
                         version: version,
                         generatedAt: generatedAt
                     )

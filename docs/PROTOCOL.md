@@ -1412,6 +1412,10 @@ idle → entering → active ⇄ resuming
 统一协调层将 AI、终端、文件三类领域状态收敛到统一的协调治理体系，
 为每个 `(project, workspace)` 提供单一的协调状态入口。
 
+> **v1.47 扩展**：`coordinator_snapshot` 与 `system_snapshot` 种子字段新增 `terminal` 和 `file` 两域，
+> 补齐重连后三域完整恢复能力。`FileWorkspacePhaseTracker` 相位变化驱动 Core 主动推送增量快照；
+> 客户端仅消费，不在本地重建健康语义。
+
 ### 协调层身份模型
 
 - **WorkspaceCoordinatorId**：`{ project, workspace }` 二元组，与协议层边界字段对齐。
@@ -1524,9 +1528,9 @@ Core 对工作区协调状态执行以下校验规则：
 4. **工作区删除规则**：收到工作区删除通知时，调用 `apply(.removeWorkspace(id))` 清除对应条目。
 5. **项目删除规则**：项目删除时通过 `removeProject(_:)` 批量清除该项目下所有工作区状态。
 
-#### system_snapshot 种子恢复（v1.46）
+#### system_snapshot 种子恢复（v1.46/v1.47）
 
-`GET /system_snapshot` 的 `workspace_items` 数组中，每个条目携带可选字段 `coordinator_ai`（类型同 `coordinator_snapshot` 中的 `ai` 字段）：
+`GET /system_snapshot` 的 `workspace_items` 数组中，每个条目携带可选字段 `coordinator_ai`、`coordinator_terminal`、`coordinator_file`，类型同 `coordinator_snapshot` 中对应域：
 
 ```json
 {
@@ -1542,17 +1546,31 @@ Core 对工作区协调状态执行以下校验规则：
         "active_tool_name": "Codex",
         "last_error_message": null,
         "display_updated_at": 1741800000000
+      },
+      "coordinator_terminal": {
+        "alive_count": 2,
+        "total_count": 3,
+        "phase": "active",
+        "version": 1741800000000
+      },
+      "coordinator_file": {
+        "phase": "ready",
+        "indexing_in_progress": false,
+        "watcher_active": true,
+        "version": 1741800000000
       }
     }
   ]
 }
 ```
 
-客户端在收到 `system_snapshot` 时，对每个携带 `coordinator_ai` 的条目调用与 `coordinator_snapshot` 相同的写入逻辑（`apply(.updateWorkspace(...))`），实现重连后的一次性状态恢复。
+客户端在收到 `system_snapshot` 时，对每个携带 coordinator 种子的条目调用与 `coordinator_snapshot` 相同的写入逻辑（`apply(.updateWorkspace(...))`），实现重连后的一次性三域状态恢复。
 
-#### coordinator_snapshot 增量事件（v1.46）
+**协议权威边界**：文件域状态（健康语义）由 Core `FileWorkspacePhaseTracker` 权威维护，客户端仅消费并展示，不在本地重建健康判断逻辑。
 
-Core 在 AI 会话状态实际变化时，通过 WebSocket 推送 `coordinator_snapshot` 增量事件（domain: `coordinator`）：
+#### coordinator_snapshot 增量事件（v1.46/v1.47）
+
+Core 在 AI 会话或文件域状态实际变化时，通过 WebSocket 推送 `coordinator_snapshot` 增量事件（domain: `coordinator`）。各域字段均为可选，缺失表示该域未变化（客户端应保留当前缓存值）：
 
 ```json
 {
@@ -1568,12 +1586,24 @@ Core 在 AI 会话状态实际变化时，通过 WebSocket 推送 `coordinator_s
     "last_error_message": null,
     "display_updated_at": 1741800001000
   },
+  "terminal": {
+    "alive_count": 1,
+    "total_count": 2,
+    "phase": "active",
+    "version": 1741800001000
+  },
+  "file": {
+    "phase": "ready",
+    "indexing_in_progress": false,
+    "watcher_active": true,
+    "version": 1741800001000
+  },
   "version": 1741800001000,
   "generated_at": "2026-03-12T12:00:01Z"
 }
 ```
 
-**种子与增量版本语义一致**：`version` 字段来自 `display_updated_at`（Unix ms），单调递增。客户端仅在新版本 ≥ 当前缓存版本时更新，避免乱序覆盖。
+**种子与增量版本语义一致**：`version` 字段来自 `display_updated_at` 或 UTC ms（文件/终端域），单调递增。客户端仅在新版本 ≥ 当前缓存版本时更新，避免乱序覆盖。
 
 #### 多域聚合投影（WorkspaceAggregatedSummary）
 

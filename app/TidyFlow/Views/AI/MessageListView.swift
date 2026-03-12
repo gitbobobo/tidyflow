@@ -72,6 +72,90 @@ enum AIChatTranscriptDisplayCacheSemantics {
     }
 }
 
+enum AIChatTranscriptDeferredUpdateAction: Equatable {
+    case none
+    case tailSync
+    case fullRefresh
+
+    func merged(with incoming: AIChatTranscriptDeferredUpdateAction) -> AIChatTranscriptDeferredUpdateAction {
+        switch (self, incoming) {
+        case (.fullRefresh, _), (_, .fullRefresh):
+            return .fullRefresh
+        case (.tailSync, _), (_, .tailSync):
+            return .tailSync
+        case (.none, .none):
+            return .none
+        }
+    }
+}
+
+struct AIChatTranscriptDeferredUpdateState: Equatable {
+    private(set) var isScrollInFlight: Bool = false
+    private(set) var pendingAction: AIChatTranscriptDeferredUpdateAction = .none
+
+    mutating func registerTailChange() -> Bool {
+        register(action: .tailSync)
+    }
+
+    mutating func registerFullRefresh() -> Bool {
+        register(action: .fullRefresh)
+    }
+
+    mutating func beginScroll() {
+        isScrollInFlight = true
+    }
+
+    mutating func endScroll() -> AIChatTranscriptDeferredUpdateAction? {
+        isScrollInFlight = false
+        guard pendingAction != .none else { return nil }
+        let action = pendingAction
+        pendingAction = .none
+        return action
+    }
+
+    mutating func reset() {
+        isScrollInFlight = false
+        pendingAction = .none
+    }
+
+    private mutating func register(action: AIChatTranscriptDeferredUpdateAction) -> Bool {
+        guard isScrollInFlight else { return true }
+        pendingAction = pendingAction.merged(with: action)
+        return false
+    }
+}
+
+enum AIChatTranscriptDeferredFlushFollowUp: Equatable {
+    case none
+    case preserveVisibleContent(anchorID: String)
+    case updateTail
+}
+
+enum AIChatTranscriptDeferredFlushSemantics {
+    static func followUpAfterFullRefresh(
+        previousSourceCount: Int,
+        currentSourceCount: Int,
+        currentDisplayMessages: [AIChatMessage],
+        pendingPrependAnchorID: String?,
+        lastDisplayMessageCount: Int,
+        lastTailMessageID: String?
+    ) -> AIChatTranscriptDeferredFlushFollowUp {
+        if let prependAnchorID = pendingPrependAnchorID,
+           currentSourceCount > previousSourceCount,
+           currentDisplayMessages.contains(where: { $0.id == prependAnchorID }) {
+            return .preserveVisibleContent(anchorID: prependAnchorID)
+        }
+
+        let currentDisplayCount = currentDisplayMessages.count
+        let currentTailMessageID = currentDisplayMessages.last?.id
+        let hasVisibleChange =
+            currentDisplayCount != lastDisplayMessageCount ||
+            currentTailMessageID != lastTailMessageID ||
+            currentSourceCount != previousSourceCount
+        return hasVisibleChange ? .updateTail : .none
+    }
+}
+
 private actor ChatImageLoader {
     static let shared = ChatImageLoader()
 
@@ -227,18 +311,21 @@ struct AIChatTranscriptContainer: View {
     @State private var scrollPolicy: ChatScrollPolicy = ChatScrollPolicy()
     @State private var lastTailMessageID: String?
     @State private var lastDisplayMessageCount: Int = 0
+    @State private var lastAppliedSourceMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
     @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
     @State private var pendingPrependAnchorID: String?
+    @State private var deferredUpdateState: AIChatTranscriptDeferredUpdateState = AIChatTranscriptDeferredUpdateState()
+    @State private var suppressNextTailChange: Bool = false
     /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
     /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
     /// 上一帧的 ScrollView 内容高度，用于区分"内容增长"和"用户滚动"。
     /// 当 distanceToBottom 增加时，如果内容高度同步增长，说明是内容推远了底部，而非用户主动滚离。
     @State private var lastKnownContentHeight: CGFloat = 0
-    /// 缓存的显示消息列表，仅在消息数量或会话变化时完整重算。
-    /// 流式增量更新只修改最后一条消息内容，无需重跑 O(n) filter。
+    /// 已应用到 transcript 的显示消息缓存。
+    /// 滚动中的流式更新不会直接写入这里，而是先积压到 deferred state。
     @State private var cachedDisplayMessages: [AIChatMessage] = []
     /// 上次完整重算时的消息数量，用于检测结构性变化。
     @State private var cachedDisplayMessageSourceCount: Int = -1
@@ -274,34 +361,10 @@ struct AIChatTranscriptContainer: View {
         self.onOpenLinkedSession = onOpenLinkedSession
     }
 
-    /// 返回当前显示消息列表：优先使用缓存，仅在流式消息内容变化时补丁最后一条。
-    /// 完整的 filter 重算通过 recomputeDisplayMessages() 在 onChange 中触发。
+    /// 当前显示消息列表只来源于已应用缓存。
+    /// 滚动中的流式更新会先积压到 deferred state，直到滚动结束后再统一刷新缓存。
     private var displayMessages: [AIChatMessage] {
-        guard cachedDisplayMessageSourceCount == messages.count else {
-            return recomputeDisplayMessagesSnapshot()
-        }
-        guard !cachedDisplayMessages.isEmpty else { return [] }
-        // 流式期间，消息数量不变但最后一条消息内容持续更新。
-        // 直接在缓存基础上补丁最后一条，避免 O(n) filter + displayNodes 计算。
-        if let lastMessage = messages.last, lastMessage.isStreaming {
-            var result = cachedDisplayMessages
-            if let lastIdx = result.indices.last, result[lastIdx].id == lastMessage.id {
-                result[lastIdx] = lastMessage
-            } else {
-                // 新的流式消息还未进入缓存，追加
-                result.append(lastMessage)
-            }
-            return result
-        }
         return cachedDisplayMessages
-    }
-
-    /// 完整重算显示消息（O(n) filter + displayNodes），仅在消息数量或结构变化时调用。
-    private func recomputeDisplayMessagesSnapshot() -> [AIChatMessage] {
-        AIChatTranscriptDisplayCacheSemantics.filteredDisplayMessages(
-            from: messages,
-            pendingQuestions: pendingQuestions
-        )
     }
 
     private func refreshDisplayMessagesCache() {
@@ -309,8 +372,7 @@ struct AIChatTranscriptContainer: View {
             sourceMessages: messages,
             pendingQuestions: pendingQuestions
         )
-        cachedDisplayMessages = snapshot.messages
-        cachedDisplayMessageSourceCount = snapshot.sourceCount
+        applyDisplayMessagesSnapshot(snapshot)
     }
 
     private func synchronizeDisplayMessagesCacheAfterTailChange() {
@@ -320,8 +382,13 @@ struct AIChatTranscriptContainer: View {
             cachedDisplayMessages: cachedDisplayMessages,
             cachedSourceCount: cachedDisplayMessageSourceCount
         )
+        applyDisplayMessagesSnapshot(snapshot)
+    }
+
+    private func applyDisplayMessagesSnapshot(_ snapshot: AIChatTranscriptDisplayCacheSnapshot) {
         cachedDisplayMessages = snapshot.messages
         cachedDisplayMessageSourceCount = snapshot.sourceCount
+        lastAppliedSourceMessageCount = snapshot.sourceCount
     }
 
     var body: some View {
@@ -366,6 +433,9 @@ struct AIChatTranscriptContainer: View {
                     handleScrollMetricsChanged(metrics)
                 }
             )
+            .onScrollPhaseChange { _, newPhase in
+                handleScrollPhaseChanged(newPhase, proxy: proxy)
+            }
             #if os(iOS)
             .scrollDismissesKeyboard(.interactively)
             #endif
@@ -375,7 +445,6 @@ struct AIChatTranscriptContainer: View {
                 scheduleScrollCommand(.scrollToBottom(.none), proxy: proxy)
             }
             .onChange(of: messages.count) { oldCount, newCount in
-                refreshDisplayMessagesCache()
                 handleMessageCountChanged(oldCount: oldCount, newCount: newCount, proxy: proxy)
             }
             .onChange(of: sessionToken) { _, _ in
@@ -383,7 +452,6 @@ struct AIChatTranscriptContainer: View {
                 handleSessionTokenChangeIfNeeded()
             }
             .onChange(of: aiChatStore.tailRevision) { _, _ in
-                synchronizeDisplayMessagesCacheAfterTailChange()
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: jumpToBottomRequestID) {
@@ -464,16 +532,20 @@ struct AIChatTranscriptContainer: View {
         isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         lastDisplayMessageCount = displayMessages.count
         lastTailMessageID = displayMessages.last?.id
+        lastAppliedSourceMessageCount = cachedDisplayMessageSourceCount
     }
 
     private func handleSessionTokenChangeIfNeeded() {
         guard sessionToken != nil else { return }
 
+        deferredUpdateState.reset()
+        suppressNextTailChange = false
         let decision = scrollPolicy.reduce(event: .sessionSwitched)
         isNearBottom = scrollPolicy.nearBottom
         isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         lastDisplayMessageCount = displayMessages.count
         lastTailMessageID = displayMessages.last?.id
+        lastAppliedSourceMessageCount = cachedDisplayMessageSourceCount
         lastKnownContentHeight = 0
 
         guard decision.command != .noOp else { return }
@@ -481,10 +553,16 @@ struct AIChatTranscriptContainer: View {
     }
 
     private func handleMessageCountChanged(oldCount: Int, newCount: Int, proxy: ScrollViewProxy) {
-        guard newCount > oldCount else { return }
+        guard deferredUpdateState.registerFullRefresh() else { return }
+        refreshDisplayMessagesCache()
+        suppressNextTailChange = false
+        guard newCount > oldCount else {
+            return
+        }
         guard let prependAnchor = pendingPrependAnchorID else { return }
         pendingPrependAnchorID = nil
         guard displayMessages.contains(where: { $0.id == prependAnchor }) else { return }
+        suppressNextTailChange = true
         let decision = scrollPolicy.reduce(event: .historyPrepended(anchorID: prependAnchor))
         scheduleScrollCommand(decision.command, proxy: proxy)
     }
@@ -504,10 +582,76 @@ struct AIChatTranscriptContainer: View {
     }
 
     private func handleTailChanged(proxy: ScrollViewProxy) {
+        guard !suppressNextTailChange else {
+            suppressNextTailChange = false
+            return
+        }
+        guard deferredUpdateState.registerTailChange() else { return }
+        synchronizeDisplayMessagesCacheAfterTailChange()
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.command != .noOp else { return }
         guard scrollExecutionGate.consumeAutoScrollRequest() else { return }
         scheduleScrollCommand(decision.command, proxy: proxy)
+    }
+
+    private func handleScrollPhaseChanged(_ newPhase: ScrollPhase, proxy: ScrollViewProxy) {
+        if newPhase.isScrolling {
+            deferredUpdateState.beginScroll()
+            return
+        }
+
+        guard let action = deferredUpdateState.endScroll() else { return }
+        flushDeferredUpdate(action, proxy: proxy)
+    }
+
+    private func flushDeferredUpdate(
+        _ action: AIChatTranscriptDeferredUpdateAction,
+        proxy: ScrollViewProxy
+    ) {
+        switch action {
+        case .none:
+            return
+        case .tailSync:
+            synchronizeDisplayMessagesCacheAfterTailChange()
+            handleTailChangedAfterFlush(proxy: proxy)
+        case .fullRefresh:
+            let previousSourceCount = lastAppliedSourceMessageCount
+            refreshDisplayMessagesCache()
+            handleFullRefreshAfterDeferredFlush(previousSourceCount: previousSourceCount, proxy: proxy)
+        }
+    }
+
+    private func handleTailChangedAfterFlush(proxy: ScrollViewProxy) {
+        let decision = scrollPolicy.reduce(event: tailChangeEvent())
+        guard decision.command != .noOp else { return }
+        guard scrollExecutionGate.consumeAutoScrollRequest() else { return }
+        scheduleScrollCommand(decision.command, proxy: proxy)
+    }
+
+    private func handleFullRefreshAfterDeferredFlush(
+        previousSourceCount: Int,
+        proxy: ScrollViewProxy
+    ) {
+        switch AIChatTranscriptDeferredFlushSemantics.followUpAfterFullRefresh(
+            previousSourceCount: previousSourceCount,
+            currentSourceCount: lastAppliedSourceMessageCount,
+            currentDisplayMessages: displayMessages,
+            pendingPrependAnchorID: pendingPrependAnchorID,
+            lastDisplayMessageCount: lastDisplayMessageCount,
+            lastTailMessageID: lastTailMessageID
+        ) {
+        case .none:
+            pendingPrependAnchorID = nil
+        case .preserveVisibleContent(let anchorID):
+            pendingPrependAnchorID = nil
+            let decision = scrollPolicy.reduce(event: .historyPrepended(anchorID: anchorID))
+            scheduleScrollCommand(decision.command, proxy: proxy)
+            lastDisplayMessageCount = displayMessages.count
+            lastTailMessageID = displayMessages.last?.id
+        case .updateTail:
+            pendingPrependAnchorID = nil
+            handleTailChangedAfterFlush(proxy: proxy)
+        }
     }
 
     /// 按钮显隐只取决于是否在底部附近：到达底部时立即隐藏，无论 autoFollow 状态如何。
