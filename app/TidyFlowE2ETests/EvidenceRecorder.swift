@@ -1,5 +1,8 @@
 import Foundation
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#endif
 
 enum EvidenceArtifactType: String, Codable {
     case log
@@ -400,11 +403,45 @@ final class EvidenceRecorder {
                 return "iphone"
             }
         }
-        #if os(macOS)
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+        #elseif os(tvOS)
+        return "iphone"
+        #elseif os(macOS)
+        if Self.isAppleSimulatorRuntime(env: env) {
+            return Self.resolveSimulatorDeviceFallback(env: env)
+        }
         return "mac"
         #else
         return "iphone"
         #endif
+    }
+
+    private static func resolveSimulatorDeviceFallback(env: [String: String]) -> String {
+        if let simulatorModel = env["SIMULATOR_MODEL_IDENTIFIER"]?.lowercased(),
+           simulatorModel.contains("ipad") {
+            return "ipad"
+        }
+        return "iphone"
+    }
+
+    private static func isAppleSimulatorRuntime(env: [String: String]) -> Bool {
+        if normalizeValue(env["SIMULATOR_DEVICE_NAME"]) != nil {
+            return true
+        }
+        #if os(macOS)
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        if let simulatorRoot = env["SIMULATOR_ROOT"], !simulatorRoot.isEmpty {
+            return true
+        }
+        if let simulatorUDID = env["SIMULATOR_UDID"], !simulatorUDID.isEmpty {
+            return true
+        }
+        #endif
+        #endif
+        return false
     }
 
     private static func resolveRunID(env: [String: String], runContext: EvidenceRunContext?) -> String {
