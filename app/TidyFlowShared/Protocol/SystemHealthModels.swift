@@ -1342,3 +1342,304 @@ public struct EvolutionAnalysisSummary: Codable, Equatable {
         )
     }
 }
+
+// MARK: - 全链路性能可观测共享类型（WI-001）
+
+/// 延迟指标滚动窗口
+public struct LatencyMetricWindow: Codable, Equatable {
+    public var lastMs: UInt64
+    public var avgMs: UInt64
+    public var p95Ms: UInt64
+    public var maxMs: UInt64
+    public var sampleCount: UInt64
+    public var windowSize: UInt64
+
+    public static let empty = LatencyMetricWindow(lastMs: 0, avgMs: 0, p95Ms: 0, maxMs: 0, sampleCount: 0, windowSize: 128)
+
+    public init(lastMs: UInt64 = 0, avgMs: UInt64 = 0, p95Ms: UInt64 = 0,
+                maxMs: UInt64 = 0, sampleCount: UInt64 = 0, windowSize: UInt64 = 128) {
+        self.lastMs = lastMs
+        self.avgMs = avgMs
+        self.p95Ms = p95Ms
+        self.maxMs = maxMs
+        self.sampleCount = sampleCount
+        self.windowSize = windowSize
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case lastMs = "last_ms"
+        case avgMs = "avg_ms"
+        case p95Ms = "p95_ms"
+        case maxMs = "max_ms"
+        case sampleCount = "sample_count"
+        case windowSize = "window_size"
+    }
+}
+
+/// 内存使用快照
+public struct MemoryUsageSnapshot: Codable, Equatable {
+    public var currentBytes: UInt64
+    public var peakBytes: UInt64
+    public var deltaFromBaselineBytes: Int64
+    public var virtualBytes: UInt64?
+    public var sampleCount: UInt64
+
+    public static let empty = MemoryUsageSnapshot(currentBytes: 0, peakBytes: 0, deltaFromBaselineBytes: 0, sampleCount: 0)
+
+    public init(currentBytes: UInt64 = 0, peakBytes: UInt64 = 0,
+                deltaFromBaselineBytes: Int64 = 0, virtualBytes: UInt64? = nil, sampleCount: UInt64 = 0) {
+        self.currentBytes = currentBytes
+        self.peakBytes = peakBytes
+        self.deltaFromBaselineBytes = deltaFromBaselineBytes
+        self.virtualBytes = virtualBytes
+        self.sampleCount = sampleCount
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case currentBytes = "current_bytes"
+        case peakBytes = "peak_bytes"
+        case deltaFromBaselineBytes = "delta_from_baseline_bytes"
+        case virtualBytes = "virtual_bytes"
+        case sampleCount = "sample_count"
+    }
+}
+
+/// 客户端实例性能上报
+public struct ClientPerformanceReport: Codable, Equatable {
+    public var clientInstanceId: String
+    public var platform: String
+    public var project: String
+    public var workspace: String
+    public var memory: MemoryUsageSnapshot
+    public var workspaceSwitch: LatencyMetricWindow
+    public var fileTreeRequest: LatencyMetricWindow
+    public var fileTreeExpand: LatencyMetricWindow
+    public var aiSessionListRequest: LatencyMetricWindow
+    public var aiMessageTailFlush: LatencyMetricWindow
+    public var evidencePageAppend: LatencyMetricWindow
+    public var reportedAt: UInt64
+
+    public init(clientInstanceId: String, platform: String, project: String, workspace: String,
+                memory: MemoryUsageSnapshot = .empty,
+                workspaceSwitch: LatencyMetricWindow = .empty,
+                fileTreeRequest: LatencyMetricWindow = .empty,
+                fileTreeExpand: LatencyMetricWindow = .empty,
+                aiSessionListRequest: LatencyMetricWindow = .empty,
+                aiMessageTailFlush: LatencyMetricWindow = .empty,
+                evidencePageAppend: LatencyMetricWindow = .empty,
+                reportedAt: UInt64 = 0) {
+        self.clientInstanceId = clientInstanceId
+        self.platform = platform
+        self.project = project
+        self.workspace = workspace
+        self.memory = memory
+        self.workspaceSwitch = workspaceSwitch
+        self.fileTreeRequest = fileTreeRequest
+        self.fileTreeExpand = fileTreeExpand
+        self.aiSessionListRequest = aiSessionListRequest
+        self.aiMessageTailFlush = aiMessageTailFlush
+        self.evidencePageAppend = evidencePageAppend
+        self.reportedAt = reportedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clientInstanceId = "client_instance_id"
+        case platform, project, workspace, memory
+        case workspaceSwitch = "workspace_switch"
+        case fileTreeRequest = "file_tree_request"
+        case fileTreeExpand = "file_tree_expand"
+        case aiSessionListRequest = "ai_session_list_request"
+        case aiMessageTailFlush = "ai_message_tail_flush"
+        case evidencePageAppend = "evidence_page_append"
+        case reportedAt = "reported_at"
+    }
+}
+
+/// 工作区关键路径性能快照
+public struct WorkspacePerformanceSnapshot: Codable, Equatable, Identifiable {
+    public var project: String
+    public var workspace: String
+    public var systemSnapshotBuild: LatencyMetricWindow
+    public var workspaceFileIndexRefresh: LatencyMetricWindow
+    public var workspaceGitStatusRefresh: LatencyMetricWindow
+    public var evolutionSnapshotRead: LatencyMetricWindow
+    public var snapshotAt: UInt64
+
+    public var id: String { "\(project)/\(workspace)" }
+
+    public init(project: String, workspace: String,
+                systemSnapshotBuild: LatencyMetricWindow = .empty,
+                workspaceFileIndexRefresh: LatencyMetricWindow = .empty,
+                workspaceGitStatusRefresh: LatencyMetricWindow = .empty,
+                evolutionSnapshotRead: LatencyMetricWindow = .empty,
+                snapshotAt: UInt64 = 0) {
+        self.project = project
+        self.workspace = workspace
+        self.systemSnapshotBuild = systemSnapshotBuild
+        self.workspaceFileIndexRefresh = workspaceFileIndexRefresh
+        self.workspaceGitStatusRefresh = workspaceGitStatusRefresh
+        self.evolutionSnapshotRead = evolutionSnapshotRead
+        self.snapshotAt = snapshotAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case project, workspace
+        case systemSnapshotBuild = "system_snapshot_build"
+        case workspaceFileIndexRefresh = "workspace_file_index_refresh"
+        case workspaceGitStatusRefresh = "workspace_git_status_refresh"
+        case evolutionSnapshotRead = "evolution_snapshot_read"
+        case snapshotAt = "snapshot_at"
+    }
+}
+
+/// 性能诊断范围
+public enum PerformanceDiagnosisScope: String, Codable, CaseIterable {
+    case system
+    case workspace
+    case clientInstance = "client_instance"
+}
+
+/// 性能诊断严重度
+public enum PerformanceDiagnosisSeverity: String, Codable, Comparable, CaseIterable {
+    case info
+    case warning
+    case critical
+
+    private var sortOrder: Int {
+        switch self { case .info: return 0; case .warning: return 1; case .critical: return 2 }
+    }
+    public static func < (lhs: PerformanceDiagnosisSeverity, rhs: PerformanceDiagnosisSeverity) -> Bool {
+        lhs.sortOrder < rhs.sortOrder
+    }
+}
+
+/// 性能诊断原因码
+public enum PerformanceDiagnosisReason: String, Codable, CaseIterable {
+    case wsPipelineLatencyHigh = "ws_pipeline_latency_high"
+    case workspaceSwitchLatencyHigh = "workspace_switch_latency_high"
+    case fileTreeLatencyHigh = "file_tree_latency_high"
+    case aiSessionListLatencyHigh = "ai_session_list_latency_high"
+    case messageFlushLatencyHigh = "message_flush_latency_high"
+    case coreMemoryPressure = "core_memory_pressure"
+    case clientMemoryPressure = "client_memory_pressure"
+    case memoryGrowthUnbounded = "memory_growth_unbounded"
+    case queueBackpressureHigh = "queue_backpressure_high"
+    case crossLayerLatencyMismatch = "cross_layer_latency_mismatch"
+}
+
+/// 单条性能诊断结果
+public struct PerformanceDiagnosis: Codable, Identifiable, Equatable {
+    public var diagnosisId: String
+    public var scope: PerformanceDiagnosisScope
+    public var severity: PerformanceDiagnosisSeverity
+    public var reason: PerformanceDiagnosisReason
+    public var summary: String
+    public var evidence: [String]
+    public var recommendedAction: String
+    public var context: HealthContext
+    public var clientInstanceId: String?
+    public var diagnosedAt: UInt64
+
+    public var id: String { diagnosisId }
+
+    public init(diagnosisId: String, scope: PerformanceDiagnosisScope,
+                severity: PerformanceDiagnosisSeverity, reason: PerformanceDiagnosisReason,
+                summary: String, evidence: [String] = [], recommendedAction: String,
+                context: HealthContext = .system, clientInstanceId: String? = nil,
+                diagnosedAt: UInt64 = 0) {
+        self.diagnosisId = diagnosisId
+        self.scope = scope
+        self.severity = severity
+        self.reason = reason
+        self.summary = summary
+        self.evidence = evidence
+        self.recommendedAction = recommendedAction
+        self.context = context
+        self.clientInstanceId = clientInstanceId
+        self.diagnosedAt = diagnosedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case diagnosisId = "diagnosis_id"
+        case scope, severity, reason, summary, evidence
+        case recommendedAction = "recommended_action"
+        case context
+        case clientInstanceId = "client_instance_id"
+        case diagnosedAt = "diagnosed_at"
+    }
+}
+
+/// Core 内存运行时快照
+public struct CoreRuntimeMemorySnapshot: Codable, Equatable {
+    public var residentBytes: UInt64
+    public var virtualBytes: UInt64
+    public var physFootprintBytes: UInt64
+    public var sampleTimeMs: UInt64
+
+    public static let empty = CoreRuntimeMemorySnapshot(residentBytes: 0, virtualBytes: 0, physFootprintBytes: 0, sampleTimeMs: 0)
+
+    public init(residentBytes: UInt64 = 0, virtualBytes: UInt64 = 0,
+                physFootprintBytes: UInt64 = 0, sampleTimeMs: UInt64 = 0) {
+        self.residentBytes = residentBytes
+        self.virtualBytes = virtualBytes
+        self.physFootprintBytes = physFootprintBytes
+        self.sampleTimeMs = sampleTimeMs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case residentBytes = "resident_bytes"
+        case virtualBytes = "virtual_bytes"
+        case physFootprintBytes = "phys_footprint_bytes"
+        case sampleTimeMs = "sample_time_ms"
+    }
+}
+
+/// 全链路性能可观测快照（Core 权威真源，双端消费）
+public struct PerformanceObservabilitySnapshot: Codable, Equatable {
+    public var coreMemory: CoreRuntimeMemorySnapshot
+    public var wsPipelineLatency: LatencyMetricWindow
+    public var workspaceMetrics: [WorkspacePerformanceSnapshot]
+    public var clientMetrics: [ClientPerformanceReport]
+    public var diagnoses: [PerformanceDiagnosis]
+    public var snapshotAt: UInt64
+
+    public static let empty = PerformanceObservabilitySnapshot(
+        coreMemory: .empty, wsPipelineLatency: .empty,
+        workspaceMetrics: [], clientMetrics: [], diagnoses: [], snapshotAt: 0
+    )
+
+    public init(coreMemory: CoreRuntimeMemorySnapshot = .empty,
+                wsPipelineLatency: LatencyMetricWindow = .empty,
+                workspaceMetrics: [WorkspacePerformanceSnapshot] = [],
+                clientMetrics: [ClientPerformanceReport] = [],
+                diagnoses: [PerformanceDiagnosis] = [],
+                snapshotAt: UInt64 = 0) {
+        self.coreMemory = coreMemory
+        self.wsPipelineLatency = wsPipelineLatency
+        self.workspaceMetrics = workspaceMetrics
+        self.clientMetrics = clientMetrics
+        self.diagnoses = diagnoses
+        self.snapshotAt = snapshotAt
+    }
+
+    /// Rust 侧使用 skip_serializing_if = "Vec::is_empty"，空数组不会序列化到 JSON。
+    /// 自定义解码确保缺失的数组键默认为空数组，与 Rust #[serde(default)] 语义对齐。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        coreMemory = try container.decode(CoreRuntimeMemorySnapshot.self, forKey: .coreMemory)
+        wsPipelineLatency = try container.decode(LatencyMetricWindow.self, forKey: .wsPipelineLatency)
+        workspaceMetrics = try container.decodeIfPresent([WorkspacePerformanceSnapshot].self, forKey: .workspaceMetrics) ?? []
+        clientMetrics = try container.decodeIfPresent([ClientPerformanceReport].self, forKey: .clientMetrics) ?? []
+        diagnoses = try container.decodeIfPresent([PerformanceDiagnosis].self, forKey: .diagnoses) ?? []
+        snapshotAt = try container.decode(UInt64.self, forKey: .snapshotAt)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case coreMemory = "core_memory"
+        case wsPipelineLatency = "ws_pipeline_latency"
+        case workspaceMetrics = "workspace_metrics"
+        case clientMetrics = "client_metrics"
+        case diagnoses
+        case snapshotAt = "snapshot_at"
+    }
+}

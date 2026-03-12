@@ -1594,3 +1594,88 @@ macOS 与 iOS 双端消费同一 `WorkspaceAggregatedSummary` 类型，不各自
 
 - `version` 字段单调递增，客户端仅在收到更高版本时更新缓存（避免乱序覆盖）。
 - 断线清除后，版本号归零。
+
+## v1.46（WI-001/WI-002）：全链路性能可观测
+
+### performance_observability 字段
+
+`GET /api/v1/system/snapshot` 响应新增 `performance_observability` 字段，提供 Core 权威的全链路性能可观测快照。
+
+```json
+{
+  "performance_observability": {
+    "core_memory": {
+      "resident_bytes": 134217728,
+      "virtual_bytes": 2147483648,
+      "phys_footprint_bytes": 125829120,
+      "sample_time_ms": 1741800000000
+    },
+    "ws_pipeline_latency": {
+      "last_ms": 3,
+      "avg_ms": 3,
+      "p95_ms": 12,
+      "max_ms": 15,
+      "sample_count": 1024,
+      "window_size": 128
+    },
+    "workspace_metrics": [...],
+    "client_metrics": [...],
+    "diagnoses": [...],
+    "snapshot_at": 1741800000000
+  }
+}
+```
+
+### health_report 新增 client_performance_report 字段
+
+客户端发送 `health_report` 时可附带性能上报：
+
+```json
+{
+  "type": "health_report",
+  "client_session_id": "...",
+  "connectivity": "good",
+  "incidents": [],
+  "context": {},
+  "reported_at": 1741800000000,
+  "client_performance_report": {
+    "client_instance_id": "uuid-stable-per-process",
+    "platform": "macos",
+    "project": "my-project",
+    "workspace": "feature-branch",
+    "memory": { "current_bytes": 52428800, "peak_bytes": 52428800, "delta_from_baseline_bytes": 0, "sample_count": 1 },
+    "workspace_switch": { "last_ms": 45, "avg_ms": 40, "p95_ms": 80, "max_ms": 100, "sample_count": 10, "window_size": 128 },
+    "file_tree_request": { ... },
+    "file_tree_expand": { ... },
+    "ai_session_list_request": { ... },
+    "ai_message_tail_flush": { ... },
+    "evidence_page_append": { ... },
+    "reported_at": 1741800000000
+  }
+}
+```
+
+Core 接收后将 `client_performance_report` 写入全局注册表，聚合到下一次 `performance_observability` 快照中。
+
+### PerformanceDiagnosis 结构
+
+Core 自动分析快照并产出诊断：
+
+```json
+{
+  "diagnosis_id": "perf:ws_pipeline_latency_high:system:1741800000000",
+  "scope": "system",
+  "severity": "warning",
+  "reason": "ws_pipeline_latency_high",
+  "summary": "WS 管线处理延迟 120ms，超过警告阈值 100ms",
+  "evidence": ["ws_dispatch.last_ms=120"],
+  "recommended_action": "监控 WS 出站队列深度趋势",
+  "context": {},
+  "diagnosed_at": 1741800000000
+}
+```
+
+**诊断 scope 说明：**
+- `system`：全局系统级（WS 管线延迟、队列积压、Core 内存压力）
+- `workspace`：工作区级（文件索引/Git 状态刷新延迟）
+- `client_instance`：客户端实例级（客户端内存、工作区切换、AI/文件延迟、跨层失配）

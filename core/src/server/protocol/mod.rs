@@ -828,6 +828,9 @@ pub enum ClientMessage {
         context: health::HealthContext,
         /// 上报时间（Unix ms）
         reported_at: u64,
+        /// 客户端性能上报（WI-001 新增）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_performance_report: Option<health::ClientPerformanceReport>,
     },
 
     // v1.41: 客户端请求执行修复动作

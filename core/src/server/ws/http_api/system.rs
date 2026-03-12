@@ -45,6 +45,8 @@ pub(in crate::server::ws) struct SystemSnapshotResponse {
     /// 智能演化分析摘要列表（v1.45，Core 权威输出，按 (project, workspace, cycle_id) 隔离）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     analysis_summaries: Vec<crate::server::protocol::health::EvolutionAnalysisSummary>,
+    /// 全链路性能可观测快照（WI-001/WI-002 新增，Core 权威真源）
+    performance_observability: crate::server::protocol::health::PerformanceObservabilitySnapshot,
 }
 
 /// 结构化日志关联上下文摘要（供调试面板快速关联日志与快照）
@@ -162,6 +164,9 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
     // 统一性能指标快照
     let perf_metrics = crate::server::perf::snapshot_perf_metrics();
 
+    // 全链路性能可观测快照（WI-001/WI-002）
+    let performance_observability = crate::server::perf::build_performance_observability_snapshot();
+
     // 结构化日志关联上下文
     let log_context = build_log_context_summary();
 
@@ -179,6 +184,7 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         scheduling_recommendations: health_snapshot.scheduling_recommendations,
         predictive_anomalies: health_snapshot.predictive_anomalies,
         analysis_summaries: Vec::new(), // WI-002 将实现实际生成逻辑
+        performance_observability,
     }))
 }
 
@@ -949,5 +955,96 @@ mod tests {
         assert!(tick.get("last_ms").is_some());
         assert!(tick.get("max_ms").is_some());
         assert!(tick.get("count").is_some());
+    }
+
+    /// CHK-003 定向测试：system_snapshot 的 performance_observability 字段结构正确存在
+    ///
+    /// 覆盖：PerformanceObservabilitySnapshot 顶层字段命名与协议约定一致；
+    /// core_memory、ws_pipeline_latency、snapshot_at 均在序列化输出中稳定存在。
+    #[tokio::test]
+    async fn system_snapshot_should_include_perf_observability_fields() {
+        let ctx = make_test_context(make_test_state()).await;
+        let response = system_snapshot_handler(State(ctx))
+            .await
+            .expect("handler should return response")
+            .0;
+
+        let json =
+            serde_json::to_value(&response.performance_observability).expect("should serialize");
+
+        // 顶层字段必须存在
+        assert!(
+            json.get("core_memory").is_some(),
+            "performance_observability.core_memory 必须存在"
+        );
+        assert!(
+            json.get("ws_pipeline_latency").is_some(),
+            "performance_observability.ws_pipeline_latency 必须存在"
+        );
+        assert!(
+            json.get("snapshot_at").is_some(),
+            "performance_observability.snapshot_at 必须存在"
+        );
+
+        // core_memory 结构必须包含预期字段
+        let core_mem = &json["core_memory"];
+        assert!(core_mem.get("resident_bytes").is_some(), "core_memory.resident_bytes 必须存在");
+        assert!(
+            core_mem.get("phys_footprint_bytes").is_some(),
+            "core_memory.phys_footprint_bytes 必须存在"
+        );
+
+        // ws_pipeline_latency 结构必须包含预期字段
+        let ws_lat = &json["ws_pipeline_latency"];
+        assert!(ws_lat.get("last_ms").is_some(), "ws_pipeline_latency.last_ms 必须存在");
+        assert!(ws_lat.get("p95_ms").is_some(), "ws_pipeline_latency.p95_ms 必须存在");
+        assert!(ws_lat.get("sample_count").is_some(), "ws_pipeline_latency.sample_count 必须存在");
+    }
+
+    /// 定向测试：performance_observability 可正确序列化为 JSON（协议 v9 稳定字段名验证）
+    #[test]
+    fn perf_observability_snapshot_should_serialize_with_stable_field_names() {
+        let obs = crate::server::perf::build_performance_observability_snapshot();
+        let json = serde_json::to_value(&obs).expect("should serialize");
+
+        // 确认字段使用 snake_case 命名
+        assert!(json.get("core_memory").is_some(), "core_memory 字段命名必须为 snake_case");
+        assert!(
+            json.get("ws_pipeline_latency").is_some(),
+            "ws_pipeline_latency 字段命名必须为 snake_case"
+        );
+        assert!(json.get("snapshot_at").is_some(), "snapshot_at 字段必须存在");
+
+        // workspace_metrics / client_metrics / diagnoses 在空时应被省略（skip_serializing_if）
+        // 验证这一行为符合协议约定
+        let obs_empty = crate::server::protocol::health::PerformanceObservabilitySnapshot {
+            core_memory: Default::default(),
+            ws_pipeline_latency: crate::server::protocol::health::LatencyMetricWindow {
+                last_ms: 0,
+                avg_ms: 0,
+                p95_ms: 0,
+                max_ms: 0,
+                sample_count: 0,
+                window_size: 128,
+            },
+            workspace_metrics: Vec::new(),
+            client_metrics: Vec::new(),
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let json_empty = serde_json::to_value(&obs_empty).expect("should serialize empty");
+        // 空数组字段应被跳过
+        assert!(
+            json_empty.get("workspace_metrics").is_none(),
+            "空 workspace_metrics 应被 skip_serializing_if 省略"
+        );
+        assert!(
+            json_empty.get("client_metrics").is_none(),
+            "空 client_metrics 应被 skip_serializing_if 省略"
+        );
+        assert!(
+            json_empty.get("diagnoses").is_none(),
+            "空 diagnoses 应被 skip_serializing_if 省略"
+        );
     }
 }

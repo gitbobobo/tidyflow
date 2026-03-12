@@ -24,11 +24,16 @@ pub async fn handle_health_message(
             incidents,
             context: _,
             reported_at: _,
+            client_performance_report,
         } => {
             // 将客户端上报的 incidents 注入健康注册表
             let registry = crate::server::health::global();
             if let Ok(mut reg) = registry.try_write() {
                 reg.ingest_client_report(client_session_id, incidents.clone());
+            }
+            // 将客户端性能上报写入全局性能注册表（WI-001）
+            if let Some(report) = client_performance_report {
+                crate::server::perf::record_client_performance_report(report.clone());
             }
             Ok(true)
         }

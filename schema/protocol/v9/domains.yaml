@@ -60,6 +60,15 @@ domains:
           - log_file           # 当天日志文件路径
           - retention_days     # 日志保留天数
           - perf_logging_enabled  # TIDYFLOW_PERF_LOG 是否启用
+      performance_observability:
+        description: "全链路性能可观测快照（WI-001 v1.46 新增）"
+        scope: global
+        fields:
+          - core_memory           # CoreRuntimeMemorySnapshot（resident/virtual/phys_footprint）
+          - ws_pipeline_latency   # LatencyMetricWindow（WS dispatch 代表性延迟）
+          - workspace_metrics     # WorkspacePerformanceSnapshot[]，按 (project, workspace) 排序
+          - client_metrics        # ClientPerformanceReport[]，按 client_instance_id 排序
+          - diagnoses             # PerformanceDiagnosis[]，Core 权威输出
   - id: terminal
     action_rule: prefix("term_") | one_of("spawn_terminal","kill_terminal","input","resize")
     http_read_endpoints:

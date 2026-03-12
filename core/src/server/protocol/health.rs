@@ -598,3 +598,190 @@ pub struct EvolutionAnalysisSummary {
     /// 分析有效期截止时间（Unix ms）
     pub expires_at: u64,
 }
+
+// ============================================================================
+// 全链路性能可观测共享类型（WI-001）
+// ============================================================================
+
+/// 延迟指标滚动窗口（固定 128 样本，统一输出 last/avg/p95/max/count/window_size）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LatencyMetricWindow {
+    pub last_ms: u64,
+    pub avg_ms: u64,
+    pub p95_ms: u64,
+    pub max_ms: u64,
+    pub sample_count: u64,
+    pub window_size: u64,
+}
+
+/// 内存使用快照（Darwin mach_task_basic_info / task_vm_info）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryUsageSnapshot {
+    /// 当前物理内存占用（字节）
+    pub current_bytes: u64,
+    /// 历史峰值（字节）
+    pub peak_bytes: u64,
+    /// 相对基线增量（字节，可负）
+    pub delta_from_baseline_bytes: i64,
+    /// 虚拟内存（字节，Core 端可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_bytes: Option<u64>,
+    /// 采样次数
+    pub sample_count: u64,
+}
+
+/// 工作区关键路径性能快照（按 project+workspace 隔离）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspacePerformanceSnapshot {
+    pub project: String,
+    pub workspace: String,
+    /// system_snapshot 构建延迟
+    pub system_snapshot_build: LatencyMetricWindow,
+    /// 文件索引刷新延迟
+    pub workspace_file_index_refresh: LatencyMetricWindow,
+    /// Git 状态刷新延迟
+    pub workspace_git_status_refresh: LatencyMetricWindow,
+    /// Evolution 快照读取延迟
+    pub evolution_snapshot_read: LatencyMetricWindow,
+    /// 快照生成时间（Unix ms）
+    pub snapshot_at: u64,
+}
+
+/// 客户端实例性能上报（由客户端发送，Core 聚合）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientPerformanceReport {
+    /// 客户端实例唯一 ID（每个进程启动时生成，整个进程生命周期稳定）
+    pub client_instance_id: String,
+    /// 平台（`macos` | `ios`）
+    pub platform: String,
+    /// 当前活跃项目
+    pub project: String,
+    /// 当前活跃工作区
+    pub workspace: String,
+    /// 客户端内存快照
+    pub memory: MemoryUsageSnapshot,
+    /// 工作区切换延迟
+    pub workspace_switch: LatencyMetricWindow,
+    /// 文件树首屏请求延迟
+    pub file_tree_request: LatencyMetricWindow,
+    /// 文件树展开延迟
+    pub file_tree_expand: LatencyMetricWindow,
+    /// AI 会话列表请求延迟
+    pub ai_session_list_request: LatencyMetricWindow,
+    /// AI 消息尾部刷新延迟
+    pub ai_message_tail_flush: LatencyMetricWindow,
+    /// 证据分页追加延迟
+    pub evidence_page_append: LatencyMetricWindow,
+    /// 上报时间（Unix ms）
+    pub reported_at: u64,
+}
+
+/// 性能诊断范围
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformanceDiagnosisScope {
+    System,
+    Workspace,
+    ClientInstance,
+}
+
+/// 性能诊断严重度
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformanceDiagnosisSeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+/// 性能诊断原因码
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformanceDiagnosisReason {
+    WsPipelineLatencyHigh,
+    WorkspaceSwitchLatencyHigh,
+    FileTreeLatencyHigh,
+    AiSessionListLatencyHigh,
+    MessageFlushLatencyHigh,
+    CoreMemoryPressure,
+    ClientMemoryPressure,
+    MemoryGrowthUnbounded,
+    QueueBackpressureHigh,
+    CrossLayerLatencyMismatch,
+}
+
+impl std::fmt::Display for PerformanceDiagnosisReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::WsPipelineLatencyHigh => "ws_pipeline_latency_high",
+            Self::WorkspaceSwitchLatencyHigh => "workspace_switch_latency_high",
+            Self::FileTreeLatencyHigh => "file_tree_latency_high",
+            Self::AiSessionListLatencyHigh => "ai_session_list_latency_high",
+            Self::MessageFlushLatencyHigh => "message_flush_latency_high",
+            Self::CoreMemoryPressure => "core_memory_pressure",
+            Self::ClientMemoryPressure => "client_memory_pressure",
+            Self::MemoryGrowthUnbounded => "memory_growth_unbounded",
+            Self::QueueBackpressureHigh => "queue_backpressure_high",
+            Self::CrossLayerLatencyMismatch => "cross_layer_latency_mismatch",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// 单条性能诊断结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceDiagnosis {
+    /// 诊断唯一 ID
+    pub diagnosis_id: String,
+    pub scope: PerformanceDiagnosisScope,
+    pub severity: PerformanceDiagnosisSeverity,
+    pub reason: PerformanceDiagnosisReason,
+    /// 人类可读摘要
+    pub summary: String,
+    /// 关联指标或事件列表（机器可读证据）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+    /// 建议行动
+    pub recommended_action: String,
+    /// 归属上下文（system 时 project/workspace/client_instance_id 均可为 None）
+    pub context: HealthContext,
+    /// 可选：client_instance_id（ClientInstance scope 时必须）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_instance_id: Option<String>,
+    /// 诊断生成时间（Unix ms）
+    pub diagnosed_at: u64,
+}
+
+/// Core 内存运行时快照（Darwin 采样，其他平台可为零值）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CoreRuntimeMemorySnapshot {
+    pub resident_bytes: u64,
+    pub virtual_bytes: u64,
+    pub phys_footprint_bytes: u64,
+    pub sample_time_ms: u64,
+}
+
+/// 全链路性能可观测快照（Core 权威真源）
+///
+/// - `core_runtime`: Core 全局 WS 管线延迟与内存快照
+/// - `workspace_metrics`: 按 (project, workspace) 隔离的工作区关键路径延迟
+/// - `client_metrics`: 按 client_instance_id 隔离的客户端上报聚合
+/// - `diagnoses`: Core 产出的性能诊断结果（scope: system | workspace | client_instance）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceObservabilitySnapshot {
+    /// Core 全局运行时内存快照
+    pub core_memory: CoreRuntimeMemorySnapshot,
+    /// Core WS 管线关键延迟窗口
+    pub ws_pipeline_latency: LatencyMetricWindow,
+    /// 工作区关键路径性能快照（按 project asc, workspace asc 排序）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_metrics: Vec<WorkspacePerformanceSnapshot>,
+    /// 客户端实例最近上报聚合（按 client_instance_id 排序）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub client_metrics: Vec<ClientPerformanceReport>,
+    /// Core 产出的性能诊断结果
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnoses: Vec<PerformanceDiagnosis>,
+    /// 快照生成时间（Unix ms）
+    pub snapshot_at: u64,
+}
