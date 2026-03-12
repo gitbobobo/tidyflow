@@ -31,6 +31,8 @@ pub(in crate::server::ws) struct AppContext {
     pub(in crate::server::ws) running_ai_tasks: SharedRunningAITasks,
     pub(in crate::server::ws) task_history: SharedTaskHistory,
     pub(in crate::server::ws) ai_state: SharedAIState,
+    /// StateStore 引用（用于终端恢复元数据持久化，WI-002/WI-003）
+    pub(in crate::server::ws) state_store: Arc<StateStore>,
 }
 
 fn resolve_expected_ws_token() -> Option<String> {
@@ -102,6 +104,45 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
 
     let ai_state = build_shared_ai_state();
 
+    // 注册内置健康探针（含终端恢复状态检测，WI-003）
+    crate::server::health::register_builtin_probes(
+        shared_state.clone(),
+        terminal_registry.clone(),
+    );
+
+    // 启动时加载待恢复的终端元数据，标记其恢复阶段（WI-003）
+    match state_store.load_terminal_recovery_entries().await {
+        Ok(entries) if !entries.is_empty() => {
+            let mut reg = terminal_registry.lock().await;
+            for (project, workspace, entry) in &entries {
+                reg.set_recovery_meta(
+                    &entry.term_id,
+                    crate::server::terminal_registry::TerminalRecoveryMeta {
+                        term_id: entry.term_id.clone(),
+                        project: project.clone(),
+                        workspace: workspace.clone(),
+                        cwd: entry.cwd.clone(),
+                        shell: entry.shell.clone(),
+                        name: entry.name.clone(),
+                        icon: entry.icon.clone(),
+                        recovery_state: "recovering".to_string(),
+                        failed_reason: None,
+                        created_at: entry.recorded_at.to_rfc3339(),
+                    },
+                );
+                reg.mark_recovering(&entry.term_id);
+            }
+            info!(
+                count = entries.len(),
+                "Loaded terminal recovery entries on startup"
+            );
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to load terminal recovery entries on startup");
+        }
+        _ => {}
+    }
+
     let ctx = AppContext {
         app_state: shared_state.clone(),
         save_tx,
@@ -119,6 +160,7 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
         running_ai_tasks,
         task_history,
         ai_state,
+        state_store,
     };
 
     (ctx, bind_addr)

@@ -15,6 +15,7 @@ use crate::server::protocol::ServerMessage;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::{PtyFlowGate, SharedTerminalRegistry};
 use crate::workspace::state::AppState;
+use crate::workspace::state_store::StateStore;
 
 /// 共享应用状态
 pub type SharedAppState = Arc<RwLock<AppState>>;
@@ -235,6 +236,8 @@ pub struct HandlerContext {
     pub conn_meta: ConnectionMeta,
     pub remote_sub_registry: SharedRemoteSubRegistry,
     pub ai_state: SharedAIState,
+    /// StateStore 引用（终端恢复元数据持久化，WI-002/WI-003）
+    pub state_store: Arc<StateStore>,
 }
 
 /// 统一应用错误类型 — 由调度层自动转换为 `ServerMessage::Error`

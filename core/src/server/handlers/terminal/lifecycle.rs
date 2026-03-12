@@ -96,6 +96,12 @@ pub async fn handle_lifecycle_message(
                 reg.close(&id);
                 drop(reg);
 
+                // 终端被强制关闭，清除恢复元数据
+                let _ = ctx
+                    .state_store
+                    .update_terminal_recovery_state(&id, "recovered", None)
+                    .await;
+
                 info!(term_id = %id, "Terminal killed by client request");
                 send_message(socket, &ServerMessage::TerminalKilled { session_id: id }).await?;
             }
@@ -207,6 +213,14 @@ pub async fn handle_lifecycle_message(
                 let mut reg = ctx.terminal_registry.lock().await;
                 reg.close(term_id)
             };
+
+            // 终端主动关闭后，清除恢复元数据（避免僵尸恢复记录）
+            if closed {
+                let _ = ctx
+                    .state_store
+                    .update_terminal_recovery_state(term_id, "recovered", None)
+                    .await;
+            }
 
             if closed {
                 info!(term_id = %term_id, "Terminal closed by client request");
