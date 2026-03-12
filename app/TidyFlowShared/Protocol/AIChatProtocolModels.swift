@@ -2250,6 +2250,7 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         ssrHasher.combine(project)
         ssrHasher.combine(workspace)
         ssrHasher.combine(cycleID)
+        ssrHasher.combine(title ?? "")
         ssrHasher.combine(status)
         ssrHasher.combine(currentStage)
         ssrHasher.combine(globalLoopRound)
@@ -2259,6 +2260,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         ssrHasher.combine(terminalReasonCode ?? "")
         ssrHasher.combine(terminalErrorMessage ?? "")
         ssrHasher.combine(rateLimitErrorMessage ?? "")
+        ssrHasher.combine(startedAt ?? "")
+        ssrHasher.combine(durationMs ?? 0)
+        ssrHasher.combine(errorCode ?? "")
+        ssrHasher.combine(retryable)
         self.statusStageRoundSignature = ssrHasher.finalize()
 
         var tlHasher = Hasher()
@@ -2291,6 +2296,11 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         projHasher.combine(self.timelineSignature)
         projHasher.combine(agents.count)
         projHasher.combine(executions.count)
+        projHasher.combine(title ?? "")
+        projHasher.combine(startedAt ?? "")
+        projHasher.combine(durationMs ?? 0)
+        projHasher.combine(errorCode ?? "")
+        projHasher.combine(retryable)
         self.projectionSignature = projHasher.finalize()
     }
 }

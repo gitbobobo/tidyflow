@@ -484,6 +484,10 @@ extension MobileAppState {
         if evolutionWorkspaceItems[existingIndex] != updated {
             evolutionWorkspaceItems[existingIndex] = updated
         }
+        if ev.kind == .stopped {
+            // stopped 事件只带轻量状态，终态耗时/执行时间线仍以快照为准。
+            requestEvolutionSnapshot(project: ev.project, workspace: workspace)
+        }
     }
 
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {

@@ -180,28 +180,36 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
         self.appState = appState
     }
 
-    func handleAITaskCancelled(_ result: AITaskCancelled) { appState?.handleAITaskCancelled(result) }
-    func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
-    func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
-    func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }
-    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { appState?.handleAISessionMessagesUpdate(ev) }
-    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { appState?.handleAISessionStatusResult(ev) }
-    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { appState?.handleAISessionStatusUpdate(ev) }
-    func handleAIChatDone(_ ev: AIChatDoneV2) { appState?.handleAIChatDone(ev) }
-    func handleAIChatPending(_ ev: AIChatPendingV2) { appState?.handleAIChatPending(ev) }
-    func handleAIChatError(_ ev: AIChatErrorV2) { appState?.handleAIChatError(ev) }
-    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { appState?.handleAIQuestionAsked(ev) }
-    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { appState?.handleAIQuestionCleared(ev) }
-    func handleAIProviderList(_ ev: AIProviderListResult) { appState?.handleAIProviderList(ev) }
-    func handleAIAgentList(_ ev: AIAgentListResult) { appState?.handleAIAgentList(ev) }
-    func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
-    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { appState?.handleAISlashCommandsUpdate(ev) }
-    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { appState?.handleAISessionConfigOptions(ev) }
-    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) { appState?.handleAISessionSubscribeAck(ev) }
-    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { appState?.handleAISessionRenameResult(ev) }
-    func handleAICodeReviewResult(_ ev: AICodeReviewResult) { appState?.handleAICodeReviewResult(ev) }
-    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) { appState?.handleAICodeCompletionChunk(ev) }
-    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) { appState?.handleAICodeCompletionDone(ev) }
+    /// WSClient 在解码队列回调协议方法；这里统一切回主线程，避免 UI 状态跨线程写入。
+    private func dispatchToMain(_ action: @escaping (AppState) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let appState = self?.appState else { return }
+            action(appState)
+        }
+    }
+
+    func handleAITaskCancelled(_ result: AITaskCancelled) { dispatchToMain { $0.handleAITaskCancelled(result) } }
+    func handleAISessionStarted(_ ev: AISessionStartedV2) { dispatchToMain { $0.handleAISessionStarted(ev) } }
+    func handleAISessionList(_ ev: AISessionListV2) { dispatchToMain { $0.handleAISessionList(ev) } }
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) { dispatchToMain { $0.handleAISessionMessages(ev) } }
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { dispatchToMain { $0.handleAISessionMessagesUpdate(ev) } }
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { dispatchToMain { $0.handleAISessionStatusResult(ev) } }
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { dispatchToMain { $0.handleAISessionStatusUpdate(ev) } }
+    func handleAIChatDone(_ ev: AIChatDoneV2) { dispatchToMain { $0.handleAIChatDone(ev) } }
+    func handleAIChatPending(_ ev: AIChatPendingV2) { dispatchToMain { $0.handleAIChatPending(ev) } }
+    func handleAIChatError(_ ev: AIChatErrorV2) { dispatchToMain { $0.handleAIChatError(ev) } }
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { dispatchToMain { $0.handleAIQuestionAsked(ev) } }
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { dispatchToMain { $0.handleAIQuestionCleared(ev) } }
+    func handleAIProviderList(_ ev: AIProviderListResult) { dispatchToMain { $0.handleAIProviderList(ev) } }
+    func handleAIAgentList(_ ev: AIAgentListResult) { dispatchToMain { $0.handleAIAgentList(ev) } }
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) { dispatchToMain { $0.handleAISlashCommands(ev) } }
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { dispatchToMain { $0.handleAISlashCommandsUpdate(ev) } }
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { dispatchToMain { $0.handleAISessionConfigOptions(ev) } }
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) { dispatchToMain { $0.handleAISessionSubscribeAck(ev) } }
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { dispatchToMain { $0.handleAISessionRenameResult(ev) } }
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult) { dispatchToMain { $0.handleAICodeReviewResult(ev) } }
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) { dispatchToMain { $0.handleAICodeCompletionChunk(ev) } }
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) { dispatchToMain { $0.handleAICodeCompletionDone(ev) } }
 }
 
 final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {

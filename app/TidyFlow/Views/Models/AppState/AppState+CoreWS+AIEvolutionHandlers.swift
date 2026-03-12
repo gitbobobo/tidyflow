@@ -792,6 +792,7 @@ extension AppState {
                 return
             }
 
+            let shouldReconcileTerminalSnapshot = ev.kind == .stopped
             let updated = EvolutionWorkspaceItemV2(
                 project: existing.project,
                 workspace: existing.workspace,
@@ -813,6 +814,14 @@ extension AppState {
                 self.scheduleWorkspaceSidebarStatusRefresh(
                     projectNames: [ev.project],
                     debounce: 0.2
+                )
+            }
+            if shouldReconcileTerminalSnapshot {
+                // stopped 事件只带轻量状态，终态耗时/执行时间线仍以快照为准。
+                self.scheduleEvolutionSnapshotFallback(
+                    project: ev.project,
+                    workspace: workspace,
+                    reason: "workspace_stopped_terminal_reconcile"
                 )
             }
         }
