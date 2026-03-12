@@ -7,7 +7,7 @@ use crate::server::protocol::ServerMessage;
 mod connection;
 mod dispatch;
 mod http_api;
-mod pairing;
+mod auth_keys;
 mod request_scope;
 mod server_runtime;
 mod terminal;

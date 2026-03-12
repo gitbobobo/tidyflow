@@ -51,6 +51,40 @@
 本节定义哪些能力必须通过 HTTP 读取、哪些通过 WebSocket 流式推送，以及消息必须携带的多工作区边界字段。
 所有实现（Core、macOS、iOS）**必须**遵循此契约；任何不在此声明的私有字段不得作为业务逻辑依据。
 
+## 远程认证与 API key 管理（v9）
+
+远程访问采用“Mac 本地管理 API key，移动端直接使用 API key 连接”的统一模型。
+
+### 本地认证管理端点
+
+以下端点只允许 loopback 请求访问，供 macOS 客户端管理 API key 列表：
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| `GET` | `/auth/keys` | 返回全部 API key 条目，包含完整 `api_key` 明文 |
+| `POST` | `/auth/keys` | 创建 API key；请求体必须携带 `name` |
+| `DELETE` | `/auth/keys/:key_id` | 删除 API key，并立即吊销现有远程连接 |
+
+约束：
+
+1. `name` 为必填，按去空白后的值做大小写不敏感唯一校验。
+2. `api_key` 由 Core 生成，格式固定为 `tfk_` + 32 字节随机数的 `base64url(no padding)`。
+3. 删除 API key 时，Core 必须同时删除持久化记录、主动关闭现有连接，并清理该 key 下的远程终端订阅。
+
+### 远程鉴权元数据
+
+| 传输通道 | 必填字段 | 可选字段 |
+|----------|----------|----------|
+| WebSocket `/ws` | `token=<api_key>` `client_id=<client_id>` | `device_name=<device_name>` |
+| HTTP `/api/v1/*` | `Authorization: Bearer <api_key>` `X-TidyFlow-Client-ID: <client_id>` | `X-TidyFlow-Device-Name: <device_name>` |
+
+约束：
+
+1. `client_id` 是远程客户端实例的稳定身份，Core 用 `subscriber_id = "<key_id>:<client_id>"` 作为远程订阅恢复标识。
+2. `GET /api/v1/system/snapshot` 继续保持免鉴权。
+3. 本地 bootstrap token 仍可用于本机连接；远程 API key 鉴权成功后主身份固定为 `key_id`。
+4. 当 API key 无效或已被删除时，客户端应进入 `authenticationFailed(reason)`，不得自动重连。
+
 ### HTTP 只读端点（`read_via_http_required`）
 
 以下 domain 的读取能力**只能**通过 HTTP GET 端点获取，若通过 WS action 发起则 Core 返回：

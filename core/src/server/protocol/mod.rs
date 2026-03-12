@@ -2573,7 +2573,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "file_copy".to_string(),
         "file_move".to_string(),
         "terminal_persistence".to_string(),
-        "pairing_v1".to_string(),
+        "remote_api_key_auth_v1".to_string(),
         "project_commands".to_string(),
         "remote_term_tracking".to_string(),
         "task_history".to_string(),

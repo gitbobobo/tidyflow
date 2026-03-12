@@ -6,6 +6,8 @@ use crate::server::context::{
     ConnectionMeta, SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
     TaskBroadcastTx,
 };
+use crate::server::remote_connection_registry::SharedRemoteConnectionRegistry;
+use crate::server::protocol::ServerMessage;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::workspace::state_store::StateStore;
@@ -53,6 +55,7 @@ async fn run_connection_loop(
     socket: WebSocket,
     conn_meta: &ConnectionMeta,
     runtime: runtime::SocketRuntime,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<String>,
 ) -> bool {
     let (outbound_tx, outbound_rx) = crate::server::ws::create_outbound_channel();
     if let Err(e) = stages::send_hello_message(&outbound_tx).await {
@@ -126,6 +129,25 @@ async fn run_connection_loop(
             let writer_ok = writer_task.await.ok().unwrap_or(false);
             result.is_ok() && writer_ok
         }
+        reason = &mut shutdown_rx => {
+            let reason = reason.unwrap_or_else(|_| "认证已失效，请重新连接。".to_string());
+            let _ = crate::server::ws::send_message(
+                &outbound_tx,
+                &ServerMessage::Error {
+                    code: "authentication_revoked".to_string(),
+                    message: reason,
+                    project: None,
+                    workspace: None,
+                    session_id: None,
+                    cycle_id: None,
+                },
+            )
+            .await;
+            reader_task.abort();
+            event_task.abort();
+            drop(outbound_tx);
+            writer_task.await.ok().unwrap_or(false)
+        }
     };
 
     result
@@ -139,6 +161,7 @@ pub(super) async fn handle_socket(
     scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     conn_meta: ConnectionMeta,
     remote_sub_registry: SharedRemoteSubRegistry,
+    remote_connection_registry: SharedRemoteConnectionRegistry,
     task_broadcast_tx: TaskBroadcastTx,
     running_commands: SharedRunningCommands,
     running_ai_tasks: SharedRunningAITasks,
@@ -150,6 +173,16 @@ pub(super) async fn handle_socket(
         "New WebSocket connection established (conn_id={}, remote={})",
         conn_meta.conn_id, conn_meta.is_remote
     );
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<String>();
+    if let Some(key_id) = conn_meta.api_key_id.as_deref() {
+        let mut registry = remote_connection_registry.lock().await;
+        registry.register(
+            key_id,
+            &conn_meta.conn_id,
+            conn_meta.remote_subscriber_id(),
+            shutdown_tx,
+        );
+    }
     let runtime = initialize_runtime(
         app_state,
         save_tx,
@@ -169,8 +202,13 @@ pub(super) async fn handle_socket(
     let subscribed_terms = runtime.subscribed_terms.clone();
     let handler_ctx = runtime.handler_ctx.clone();
 
-    if !run_connection_loop(socket, &conn_meta, runtime).await {
+    if !run_connection_loop(socket, &conn_meta, runtime, shutdown_rx).await {
         // Hello 消息入队失败或连接异常关闭，统一走清理。
+    }
+
+    {
+        let mut registry = remote_connection_registry.lock().await;
+        registry.unregister(&conn_meta.conn_id);
     }
 
     cleanup::cleanup_on_disconnect(

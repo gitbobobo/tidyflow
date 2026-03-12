@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 
@@ -12,16 +12,16 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::transport::endpoint::ws_handler),
         )
         .route(
-            "/pair/start",
-            post(crate::server::ws::pairing::pair_start_handler),
+            "/auth/keys",
+            get(crate::server::ws::auth_keys::list_api_keys_handler),
         )
         .route(
-            "/pair/exchange",
-            post(crate::server::ws::pairing::pair_exchange_handler),
+            "/auth/keys",
+            post(crate::server::ws::auth_keys::create_api_key_handler),
         )
         .route(
-            "/pair/revoke",
-            post(crate::server::ws::pairing::pair_revoke_handler),
+            "/auth/keys/:key_id",
+            delete(crate::server::ws::auth_keys::delete_api_key_handler),
         )
         .route("/api/v1/projects", get(crate::server::ws::http_api::projects_handler))
         .route(

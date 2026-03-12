@@ -677,10 +677,13 @@ mod tests {
             terminal_registry: Arc::new(tokio::sync::Mutex::new(TerminalRegistry::new())),
             scrollback_tx,
             expected_ws_token: Some("required-token".to_string()),
-            pairing_registry: Arc::new(tokio::sync::Mutex::new(
-                crate::server::ws::pairing::new_pairing_registry(&[]),
+            api_key_registry: Arc::new(tokio::sync::Mutex::new(
+                crate::server::ws::auth_keys::new_api_key_registry(&[]),
             )),
             remote_sub_registry: Arc::new(tokio::sync::Mutex::new(RemoteSubRegistry::new())),
+            remote_connection_registry: Arc::new(tokio::sync::Mutex::new(
+                crate::server::remote_connection_registry::RemoteConnectionRegistry::new(),
+            )),
             task_broadcast_tx,
             running_commands: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             running_ai_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

@@ -19,6 +19,7 @@ pub(in crate::server::ws) fn bind_upgrade(
                 ctx.scrollback_tx,
                 conn_meta,
                 ctx.remote_sub_registry,
+                ctx.remote_connection_registry,
                 ctx.task_broadcast_tx,
                 ctx.running_commands,
                 ctx.running_ai_tasks,

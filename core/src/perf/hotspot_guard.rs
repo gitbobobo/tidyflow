@@ -906,16 +906,6 @@ async fn measure_ai_context_high_load_rebuild_pressure() -> ScenarioMeasurement 
         ("proj-hl-3", "ws-1", "/tmp/hotspot/hl/proj-hl-3/ws-1", "sess-hl"),
     ];
 
-    let adapter_entries: Vec<((&str, &str), Option<f64>)> = workspaces
-        .iter()
-        .enumerate()
-        .map(|(i, (proj, ws, _root, sess))| {
-            let cwd = format!("/tmp/hotspot/hl/{}/{}", proj, ws);
-            let val = Some(50.0 + i as f64 * 10.0);
-            ((*proj, *sess), val)
-        })
-        .collect();
-
     // 构建 adapter：使用 root_path 而非 (proj, sess) 键，FakeAiAdapter 按 (root, sess) 索引
     let adapter_pairs: Vec<((&str, &str), Option<f64>)> = workspaces
         .iter()

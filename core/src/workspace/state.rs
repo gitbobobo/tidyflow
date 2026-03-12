@@ -193,14 +193,15 @@ impl ClientSettings {
     pub fn migrate(&mut self) {}
 }
 
-/// 移动端配对 token 持久化条目
+/// 远程访问 API key 持久化条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedTokenEntry {
-    pub token_id: String,
-    pub ws_token: String,
-    pub device_name: String,
-    pub issued_at_unix: u64,
-    pub expires_at_unix: u64,
+pub struct RemoteAPIKeyEntry {
+    pub key_id: String,
+    pub name: String,
+    pub api_key: String,
+    pub created_at_unix: u64,
+    #[serde(default)]
+    pub last_used_at_unix: Option<u64>,
 }
 
 /// Application state - 持久化由 StateStore（SQLite）负责
@@ -213,7 +214,7 @@ pub struct AppState {
     #[serde(default)]
     pub client_settings: ClientSettings,
     #[serde(default)]
-    pub paired_tokens: Vec<PersistedTokenEntry>,
+    pub remote_api_keys: Vec<RemoteAPIKeyEntry>,
 }
 
 impl Default for AppState {
@@ -223,7 +224,7 @@ impl Default for AppState {
             projects: HashMap::new(),
             last_updated: Some(Utc::now()),
             client_settings: ClientSettings::default(),
-            paired_tokens: Vec::new(),
+            remote_api_keys: Vec::new(),
         }
     }
 }
@@ -514,7 +515,7 @@ mod tests {
         assert_eq!(state.version, 1);
         assert!(state.projects.is_empty());
         assert!(state.client_settings.custom_commands.is_empty());
-        assert!(state.paired_tokens.is_empty());
+        assert!(state.remote_api_keys.is_empty());
     }
 
     #[test]
@@ -653,15 +654,15 @@ mod tests {
         assert!(cmd.blocking);
         assert!(!cmd.interactive);
 
-        let entry = PersistedTokenEntry {
-            token_id: "token-123".to_string(),
-            ws_token: "secret-token".to_string(),
-            device_name: "iPhone".to_string(),
-            issued_at_unix: 1000,
-            expires_at_unix: 2000,
+        let entry = RemoteAPIKeyEntry {
+            key_id: "key-123".to_string(),
+            name: "我的 iPhone".to_string(),
+            api_key: "tfk_secret-token".to_string(),
+            created_at_unix: 1000,
+            last_used_at_unix: Some(2000),
         };
-        assert_eq!(entry.token_id, "token-123");
-        assert!(entry.expires_at_unix > entry.issued_at_unix);
+        assert_eq!(entry.key_id, "key-123");
+        assert_eq!(entry.last_used_at_unix, Some(2000));
 
         let summary = SetupResultSummary {
             success: true,

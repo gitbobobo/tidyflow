@@ -240,7 +240,9 @@ mod tests {
             task_history,
             conn_meta: ConnectionMeta {
                 conn_id: "test-conn".to_string(),
-                token_id: None,
+                api_key_id: None,
+                client_id: None,
+                subscriber_id: None,
                 is_remote: false,
                 device_name: None,
             },

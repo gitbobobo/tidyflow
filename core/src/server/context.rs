@@ -204,18 +204,22 @@ pub fn send_task_broadcast_event(
 pub struct ConnectionMeta {
     /// 连接唯一标识
     pub conn_id: String,
-    /// 设备稳定标识（配对 token_id）；仅配对远程连接可用
-    pub token_id: Option<String>,
+    /// 远程 API key 标识；仅远程 key 连接可用
+    pub api_key_id: Option<String>,
+    /// 客户端实例标识；同一个 API key 可被多设备复用，因此必须独立建模
+    pub client_id: Option<String>,
+    /// 稳定远程订阅标识：`<key_id>:<client_id>`
+    pub subscriber_id: Option<String>,
     /// 是否为远程连接（非 loopback）
     pub is_remote: bool,
-    /// 设备名称（从 pairing token 解析）
+    /// 设备名称（从客户端元数据解析）
     pub device_name: Option<String>,
 }
 
 impl ConnectionMeta {
-    /// 远程订阅身份：优先使用稳定 token_id，未配对时退回 conn_id
+    /// 远程订阅身份：优先使用稳定 subscriber_id，缺失时退回 conn_id
     pub fn remote_subscriber_id(&self) -> &str {
-        self.token_id.as_deref().unwrap_or(&self.conn_id)
+        self.subscriber_id.as_deref().unwrap_or(&self.conn_id)
     }
 }
 

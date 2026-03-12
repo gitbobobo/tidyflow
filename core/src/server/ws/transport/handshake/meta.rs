@@ -3,30 +3,60 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::server::context::ConnectionMeta;
+use crate::server::ws::auth_keys::WsAuthQuery;
 
 pub(in crate::server::ws) async fn build_connection_meta(
     addr: SocketAddr,
-    provided_token: Option<&str>,
-    pairing_registry: &crate::server::ws::pairing::SharedPairingRegistry,
+    query: &WsAuthQuery,
+    api_key_registry: &crate::server::ws::auth_keys::SharedRemoteAPIKeyRegistry,
 ) -> ConnectionMeta {
-    // 判断是否为远程连接：使用配对 token 的连接始终视为远程（覆盖 iOS 模拟器等 loopback 场景）
-    let (is_remote, token_id, device_name) = {
-        let paired_info = if let Some(token) = provided_token {
-            crate::server::ws::pairing::lookup_paired_info(pairing_registry, token).await
+    let conn_id = Uuid::new_v4().to_string();
+    let provided_token = query.token.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let client_id = query
+        .client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let device_name = query
+        .device_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    let (is_remote, api_key_id, subscriber_id, device_name) = if let Some(token) = provided_token {
+        if let Some(info) = crate::server::ws::auth_keys::authorize_token(
+            None,
+            Some(token),
+            query,
+            api_key_registry,
+        )
+        .await
+        {
+            if !info.key_id.is_empty() {
+                let client_id = client_id.clone().unwrap_or_else(|| conn_id.clone());
+                (
+                    true,
+                    Some(info.key_id.clone()),
+                    Some(format!("{}:{}", info.key_id, client_id)),
+                    Some(device_name.unwrap_or_else(|| "Remote Client".to_string())),
+                )
+            } else {
+                (!addr.ip().is_loopback(), None, None, None)
+            }
         } else {
-            None
-        };
-        if let Some((token_id, device_name)) = paired_info {
-            // 配对 token 认证 -> 一定是远程设备
-            (true, Some(token_id), Some(device_name))
-        } else {
-            (!addr.ip().is_loopback(), None, None)
+            (!addr.ip().is_loopback(), None, None, None)
         }
+    } else {
+        (!addr.ip().is_loopback(), None, None, None)
     };
 
     ConnectionMeta {
-        conn_id: Uuid::new_v4().to_string(),
-        token_id,
+        conn_id,
+        api_key_id,
+        client_id,
+        subscriber_id,
         is_remote,
         device_name,
     }

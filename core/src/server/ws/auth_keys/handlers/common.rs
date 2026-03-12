@@ -1,12 +1,12 @@
 use axum::response::{IntoResponse, Response};
 use axum::{http::StatusCode, Json};
 
-use super::super::model::PairErrorResponse;
+use crate::server::ws::auth_keys::model::APIKeyErrorResponse;
 
-pub(super) fn forbidden_response(message: &str) -> Response {
+pub(in crate::server::ws) fn forbidden_response(message: &str) -> Response {
     (
         StatusCode::FORBIDDEN,
-        Json(PairErrorResponse {
+        Json(APIKeyErrorResponse {
             error: "forbidden".to_string(),
             message: message.to_string(),
         }),

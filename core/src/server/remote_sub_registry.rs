@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, Mutex};
 /// 远程订阅者信息
 #[derive(Debug, Clone)]
 pub struct RemoteSubscriberInfo {
-    /// 订阅者稳定标识：优先为 token_id，未配对时退回 conn_id
+    /// 订阅者稳定标识：优先使用 `<key_id>:<client_id>`，本地连接退回 conn_id
     pub conn_id: String,
     pub device_name: String,
 }
@@ -73,7 +73,7 @@ impl RemoteSubRegistry {
         }
     }
 
-    /// 清理该订阅者（token_id/conn_id）的所有订阅
+    /// 清理该订阅者（subscriber_id/conn_id）的所有订阅
     pub fn unsubscribe_all(&mut self, subscriber_id: &str) {
         let mut changed = false;
         self.subscribers.retain(|_, subs| {

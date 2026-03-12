@@ -4,21 +4,21 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub(in crate::server::ws) fn extract_provided_token(
-    query: Option<Query<crate::server::ws::pairing::WsAuthQuery>>,
-) -> Option<String> {
-    query.and_then(|q| q.0.token)
+pub(in crate::server::ws) fn extract_auth_query(
+    query: Option<Query<crate::server::ws::auth_keys::WsAuthQuery>>,
+) -> crate::server::ws::auth_keys::WsAuthQuery {
+    query.map(|value| value.0).unwrap_or_default()
 }
 
 pub(in crate::server::ws) async fn ensure_authorized_or_response(
     expected_ws_token: Option<&str>,
-    provided_token: Option<&str>,
-    pairing_registry: &crate::server::ws::pairing::SharedPairingRegistry,
+    query: &crate::server::ws::auth_keys::WsAuthQuery,
+    api_key_registry: &crate::server::ws::auth_keys::SharedRemoteAPIKeyRegistry,
 ) -> Result<(), Response> {
     if crate::server::ws::transport::handshake::authorize_ws_upgrade(
         expected_ws_token,
-        provided_token,
-        pairing_registry,
+        query,
+        api_key_registry,
     )
     .await
     .is_err()

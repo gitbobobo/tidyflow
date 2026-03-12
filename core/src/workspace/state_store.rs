@@ -15,7 +15,7 @@ use sqlx::{Pool, Row, Sqlite};
 use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
-    KeybindingConfig, PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError,
+    KeybindingConfig, Project, ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError,
     TemplateCommand, WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus,
     WorkspaceTodoItem, WorkspaceTerminalRecoveryEntry,
 };
@@ -296,30 +296,30 @@ impl StateStore {
         client_settings.evolution_agent_profiles = evolution_agent_profiles;
         client_settings.migrate();
 
-        let paired_tokens = sqlx::query(
+        let remote_api_keys = sqlx::query(
             r#"
-            SELECT token_id, ws_token, device_name, issued_at_unix, expires_at_unix
-            FROM paired_tokens
+            SELECT key_id, name, api_key, created_at_unix, last_used_at_unix
+            FROM remote_api_keys
             "#,
         )
         .fetch_all(&self.pool)
         .await
         .map_err(|e| StateError::ReadError(e.to_string()))?
         .into_iter()
-        .map(|row| PersistedTokenEntry {
-            token_id: row.try_get("token_id").unwrap_or_default(),
-            ws_token: row.try_get("ws_token").unwrap_or_default(),
-            device_name: row.try_get("device_name").unwrap_or_default(),
-            issued_at_unix: row
-                .try_get::<i64, _>("issued_at_unix")
+        .map(|row| RemoteAPIKeyEntry {
+            key_id: row.try_get("key_id").unwrap_or_default(),
+            name: row.try_get("name").unwrap_or_default(),
+            api_key: row.try_get("api_key").unwrap_or_default(),
+            created_at_unix: row
+                .try_get::<i64, _>("created_at_unix")
                 .ok()
                 .and_then(|v| u64::try_from(v).ok())
                 .unwrap_or(0),
-            expires_at_unix: row
-                .try_get::<i64, _>("expires_at_unix")
+            last_used_at_unix: row
+                .try_get::<Option<i64>, _>("last_used_at_unix")
                 .ok()
-                .and_then(|v| u64::try_from(v).ok())
-                .unwrap_or(0),
+                .flatten()
+                .and_then(|v| u64::try_from(v).ok()),
         })
         .collect();
 
@@ -501,7 +501,7 @@ impl StateStore {
             projects,
             last_updated,
             client_settings,
-            paired_tokens,
+            remote_api_keys,
         })
     }
 
@@ -522,7 +522,7 @@ impl StateStore {
             "workspace_shortcuts",
             "workspace_todos",
             "evolution_stage_profiles",
-            "paired_tokens",
+            "remote_api_keys",
             "keybindings",
         ] {
             let sql = format!("DELETE FROM {}", table);
@@ -688,18 +688,18 @@ impl StateStore {
             }
         }
 
-        for token in &state.paired_tokens {
+        for key in &state.remote_api_keys {
             sqlx::query(
                 r#"
-                INSERT INTO paired_tokens (ws_token, token_id, device_name, issued_at_unix, expires_at_unix)
+                INSERT INTO remote_api_keys (key_id, name, api_key, created_at_unix, last_used_at_unix)
                 VALUES (?1, ?2, ?3, ?4, ?5)
                 "#,
             )
-            .bind(&token.ws_token)
-            .bind(&token.token_id)
-            .bind(&token.device_name)
-            .bind(i64::try_from(token.issued_at_unix).unwrap_or(0))
-            .bind(i64::try_from(token.expires_at_unix).unwrap_or(0))
+            .bind(&key.key_id)
+            .bind(&key.name)
+            .bind(&key.api_key)
+            .bind(i64::try_from(key.created_at_unix).unwrap_or(0))
+            .bind(key.last_used_at_unix.and_then(|value| i64::try_from(value).ok()))
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -995,12 +995,12 @@ impl StateStore {
             )
             "#,
             r#"
-            CREATE TABLE IF NOT EXISTS paired_tokens (
-                ws_token TEXT PRIMARY KEY,
-                token_id TEXT NOT NULL,
-                device_name TEXT NOT NULL,
-                issued_at_unix INTEGER NOT NULL,
-                expires_at_unix INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS remote_api_keys (
+                key_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                created_at_unix INTEGER NOT NULL,
+                last_used_at_unix INTEGER
             )
             "#,
             r#"
@@ -1049,6 +1049,9 @@ impl StateStore {
         }
         self.ensure_client_settings_columns().await?;
         self.ensure_workspace_recovery_columns().await?;
+        let _ = sqlx::query("DELETE FROM paired_tokens")
+            .execute(&self.pool)
+            .await;
         Ok(())
     }
 
@@ -1309,12 +1312,12 @@ mod tests {
                 config_options: HashMap::new(),
             }],
         )]);
-        state.paired_tokens = vec![PersistedTokenEntry {
-            token_id: "token-1".to_string(),
-            ws_token: "ws-token-1".to_string(),
-            device_name: "iPhone".to_string(),
-            issued_at_unix: 1,
-            expires_at_unix: 2,
+        state.remote_api_keys = vec![RemoteAPIKeyEntry {
+            key_id: "key-1".to_string(),
+            name: "我的 iPhone".to_string(),
+            api_key: "tfk_ws-token-1".to_string(),
+            created_at_unix: 1,
+            last_used_at_unix: Some(2),
         }];
 
         let project = Project {
@@ -1394,7 +1397,7 @@ mod tests {
                 .map(|item| item.status.as_str()),
             Some("in_progress")
         );
-        assert_eq!(loaded.paired_tokens.len(), 1);
+        assert_eq!(loaded.remote_api_keys.len(), 1);
 
         let loaded_project = loaded.projects.get("demo").expect("project should exist");
         assert_eq!(loaded_project.commands.len(), 1);

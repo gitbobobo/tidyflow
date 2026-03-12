@@ -6,6 +6,7 @@ pub mod handlers;
 pub mod health;
 pub mod perf;
 pub mod protocol;
+pub mod remote_connection_registry;
 pub mod remote_sub_registry;
 pub mod terminal_registry;
 pub mod watcher;

@@ -162,13 +162,15 @@ pub(in crate::server::ws) fn build_http_handler_context(
 ) -> HandlerContext {
     let (agg_tx, _agg_rx) = mpsc::channel::<(String, Vec<u8>)>(1);
     let (cmd_output_tx, _cmd_output_rx) = mpsc::channel::<ServerMessage>(1);
-    let (token_id, device_name, is_remote) = match identity {
+    let (api_key_id, client_id, subscriber_id, device_name, is_remote) = match identity {
         Some(identity) => (
-            identity.token_id.clone(),
+            identity.api_key_id.clone(),
+            identity.client_id.clone(),
+            identity.subscriber_id.clone(),
             identity.device_name.clone(),
             identity.is_remote,
         ),
-        None => (None, None, false),
+        None => (None, None, None, None, false),
     };
 
     HandlerContext {
@@ -185,7 +187,9 @@ pub(in crate::server::ws) fn build_http_handler_context(
         task_history: ctx.task_history.clone(),
         conn_meta: ConnectionMeta {
             conn_id: "http-api".to_string(),
-            token_id,
+            api_key_id,
+            client_id,
+            subscriber_id,
             is_remote,
             device_name,
         },

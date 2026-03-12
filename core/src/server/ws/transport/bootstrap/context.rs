@@ -8,6 +8,9 @@ use crate::server::context::{
     SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx,
 };
 use crate::server::handlers::ai::{AIState, SharedAIState};
+use crate::server::remote_connection_registry::{
+    RemoteConnectionRegistry, SharedRemoteConnectionRegistry,
+};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_idle_reaper, spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
@@ -24,8 +27,10 @@ pub(in crate::server::ws) struct AppContext {
     pub(in crate::server::ws) terminal_registry: SharedTerminalRegistry,
     pub(in crate::server::ws) scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     pub(in crate::server::ws) expected_ws_token: Option<String>,
-    pub(in crate::server::ws) pairing_registry: crate::server::ws::pairing::SharedPairingRegistry,
+    pub(in crate::server::ws) api_key_registry:
+        crate::server::ws::auth_keys::SharedRemoteAPIKeyRegistry,
     pub(in crate::server::ws) remote_sub_registry: SharedRemoteSubRegistry,
+    pub(in crate::server::ws) remote_connection_registry: SharedRemoteConnectionRegistry,
     pub(in crate::server::ws) task_broadcast_tx: TaskBroadcastTx,
     pub(in crate::server::ws) running_commands: SharedRunningCommands,
     pub(in crate::server::ws) running_ai_tasks: SharedRunningAITasks,
@@ -149,12 +154,11 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
         terminal_registry,
         scrollback_tx,
         expected_ws_token,
-        pairing_registry: Arc::new(Mutex::new(
-            crate::server::ws::pairing::new_pairing_registry(
-                &shared_state.read().await.paired_tokens,
-            ),
-        )),
+        api_key_registry: Arc::new(Mutex::new(crate::server::ws::auth_keys::new_api_key_registry(
+            &shared_state.read().await.remote_api_keys,
+        ))),
         remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
+        remote_connection_registry: Arc::new(Mutex::new(RemoteConnectionRegistry::new())),
         task_broadcast_tx,
         running_commands,
         running_ai_tasks,

@@ -6,11 +6,11 @@
 
 - 实时写入与推送通道：`WebSocket`（`/ws`）
 - 读取通道：`HTTP`（`/api/v1/*`）
-- 配对控制通道：`HTTP`（`/pair/*`）
+- 本地认证管理通道：`HTTP`（`/auth/keys`，仅 loopback）
 - 默认监听地址：`127.0.0.1:47999`（安全默认）
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
-- 配对 HTTP 编码：`JSON`
+- 本地认证管理 HTTP 编码：`JSON`
 - 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 9`
 - 协议 schema 权威源：`schema/protocol/v9/`
 
@@ -35,21 +35,23 @@
   - `protocol_version`
   - `core_version`
 
-## 远程配对（pairing_v1）
+## 远程认证（remote_api_key_auth_v1）
 
-- 能力标识：`pairing_v1`
-- 端点：
-  - `POST /pair/start`：生成 6 位配对码（仅 loopback 请求允许）
-  - `POST /pair/exchange`：移动端使用配对码换取短期 `ws_token`
-  - `POST /pair/revoke`：吊销已签发 token（仅 loopback 请求允许）
+- 能力标识：`remote_api_key_auth_v1`
+- 本地管理端点（仅 loopback 请求允许）：
+  - `GET /auth/keys`：列出全部 API key（返回完整 key 明文，供本机复制）
+  - `POST /auth/keys`：创建 API key，请求体为 `{ "name": "<显示名称>" }`
+  - `DELETE /auth/keys/:key_id`：删除指定 API key，并立即吊销对应远程连接
 - 鉴权规则：
   - 当监听地址为非 loopback（例如 `0.0.0.0`）或设置了 `TIDYFLOW_WS_TOKEN` 时，`/ws` 需携带 `token` 查询参数；
-  - `/api/v1/*` 在相同条件下也必须鉴权，支持 `Authorization: Bearer <token>`，并兼容 `?token=<token>`；
+  - `/api/v1/*` 在相同条件下也必须鉴权，支持 `Authorization: Bearer <token>`；
   - 例外：`GET /api/v1/system/snapshot` 为公开只读端点，始终免鉴权；
-  - `token` 可为启动 token，或 `/pair/exchange` 返回的配对 token；
-  - `/pair/start` 与 `/pair/revoke` 仍仅允许 loopback 请求；
-  - 配对 token 过期后不可继续用于连接；
-  - 未携带 token 的远程连接将返回 `401 Unauthorized`。
+  - `token` 可为启动 token，或 Mac 端创建的 API key；
+  - 远程 API key 请求必须携带稳定客户端身份：
+    - WebSocket：`?token=<api_key>&client_id=<client_id>&device_name=<device_name?>`
+    - HTTP：`Authorization: Bearer <api_key>`、`X-TidyFlow-Client-ID: <client_id>`、`X-TidyFlow-Device-Name: <device_name?>`
+  - 删除 API key 后，现有连接会先收到 `authentication_revoked` 错误，再被服务端关闭；
+  - API key 无过期时间；失效方式只有显式删除或服务端配置切换。
 
 ## 读取 API（`/api/v1`）
 
@@ -231,16 +233,16 @@
 | `connected` | 已建立稳定连接 |
 | `reconnecting(attempt, maxAttempts)` | 意外断线，自动重连进行中 |
 | `reconnectFailed` | 重连耗尽，需人工恢复 |
-| `pairingFailed(reason)` | 配对失败或 token 失效（iOS） |
+| `authenticationFailed(reason)` | 认证失败或 API key 已失效（iOS） |
 | `intentionallyDisconnected` | 由用户或应用主动断开，不触发自动重连 |
 
 #### 断线重连行为约束
 
 1. **自动重连入口唯一性**：`startAutoReconnect()` 是唯一合法入口，通过 `allowsAutoReconnect` 防护避免重复触发。
-   处于 `reconnecting` / `intentionallyDisconnected` / `pairingFailed` / `reconnectFailed` 阶段时一律拒绝自动重连。
+   处于 `reconnecting` / `intentionallyDisconnected` / `authenticationFailed` / `reconnectFailed` 阶段时一律拒绝自动重连。
 
 2. **旧连接状态不泄漏**：断线时服务端按 `conn_id` 清理所有 AI 会话订阅与终端订阅；
-   带 `token_id` 的远程连接（iOS）可保留终端订阅，支持同设备跨重连恢复。
+   带稳定 `subscriber_id = "<key_id>:<client_id>"` 的远程连接（iOS）可保留终端订阅，支持同一客户端实例跨重连恢复。
 
 3. **恢复作用域严格按当前工作区**：重连后恢复 AI 会话、终端 attach、文件订阅等操作，
    必须仅限当前选中的 `(project, workspace)`，后台工作区不得被错误恢复。

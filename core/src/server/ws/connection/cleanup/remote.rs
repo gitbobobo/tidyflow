@@ -11,7 +11,7 @@ pub(in crate::server::ws) async fn cleanup_remote_subscriptions(
         return;
     }
 
-    if conn_meta.token_id.is_some() {
+    if conn_meta.subscriber_id.is_some() {
         info!(
             conn_id = %conn_meta.conn_id,
             subscriber_id = %conn_meta.remote_subscriber_id(),
