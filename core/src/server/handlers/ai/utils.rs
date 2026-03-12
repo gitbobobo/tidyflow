@@ -1510,9 +1510,6 @@ fn progress_section(
 fn terminal_command_summary(input: &HashMap<String, serde_json::Value>) -> Option<String> {
     for key in ["command", "cmd", "script"] {
         if let Some(command) = value_as_string(input.get(key)) {
-            if command.chars().count() > 60 {
-                return Some(format!("{}…", command.chars().take(57).collect::<String>()));
-            }
             return Some(command);
         }
     }
@@ -1741,7 +1738,15 @@ fn normalized_tool_kind_for_wire(
     if is_web_search_tool(tool_name, tool_kind, input) {
         return Some("websearch".to_string());
     }
-    tool_kind.map(|value| value.to_string())
+    if let Some(mapped) = crate::ai::acp::tool_call::tool_kind_semantic_id(tool_kind) {
+        return Some(mapped.to_string());
+    }
+    let semantic = semantic_tool_id_for_view(tool_name, tool_kind);
+    if semantic == "unknown" {
+        tool_kind.map(|value| value.to_string())
+    } else {
+        Some(semantic)
+    }
 }
 
 fn extract_session_id_recursive(
@@ -2410,9 +2415,7 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     let display_title = tool_content_display_title(&tool_id, &input).unwrap_or_else(|| {
         title.unwrap_or_else(|| {
             if matches!(tool_id.as_str(), "read" | "edit" | "terminal" | "switch_mode") {
-                part.tool_kind
-                    .clone()
-                    .unwrap_or_else(|| tool_display_name(&tool_id))
+                tool_display_name(&tool_id)
             } else {
                 part.tool_kind
                     .clone()
@@ -2945,8 +2948,8 @@ mod tests {
 
         let tool_view = part.tool_view.expect("tool_view should exist");
         assert_eq!(part.tool_name.as_deref(), Some("executeCommand"));
-        assert_eq!(part.tool_kind.as_deref(), Some("execute"));
-        assert_eq!(tool_view.display_title, "execute");
+        assert_eq!(part.tool_kind.as_deref(), Some("terminal"));
+        assert_eq!(tool_view.display_title, "terminal");
         assert_eq!(
             tool_view.header_command_summary.as_deref(),
             Some("npm test")
@@ -3072,6 +3075,47 @@ mod tests {
         assert_eq!(tool_view.sections.len(), 1);
         assert_eq!(tool_view.sections[0].id, "generic-raw");
         assert_eq!(tool_view.sections[0].content, "stderr only");
+    }
+
+    #[test]
+    fn normalize_part_for_wire_maps_kimi_glob_to_search_card_kind() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-glob".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("Glob".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "input": {
+                    "pattern": ".tidyflow/evolution/**/*.jsonc"
+                }
+            })),
+            ..Default::default()
+        });
+
+        assert_eq!(part.tool_kind.as_deref(), Some("search"));
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.display_title, ".tidyflow/evolution/**/*.jsonc");
+    }
+
+    #[test]
+    fn normalize_part_for_wire_keeps_full_terminal_command_summary() {
+        let command = "cd /Users/godbobo/work/projects/musiver && ./musiver-dev quality-gate --workspace main --show-details";
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-long-command".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("terminal".to_string()),
+            tool_kind: Some("terminal".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "input": {
+                    "command": command
+                }
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.header_command_summary.as_deref(), Some(command));
     }
 
     #[test]

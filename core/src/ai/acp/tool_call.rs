@@ -116,27 +116,24 @@ fn infer_tool_name_from_token(token: &str) -> Option<&'static str> {
         || normalized.starts_with("executecommand")
         || normalized.starts_with("execcommand")
     {
-        return Some("bash");
+        return Some("terminal");
     }
 
-    if normalized == "grep" || normalized.starts_with("search") {
-        return Some("grep");
-    }
-
-    if matches!(normalized.as_str(), "list" | "listfiles" | "ls") || normalized.starts_with("list")
+    if matches!(
+        normalized.as_str(),
+        "grep" | "glob" | "list" | "listfiles" | "ls" | "codesearch" | "webfetch" | "fetch"
+    ) || normalized.starts_with("search")
+        || normalized.starts_with("glob")
+        || normalized.starts_with("list")
     {
-        return Some("list");
+        return Some("search");
     }
 
     None
 }
 
 fn normalize_explicit_tool_name(raw_name: &str) -> Option<String> {
-    let mapped = infer_tool_name_from_token(raw_name)?;
-    match mapped {
-        "read" | "edit" | "write" => Some(mapped.to_string()),
-        _ => None,
-    }
+    infer_tool_name_from_token(raw_name).map(|mapped| mapped.to_string())
 }
 
 fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
@@ -172,10 +169,10 @@ fn infer_tool_name_from_input(value: Option<&Value>) -> Option<&'static str> {
         return Some("read");
     }
     if has_command {
-        return Some("bash");
+        return Some("terminal");
     }
     if has_query {
-        return Some("grep");
+        return Some("search");
     }
     if has_path {
         return Some("read");
@@ -1258,7 +1255,7 @@ mod tests {
         });
         let parsed = parse_tool_call_update_content(update.as_object().expect("object"))
             .expect("should parse");
-        assert_eq!(parsed.tool_name, "executeCommand");
+        assert_eq!(parsed.tool_name, "terminal");
         assert_eq!(parsed.tool_kind.as_deref(), Some("execute"));
         assert!(parsed.structured_content.is_some());
         assert!(parsed.output_delta.is_none());
@@ -1403,7 +1400,7 @@ mod tests {
             "sessionUpdate": "tool_call_update"
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
-        assert_eq!(parsed.tool_name, "executeCommand");
+        assert_eq!(parsed.tool_name, "terminal");
         assert_eq!(
             parsed.tool_title.as_deref(),
             Some("验证 event_bus_concurrent_test")
@@ -1448,5 +1445,50 @@ mod tests {
         });
         let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
         assert_eq!(parsed.tool_name, "edit");
+    }
+
+    #[test]
+    fn test_explicit_kimi_shell_tool_name_should_normalize_to_terminal() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "Shell",
+            "toolCallId": "kimi-shell-1",
+            "rawInput": {
+                "command": "git status --short"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "terminal");
+    }
+
+    #[test]
+    fn test_explicit_kimi_execute_command_tool_name_should_normalize_to_terminal() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "executeCommand",
+            "toolCallId": "kimi-exec-1",
+            "rawInput": {
+                "command": "git log --oneline -20"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "terminal");
+    }
+
+    #[test]
+    fn test_explicit_kimi_glob_tool_name_should_normalize_to_search() {
+        let update = json!({
+            "status": "completed",
+            "toolName": "Glob",
+            "toolCallId": "kimi-glob-1",
+            "rawInput": {
+                "pattern": ".tidyflow/evolution/**/*.jsonc"
+            },
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "search");
     }
 }

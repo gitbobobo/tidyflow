@@ -923,7 +923,7 @@ fn parse_tool_call_update_content_should_extract_full_tool_fields() {
         super::tool_call::parse_tool_call_update_content(content.as_object().expect("object"))
             .expect("should parse tool_call_update");
     assert_eq!(parsed.tool_call_id.as_deref(), Some("call-1"));
-    assert_eq!(parsed.tool_name, "bash");
+    assert_eq!(parsed.tool_name, "terminal");
     assert_eq!(parsed.tool_kind.as_deref(), Some("terminal"));
     assert_eq!(parsed.tool_title.as_deref(), Some("执行测试"));
     assert_eq!(parsed.status.as_deref(), Some("running"));
@@ -979,7 +979,7 @@ fn parse_tool_call_update_event_should_parse_root_level_tool_update() {
     let parsed = AcpAgent::parse_tool_call_update_event(&update, "tool_call_update")
         .expect("should parse root level tool update");
     assert_eq!(parsed.tool_call_id.as_deref(), Some("call-root"));
-    assert_eq!(parsed.tool_name, "bash");
+    assert_eq!(parsed.tool_name, "terminal");
     assert_eq!(parsed.tool_kind.as_deref(), Some("terminal"));
     assert_eq!(parsed.status.as_deref(), Some("running"));
     assert_eq!(parsed.output_delta.as_deref(), Some("running..."));
@@ -1006,7 +1006,7 @@ fn parse_tool_call_update_event_should_parse_nested_tool_call_payload() {
     let parsed = AcpAgent::parse_tool_call_update_event(&update, "tool_call_update")
         .expect("should parse nested toolCall payload");
     assert_eq!(parsed.tool_call_id.as_deref(), Some("call-nested"));
-    assert_eq!(parsed.tool_name, "bash");
+    assert_eq!(parsed.tool_name, "terminal");
     assert_eq!(parsed.tool_kind.as_deref(), Some("terminal"));
     assert_eq!(parsed.status.as_deref(), Some("completed"));
     assert_eq!(parsed.output_delta.as_deref(), Some("done"));
