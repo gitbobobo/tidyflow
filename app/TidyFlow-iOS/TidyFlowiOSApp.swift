@@ -27,11 +27,15 @@ struct TidyFlowiOSApp: App {
     @StateObject private var appState = MobileAppState()
     @Environment(\.scenePhase) private var scenePhase
 
+    private var perfFixtureScenario: AIChatPerfFixtureScenario? {
+        AIChatPerfFixtureScenario.current()
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack(alignment: .top) {
                 NavigationStack(path: $appState.navigationPath) {
-                    ConnectionView()
+                    rootView
                         .navigationDestination(for: MobileRoute.self) { route in
                             switch route {
                             case .projects:
@@ -98,6 +102,20 @@ struct TidyFlowiOSApp: App {
                     break
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var rootView: some View {
+        if let perfFixtureScenario {
+            MobileAIChatView(
+                appState: appState,
+                aiChatStore: appState.aiChatStore,
+                project: perfFixtureScenario.project,
+                workspace: perfFixtureScenario.workspace
+            )
+        } else {
+            ConnectionView()
         }
     }
 }

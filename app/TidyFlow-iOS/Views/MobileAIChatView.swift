@@ -23,6 +23,11 @@ struct MobileAIChatView: View {
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
     @State private var projectionStore = AIChatShellProjectionStore()
+    @StateObject private var perfFixtureRunner = AIChatPerfFixtureRunner()
+
+    private var perfFixtureScenario: AIChatPerfFixtureScenario? {
+        AIChatPerfFixtureScenario.current()
+    }
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -183,34 +188,41 @@ struct MobileAIChatView: View {
                 }
             }
         }
-        .onAppear {
-            appState.openAIChat(project: project, workspace: workspace)
+            .onAppear {
+            if configurePerfFixtureModeIfNeeded() == false {
+                appState.openAIChat(project: project, workspace: workspace)
+            }
+            runPerfFixtureIfNeeded()
             consumeOneShotHintIfNeeded()
             consumeOneShotPrefillIfNeeded()
-            requestCurrentSessionStatus(force: true)
-            restartSessionStatusPollingIfNeeded()
+            if isPerfFixtureMode == false {
+                requestCurrentSessionStatus(force: true)
+                restartSessionStatusPollingIfNeeded()
+            }
             refreshShellProjection()
         }
         .onDisappear {
             referenceSearchTask?.cancel()
             sessionStatusPollingTask?.cancel()
             sessionStatusPollingTask = nil
-            appState.closeAIChat()
+            perfFixtureRunner.cancel()
+            if isPerfFixtureMode == false {
+                appState.closeAIChat()
+            }
         }
         .onChange(of: appState.aiCurrentSessionId) { _, _ in
             mainMessageListScrollSessionToken += 1
+            guard isPerfFixtureMode == false else { return }
             requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
-            refreshShellProjection()
         }
         .onChange(of: aiChatStore.isStreaming) { _, _ in
+            guard isPerfFixtureMode == false else { return }
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
-            refreshShellProjection()
         }
         .onChange(of: aiChatStore.tailRevision) { _, _ in
             observeCodexPlanProposal(aiChatStore.messages)
-            refreshShellProjection()
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             if isStreaming {
@@ -222,7 +234,7 @@ struct MobileAIChatView: View {
             sawCodexPlanProposalInCurrentTurn = false
             codexPlanProposalPartIDInCurrentTurn = nil
         }
-        .onChange(of: appState.aiSessionStatusesByTool) { _, _ in
+        .onChange(of: projectionInput.signature) { _, _ in
             refreshShellProjection()
         }
         .accessibilityIdentifier("tf.ios.ai.chat-area")
@@ -240,22 +252,33 @@ struct MobileAIChatView: View {
                 "session": projectionStore.projection.presentation.currentSessionId ?? "none"
             ]
         )
+        .overlay(alignment: .topLeading) {
+            if perfFixtureScenario != nil {
+                ZStack(alignment: .topLeading) {
+                    Text("fixture \(perfFixtureRunner.statusText)")
+                        .font(.caption2.monospaced())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityIdentifier("tf.perf.chat.status")
+                    if perfFixtureRunner.isCompleted {
+                        Text("fixture completed")
+                            .font(.caption2)
+                            .opacity(0.01)
+                            .accessibilityIdentifier("tf.perf.chat.completed")
+                    }
+                }
+                .padding(12)
+            }
+        }
     }
 
-    private func refreshShellProjection() {
-        let sessionStatus: AISessionStatusSnapshot? = {
-            guard let sessionId = appState.aiCurrentSessionId, !sessionId.isEmpty else { return nil }
-            let session = AISessionInfo(
-                projectName: appState.aiActiveProject,
-                workspaceName: appState.aiActiveWorkspace,
-                aiTool: appState.aiChatTool,
-                id: sessionId,
-                title: "",
-                updatedAt: 0
-            )
-            return appState.aiSessionStatus(for: session)
-        }()
-        projectionStore.refresh(
+    private var isPerfFixtureMode: Bool {
+        perfFixtureScenario != nil
+    }
+
+    private var projectionInput: AIChatShellProjectionInput {
+        AIChatShellProjectionInput(
             tool: appState.aiChatTool,
             currentSessionId: appState.aiCurrentSessionId,
             messages: aiChatStore.messages,
@@ -264,13 +287,32 @@ struct MobileAIChatView: View {
             historyIsLoading: aiChatStore.historyIsLoading,
             canSwitchTool: appState.canSwitchAIChatTool,
             scrollSessionToken: mainMessageListScrollSessionToken,
-            sessionStatus: sessionStatus,
+            sessionStatus: mobileCurrentSessionStatus(),
             localIsStreaming: aiChatStore.isStreaming,
             awaitingUserEcho: aiChatStore.awaitingUserEcho,
             abortPendingSessionId: aiChatStore.abortPendingSessionId,
             hasPendingFirstContent: aiChatStore.hasPendingFirstContent,
-            pendingQuestions: aiChatStore.pendingToolQuestions
+            pendingQuestions: aiChatStore.pendingToolQuestions,
+            tailRevision: aiChatStore.tailRevision,
+            pendingQuestionVersion: aiChatStore.pendingQuestionVersion
         )
+    }
+
+    private func mobileCurrentSessionStatus() -> AISessionStatusSnapshot? {
+        guard let sessionId = appState.aiCurrentSessionId, !sessionId.isEmpty else { return nil }
+        let session = AISessionInfo(
+            projectName: appState.aiActiveProject,
+            workspaceName: appState.aiActiveWorkspace,
+            aiTool: appState.aiChatTool,
+            id: sessionId,
+            title: "",
+            updatedAt: 0
+        )
+        return appState.aiSessionStatus(for: session)
+    }
+
+    private func refreshShellProjection() {
+        projectionStore.refresh(projectionInput)
     }
 
     private static func debugPrintChangesIfNeeded() {
@@ -295,6 +337,24 @@ struct MobileAIChatView: View {
             return
         }
         inputText = text
+    }
+
+    private func runPerfFixtureIfNeeded() {
+        guard let scenario = perfFixtureScenario else { return }
+        TFLog.perf.info(
+            "perf chat_perf_fixture_on_appear scenario=\(scenario.id, privacy: .public) generated_delta_flushes=\(scenario.deltaFlushes.count, privacy: .public) flush_count=\(scenario.flushCount, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public)"
+        )
+        perfFixtureRunner.run(store: aiChatStore, perfReporter: appState.perfReporter)
+    }
+
+    private func configurePerfFixtureModeIfNeeded() -> Bool {
+        guard let scenario = perfFixtureScenario else { return false }
+        appState.aiActiveProject = scenario.project
+        appState.aiActiveWorkspace = scenario.workspace
+        appState.aiCurrentSessionId = scenario.sessionId
+        sessionStatusPollingTask?.cancel()
+        sessionStatusPollingTask = nil
+        return true
     }
 
     private func loadOlderMessages() {
@@ -494,6 +554,7 @@ struct MobileAIChatView: View {
     }
 
     private func restartSessionStatusPollingIfNeeded() {
+        guard isPerfFixtureMode == false else { return }
         sessionStatusPollingTask?.cancel()
         sessionStatusPollingTask = nil
         guard appState.aiCurrentSessionId != nil else { return }

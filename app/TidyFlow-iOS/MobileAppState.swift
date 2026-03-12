@@ -2164,19 +2164,40 @@ final class MobileAppState: ObservableObject {
         }
 
         if let messages = ev.messages {
-            subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
-                sessionId: ev.sessionId,
-                messages: messages
-            )
-            subAgentViewerStore.replaceQuestionRequests(restoredQuestions)
+            let isStreaming = ev.isStreaming
+            let sessionId = ev.sessionId
+            let fromRevision = ev.fromRevision
+            let toRevision = ev.toRevision
+            // 后台构建 prepared snapshot，主线程提交
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
+                    sessionId: sessionId,
+                    messages: messages
+                )
+                let preparedSnapshot = AIChatPreparedSnapshotBuilder.build(
+                    protocolMessages: messages,
+                    pendingQuestionRequests: restoredQuestions,
+                    effectiveSelectionHint: nil,
+                    isStreaming: isStreaming,
+                    fromRevision: fromRevision,
+                    toRevision: toRevision
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.subAgentViewerStore.applyPreparedSnapshot(preparedSnapshot)
+                    self.subAgentViewerLoading = false
+                    self.subAgentViewerError = nil
+                }
+            }
         } else if let ops = ev.ops {
             subAgentViewerStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+            subAgentViewerLoading = false
+            subAgentViewerError = nil
         } else if !ev.isStreaming {
             subAgentViewerStore.applySessionCacheOps([], isStreaming: false)
+            subAgentViewerLoading = false
+            subAgentViewerError = nil
         }
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
         return true
     }
 
@@ -5050,24 +5071,43 @@ extension MobileAppState {
         if aiChatStore.isAbortPending(for: ev.sessionId) { return }
 
         if let messages = ev.messages {
+            // revision gate 在主线程同步校验（维护 sessionCacheRevisionBySessionId）
             guard aiChatStore.shouldApplySessionCacheRevision(
                 fromRevision: ev.fromRevision,
                 toRevision: ev.toRevision,
                 sessionId: ev.sessionId
             ) else { return }
-            // 共享消息流归一化入口，与 ai_session_messages 走同一链路
-            let normalized = AISessionSemantics.normalizeMessageStream(
-                sessionId: ev.sessionId,
-                messages: messages,
-                primarySelectionHint: ev.selectionHint
-            )
-            aiChatStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
-            aiChatStore.replaceQuestionRequests(normalized.pendingQuestionRequests)
-            applyAISessionSelectionHint(
-                normalized.effectiveSelectionHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
+            // 后台构建 prepared snapshot，主线程提交，与 macOS 链路对齐
+            let sessionId = ev.sessionId
+            let isStreaming = ev.isStreaming
+            let selectionHint = ev.selectionHint
+            let aiTool = ev.aiTool
+            let fromRevision = ev.fromRevision
+            let toRevision = ev.toRevision
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let normalized = AISessionSemantics.normalizeMessageStream(
+                    sessionId: sessionId,
+                    messages: messages,
+                    primarySelectionHint: selectionHint
+                )
+                let preparedSnapshot = AIChatPreparedSnapshotBuilder.build(
+                    protocolMessages: messages,
+                    pendingQuestionRequests: normalized.pendingQuestionRequests,
+                    effectiveSelectionHint: normalized.effectiveSelectionHint,
+                    isStreaming: isStreaming,
+                    fromRevision: fromRevision,
+                    toRevision: toRevision
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.aiChatStore.applyPreparedSnapshot(preparedSnapshot)
+                    self.applyAISessionSelectionHint(
+                        preparedSnapshot.effectiveSelectionHint,
+                        sessionId: sessionId,
+                        for: aiTool
+                    )
+                }
+            }
             return
         }
 
