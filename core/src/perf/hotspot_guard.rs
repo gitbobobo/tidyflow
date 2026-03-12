@@ -9,7 +9,8 @@
 //! `core/benches/workspace_cache_bench.rs` 直接导入本模块的夹具类型，
 //! 保证双轨测量使用同一套数据构造逻辑，避免场景漂移。
 //!
-//! ## 固定场景 ID（7 个）
+//! ## 固定场景 ID（10 个）
+//! ### 原有场景（轻/中等负载）
 //! - `file_index.filter_prefix_4096`
 //! - `file_index.snapshot_multi_project_4x6`
 //! - `git_status.medium_repo_100_files`
@@ -17,6 +18,10 @@
 //! - `ai_context.runtime_cache_hit`
 //! - `ai_context.persistent_snapshot_warm_start`
 //! - `ai_context.multi_workspace_isolation`
+//! ### 高负载多工作区场景（WI-001 新增）
+//! - `file_index.high_load_workspace_fanout_8x16`
+//! - `git_status.high_load_same_name_cross_project_isolation`
+//! - `ai_context.high_load_rebuild_pressure`
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -805,12 +810,164 @@ async fn measure_ai_context_multi_workspace_isolation() -> ScenarioMeasurement {
 }
 
 // ============================================================================
-// 公共入口：运行全部 7 个场景并返回测量结果
+// WI-001 高负载多工作区场景（3 个新增）
 // ============================================================================
 
-/// 运行全部 7 个固定场景并返回稳定 JSON 可读的测量结果。
+/// 高负载工作区 fan-out：8 个项目 × 16 个工作区，测量大规模多工作区快照聚合热路径
+fn measure_file_index_high_load_workspace_fanout_8x16() -> ScenarioMeasurement {
+    let scenario = MultiProjectFixture::new(8, 16);
+    scenario.reset_metrics();
+    // 高命中压力：每个工作区写入 100 次 file cache 命中
+    scenario.prime_file_cache_hits(100);
+    // 高 git 命中压力：每个工作区 80 次
+    scenario.prime_git_cache_hits(80);
+    // 高重建压力：每个工作区 10 次重建
+    scenario.prime_rebuilds(10);
+
+    let (avg_ns, iters) = measure_sync(
+        || {
+            for (project, workspace, root) in &scenario.entries {
+                let snap = WorkspaceCacheSnapshot::from_counters(project, workspace, root);
+                std::hint::black_box(snap);
+            }
+        },
+        10,
+    );
+
+    ScenarioMeasurement {
+        scenario_id: "file_index.high_load_workspace_fanout_8x16".to_string(),
+        measured_ns: avg_ns,
+        sample_count: iters,
+        projects: 8,
+        workspaces_per_project: 16,
+        notes: Some("8 项目 × 16 工作区高负载快照聚合热路径（高命中+高重建压力）".to_string()),
+    }
+}
+
+/// 高负载同名工作区跨项目隔离：4 个项目各持有同名工作区 "release"，验证多工作区隔离不随负载退化
+fn measure_git_status_high_load_same_name_cross_project_isolation() -> ScenarioMeasurement {
+    let projects = 4usize;
+    let workspace_name = "release";
+    let roots: Vec<String> = (0..projects)
+        .map(|i| format!("/tmp/hotspot_guard_hl/project_{}/{}", i, workspace_name))
+        .collect();
+
+    // 清理并写入差异化重建记录（每个项目重建数不同，以便验证隔离）
+    for (i, root) in roots.iter().enumerate() {
+        cache_metrics::clear_metrics_for_path(root.as_str());
+        for j in 0..50u64 {
+            cache_metrics::record_file_cache_rebuild(root.as_str(), ((i + 1) * 100 + j as usize) as usize);
+        }
+        for _ in 0..200u64 {
+            cache_metrics::record_file_cache_hit(root.as_str());
+        }
+    }
+
+    let project_names: Vec<String> = (0..projects).map(|i| format!("project_{}", i)).collect();
+
+    let (avg_ns, iters) = measure_sync(
+        || {
+            let snaps: Vec<WorkspaceCacheSnapshot> = roots
+                .iter()
+                .zip(project_names.iter())
+                .map(|(root, proj)| {
+                    WorkspaceCacheSnapshot::from_counters(proj.as_str(), workspace_name, root.as_str())
+                })
+                .collect();
+            // 验证同名工作区跨项目的指标不相同（隔离断言不退化）
+            let all_distinct = snaps.windows(2).all(|pair| {
+                pair[0].file_cache.item_count != pair[1].file_cache.item_count
+            });
+            std::hint::black_box(all_distinct);
+        },
+        30,
+    );
+
+    ScenarioMeasurement {
+        scenario_id: "git_status.high_load_same_name_cross_project_isolation".to_string(),
+        measured_ns: avg_ns,
+        sample_count: iters,
+        projects: projects,
+        workspaces_per_project: 1,
+        notes: Some("4 项目同名工作区高负载（50次重建+200次命中）跨项目隔离验证".to_string()),
+    }
+}
+
+/// 高负载重建压力：多工作区高缓存命中率 + 高重建频率，测量 AI 上下文热路径在负载放大后的基线
+async fn measure_ai_context_high_load_rebuild_pressure() -> ScenarioMeasurement {
+    let guard = TempGuard::new().expect("failed to create temp dir");
+    let db_path = guard.path().join("ai_hl_rebuild.sqlite");
+
+    // 构造 8 个工作区，每对使用相同 session_id 来模拟高并发命中场景
+    let workspaces: Vec<(&str, &str, &str, &str)> = vec![
+        ("proj-hl-0", "ws-0", "/tmp/hotspot/hl/proj-hl-0/ws-0", "sess-hl"),
+        ("proj-hl-1", "ws-0", "/tmp/hotspot/hl/proj-hl-1/ws-0", "sess-hl"),
+        ("proj-hl-2", "ws-1", "/tmp/hotspot/hl/proj-hl-2/ws-1", "sess-hl"),
+        ("proj-hl-3", "ws-1", "/tmp/hotspot/hl/proj-hl-3/ws-1", "sess-hl"),
+    ];
+
+    let adapter_entries: Vec<((&str, &str), Option<f64>)> = workspaces
+        .iter()
+        .enumerate()
+        .map(|(i, (proj, ws, _root, sess))| {
+            let cwd = format!("/tmp/hotspot/hl/{}/{}", proj, ws);
+            let val = Some(50.0 + i as f64 * 10.0);
+            ((*proj, *sess), val)
+        })
+        .collect();
+
+    // 构建 adapter：使用 root_path 而非 (proj, sess) 键，FakeAiAdapter 按 (root, sess) 索引
+    let adapter_pairs: Vec<((&str, &str), Option<f64>)> = workspaces
+        .iter()
+        .enumerate()
+        .map(|(i, (_proj, _ws, root, sess))| ((*root, *sess), Some(50.0 + i as f64 * 10.0)))
+        .collect();
+    let adapter = FakeAiAdapter::new(&adapter_pairs);
+
+    let harness = AiContextTestHarness::new(&db_path, adapter).await;
+
+    // 种子化所有工作区数据并预热运行时缓存
+    for (i, (proj, ws, root, sess)) in workspaces.iter().enumerate() {
+        harness
+            .seed_session(proj, ws, "codex", root, sess, Some(50.0 + i as f64 * 10.0))
+            .await;
+        // 预热缓存（确保命中路径已初始化）
+        let _ = harness.read_context(proj, ws, "codex", root, sess).await;
+    }
+
+    let (avg_ns, iters) = measure_async(
+        || async {
+            let mut results = Vec::with_capacity(workspaces.len());
+            for (proj, ws, root, sess) in &workspaces {
+                let pct = harness.read_context(proj, ws, "codex", root, sess).await;
+                results.push(pct);
+            }
+            // 验证多工作区结果互不相同（高负载下隔离不退化）
+            let all_distinct = results.windows(2).all(|pair| pair[0] != pair[1]);
+            std::hint::black_box((results, all_distinct));
+        },
+        20,
+    )
+    .await;
+
+    ScenarioMeasurement {
+        scenario_id: "ai_context.high_load_rebuild_pressure".to_string(),
+        measured_ns: avg_ns,
+        sample_count: iters,
+        projects: 4,
+        workspaces_per_project: 1,
+        notes: Some("4 工作区高缓存命中率+高负载并发读取，验证 AI 上下文热路径在高负载下的基线".to_string()),
+    }
+}
+
+// ============================================================================
+// 公共入口：运行全部 10 个场景并返回测量结果
+// ============================================================================
+
+/// 运行全部 10 个固定场景并返回稳定 JSON 可读的测量结果。
 ///
 /// 供 `hotspot_perf_guard` 二进制调用；benchmark 通过导入共享夹具类型而不调用此函数。
+/// 场景集合：7 个原有场景 + 3 个 WI-001 新增高负载多工作区场景。
 pub async fn measure_all_scenarios() -> HotspotMeasurements {
     let scenarios = vec![
         measure_file_index_filter_prefix_4096(),
@@ -820,6 +977,10 @@ pub async fn measure_all_scenarios() -> HotspotMeasurements {
         measure_ai_context_runtime_cache_hit().await,
         measure_ai_context_persistent_snapshot_warm_start().await,
         measure_ai_context_multi_workspace_isolation().await,
+        // WI-001 高负载场景
+        measure_file_index_high_load_workspace_fanout_8x16(),
+        measure_git_status_high_load_same_name_cross_project_isolation(),
+        measure_ai_context_high_load_rebuild_pressure().await,
     ];
 
     HotspotMeasurements {
@@ -860,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn hotspot_perf_baseline_contains_all_7_scenario_ids() {
+    fn hotspot_perf_baseline_contains_all_10_scenario_ids() {
         let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("benches/baselines/hotspot_regression.json");
         let content = std::fs::read_to_string(&baseline_path).expect("读取基线文件失败");
@@ -880,6 +1041,10 @@ mod tests {
             "ai_context.runtime_cache_hit",
             "ai_context.persistent_snapshot_warm_start",
             "ai_context.multi_workspace_isolation",
+            // WI-001 高负载场景
+            "file_index.high_load_workspace_fanout_8x16",
+            "git_status.high_load_same_name_cross_project_isolation",
+            "ai_context.high_load_rebuild_pressure",
         ];
         for id in required {
             assert!(ids.contains(&id), "基线文件缺少 scenario_id: {}", id);

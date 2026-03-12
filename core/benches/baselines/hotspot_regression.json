@@ -85,6 +85,42 @@
       "warn_ratio_limit": 2.0,
       "fail_ratio_limit": 10.0,
       "absolute_budget_ns": 2000000
+    },
+    {
+      "scenario_id": "file_index.high_load_workspace_fanout_8x16",
+      "path_kind": "file_index",
+      "workload_kind": "high_load_multi_workspace",
+      "projects": 8,
+      "workspaces_per_project": 16,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 5000000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 100000000
+    },
+    {
+      "scenario_id": "git_status.high_load_same_name_cross_project_isolation",
+      "path_kind": "git_status",
+      "workload_kind": "high_load_multi_workspace",
+      "projects": 4,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 500000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 10000000
+    },
+    {
+      "scenario_id": "ai_context.high_load_rebuild_pressure",
+      "path_kind": "ai_context",
+      "workload_kind": "high_load_multi_workspace",
+      "projects": 4,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 200000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 5000000
     }
   ]
 }
