@@ -686,6 +686,11 @@ mod tests {
             running_ai_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             task_history: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             ai_state: Arc::new(tokio::sync::Mutex::new(AIState::new())),
+            state_store: Arc::new(
+                crate::workspace::state_store::StateStore::open_in_memory_for_test()
+                    .await
+                    .expect("test state store"),
+            ),
         }
     }
 

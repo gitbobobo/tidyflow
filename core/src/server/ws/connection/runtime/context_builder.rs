@@ -4,6 +4,8 @@ use crate::server::context::{
 };
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::workspace::state_store::StateStore;
+use std::sync::Arc;
 
 use super::types::{RuntimeChannels, RuntimeSharedState};
 
@@ -21,6 +23,7 @@ pub(in crate::server::ws) fn build_handler_context(
     ai_state: crate::server::handlers::ai::SharedAIState,
     shared_state: &RuntimeSharedState,
     channels: &RuntimeChannels,
+    state_store: Arc<StateStore>,
 ) -> HandlerContext {
     HandlerContext {
         app_state: app_state.clone(),
@@ -37,5 +40,6 @@ pub(in crate::server::ws) fn build_handler_context(
         conn_meta: conn_meta.clone(),
         remote_sub_registry: remote_sub_registry.clone(),
         ai_state,
+        state_store,
     }
 }

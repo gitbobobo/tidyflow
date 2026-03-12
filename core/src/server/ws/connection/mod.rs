@@ -8,6 +8,8 @@ use crate::server::context::{
 };
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::workspace::state_store::StateStore;
+use std::sync::Arc;
 
 mod cleanup;
 mod events;
@@ -28,6 +30,7 @@ async fn initialize_runtime(
     running_ai_tasks: SharedRunningAITasks,
     task_history: SharedTaskHistory,
     ai_state: crate::server::handlers::ai::SharedAIState,
+    state_store: Arc<StateStore>,
 ) -> runtime::SocketRuntime {
     runtime::build_socket_runtime(
         app_state,
@@ -41,6 +44,7 @@ async fn initialize_runtime(
         running_ai_tasks,
         task_history,
         ai_state,
+        state_store,
     )
     .await
 }
@@ -140,6 +144,7 @@ pub(super) async fn handle_socket(
     running_ai_tasks: SharedRunningAITasks,
     task_history: SharedTaskHistory,
     ai_state: crate::server::handlers::ai::SharedAIState,
+    state_store: Arc<StateStore>,
 ) {
     info!(
         "New WebSocket connection established (conn_id={}, remote={})",
@@ -157,6 +162,7 @@ pub(super) async fn handle_socket(
         running_ai_tasks,
         task_history,
         ai_state,
+        state_store,
     )
     .await;
 

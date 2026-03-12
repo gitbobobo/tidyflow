@@ -191,5 +191,6 @@ pub(in crate::server::ws) fn build_http_handler_context(
         },
         remote_sub_registry: ctx.remote_sub_registry.clone(),
         ai_state: ctx.ai_state.clone(),
+        state_store: ctx.state_store.clone(),
     }
 }

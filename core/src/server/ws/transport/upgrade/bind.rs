@@ -24,6 +24,7 @@ pub(in crate::server::ws) fn bind_upgrade(
                 ctx.running_ai_tasks,
                 ctx.task_history,
                 ctx.ai_state,
+                ctx.state_store,
             )
         })
         .into_response()

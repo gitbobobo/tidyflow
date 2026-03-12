@@ -4,6 +4,8 @@ use crate::server::context::{
 };
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::workspace::state_store::StateStore;
+use std::sync::Arc;
 
 mod channels;
 mod context_builder;
@@ -25,6 +27,7 @@ pub(in crate::server::ws) async fn build_socket_runtime(
     running_ai_tasks: SharedRunningAITasks,
     task_history: SharedTaskHistory,
     ai_state: crate::server::handlers::ai::SharedAIState,
+    state_store: Arc<StateStore>,
 ) -> SocketRuntime {
     let channels = channels::build_runtime_channels();
     let shared_state = shared::build_runtime_shared_state(channels.tx_watch.clone());
@@ -43,6 +46,7 @@ pub(in crate::server::ws) async fn build_socket_runtime(
         ai_state,
         &shared_state,
         &channels,
+        state_store,
     );
     let remote_term_rx = remote_term::build_remote_term_rx(conn_meta, &remote_sub_registry).await;
 

@@ -1,7 +1,8 @@
 //! 热点性能守卫入口
 //!
-//! 运行三类热点路径（文件索引、Git 状态、AI 上下文）的全部 7 个固定场景，
+//! 运行三类热点路径（文件索引、Git 状态、AI 上下文）的全部 10 个固定场景，
 //! 输出稳定的机器可读 JSON 测量结果，供比较器脚本消费。
+//! 场景集合：7 个原有轻/中等负载场景 + 3 个 WI-001 新增高负载多工作区场景。
 //!
 //! ## 用法
 //! ```bash
@@ -13,7 +14,7 @@
 //! - `schema_version`：当前为 "1"
 //! - `suite_id`："hotspot_perf_guard"
 //! - `generated_at`：ISO 8601 时间戳
-//! - `scenarios[]`：7 个场景的测量结果
+//! - `scenarios[]`：10 个场景的测量结果
 
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ use tidyflow_core::perf::hotspot_guard::measure_all_scenarios;
 async fn main() -> anyhow::Result<()> {
     let output_path = parse_output_arg();
 
-    eprintln!("[hotspot_perf_guard] 开始运行 7 个热点场景...");
+    eprintln!("[hotspot_perf_guard] 开始运行 10 个热点场景...");
     let measurements = measure_all_scenarios().await;
 
     let json = serde_json::to_string_pretty(&measurements)?;
