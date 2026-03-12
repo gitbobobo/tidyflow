@@ -17,6 +17,7 @@ use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::server::context::SharedAppState;
+use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::server::protocol::health::{
     HealthContext, HealthIncident, IncidentRecoverability, IncidentSeverity, IncidentSource,
     RepairActionKind, RepairActionRequest, RepairAuditEntry, RepairOutcome, SystemHealthSnapshot,
@@ -305,7 +306,10 @@ fn compute_overall_status(incidents: &[HealthIncident]) -> SystemHealthStatus {
 // ============================================================================
 
 /// 注册内置探针（在 Core 启动时调用一次）
-pub fn register_builtin_probes(app_state: SharedAppState) {
+pub fn register_builtin_probes(
+    app_state: SharedAppState,
+    terminal_registry: SharedTerminalRegistry,
+) {
     let registry = global();
     let mut reg = match registry.try_write() {
         Ok(r) => r,
@@ -331,6 +335,13 @@ pub fn register_builtin_probes(app_state: SharedAppState) {
 
     // 终端注册表资源压力探针
     reg.register_probe("core.terminal_budget", Box::new(probe_terminal_budget));
+
+    // 终端恢复状态探针（检查持有 Recovering 或 RecoveryFailed 状态的终端）
+    let term_reg_clone = terminal_registry;
+    reg.register_probe(
+        "core.terminal_recovery",
+        Box::new(move || probe_terminal_recovery(&term_reg_clone)),
+    );
 }
 
 /// 终端注册表预算压力探针：当全局 scrollback 使用率 > 80% 时发出 Warning
@@ -441,6 +452,60 @@ fn probe_workspace_recovery(app_state: &SharedAppState) -> Vec<HealthIncident> {
                 context: HealthContext::for_workspace(&project.name, &ws.name),
             });
         }
+    }
+    incidents
+}
+
+/// 终端恢复状态探针：检查注册表中持有 Recovering 或 RecoveryFailed 状态的终端
+///
+/// 每个 incident 携带对应 `(project, workspace)` 上下文，按工作区边界隔离。
+fn probe_terminal_recovery(terminal_registry: &SharedTerminalRegistry) -> Vec<HealthIncident> {
+    let reg = match terminal_registry.try_lock() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let now = unix_ms();
+    let mut incidents = Vec::new();
+
+    for entry in reg.collect_recovery_metas() {
+        let (severity, root_cause, summary): (IncidentSeverity, &str, String) =
+            match entry.recovery_state.as_str() {
+                "recovering" => (
+                    IncidentSeverity::Warning,
+                    "terminal_recovery_in_progress",
+                    format!(
+                        "终端 {} ({}/{}) 正在恢复中，请等待完成",
+                        entry.term_id, entry.project, entry.workspace
+                    ),
+                ),
+                "failed" => (
+                    IncidentSeverity::Critical,
+                    "terminal_recovery_failed",
+                    format!(
+                        "终端 {} ({}/{}) 恢复失败：{}",
+                        entry.term_id,
+                        entry.project,
+                        entry.workspace,
+                        entry.failed_reason.as_deref().unwrap_or("unknown"),
+                    ),
+                ),
+                _ => continue,
+            };
+        let incident_id = format!(
+            "terminal_recovery:{}:{}:{}",
+            entry.project, entry.workspace, entry.term_id
+        );
+        incidents.push(HealthIncident {
+            incident_id,
+            severity,
+            recoverability: IncidentRecoverability::Recoverable,
+            source: IncidentSource::CoreLog,
+            root_cause: root_cause.to_string(),
+            summary: Some(summary),
+            first_seen_at: now,
+            last_seen_at: now,
+            context: HealthContext::for_workspace(&entry.project, &entry.workspace),
+        });
     }
     incidents
 }

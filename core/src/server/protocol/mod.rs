@@ -2114,7 +2114,7 @@ pub struct TerminalInfo {
     pub workspace: String,
     pub cwd: String,
     pub status: String, // "running" or "exited"
-    /// 客户端连接层生命周期相位："entering"/"active"/"resuming"/"idle"
+    /// 客户端连接层生命周期相位："entering"/"active"/"resuming"/"idle"/"recovering"/"recovery_failed"
     #[serde(default = "default_lifecycle_phase")]
     pub lifecycle_phase: String,
     #[serde(default)]
@@ -2123,6 +2123,13 @@ pub struct TerminalInfo {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Core 重启恢复相位（仅当 lifecycle_phase 为 recovering/recovery_failed 时非 None）
+    /// 客户端应以此字段作为恢复状态权威来源，不得自行推导
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_phase: Option<String>,
+    /// 恢复失败原因（仅 recovery_phase=recovery_failed 时有值）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_failed_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remote_subscribers: Vec<RemoteSubscriberDetail>,
 }
