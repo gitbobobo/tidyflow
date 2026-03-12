@@ -44,6 +44,7 @@ bytes = "1"
 async-trait = "0.1.89"
 gix = "0.80"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
+anyhow = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
@@ -51,6 +52,10 @@ futures-util = "0.3"
 tempfile = "3"
 rmp-serde = "1.1"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "hotspot_perf_guard"
+path = "src/bin/hotspot_perf_guard.rs"
 
 [[bench]]
 name = "workspace_cache_bench"

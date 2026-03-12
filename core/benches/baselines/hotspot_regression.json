@@ -1,0 +1,90 @@
+{
+  "schema_version": "1",
+  "suite_id": "hotspot_perf_guard",
+  "scenarios": [
+    {
+      "scenario_id": "file_index.filter_prefix_4096",
+      "path_kind": "file_index",
+      "workload_kind": "hot",
+      "projects": 1,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 500000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 5000000
+    },
+    {
+      "scenario_id": "file_index.snapshot_multi_project_4x6",
+      "path_kind": "file_index",
+      "workload_kind": "multi_workspace",
+      "projects": 4,
+      "workspaces_per_project": 6,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 1000000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 20000000
+    },
+    {
+      "scenario_id": "git_status.medium_repo_100_files",
+      "path_kind": "git_status",
+      "workload_kind": "cold",
+      "projects": 1,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 500000000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 5.0,
+      "absolute_budget_ns": 5000000000
+    },
+    {
+      "scenario_id": "git_status.same_workspace_name_isolation",
+      "path_kind": "git_status",
+      "workload_kind": "hot",
+      "projects": 2,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 100000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 2000000
+    },
+    {
+      "scenario_id": "ai_context.runtime_cache_hit",
+      "path_kind": "ai_context",
+      "workload_kind": "hot",
+      "projects": 1,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 50000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 1000000
+    },
+    {
+      "scenario_id": "ai_context.persistent_snapshot_warm_start",
+      "path_kind": "ai_context",
+      "workload_kind": "warm",
+      "projects": 1,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 100000000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 5.0,
+      "absolute_budget_ns": 2000000000
+    },
+    {
+      "scenario_id": "ai_context.multi_workspace_isolation",
+      "path_kind": "ai_context",
+      "workload_kind": "multi_workspace",
+      "projects": 2,
+      "workspaces_per_project": 1,
+      "metric_key": "avg_ns_per_iter",
+      "baseline_ns": 100000,
+      "warn_ratio_limit": 2.0,
+      "fail_ratio_limit": 10.0,
+      "absolute_budget_ns": 2000000
+    }
+  ]
+}
