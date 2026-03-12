@@ -2361,7 +2361,10 @@ final class MobileAppState: ObservableObject {
         aiChatTool = newTool
 
         if !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty {
-            restoreAISnapshot(project: aiActiveProject, workspace: aiActiveWorkspace)
+            aiCurrentSessionId = nil
+            aiChatStore.setCurrentSessionId(nil)
+            aiChatStore.clearMessages()
+            aiSessions = []
             aiProviders = []
             aiSelectedModel = nil
             aiAgents = []
@@ -2369,8 +2372,7 @@ final class MobileAppState: ObservableObject {
             aiSessionConfigOptions = aiSessionConfigOptionsByTool[newTool] ?? []
             aiSelectedModelVariant = aiSelectedModelVariantByTool[newTool] ?? nil
             refreshCurrentAISlashCommands(for: newTool)
-            requestAIContextResources(refreshSessionList: false)
-            reloadCurrentAISessionIfNeeded()
+            requestAIContextResources(refreshSessionList: true)
         }
 
         // 切换完成后标记就绪

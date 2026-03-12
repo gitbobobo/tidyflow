@@ -802,6 +802,9 @@ struct AITabView: View {
     }
 
     /// 切换工具时同步快照边界，避免其他工作区残留在隐藏工具 store 中的流式状态泄漏。
+    /// 手动切换工具默认进入空会话，不自动恢复该工具最近一次对话；
+    /// 但若切换前已显式指定目标会话（例如从 evolution 卡片跨工具打开会话），
+    /// 则保留已预置的会话上下文，避免首击被旧快照覆盖。
     private func syncToolSnapshotContext(oldTool: AIChatTool, newTool: AIChatTool) {
         guard let workspace = appState.selectedWorkspaceKey, !workspace.isEmpty else {
             appState.aiStore(for: newTool).clearAll()
@@ -815,11 +818,15 @@ struct AITabView: View {
             workspaceName: workspace,
             tool: oldTool
         )
-        restoreSnapshot(
-            projectName: project,
-            workspaceName: workspace,
-            tool: newTool
-        )
+        let targetStore = appState.aiStore(for: newTool)
+        let hasPrimedSession = {
+            guard let sessionId = targetStore.currentSessionId else { return false }
+            return !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }()
+        if !hasPrimedSession {
+            targetStore.clearAll()
+            appState.setAISessions([], for: newTool)
+        }
         previousSnapshotKey = snapshotKey(
             projectName: project,
             workspaceName: workspace,
