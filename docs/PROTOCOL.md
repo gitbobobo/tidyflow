@@ -184,6 +184,56 @@
 持久化层（SQLite `workspaces` 表）以 `(project_name, name)` 为主键存储恢复元数据，
 崩溃重启后不会将一个工作区的残留状态恢复到另一个工作区。
 
+### WS 断线重连契约（v1.46）
+
+本节描述客户端在 WebSocket 意外断线后的恢复行为约定，macOS 与 iOS 必须严格遵守。
+
+#### 客户端连接阶段（ConnectionPhase）
+
+| 阶段 | 含义 |
+|------|------|
+| `connecting` | 主动建连中，握手未完成 |
+| `connected` | 已建立稳定连接 |
+| `reconnecting(attempt, maxAttempts)` | 意外断线，自动重连进行中 |
+| `reconnectFailed` | 重连耗尽，需人工恢复 |
+| `pairingFailed(reason)` | 配对失败或 token 失效（iOS） |
+| `intentionallyDisconnected` | 由用户或应用主动断开，不触发自动重连 |
+
+#### 断线重连行为约束
+
+1. **自动重连入口唯一性**：`startAutoReconnect()` 是唯一合法入口，通过 `allowsAutoReconnect` 防护避免重复触发。
+   处于 `reconnecting` / `intentionallyDisconnected` / `pairingFailed` / `reconnectFailed` 阶段时一律拒绝自动重连。
+
+2. **旧连接状态不泄漏**：断线时服务端按 `conn_id` 清理所有 AI 会话订阅与终端订阅；
+   带 `token_id` 的远程连接（iOS）可保留终端订阅，支持同设备跨重连恢复。
+
+3. **恢复作用域严格按当前工作区**：重连后恢复 AI 会话、终端 attach、文件订阅等操作，
+   必须仅限当前选中的 `(project, workspace)`，后台工作区不得被错误恢复。
+   - AI 会话：仅恢复 `selectedWorkspaceKey` 对应工作区的会话。
+   - 终端 attach：仅恢复当前工作区的 stale terminal tabs（`requestTerminalReattach`）。
+
+4. **ack 驱动恢复完成**：AI 会话处于 `resuming` 阶段时，收到 `ai_session_subscribe_ack`
+   后方可迁移到 `active`；迟到 ack（`forceReset` 或工作区切换后到达）必须被忽略。
+
+5. **工作区切换清理**：切换工作区时必须先执行 `forceResetAIChatStage()` 和
+   `terminalSessionStore.forceResetAllLifecycles()`，确保旧工作区的 ack、工具事件、流式事件全部被拒绝。
+
+#### AI 会话恢复阶段状态机
+
+```
+idle → entering → active ⇄ resuming
+               ↘ (forceReset 或工作区切换) → idle
+```
+
+| 迁移事件 | 触发条件 | 结果阶段 |
+|----------|----------|----------|
+| `enter` | 初次进入工作区 | `entering` |
+| `ready` | 收到 `ai_session_subscribe_ack`（entering 阶段） | `active` |
+| `resume` | 断线重连后发起恢复 | `resuming` |
+| `resumeCompleted` | 收到 `ai_session_subscribe_ack`（resuming 阶段） | `active` |
+| `forceReset` | 断线、工作区切换、项目删除 | `idle` |
+| `close` | 正常退出工作区 | `idle` |
+
 ### 多项目/多工作区消费约束
 
 - 客户端**必须**通过 `(project, workspace)` 二元组唯一标识一个工作区，

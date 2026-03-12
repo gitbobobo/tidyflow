@@ -245,8 +245,19 @@ pub struct Project {
 /// 工作区崩溃恢复元数据
 ///
 /// 记录工作区中断时的运行态、恢复游标与失败上下文。
-/// 按 `(project_name, workspace_name)` 复合键持久化，崩溃重启后仅恢复到所属工作区，
-/// 不会将一个工作区的残留状态施加到另一个工作区。
+/// 工作区恢复元数据（崩溃/中断后的状态记录）。
+///
+/// ## 复合键隔离约束
+///
+/// 必须按 `(project_name, workspace_name)` 复合键持久化与读取
+/// （见 `state_store.rs` 中 `workspaces` 表的 `PRIMARY KEY (project_name, name)` 约束）。
+/// 同名工作区在不同项目中的恢复状态严格隔离，不得跨项目读取或推导。
+///
+/// ## 客户端使用规范
+///
+/// - `system_snapshot` 中 `recovery_state` 字段缺失（`None`）时，客户端应回退为正常态，
+///   视作无需恢复，不得猜测或继承其他工作区的恢复状态。
+/// - 客户端只消费此字段，不在本地重建或推导恢复逻辑；Core 是恢复行为的权威源。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceRecoveryMeta {
     /// 恢复状态：`none` | `interrupted` | `recovering` | `recovered`

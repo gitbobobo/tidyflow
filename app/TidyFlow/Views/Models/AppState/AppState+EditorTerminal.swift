@@ -410,23 +410,30 @@ extension AppState {
         terminalState = .idle
     }
 
+    /// 重连后附着当前工作区的 stale 终端会话。
+    ///
+    /// 严格按当前选中的 `(project, workspace)` 作用域执行，后台工作区的终端不会被错误恢复。
+    /// 这是断线重连后终端恢复的唯一入口；不得在其他路径直接 requestTermAttach。
     func requestTerminalReattach() {
         guard !staleTerminalTabs.isEmpty else { return }
+        // 仅恢复当前选中工作区的终端，防止后台工作区被错误恢复
+        guard let currentWorkspace = selectedWorkspaceKey, !currentWorkspace.isEmpty else { return }
+        let currentKey = "\(selectedProjectName):\(currentWorkspace)"
+        guard let tabs = workspaceTabs[currentKey] else { return }
 
-        for (_, tabs) in workspaceTabs {
-            for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
-                if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
-                    TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
-                    // 驱动共享终端生命周期到 resuming（断连后重连）
-                    if let project = terminalSessionStore.displayInfo(for: sessionId)?.project,
-                       let workspace = terminalSessionStore.displayInfo(for: sessionId)?.workspace {
-                        terminalSessionStore.beginAttach(project: project, workspace: workspace, termId: sessionId)
-                    }
-                    // 通过共享终端存储记录重连 attach 请求时间
-                    terminalSessionStore.recordAttachRequest(termId: sessionId)
-                    wsClient.requestTermAttach(termId: sessionId)
-                }
+        for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
+            guard let sessionId = tab.terminalSessionId, !sessionId.isEmpty else { continue }
+            TFLog.app.info(
+                "终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public), workspace=\(currentKey, privacy: .public)"
+            )
+            // 驱动共享终端生命周期到 resuming（断连后重连）
+            if let project = terminalSessionStore.displayInfo(for: sessionId)?.project,
+               let workspace = terminalSessionStore.displayInfo(for: sessionId)?.workspace {
+                terminalSessionStore.beginAttach(project: project, workspace: workspace, termId: sessionId)
             }
+            // 通过共享终端存储记录重连 attach 请求时间
+            terminalSessionStore.recordAttachRequest(termId: sessionId)
+            wsClient.requestTermAttach(termId: sessionId)
         }
     }
 

@@ -10,8 +10,17 @@ use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 mod remote;
 mod terminal;
 
-/// 连接关闭时的统一清理入口：按 conn_id 语义回收 AI、终端和远程订阅。
-/// 确保旧连接不会在新连接建立后继续收到推送或残留脏状态。
+/// 连接关闭时的统一清理入口（单一编排驱动）。
+///
+/// 职责：
+/// - 按 `conn_id` 回收 AI 会话订阅（不跨连接串用）
+/// - 按 `conn_id` 回收终端订阅（stale 状态终端归属当前连接）
+/// - 远程（iOS/移动端）连接携带 `token_id` 时保留终端订阅，支持同一设备跨重连恢复
+///
+/// 约束：
+/// - 本函数是 WebSocket 断开时的唯一合法清理路径，`handle_socket` 在 loop 结束后必须调用。
+/// - 不得在各 action handler 中直接清理订阅状态；所有清理必须通过此入口。
+/// - 恢复订阅与上下文的责任在客户端，服务端仅保证旧连接状态不泄漏到新连接。
 pub(in crate::server::ws) async fn cleanup_on_disconnect(
     subscribed_terms: &Arc<tokio::sync::Mutex<HashMap<String, TermSubscription>>>,
     conn_meta: &ConnectionMeta,
