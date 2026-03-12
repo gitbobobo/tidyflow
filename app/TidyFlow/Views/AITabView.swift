@@ -98,19 +98,16 @@ struct AITabView: View {
             resetAIContext()
             consumeOneShotHintIfNeeded()
             consumeOneShotPrefillIfNeeded()
-            refreshShellProjection()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             isCompactSidebarDrawerPresented = false
             resetAIContext()
             consumeOneShotHintIfNeeded()
             consumeOneShotPrefillIfNeeded()
-            refreshShellProjection()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             mainMessageListScrollSessionToken += 1
             requestCurrentSessionStatus(force: true)
-            refreshShellProjection()
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -155,7 +152,6 @@ struct AITabView: View {
             } else {
                 reloadCurrentSessionIfNeeded(for: newTool)
             }
-            refreshShellProjection()
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
             // user echo 到达时不再需要清空输入——已在发送时立即清空。
@@ -165,7 +161,6 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             requestCurrentSessionStatus()
-            refreshShellProjection()
             if isStreaming {
                 sawCodexPlanProposalInCurrentTurn = false
                 codexPlanProposalPartIDInCurrentTurn = nil
@@ -177,17 +172,13 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
             requestCurrentSessionStatus()
-            refreshShellProjection()
         }
         .onChange(of: appState.sessionPanelAction) { _, action in
             guard let action else { return }
             handleSessionPanelAction(action)
             appState.sessionPanelAction = nil
         }
-        .onChange(of: aiChatStore.tailRevision) { _, _ in
-            refreshShellProjection()
-        }
-        .onChange(of: appState.aiSessionStatusesByTool) { _, _ in
+        .onChange(of: projectionInput.signature) { _, _ in
             refreshShellProjection()
         }
         .onReceive(appState.$aiProviders) { _ in
@@ -540,21 +531,9 @@ struct AITabView: View {
         )
     }
 
-    private func refreshShellProjection() {
-        let sessionStatus: AISessionStatusSnapshot? = {
-            guard let sessionId = aiChatStore.currentSessionId,
-                  let workspace = appState.selectedWorkspaceKey else { return nil }
-            let session = AISessionInfo(
-                projectName: appState.selectedProjectName,
-                workspaceName: workspace,
-                aiTool: appState.aiChatTool,
-                id: sessionId,
-                title: "",
-                updatedAt: 0
-            )
-            return appState.aiSessionStatus(for: session)
-        }()
-        projectionStore.refresh(
+    /// 当前视图层的壳投影输入，用于单签名失效检测。
+    private var projectionInput: AIChatShellProjectionInput {
+        AIChatShellProjectionInput(
             tool: appState.aiChatTool,
             currentSessionId: aiChatStore.currentSessionId,
             messages: aiChatStore.messages,
@@ -563,13 +542,33 @@ struct AITabView: View {
             historyIsLoading: aiChatStore.historyIsLoading,
             canSwitchTool: canSwitchAITool,
             scrollSessionToken: mainMessageListScrollSessionToken,
-            sessionStatus: sessionStatus,
+            sessionStatus: currentSessionStatusForProjection(),
             localIsStreaming: aiChatStore.isStreaming,
             awaitingUserEcho: aiChatStore.awaitingUserEcho,
             abortPendingSessionId: aiChatStore.abortPendingSessionId,
             hasPendingFirstContent: aiChatStore.hasPendingFirstContent,
-            pendingQuestions: aiChatStore.pendingToolQuestions
+            pendingQuestions: aiChatStore.pendingToolQuestions,
+            tailRevision: aiChatStore.tailRevision,
+            pendingQuestionVersion: aiChatStore.pendingQuestionVersion
         )
+    }
+
+    private func currentSessionStatusForProjection() -> AISessionStatusSnapshot? {
+        guard let sessionId = aiChatStore.currentSessionId,
+              let workspace = appState.selectedWorkspaceKey else { return nil }
+        let session = AISessionInfo(
+            projectName: appState.selectedProjectName,
+            workspaceName: workspace,
+            aiTool: appState.aiChatTool,
+            id: sessionId,
+            title: "",
+            updatedAt: 0
+        )
+        return appState.aiSessionStatus(for: session)
+    }
+
+    private func refreshShellProjection() {
+        projectionStore.refresh(projectionInput)
     }
 
     private static func debugPrintChangesIfNeeded() {

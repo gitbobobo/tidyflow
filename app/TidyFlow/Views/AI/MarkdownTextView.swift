@@ -1,6 +1,29 @@
 import SwiftUI
 import Textual
 
+/// Markdown 最终态字符串缓存；避免同一 part 在壳投影刷新后重复走字符串规范化路径。
+/// key=(partId, renderRevision, baseFontSize_x10, roleInt)，缓存上限 128 条。
+private final class MarkdownFinalStateCache {
+    static let shared = MarkdownFinalStateCache()
+    private let cache = NSCache<NSString, NSString>()
+
+    private init() {
+        cache.countLimit = 128
+    }
+
+    func cacheKey(partId: String, renderRevision: UInt64, baseFontSize: CGFloat, role: AIChatMarkdownRole) -> NSString {
+        "\(partId):\(renderRevision):\(Int(baseFontSize * 10)):\(role == .user ? 0 : 1)" as NSString
+    }
+
+    func get(key: NSString) -> String? {
+        cache.object(forKey: key).map { $0 as String }
+    }
+
+    func set(key: NSString, value: String) {
+        cache.setObject(value as NSString, forKey: key)
+    }
+}
+
 enum AIChatMarkdownRole {
     case user
     case assistant
@@ -51,6 +74,10 @@ struct MarkdownTextView: View {
     var role: AIChatMarkdownRole = .assistant
     var baseFontSize: CGFloat = 13
     var isStreaming: Bool = false
+    /// part 标识，用于最终态缓存 key
+    var partId: String = ""
+    /// 渲染版本号，配合 partId 构成缓存 key
+    var renderRevision: UInt64 = 0
 
     /// 已提交给 StructuredText 的文本快照
     @State private var renderedText: String = ""
@@ -83,6 +110,18 @@ struct MarkdownTextView: View {
                 renderedText = text
                 lastRenderTime = CFAbsoluteTimeGetCurrent()
                 streamingRenderCount = 0
+                // 非流式场景查询最终态缓存，减少重复规范化
+                if !isStreaming && !partId.isEmpty {
+                    let cacheKey = MarkdownFinalStateCache.shared.cacheKey(
+                        partId: partId,
+                        renderRevision: renderRevision,
+                        baseFontSize: baseFontSize,
+                        role: role
+                    )
+                    if let cached = MarkdownFinalStateCache.shared.get(key: cacheKey) {
+                        renderedText = cached
+                    }
+                }
             }
             .onChange(of: text) { _, newText in
                 throttledRender(newText)
@@ -163,6 +202,16 @@ struct MarkdownTextView: View {
             TFLog.perf.debug(
                 "perf ai_markdown_stream_render count=\(streamingRenderCount, privacy: .public) chars=\(newText.utf16.count, privacy: .public) reason=\(reason, privacy: .public)"
             )
+        }
+        // 流式结束后将最终文本写入缓存
+        if !isStreaming && !partId.isEmpty {
+            let cacheKey = MarkdownFinalStateCache.shared.cacheKey(
+                partId: partId,
+                renderRevision: renderRevision,
+                baseFontSize: baseFontSize,
+                role: role
+            )
+            MarkdownFinalStateCache.shared.set(key: cacheKey, value: newText)
         }
     }
 

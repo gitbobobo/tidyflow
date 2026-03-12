@@ -242,3 +242,104 @@ enum AIChatMessageLayoutSemantics {
         return ordered
     }
 }
+
+// MARK: - 行级投影缓存
+
+/// 行级投影缓存 key，包含所有影响投影结果的信号字段
+struct AIChatRowProjectionCacheKey: Hashable {
+    let messageLocalId: String
+    let renderRevision: UInt32
+    let pendingQuestionToken: String
+    let prefersFullRender: Bool
+}
+
+/// 单条消息的行级投影；在 AIChatTranscriptContent 预计算，避免每行重复扫描 pendingQuestions。
+struct AIChatRowProjection: Equatable {
+    let cacheKey: AIChatRowProjectionCacheKey
+    let messageId: String?
+    let isUser: Bool
+    let nodes: [AIChatMessageDisplayNode]
+    let compactSummary: String
+    let pendingQuestionToken: String
+
+    static func == (lhs: AIChatRowProjection, rhs: AIChatRowProjection) -> Bool {
+        lhs.cacheKey == rhs.cacheKey
+    }
+}
+
+/// 行级投影缓存；容量上限 256 条，切换 session/workspace 时清空。
+final class AIChatRowProjectionCache {
+    private let capacity: Int
+    private var cache: [AIChatRowProjectionCacheKey: AIChatRowProjection] = [:]
+    private var insertionOrder: [AIChatRowProjectionCacheKey] = []
+
+    init(capacity: Int = 256) {
+        self.capacity = capacity
+    }
+
+    func get(key: AIChatRowProjectionCacheKey) -> AIChatRowProjection? {
+        cache[key]
+    }
+
+    func put(key: AIChatRowProjectionCacheKey, value: AIChatRowProjection) {
+        if cache[key] != nil {
+            cache[key] = value
+            return
+        }
+        if cache.count >= capacity {
+            if let oldest = insertionOrder.first {
+                cache.removeValue(forKey: oldest)
+                insertionOrder.removeFirst()
+            }
+        }
+        cache[key] = value
+        insertionOrder.append(key)
+    }
+
+    func clear() {
+        cache.removeAll()
+        insertionOrder.removeAll()
+    }
+}
+
+extension AIChatMessageLayoutSemantics {
+    /// 构建行级投影，供 AIChatTranscriptContent 预计算后缓存。
+    static func buildRowProjection(
+        for message: AIChatMessage,
+        cacheKey: AIChatRowProjectionCacheKey,
+        pendingQuestions: [String: AIQuestionRequestInfo]
+    ) -> AIChatRowProjection {
+        let nodes = displayNodes(for: message, pendingQuestions: pendingQuestions)
+        let compactSummary = makeCompactSummary(for: message)
+        return AIChatRowProjection(
+            cacheKey: cacheKey,
+            messageId: message.messageId,
+            isUser: message.role == .user,
+            nodes: nodes,
+            compactSummary: compactSummary,
+            pendingQuestionToken: cacheKey.pendingQuestionToken
+        )
+    }
+
+    private static func makeCompactSummary(for message: AIChatMessage) -> String {
+        if message.role == .user {
+            return message.parts.compactMap(\.text)
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .first.map { String($0.prefix(120)) } ?? ""
+        }
+        for part in message.parts {
+            switch part.kind {
+            case .text:
+                let trimmed = (part.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return String(trimmed.prefix(120)) }
+            case .tool:
+                if let title = part.toolView?.displayTitle ?? part.toolName {
+                    return "🔧 \(title)"
+                }
+            default:
+                break
+            }
+        }
+        return ""
+    }
+}

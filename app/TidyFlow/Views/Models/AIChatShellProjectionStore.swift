@@ -1,6 +1,68 @@
 import Foundation
 import Observation
 
+/// 壳投影失效签名：包含所有影响 shell projection 结果的轻量字段，
+/// 视图只在签名发生变化时才调用 projectionStore.refresh。
+struct AIChatShellProjectionInvalidationSignature: Equatable {
+    let tool: AIChatTool
+    let currentSessionId: String?
+    let tailRevision: UInt64
+    let historyHasMore: Bool
+    let historyIsLoading: Bool
+    let recentHistoryIsLoading: Bool
+    let isStreaming: Bool
+    let awaitingUserEcho: Bool
+    let abortPendingSessionId: String?
+    let hasPendingFirstContent: Bool
+    let pendingQuestionCount: Int
+    let pendingQuestionVersion: UInt64
+    let sessionStatusIsActive: Bool?
+    let sessionStatusContextPercent: Double?
+    let scrollSessionToken: Int
+    let canSwitchTool: Bool
+}
+
+/// 壳投影刷新所需的完整输入，从中可派生 AIChatShellProjectionInvalidationSignature。
+struct AIChatShellProjectionInput {
+    let tool: AIChatTool
+    let currentSessionId: String?
+    let messages: [AIChatMessage]
+    let recentHistoryIsLoading: Bool
+    let historyHasMore: Bool
+    let historyIsLoading: Bool
+    let canSwitchTool: Bool
+    let scrollSessionToken: Int
+    let sessionStatus: AISessionStatusSnapshot?
+    let localIsStreaming: Bool
+    let awaitingUserEcho: Bool
+    let abortPendingSessionId: String?
+    let hasPendingFirstContent: Bool
+    let pendingQuestions: [String: AIQuestionRequestInfo]
+    let tailRevision: UInt64
+    let pendingQuestionVersion: UInt64
+
+    var signature: AIChatShellProjectionInvalidationSignature {
+        AIChatShellProjectionInvalidationSignature(
+            tool: tool,
+            currentSessionId: currentSessionId,
+            tailRevision: tailRevision,
+            historyHasMore: historyHasMore,
+            historyIsLoading: historyIsLoading,
+            recentHistoryIsLoading: recentHistoryIsLoading,
+            isStreaming: localIsStreaming,
+            awaitingUserEcho: awaitingUserEcho,
+            abortPendingSessionId: abortPendingSessionId,
+            hasPendingFirstContent: hasPendingFirstContent,
+            pendingQuestionCount: pendingQuestions.count,
+            pendingQuestionVersion: pendingQuestionVersion,
+            sessionStatusIsActive: sessionStatus?.isActive,
+            sessionStatusContextPercent: sessionStatus?.contextRemainingPercent,
+            scrollSessionToken: scrollSessionToken,
+            canSwitchTool: canSwitchTool
+        )
+    }
+}
+
 extension AIChatPresentationProjection {
     static let empty = AIChatPresentationProjection(
         tool: .opencode,
@@ -154,5 +216,24 @@ final class AIChatShellProjectionStore {
             pendingQuestions: pendingQuestions
         )
         _ = updateProjection(next)
+    }
+
+    func refresh(_ input: AIChatShellProjectionInput) {
+        refresh(
+            tool: input.tool,
+            currentSessionId: input.currentSessionId,
+            messages: input.messages,
+            recentHistoryIsLoading: input.recentHistoryIsLoading,
+            historyHasMore: input.historyHasMore,
+            historyIsLoading: input.historyIsLoading,
+            canSwitchTool: input.canSwitchTool,
+            scrollSessionToken: input.scrollSessionToken,
+            sessionStatus: input.sessionStatus,
+            localIsStreaming: input.localIsStreaming,
+            awaitingUserEcho: input.awaitingUserEcho,
+            abortPendingSessionId: input.abortPendingSessionId,
+            hasPendingFirstContent: input.hasPendingFirstContent,
+            pendingQuestions: input.pendingQuestions
+        )
     }
 }

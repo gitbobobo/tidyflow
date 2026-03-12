@@ -795,6 +795,9 @@ struct AIChatTranscriptContent: View {
     let onMessageAppear: (String) -> Void
     let onMessageDisappear: (String) -> Void
 
+    /// 行级投影缓存，切换 session 时清空
+    @State private var rowProjectionCache = AIChatRowProjectionCache()
+
     private var showsStreamingFooter: Bool {
         guard let lastMessage = messages.last else { return false }
         return lastMessage.role == .assistant && lastMessage.isStreaming
@@ -814,16 +817,22 @@ struct AIChatTranscriptContent: View {
                 )
                 ForEach(messages) { message in
                     let index = msgIndexMap[message.id] ?? 0
+                    let prefersFullRender = virtualizationWindow.shouldFullyRender(
+                        index: index,
+                        isStreaming: message.isStreaming,
+                        fullRenderRange: renderRange,
+                        totalCount: messages.count
+                    )
+                    let pqToken = pendingQuestionToken(for: message)
+                    let rowProjection = cachedRowProjection(
+                        for: message,
+                        prefersFullRender: prefersFullRender,
+                        pendingQuestionToken: pqToken
+                    )
                     AIChatMessageRow(
+                        projection: rowProjection,
                         message: message,
-                        prefersFullRender: virtualizationWindow.shouldFullyRender(
-                            index: index,
-                            isStreaming: message.isStreaming,
-                            fullRenderRange: renderRange,
-                            totalCount: messages.count
-                        ),
-                        pendingQuestionToken: pendingQuestionToken(for: message),
-                        pendingQuestions: pendingQuestions,
+                        prefersFullRender: prefersFullRender,
                         sessionId: sessionId,
                         questionRequestResolver: questionRequestResolver,
                         onQuestionReply: onQuestionReply,
@@ -867,6 +876,9 @@ struct AIChatTranscriptContent: View {
                 .id(AIChatTranscriptContainer.bottomAnchorId)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: sessionId) { _, _ in
+            rowProjectionCache.clear()
+        }
     }
 
     @ViewBuilder
@@ -905,6 +917,29 @@ struct AIChatTranscriptContent: View {
             visibleIndices: visibleIndices,
             totalCount: msgs.count
         )
+    }
+
+    private func cachedRowProjection(
+        for message: AIChatMessage,
+        prefersFullRender: Bool,
+        pendingQuestionToken: String
+    ) -> AIChatRowProjection {
+        let key = AIChatRowProjectionCacheKey(
+            messageLocalId: message.id,
+            renderRevision: message.renderRevision,
+            pendingQuestionToken: pendingQuestionToken,
+            prefersFullRender: prefersFullRender
+        )
+        if let cached = rowProjectionCache.get(key: key) {
+            return cached
+        }
+        let projection = AIChatMessageLayoutSemantics.buildRowProjection(
+            for: message,
+            cacheKey: key,
+            pendingQuestions: pendingQuestions
+        )
+        rowProjectionCache.put(key: key, value: projection)
+        return projection
     }
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
@@ -1031,10 +1066,9 @@ private struct MessageListScrollMetrics: Equatable {
 }
 
 struct AIChatMessageRow: View, Equatable {
+    let projection: AIChatRowProjection
     let message: AIChatMessage
     let prefersFullRender: Bool
-    let pendingQuestionToken: String
-    let pendingQuestions: [String: AIQuestionRequestInfo]
     let sessionId: String
     let questionRequestResolver: (String?, String?, String?, String?) -> AIQuestionRequestInfo?
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
@@ -1051,15 +1085,12 @@ struct AIChatMessageRow: View, Equatable {
             lhs.message.renderRevision == rhs.message.renderRevision &&
             lhs.message.isStreaming == rhs.message.isStreaming &&
             lhs.prefersFullRender == rhs.prefersFullRender &&
-            lhs.pendingQuestionToken == rhs.pendingQuestionToken &&
+            lhs.projection.cacheKey == rhs.projection.cacheKey &&
             lhs.sessionId == rhs.sessionId
     }
 
     var body: some View {
-        let nodes = AIChatMessageLayoutSemantics.displayNodes(
-            for: message,
-            pendingQuestions: pendingQuestions
-        )
+        let nodes = projection.nodes
         let contentMaxWidth: CGFloat = isUser ? 520 : .infinity
 
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
