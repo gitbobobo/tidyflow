@@ -2426,7 +2426,24 @@ struct EvolutionRunningAgentsSectionView: View {
     }
 
     private func runningAgentCard(_ card: EvolutionRunningAgentCardModel) -> some View {
-        return VStack(alignment: .leading, spacing: 10) {
+        Group {
+            if card.canOpenSession {
+                Button {
+                    openStageSession(stage: card.stage)
+                } label: {
+                    runningAgentCardContent(card)
+                }
+                .buttonStyle(.plain)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .help("evolution.page.pipeline.viewChat".localized)
+            } else {
+                runningAgentCardContent(card)
+            }
+        }
+    }
+
+    private func runningAgentCardContent(_ card: EvolutionRunningAgentCardModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 aiToolIcon(card)
                     .frame(width: 32, height: 32)
@@ -2462,14 +2479,13 @@ struct EvolutionRunningAgentsSectionView: View {
                 Spacer()
 
                 if card.canOpenSession {
-                    Button {
-                        openStageSession(stage: card.stage)
-                    } label: {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .font(.system(size: 10))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("evolution.page.pipeline.viewChat".localized)
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle()
+                                .fill(Color.orange.opacity(0.12))
+                        )
                 }
             }
             .foregroundColor(.secondary)
