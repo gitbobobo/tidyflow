@@ -1141,6 +1141,745 @@ fn compute_health_score(
     (success_ratio - failure_penalty - rate_limit_penalty + cache_bonus).clamp(0.0, 1.0)
 }
 
+// ============================================================================
+// 滚动延迟窗口（WI-002）
+// ============================================================================
+
+use crate::server::protocol::health::{
+    ClientPerformanceReport, CoreRuntimeMemorySnapshot, LatencyMetricWindow,
+    PerformanceDiagnosis, PerformanceDiagnosisReason, PerformanceDiagnosisScope,
+    PerformanceDiagnosisSeverity, PerformanceObservabilitySnapshot, WorkspacePerformanceSnapshot,
+};
+
+const LATENCY_WINDOW_SIZE: usize = 128;
+
+/// 固定大小滚动延迟窗口
+#[derive(Debug, Clone)]
+pub struct LatencyWindow {
+    samples: [u64; 128],
+    write_pos: usize,
+    count: usize,
+    max: u64,
+}
+
+impl Default for LatencyWindow {
+    fn default() -> Self {
+        Self { samples: [0u64; 128], write_pos: 0, count: 0, max: 0 }
+    }
+}
+
+impl LatencyWindow {
+    pub fn push(&mut self, ms: u64) {
+        self.samples[self.write_pos] = ms;
+        self.write_pos = (self.write_pos + 1) % LATENCY_WINDOW_SIZE;
+        if self.count < LATENCY_WINDOW_SIZE {
+            self.count += 1;
+        }
+        if ms > self.max {
+            self.max = ms;
+        }
+    }
+
+    pub fn last_ms(&self) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let last_pos = (self.write_pos + LATENCY_WINDOW_SIZE - 1) % LATENCY_WINDOW_SIZE;
+        self.samples[last_pos]
+    }
+
+    pub fn avg_ms(&self) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let n = self.count.min(LATENCY_WINDOW_SIZE);
+        let sum: u64 = self.samples[..n].iter().sum();
+        sum / n as u64
+    }
+
+    pub fn p95_ms(&self) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let n = self.count.min(LATENCY_WINDOW_SIZE);
+        let mut sorted: Vec<u64> = self.samples[..n].to_vec();
+        sorted.sort_unstable();
+        let idx = ((n as f64 * 0.95) as usize).saturating_sub(1).min(n - 1);
+        sorted[idx]
+    }
+
+    pub fn to_metric_window(&self) -> LatencyMetricWindow {
+        LatencyMetricWindow {
+            last_ms: self.last_ms(),
+            avg_ms: self.avg_ms(),
+            p95_ms: self.p95_ms(),
+            max_ms: self.max,
+            sample_count: self.count as u64,
+            window_size: LATENCY_WINDOW_SIZE as u64,
+        }
+    }
+}
+
+// ============================================================================
+// 工作区关键路径采样注册表（WI-002）
+// ============================================================================
+
+/// 单工作区关键路径延迟累加器
+#[derive(Debug, Default)]
+pub struct WorkspaceLatencyAccumulator {
+    pub system_snapshot_build: LatencyWindow,
+    pub workspace_file_index_refresh: LatencyWindow,
+    pub workspace_git_status_refresh: LatencyWindow,
+    pub evolution_snapshot_read: LatencyWindow,
+}
+
+impl WorkspaceLatencyAccumulator {
+    pub fn to_snapshot(&self, project: &str, workspace: &str) -> WorkspacePerformanceSnapshot {
+        WorkspacePerformanceSnapshot {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            system_snapshot_build: self.system_snapshot_build.to_metric_window(),
+            workspace_file_index_refresh: self.workspace_file_index_refresh.to_metric_window(),
+            workspace_git_status_refresh: self.workspace_git_status_refresh.to_metric_window(),
+            evolution_snapshot_read: self.evolution_snapshot_read.to_metric_window(),
+            snapshot_at: unix_ms_now(),
+        }
+    }
+}
+
+/// 工作区性能注册表（全局单例）
+static WORKSPACE_PERF_REGISTRY: OnceLock<
+    std::sync::Mutex<HashMap<(String, String), WorkspaceLatencyAccumulator>>,
+> = OnceLock::new();
+
+fn workspace_perf_registry(
+) -> &'static std::sync::Mutex<HashMap<(String, String), WorkspaceLatencyAccumulator>> {
+    WORKSPACE_PERF_REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 客户端性能上报聚合（按 client_instance_id 存储最新一份）
+static CLIENT_PERF_REPORTS: OnceLock<std::sync::Mutex<HashMap<String, ClientPerformanceReport>>> =
+    OnceLock::new();
+
+fn client_perf_reports() -> &'static std::sync::Mutex<HashMap<String, ClientPerformanceReport>> {
+    CLIENT_PERF_REPORTS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 记录工作区关键路径延迟样本
+pub fn record_workspace_latency(project: &str, workspace: &str, event: &str, ms: u64) {
+    let mut reg = match workspace_perf_registry().lock() {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let acc = reg
+        .entry((project.to_string(), workspace.to_string()))
+        .or_default();
+    match event {
+        "system_snapshot_build" => acc.system_snapshot_build.push(ms),
+        "workspace_file_index_refresh" => acc.workspace_file_index_refresh.push(ms),
+        "workspace_git_status_refresh" => acc.workspace_git_status_refresh.push(ms),
+        "evolution_snapshot_read" => acc.evolution_snapshot_read.push(ms),
+        _ => {}
+    }
+}
+
+/// 记录客户端性能上报（幂等更新 client_instance_id 对应的最新快照）
+pub fn record_client_performance_report(report: ClientPerformanceReport) {
+    let mut reports = match client_perf_reports().lock() {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    reports.insert(report.client_instance_id.clone(), report);
+}
+
+// ============================================================================
+// Core 内存采样（WI-002）
+// ============================================================================
+
+/// 采样 Core 进程当前内存使用（Darwin task_vm_info）
+/// 非 Darwin 平台返回全零快照。
+pub fn sample_core_memory() -> CoreRuntimeMemorySnapshot {
+    #[cfg(target_os = "macos")]
+    {
+        use std::mem;
+
+        #[allow(non_camel_case_types)]
+        type mach_port_t = u32;
+        #[allow(non_camel_case_types)]
+        type kern_return_t = i32;
+        #[allow(non_camel_case_types)]
+        type natural_t = u32;
+        #[allow(non_camel_case_types)]
+        type mach_msg_type_number_t = natural_t;
+
+        #[repr(C)]
+        #[derive(Default)]
+        struct TaskVmInfo {
+            virtual_size: u64,
+            region_count: i32,
+            page_size: i32,
+            resident_size: u64,
+            resident_size_peak: u64,
+            reusable: u64,
+            reusable_max: u64,
+            purgeable_volatile_pmap: u64,
+            purgeable_volatile_resident: u64,
+            purgeable_volatile_virtual: u64,
+            compressed: u64,
+            compressed_peak: u64,
+            compressed_lifetime: u64,
+            phys_footprint: u64,
+        }
+
+        extern "C" {
+            fn task_self_trap() -> mach_port_t;
+            fn task_info(
+                target_task: mach_port_t,
+                flavor: u32,
+                task_info_out: *mut TaskVmInfo,
+                task_info_outCnt: *mut mach_msg_type_number_t,
+            ) -> kern_return_t;
+        }
+
+        const TASK_VM_INFO: u32 = 22;
+        let task_vm_info_count = (mem::size_of::<TaskVmInfo>()
+            / mem::size_of::<natural_t>())
+            as mach_msg_type_number_t;
+
+        let mut info = TaskVmInfo::default();
+        let mut count = task_vm_info_count;
+        let kr = unsafe {
+            let task = task_self_trap();
+            task_info(task, TASK_VM_INFO, &mut info as *mut TaskVmInfo, &mut count)
+        };
+
+        if kr == 0 {
+            return CoreRuntimeMemorySnapshot {
+                resident_bytes: info.resident_size,
+                virtual_bytes: info.virtual_size,
+                phys_footprint_bytes: info.phys_footprint,
+                sample_time_ms: unix_ms_now(),
+            };
+        }
+    }
+    CoreRuntimeMemorySnapshot {
+        resident_bytes: 0,
+        virtual_bytes: 0,
+        phys_footprint_bytes: 0,
+        sample_time_ms: unix_ms_now(),
+    }
+}
+
+// ============================================================================
+// 统一性能可观测快照构建（WI-002）
+// ============================================================================
+
+/// 构建全链路性能可观测快照（Core 权威真源）
+pub fn build_performance_observability_snapshot() -> PerformanceObservabilitySnapshot {
+    let core_memory = sample_core_memory();
+
+    // WS 管线延迟（复用现有全局计数器，用 dispatch 作为代表性管线延迟）
+    let ws_pipeline_latency = {
+        let last_ms = WS_DISPATCH_MS.load(Ordering::Relaxed);
+        let max_ms = WS_DISPATCH_MAX_MS.load(Ordering::Relaxed);
+        let count = WS_DISPATCH_COUNT.load(Ordering::Relaxed);
+        LatencyMetricWindow {
+            last_ms,
+            avg_ms: last_ms,
+            p95_ms: max_ms,
+            max_ms,
+            sample_count: count,
+            window_size: LATENCY_WINDOW_SIZE as u64,
+        }
+    };
+
+    // 工作区指标（按 project asc, workspace asc 排序）
+    let workspace_metrics = {
+        let reg = match workspace_perf_registry().lock() {
+            Ok(r) => r,
+            Err(_) => {
+                return PerformanceObservabilitySnapshot {
+                    core_memory,
+                    ws_pipeline_latency,
+                    workspace_metrics: vec![],
+                    client_metrics: vec![],
+                    diagnoses: vec![],
+                    snapshot_at: unix_ms_now(),
+                }
+            }
+        };
+        let mut metrics: Vec<WorkspacePerformanceSnapshot> = reg
+            .iter()
+            .map(|((p, w), acc)| acc.to_snapshot(p, w))
+            .collect();
+        metrics.sort_by(|a, b| a.project.cmp(&b.project).then(a.workspace.cmp(&b.workspace)));
+        metrics
+    };
+
+    // 客户端上报（按 client_instance_id 排序）
+    let client_metrics = {
+        let reports = match client_perf_reports().lock() {
+            Ok(r) => r,
+            Err(_) => {
+                return PerformanceObservabilitySnapshot {
+                    core_memory,
+                    ws_pipeline_latency,
+                    workspace_metrics,
+                    client_metrics: vec![],
+                    diagnoses: vec![],
+                    snapshot_at: unix_ms_now(),
+                }
+            }
+        };
+        let mut metrics: Vec<ClientPerformanceReport> = reports.values().cloned().collect();
+        metrics.sort_by(|a, b| a.client_instance_id.cmp(&b.client_instance_id));
+        metrics
+    };
+
+    let snapshot_at = unix_ms_now();
+
+    let mut snapshot = PerformanceObservabilitySnapshot {
+        core_memory,
+        ws_pipeline_latency,
+        workspace_metrics,
+        client_metrics,
+        diagnoses: vec![],
+        snapshot_at,
+    };
+
+    snapshot.diagnoses = build_performance_diagnoses(&snapshot);
+    snapshot
+}
+
+// ============================================================================
+// 性能自动诊断（WI-004）
+// ============================================================================
+
+const WS_PIPELINE_LATENCY_WARNING_MS: u64 = 100;
+const WS_PIPELINE_LATENCY_CRITICAL_MS: u64 = 500;
+const WORKSPACE_SWITCH_LATENCY_CRITICAL_MS: u64 = 1000;
+const FILE_TREE_LATENCY_WARNING_MS: u64 = 500;
+const FILE_TREE_LATENCY_CRITICAL_MS: u64 = 2000;
+const AI_SESSION_LIST_LATENCY_WARNING_MS: u64 = 500;
+const MESSAGE_FLUSH_LATENCY_WARNING_MS: u64 = 200;
+const QUEUE_DEPTH_WARNING: u64 = 50;
+const QUEUE_DEPTH_CRITICAL: u64 = 200;
+const CORE_MEMORY_WARNING_BYTES: u64 = 512 * 1024 * 1024;
+const CORE_MEMORY_CRITICAL_BYTES: u64 = 768 * 1024 * 1024;
+const MACOS_CLIENT_MEMORY_WARNING_BYTES: u64 = 400 * 1024 * 1024;
+const MACOS_CLIENT_MEMORY_CRITICAL_BYTES: u64 = 700 * 1024 * 1024;
+const IOS_CLIENT_MEMORY_WARNING_BYTES: u64 = 250 * 1024 * 1024;
+const IOS_CLIENT_MEMORY_CRITICAL_BYTES: u64 = 400 * 1024 * 1024;
+const CROSS_LAYER_MISMATCH_RATIO: u64 = 3;
+
+/// 根据全链路性能快照生成诊断结果
+pub fn build_performance_diagnoses(
+    snapshot: &PerformanceObservabilitySnapshot,
+) -> Vec<PerformanceDiagnosis> {
+    let mut diagnoses = Vec::new();
+    let now = unix_ms_now();
+
+    // 1. WS 管线延迟诊断
+    let ws_last = snapshot.ws_pipeline_latency.last_ms;
+    if ws_last >= WS_PIPELINE_LATENCY_CRITICAL_MS {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:ws_pipeline_latency_high:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Critical,
+            reason: PerformanceDiagnosisReason::WsPipelineLatencyHigh,
+            summary: format!(
+                "WS 管线处理延迟 {}ms，超过临界阈值 {}ms",
+                ws_last, WS_PIPELINE_LATENCY_CRITICAL_MS
+            ),
+            evidence: vec![format!("ws_dispatch.last_ms={}", ws_last)],
+            recommended_action: "检查 WS 出站队列深度和处理线程负载".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    } else if ws_last >= WS_PIPELINE_LATENCY_WARNING_MS {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:ws_pipeline_latency_high:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Warning,
+            reason: PerformanceDiagnosisReason::WsPipelineLatencyHigh,
+            summary: format!(
+                "WS 管线处理延迟 {}ms，超过警告阈值 {}ms",
+                ws_last, WS_PIPELINE_LATENCY_WARNING_MS
+            ),
+            evidence: vec![format!("ws_dispatch.last_ms={}", ws_last)],
+            recommended_action: "监控 WS 出站队列深度趋势".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    }
+
+    // 2. 队列积压诊断
+    let queue_depth = WS_OUTBOUND_QUEUE_DEPTH.load(Ordering::Relaxed);
+    if queue_depth >= QUEUE_DEPTH_CRITICAL {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:queue_backpressure_high:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Critical,
+            reason: PerformanceDiagnosisReason::QueueBackpressureHigh,
+            summary: format!(
+                "WS 出站队列深度 {}，超过临界阈值 {}",
+                queue_depth, QUEUE_DEPTH_CRITICAL
+            ),
+            evidence: vec![format!("ws_outbound_queue_depth={}", queue_depth)],
+            recommended_action: "检查消费者是否阻塞或慢于生产者速率".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    } else if queue_depth >= QUEUE_DEPTH_WARNING {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:queue_backpressure_high:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Warning,
+            reason: PerformanceDiagnosisReason::QueueBackpressureHigh,
+            summary: format!(
+                "WS 出站队列深度 {}，超过警告阈值 {}",
+                queue_depth, QUEUE_DEPTH_WARNING
+            ),
+            evidence: vec![format!("ws_outbound_queue_depth={}", queue_depth)],
+            recommended_action: "监控队列增长趋势".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    }
+
+    // 3. Core 内存压力诊断
+    let core_phys = snapshot.core_memory.phys_footprint_bytes;
+    if core_phys >= CORE_MEMORY_CRITICAL_BYTES {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:core_memory_pressure:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Critical,
+            reason: PerformanceDiagnosisReason::CoreMemoryPressure,
+            summary: format!(
+                "Core 内存占用 {}MB，超过临界阈值 768MB",
+                core_phys / (1024 * 1024)
+            ),
+            evidence: vec![format!("core.phys_footprint_bytes={}", core_phys)],
+            recommended_action: "考虑减少并发工作区数量或重启 Core 进程".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    } else if core_phys >= CORE_MEMORY_WARNING_BYTES {
+        diagnoses.push(PerformanceDiagnosis {
+            diagnosis_id: format!("perf:core_memory_pressure:system:{}", now),
+            scope: PerformanceDiagnosisScope::System,
+            severity: PerformanceDiagnosisSeverity::Warning,
+            reason: PerformanceDiagnosisReason::CoreMemoryPressure,
+            summary: format!(
+                "Core 内存占用 {}MB，超过警告阈值 512MB",
+                core_phys / (1024 * 1024)
+            ),
+            evidence: vec![format!("core.phys_footprint_bytes={}", core_phys)],
+            recommended_action: "监控内存增长趋势，检查缓存淘汰策略".to_string(),
+            context: HealthContext::system(),
+            client_instance_id: None,
+            diagnosed_at: now,
+        });
+    }
+
+    // 4. 工作区关键路径延迟诊断
+    for ws in &snapshot.workspace_metrics {
+        let ctx = HealthContext::for_workspace(&ws.project, &ws.workspace);
+        let fi_p95 = ws.workspace_file_index_refresh.p95_ms;
+        if fi_p95 >= FILE_TREE_LATENCY_CRITICAL_MS
+            && ws.workspace_file_index_refresh.sample_count > 0
+        {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:file_tree_latency_high:{}:{}:{}",
+                    ws.project, ws.workspace, now
+                ),
+                scope: PerformanceDiagnosisScope::Workspace,
+                severity: PerformanceDiagnosisSeverity::Critical,
+                reason: PerformanceDiagnosisReason::FileTreeLatencyHigh,
+                summary: format!(
+                    "[{}/{}] 文件索引刷新 p95={}ms",
+                    ws.project, ws.workspace, fi_p95
+                ),
+                evidence: vec![format!("workspace_file_index_refresh.p95_ms={}", fi_p95)],
+                recommended_action: "检查工作区文件数量和磁盘 I/O 状态".to_string(),
+                context: ctx,
+                client_instance_id: None,
+                diagnosed_at: now,
+            });
+        } else if fi_p95 >= FILE_TREE_LATENCY_WARNING_MS
+            && ws.workspace_file_index_refresh.sample_count > 0
+        {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:file_tree_latency_high:{}:{}:{}",
+                    ws.project, ws.workspace, now
+                ),
+                scope: PerformanceDiagnosisScope::Workspace,
+                severity: PerformanceDiagnosisSeverity::Warning,
+                reason: PerformanceDiagnosisReason::FileTreeLatencyHigh,
+                summary: format!(
+                    "[{}/{}] 文件索引刷新 p95={}ms",
+                    ws.project, ws.workspace, fi_p95
+                ),
+                evidence: vec![format!("workspace_file_index_refresh.p95_ms={}", fi_p95)],
+                recommended_action: "监控文件索引增长趋势".to_string(),
+                context: ctx,
+                client_instance_id: None,
+                diagnosed_at: now,
+            });
+        }
+    }
+
+    // 5. 客户端性能诊断
+    for client in &snapshot.client_metrics {
+        let (mem_warning, mem_critical) = if client.platform == "ios" {
+            (IOS_CLIENT_MEMORY_WARNING_BYTES, IOS_CLIENT_MEMORY_CRITICAL_BYTES)
+        } else {
+            (MACOS_CLIENT_MEMORY_WARNING_BYTES, MACOS_CLIENT_MEMORY_CRITICAL_BYTES)
+        };
+        let ctx = HealthContext::for_workspace(&client.project, &client.workspace);
+
+        // 客户端内存压力
+        let client_mem = client.memory.current_bytes;
+        if client_mem >= mem_critical {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:client_memory_pressure:{}:{}",
+                    client.client_instance_id, now
+                ),
+                scope: PerformanceDiagnosisScope::ClientInstance,
+                severity: PerformanceDiagnosisSeverity::Critical,
+                reason: PerformanceDiagnosisReason::ClientMemoryPressure,
+                summary: format!(
+                    "[{}:{}] 客户端内存 {}MB，超过临界阈值",
+                    client.client_instance_id,
+                    client.platform,
+                    client_mem / (1024 * 1024)
+                ),
+                evidence: vec![format!("client.memory.current_bytes={}", client_mem)],
+                recommended_action: "检查客户端内存泄漏，考虑关闭不用的工作区".to_string(),
+                context: ctx.clone(),
+                client_instance_id: Some(client.client_instance_id.clone()),
+                diagnosed_at: now,
+            });
+        } else if client_mem >= mem_warning && client_mem > 0 {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:client_memory_pressure:{}:{}",
+                    client.client_instance_id, now
+                ),
+                scope: PerformanceDiagnosisScope::ClientInstance,
+                severity: PerformanceDiagnosisSeverity::Warning,
+                reason: PerformanceDiagnosisReason::ClientMemoryPressure,
+                summary: format!(
+                    "[{}:{}] 客户端内存 {}MB，超过警告阈值",
+                    client.client_instance_id,
+                    client.platform,
+                    client_mem / (1024 * 1024)
+                ),
+                evidence: vec![format!("client.memory.current_bytes={}", client_mem)],
+                recommended_action: "监控客户端内存增长趋势".to_string(),
+                context: ctx.clone(),
+                client_instance_id: Some(client.client_instance_id.clone()),
+                diagnosed_at: now,
+            });
+        }
+
+        // 工作区切换延迟
+        let ws_p95 = client.workspace_switch.p95_ms;
+        if ws_p95 >= WORKSPACE_SWITCH_LATENCY_CRITICAL_MS
+            && client.workspace_switch.sample_count > 0
+        {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:workspace_switch_latency_high:{}:{}",
+                    client.client_instance_id, now
+                ),
+                scope: PerformanceDiagnosisScope::ClientInstance,
+                severity: PerformanceDiagnosisSeverity::Critical,
+                reason: PerformanceDiagnosisReason::WorkspaceSwitchLatencyHigh,
+                summary: format!(
+                    "[{}] 工作区切换 p95={}ms",
+                    client.client_instance_id, ws_p95
+                ),
+                evidence: vec![format!("client.workspace_switch.p95_ms={}", ws_p95)],
+                recommended_action: "检查工作区切换时加载的数据量，考虑懒加载优化".to_string(),
+                context: ctx.clone(),
+                client_instance_id: Some(client.client_instance_id.clone()),
+                diagnosed_at: now,
+            });
+        }
+
+        // AI 会话列表延迟
+        let ai_p95 = client.ai_session_list_request.p95_ms;
+        if ai_p95 >= AI_SESSION_LIST_LATENCY_WARNING_MS
+            && client.ai_session_list_request.sample_count > 0
+        {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:ai_session_list_latency_high:{}:{}",
+                    client.client_instance_id, now
+                ),
+                scope: PerformanceDiagnosisScope::ClientInstance,
+                severity: PerformanceDiagnosisSeverity::Warning,
+                reason: PerformanceDiagnosisReason::AiSessionListLatencyHigh,
+                summary: format!(
+                    "[{}] AI 会话列表请求 p95={}ms",
+                    client.client_instance_id, ai_p95
+                ),
+                evidence: vec![format!(
+                    "client.ai_session_list_request.p95_ms={}",
+                    ai_p95
+                )],
+                recommended_action: "检查 AI 会话列表数据量和 Core 处理延迟".to_string(),
+                context: ctx.clone(),
+                client_instance_id: Some(client.client_instance_id.clone()),
+                diagnosed_at: now,
+            });
+        }
+
+        // 消息尾部刷新延迟
+        let flush_p95 = client.ai_message_tail_flush.p95_ms;
+        if flush_p95 >= MESSAGE_FLUSH_LATENCY_WARNING_MS
+            && client.ai_message_tail_flush.sample_count > 0
+        {
+            diagnoses.push(PerformanceDiagnosis {
+                diagnosis_id: format!(
+                    "perf:message_flush_latency_high:{}:{}",
+                    client.client_instance_id, now
+                ),
+                scope: PerformanceDiagnosisScope::ClientInstance,
+                severity: PerformanceDiagnosisSeverity::Warning,
+                reason: PerformanceDiagnosisReason::MessageFlushLatencyHigh,
+                summary: format!(
+                    "[{}] AI 消息尾部刷新 p95={}ms",
+                    client.client_instance_id, flush_p95
+                ),
+                evidence: vec![format!(
+                    "client.ai_message_tail_flush.p95_ms={}",
+                    flush_p95
+                )],
+                recommended_action: "检查消息批量写入频率和 WS 管线吞吐量".to_string(),
+                context: ctx.clone(),
+                client_instance_id: Some(client.client_instance_id.clone()),
+                diagnosed_at: now,
+            });
+        }
+
+        // 跨层延迟失配
+        let client_ft_p95 = client.file_tree_request.p95_ms;
+        if client_ft_p95 > 0 && client.file_tree_request.sample_count > 0 {
+            let core_ft_p95 = snapshot
+                .workspace_metrics
+                .iter()
+                .find(|w| w.project == client.project && w.workspace == client.workspace)
+                .map(|w| w.workspace_file_index_refresh.p95_ms)
+                .unwrap_or(0);
+
+            if core_ft_p95 > 0
+                && client_ft_p95 >= FILE_TREE_LATENCY_WARNING_MS
+                && client_ft_p95 >= core_ft_p95 * CROSS_LAYER_MISMATCH_RATIO
+            {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:cross_layer_latency_mismatch:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Warning,
+                    reason: PerformanceDiagnosisReason::CrossLayerLatencyMismatch,
+                    summary: format!(
+                        "[{}] 文件树延迟 client p95={}ms vs Core p95={}ms，客户端/UI 层可能是瓶颈",
+                        client.client_instance_id, client_ft_p95, core_ft_p95
+                    ),
+                    evidence: vec![
+                        format!("client.file_tree_request.p95_ms={}", client_ft_p95),
+                        format!(
+                            "core.workspace_file_index_refresh.p95_ms={}",
+                            core_ft_p95
+                        ),
+                    ],
+                    recommended_action: "检查客户端文件树渲染性能和状态更新机制".to_string(),
+                    context: ctx,
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            } else if core_ft_p95 == 0
+                && client_ft_p95 >= FILE_TREE_LATENCY_WARNING_MS
+                && snapshot.ws_pipeline_latency.last_ms >= WS_PIPELINE_LATENCY_WARNING_MS
+            {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:cross_layer_latency_mismatch:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Warning,
+                    reason: PerformanceDiagnosisReason::CrossLayerLatencyMismatch,
+                    summary: format!(
+                        "[{}] 文件树延迟 client p95={}ms，WS 管线同步升高，Core/协议层疑似瓶颈",
+                        client.client_instance_id, client_ft_p95
+                    ),
+                    evidence: vec![
+                        format!("client.file_tree_request.p95_ms={}", client_ft_p95),
+                        format!(
+                            "ws_dispatch.last_ms={}",
+                            snapshot.ws_pipeline_latency.last_ms
+                        ),
+                    ],
+                    recommended_action: "检查 Core WS 管线处理延迟和出站队列".to_string(),
+                    context: ctx,
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            }
+        }
+    }
+
+    diagnoses
+}
+
+// ============================================================================
+// 性能诊断 → HealthIncident 映射（WI-004）
+// ============================================================================
+
+/// 将高优先级性能诊断映射为 HealthIncident
+pub fn performance_diagnoses_to_incidents(
+    diagnoses: &[PerformanceDiagnosis],
+) -> Vec<crate::server::protocol::health::HealthIncident> {
+    use crate::server::protocol::health::{
+        HealthIncident, IncidentRecoverability, IncidentSeverity, IncidentSource,
+    };
+    diagnoses
+        .iter()
+        .filter(|d| d.severity >= PerformanceDiagnosisSeverity::Warning)
+        .map(|d| {
+            let severity = match d.severity {
+                PerformanceDiagnosisSeverity::Critical => IncidentSeverity::Critical,
+                PerformanceDiagnosisSeverity::Warning => IncidentSeverity::Warning,
+                PerformanceDiagnosisSeverity::Info => IncidentSeverity::Info,
+            };
+            HealthIncident {
+                incident_id: d.diagnosis_id.clone(),
+                severity,
+                recoverability: IncidentRecoverability::Recoverable,
+                source: IncidentSource::CoreProcess,
+                root_cause: format!("{}", d.reason),
+                summary: Some(d.summary.clone()),
+                first_seen_at: d.diagnosed_at,
+                last_seen_at: d.diagnosed_at,
+                context: d.context.clone(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1347,5 +2086,496 @@ mod analysis_tests {
         assert_eq!(summary_a.bottlenecks.len(), 1);
         assert_eq!(summary_a.bottlenecks[0].kind, BottleneckKind::RateLimit);
         assert_eq!(summary_a.predictive_anomaly_ids, vec!["pred:a:projA:wsA"]);
+    }
+}
+
+// ============================================================================
+// 性能可观测回归护栏测试（WI-006）
+// ============================================================================
+//
+// 覆盖：协议序列化稳定性、工作区隔离、客户端实例隔离、诊断阈值、跨层延迟归因
+// 注意：所有测试直接构造 PerformanceObservabilitySnapshot 快照并调用
+//       build_performance_diagnoses()，避免依赖全局 Mutex 状态，测试间互不干扰。
+
+#[cfg(test)]
+mod perf_observability_tests {
+    use super::*;
+    use crate::server::protocol::health::*;
+
+    // ── 辅助构造函数 ────────────────────────────────────────────────────────
+
+    fn empty_latency() -> LatencyMetricWindow {
+        LatencyMetricWindow {
+            last_ms: 0,
+            avg_ms: 0,
+            p95_ms: 0,
+            max_ms: 0,
+            sample_count: 0,
+            window_size: 128,
+        }
+    }
+
+    fn latency_with(last_ms: u64, p95_ms: u64, sample_count: u64) -> LatencyMetricWindow {
+        LatencyMetricWindow {
+            last_ms,
+            avg_ms: last_ms,
+            p95_ms,
+            max_ms: p95_ms,
+            sample_count,
+            window_size: 128,
+        }
+    }
+
+    fn empty_memory() -> MemoryUsageSnapshot {
+        MemoryUsageSnapshot::default()
+    }
+
+    fn empty_core_memory() -> CoreRuntimeMemorySnapshot {
+        CoreRuntimeMemorySnapshot::default()
+    }
+
+    fn empty_obs() -> PerformanceObservabilitySnapshot {
+        PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: Vec::new(),
+            client_metrics: Vec::new(),
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        }
+    }
+
+    fn client_report_for(
+        id: &str,
+        platform: &str,
+        project: &str,
+        workspace: &str,
+    ) -> ClientPerformanceReport {
+        ClientPerformanceReport {
+            client_instance_id: id.to_string(),
+            platform: platform.to_string(),
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            memory: empty_memory(),
+            workspace_switch: empty_latency(),
+            file_tree_request: empty_latency(),
+            file_tree_expand: empty_latency(),
+            ai_session_list_request: empty_latency(),
+            ai_message_tail_flush: empty_latency(),
+            evidence_page_append: empty_latency(),
+            reported_at: 0,
+        }
+    }
+
+    fn ws_snapshot_for(
+        project: &str,
+        workspace: &str,
+        file_index_refresh_p95: u64,
+    ) -> WorkspacePerformanceSnapshot {
+        WorkspacePerformanceSnapshot {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            system_snapshot_build: empty_latency(),
+            workspace_file_index_refresh: if file_index_refresh_p95 > 0 {
+                latency_with(file_index_refresh_p95, file_index_refresh_p95, 5)
+            } else {
+                empty_latency()
+            },
+            workspace_git_status_refresh: empty_latency(),
+            evolution_snapshot_read: empty_latency(),
+            snapshot_at: 0,
+        }
+    }
+
+    // ── LatencyWindow 滚动统计正确性 ─────────────────────────────────────
+
+    #[test]
+    fn latency_window_statistics_correct_on_single_sample() {
+        let mut w = LatencyWindow::default();
+        assert_eq!(w.last_ms(), 0, "空窗口 last_ms 应为 0");
+        assert_eq!(w.avg_ms(), 0, "空窗口 avg_ms 应为 0");
+        assert_eq!(w.p95_ms(), 0, "空窗口 p95_ms 应为 0");
+
+        w.push(100);
+        assert_eq!(w.last_ms(), 100);
+        assert_eq!(w.avg_ms(), 100);
+        assert_eq!(w.p95_ms(), 100);
+    }
+
+    #[test]
+    fn latency_window_p95_near_top_value_for_100_samples() {
+        let mut w = LatencyWindow::default();
+        for i in 1u64..=100 {
+            w.push(i);
+        }
+        let p95 = w.p95_ms();
+        assert!(p95 >= 94 && p95 <= 100, "p95={} 应在 [94,100]", p95);
+    }
+
+    #[test]
+    fn latency_window_max_tracks_global_maximum() {
+        let mut w = LatencyWindow::default();
+        w.push(10);
+        w.push(500);
+        w.push(200);
+        let mw = w.to_metric_window();
+        assert_eq!(mw.max_ms, 500, "max_ms 应跟踪全局最大值");
+        assert_eq!(mw.sample_count, 3);
+        assert_eq!(mw.window_size, 128);
+    }
+
+    // ── 协议序列化稳定性 ─────────────────────────────────────────────────
+
+    #[test]
+    fn performance_observability_snapshot_serializes_stable_json_fields() {
+        let snap = empty_obs();
+        let json = serde_json::to_value(&snap).expect("should serialize");
+        assert!(json.get("core_memory").is_some(), "core_memory 字段必须存在");
+        assert!(
+            json.get("ws_pipeline_latency").is_some(),
+            "ws_pipeline_latency 字段必须存在"
+        );
+        assert!(json.get("snapshot_at").is_some(), "snapshot_at 字段必须存在");
+    }
+
+    #[test]
+    fn workspace_performance_snapshot_field_names_are_snake_case() {
+        let ws = ws_snapshot_for("proj_a", "ws1", 42);
+        let json = serde_json::to_value(&ws).expect("should serialize");
+        assert_eq!(json["project"], "proj_a");
+        assert_eq!(json["workspace"], "ws1");
+        assert!(
+            json.get("workspace_file_index_refresh").is_some(),
+            "workspace_file_index_refresh 字段必须存在"
+        );
+        assert_eq!(json["workspace_file_index_refresh"]["p95_ms"], 42);
+        assert_eq!(json["snapshot_at"], 0);
+    }
+
+    #[test]
+    fn client_performance_report_serializes_client_instance_id_correctly() {
+        let r = client_report_for("inst-001", "macos", "proj_x", "ws_default");
+        let json = serde_json::to_value(&r).expect("should serialize");
+        assert_eq!(json["client_instance_id"], "inst-001");
+        assert_eq!(json["platform"], "macos");
+        assert_eq!(json["project"], "proj_x");
+        assert_eq!(json["workspace"], "ws_default");
+    }
+
+    #[test]
+    fn performance_diagnosis_reason_serializes_to_snake_case() {
+        let reason = PerformanceDiagnosisReason::WsPipelineLatencyHigh;
+        let json = serde_json::to_value(&reason).expect("should serialize");
+        assert_eq!(json, "ws_pipeline_latency_high");
+
+        let scope = PerformanceDiagnosisScope::ClientInstance;
+        let json2 = serde_json::to_value(&scope).expect("should serialize");
+        assert_eq!(json2, "client_instance");
+    }
+
+    // ── 工作区隔离：不同 project 下同名工作区指标不混用 ──────────────────
+
+    #[test]
+    fn workspace_isolation_same_workspace_name_different_projects() {
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: vec![
+                // proj_a/default: 文件索引 p95=3000ms（超过 critical 2000ms）
+                ws_snapshot_for("proj_a", "default", 3000),
+                // proj_b/default: 正常
+                ws_snapshot_for("proj_b", "default", 10),
+            ],
+            client_metrics: Vec::new(),
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let diagnoses = build_performance_diagnoses(&snap);
+        let ft: Vec<_> = diagnoses
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::FileTreeLatencyHigh)
+            .collect();
+        assert_eq!(ft.len(), 1, "只有 proj_a/default 应触发 file_tree_latency_high");
+        assert_eq!(ft[0].context.project.as_deref(), Some("proj_a"));
+        assert_eq!(ft[0].context.workspace.as_deref(), Some("default"));
+        assert_eq!(ft[0].scope, PerformanceDiagnosisScope::Workspace);
+    }
+
+    #[test]
+    fn workspace_isolation_same_project_different_workspaces() {
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: vec![
+                ws_snapshot_for("proj_a", "ws_slow", 2500),
+                ws_snapshot_for("proj_a", "ws_fast", 10),
+            ],
+            client_metrics: Vec::new(),
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let diagnoses = build_performance_diagnoses(&snap);
+        let ft: Vec<_> = diagnoses
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::FileTreeLatencyHigh)
+            .collect();
+        assert_eq!(ft.len(), 1, "只有 ws_slow 应触发");
+        assert_eq!(ft[0].context.workspace.as_deref(), Some("ws_slow"));
+    }
+
+    // ── 客户端实例隔离：不同 client_instance_id 指标互不覆盖 ─────────────
+
+    #[test]
+    fn client_isolation_only_high_memory_instance_triggers_diagnosis() {
+        // iOS critical = 400 MB
+        let ios_critical: u64 = 400 * 1024 * 1024 + 1;
+        let mut report_a = client_report_for("inst_a", "ios", "proj", "ws");
+        report_a.memory.current_bytes = ios_critical;
+        let mut report_b = client_report_for("inst_b", "ios", "proj", "ws");
+        report_b.memory.current_bytes = 10 * 1024 * 1024; // 正常
+
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: Vec::new(),
+            client_metrics: vec![report_a, report_b],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let diagnoses = build_performance_diagnoses(&snap);
+        let mem: Vec<_> = diagnoses
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::ClientMemoryPressure)
+            .collect();
+        assert_eq!(mem.len(), 1, "只有 inst_a 应触发内存诊断");
+        assert_eq!(
+            mem[0].client_instance_id.as_deref(),
+            Some("inst_a"),
+            "诊断的 client_instance_id 应为 inst_a"
+        );
+        assert_eq!(mem[0].severity, PerformanceDiagnosisSeverity::Critical);
+        assert_eq!(mem[0].scope, PerformanceDiagnosisScope::ClientInstance);
+    }
+
+    #[test]
+    fn client_isolation_two_instances_with_different_latency_problems() {
+        // inst_c: workspace_switch 高延迟（>= critical 1000ms）
+        // inst_d: workspace_switch 正常
+        let mut report_c = client_report_for("inst_c", "macos", "proj", "ws");
+        report_c.workspace_switch = latency_with(1200, 1200, 3);
+        let report_d = client_report_for("inst_d", "macos", "proj", "ws");
+
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: Vec::new(),
+            client_metrics: vec![report_c, report_d],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let diagnoses = build_performance_diagnoses(&snap);
+        let ws_diag: Vec<_> = diagnoses
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::WorkspaceSwitchLatencyHigh)
+            .collect();
+        assert_eq!(ws_diag.len(), 1, "只有 inst_c 应触发工作区切换延迟诊断");
+        assert_eq!(ws_diag[0].client_instance_id.as_deref(), Some("inst_c"));
+    }
+
+    // ── 诊断阈值精确验证 ─────────────────────────────────────────────────
+
+    #[test]
+    fn threshold_core_memory_exactly_at_warning_triggers_warning() {
+        let warning_bytes: u64 = 512 * 1024 * 1024;
+        let mut snap = empty_obs();
+        snap.core_memory.phys_footprint_bytes = warning_bytes;
+        let d = build_performance_diagnoses(&snap);
+        let mem: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::CoreMemoryPressure)
+            .collect();
+        assert_eq!(mem.len(), 1, "512MB 应触发 warning");
+        assert_eq!(mem[0].severity, PerformanceDiagnosisSeverity::Warning);
+    }
+
+    #[test]
+    fn threshold_core_memory_exactly_at_critical_triggers_critical() {
+        let critical_bytes: u64 = 768 * 1024 * 1024;
+        let mut snap = empty_obs();
+        snap.core_memory.phys_footprint_bytes = critical_bytes;
+        let d = build_performance_diagnoses(&snap);
+        let mem: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::CoreMemoryPressure)
+            .collect();
+        assert_eq!(mem.len(), 1, "768MB 应触发 critical");
+        assert_eq!(mem[0].severity, PerformanceDiagnosisSeverity::Critical);
+    }
+
+    #[test]
+    fn threshold_below_warning_produces_no_memory_diagnosis() {
+        let below: u64 = 511 * 1024 * 1024;
+        let mut snap = empty_obs();
+        snap.core_memory.phys_footprint_bytes = below;
+        let d = build_performance_diagnoses(&snap);
+        assert!(
+            d.iter()
+                .all(|d| d.reason != PerformanceDiagnosisReason::CoreMemoryPressure),
+            "低于阈值不应产出 CoreMemoryPressure 诊断"
+        );
+    }
+
+    #[test]
+    fn threshold_macos_client_memory_at_warning() {
+        let macos_warning: u64 = 400 * 1024 * 1024;
+        let mut report = client_report_for("mac_inst", "macos", "p", "w");
+        report.memory.current_bytes = macos_warning;
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: Vec::new(),
+            client_metrics: vec![report],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let d = build_performance_diagnoses(&snap);
+        let mem: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::ClientMemoryPressure)
+            .collect();
+        assert_eq!(mem.len(), 1, "macOS 400MB 应触发 warning");
+        assert_eq!(mem[0].severity, PerformanceDiagnosisSeverity::Warning);
+    }
+
+    #[test]
+    fn threshold_ios_client_memory_at_critical() {
+        let ios_critical: u64 = 400 * 1024 * 1024;
+        let mut report = client_report_for("ios_inst", "ios", "p", "w");
+        report.memory.current_bytes = ios_critical;
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: Vec::new(),
+            client_metrics: vec![report],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let d = build_performance_diagnoses(&snap);
+        let mem: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::ClientMemoryPressure)
+            .collect();
+        assert_eq!(mem.len(), 1, "iOS 400MB 应触发 critical");
+        assert_eq!(mem[0].severity, PerformanceDiagnosisSeverity::Critical);
+    }
+
+    #[test]
+    fn threshold_ws_pipeline_at_warning() {
+        let mut snap = empty_obs();
+        snap.ws_pipeline_latency = latency_with(100, 100, 1);
+        let d = build_performance_diagnoses(&snap);
+        let ws: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::WsPipelineLatencyHigh)
+            .collect();
+        assert_eq!(ws.len(), 1, "WS 管线 100ms 应触发 warning");
+        assert_eq!(ws[0].severity, PerformanceDiagnosisSeverity::Warning);
+        assert_eq!(ws[0].scope, PerformanceDiagnosisScope::System);
+    }
+
+    #[test]
+    fn threshold_ws_pipeline_at_critical() {
+        let mut snap = empty_obs();
+        snap.ws_pipeline_latency = latency_with(500, 500, 1);
+        let d = build_performance_diagnoses(&snap);
+        let ws: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::WsPipelineLatencyHigh)
+            .collect();
+        assert_eq!(ws.len(), 1, "WS 管线 500ms 应触发 critical");
+        assert_eq!(ws[0].severity, PerformanceDiagnosisSeverity::Critical);
+    }
+
+    // ── 跨层延迟归因 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cross_layer_attribution_points_to_client_ui_when_core_normal() {
+        // client file_tree p95 = 600ms >> Core p95 = 100ms（比值 = 6 > RATIO=3）
+        // → 应归因为客户端/UI 层
+        let core_p95: u64 = 100;
+        let client_p95: u64 = 600;
+
+        let mut report = client_report_for("inst_ui", "macos", "proj_x", "ws1");
+        report.file_tree_request = latency_with(client_p95, client_p95, 5);
+
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: empty_latency(),
+            workspace_metrics: vec![ws_snapshot_for("proj_x", "ws1", core_p95)],
+            client_metrics: vec![report],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let d = build_performance_diagnoses(&snap);
+        let cl: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::CrossLayerLatencyMismatch)
+            .collect();
+        assert!(!cl.is_empty(), "应检测到跨层延迟失配");
+        assert!(
+            cl[0].summary.contains("客户端/UI 层"),
+            "归因应偏向客户端/UI 层，got: {}",
+            cl[0].summary
+        );
+        assert_eq!(cl[0].scope, PerformanceDiagnosisScope::ClientInstance);
+    }
+
+    #[test]
+    fn cross_layer_attribution_points_to_protocol_when_ws_pipeline_also_high() {
+        // client file_tree p95 高 + WS 管线同步升高 + 无 Core 工作区数据
+        // → 应归因为 Core/协议层
+        let mut report = client_report_for("inst_proto", "macos", "proj_y", "ws2");
+        report.file_tree_request = latency_with(600, 600, 5);
+
+        let snap = PerformanceObservabilitySnapshot {
+            core_memory: empty_core_memory(),
+            ws_pipeline_latency: latency_with(150, 150, 3), // WS 管线升高（>= 100ms warning）
+            workspace_metrics: Vec::new(),                  // 无对应 Core 工作区数据
+            client_metrics: vec![report],
+            diagnoses: Vec::new(),
+            snapshot_at: 0,
+        };
+        let d = build_performance_diagnoses(&snap);
+        let cl: Vec<_> = d
+            .iter()
+            .filter(|d| d.reason == PerformanceDiagnosisReason::CrossLayerLatencyMismatch)
+            .collect();
+        assert!(!cl.is_empty(), "应检测到跨层延迟失配（协议侧）");
+        assert!(
+            cl[0].summary.contains("Core/协议"),
+            "归因应偏向 Core/协议，got: {}",
+            cl[0].summary
+        );
+    }
+
+    // ── 诊断结果字段完整性 ───────────────────────────────────────────────
+
+    #[test]
+    fn diagnosis_has_non_empty_id_summary_and_recommended_action() {
+        let mut snap = empty_obs();
+        snap.core_memory.phys_footprint_bytes = 768 * 1024 * 1024;
+        let d = build_performance_diagnoses(&snap);
+        let diag = d
+            .iter()
+            .find(|d| d.reason == PerformanceDiagnosisReason::CoreMemoryPressure)
+            .expect("应存在 CoreMemoryPressure 诊断");
+        assert!(!diag.diagnosis_id.is_empty(), "diagnosis_id 不能为空");
+        assert!(
+            diag.diagnosis_id.contains("perf:core_memory_pressure"),
+            "diagnosis_id 应包含原因前缀，got: {}",
+            diag.diagnosis_id
+        );
+        assert!(!diag.summary.is_empty(), "summary 不能为空");
+        assert!(!diag.recommended_action.is_empty(), "recommended_action 不能为空");
     }
 }

@@ -380,3 +380,47 @@ HTTP 读取接口：
 - `GET .../ai/context-snapshots`：读取跨工作区快照列表（支持 `?ai_tool=` 筛选）
 
 跨工作区引用：使用 `@@project-name` 语法后，注入对应项目已持久化的上下文快照（`context_summary` 与 `selection_hint`），不依赖当前运行状态。
+
+## v1.46: 全链路性能可观测（WI-001/WI-002）
+
+在 `GET /api/v1/system/snapshot` 响应中新增 `performance_observability` 字段，
+提供 Core 全局 WS 管线、工作区关键路径、客户端实例性能的统一可观测快照。
+
+### 新增字段（performance_observability）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `core_memory` | `CoreRuntimeMemorySnapshot` | Core 进程当前物理内存、虚拟内存、phys_footprint |
+| `ws_pipeline_latency` | `LatencyMetricWindow` | WS dispatch 关键延迟（last/avg/p95/max/count） |
+| `workspace_metrics` | `WorkspacePerformanceSnapshot[]` | 按 (project, workspace) 隔离的工作区关键路径延迟 |
+| `client_metrics` | `ClientPerformanceReport[]` | 各客户端实例最近上报聚合（按 client_instance_id 排序） |
+| `diagnoses` | `PerformanceDiagnosis[]` | Core 产出的性能诊断结果（scope: system/workspace/client_instance） |
+| `snapshot_at` | `u64` | 快照生成时间（Unix ms） |
+
+### 新增 HealthReport 字段（WI-001）
+
+`health_report` WS action 新增可选字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `client_performance_report` | `ClientPerformanceReport?` | 客户端性能上报，Core 接收后写入全局注册表 |
+
+`ClientPerformanceReport` 包含：
+- `client_instance_id`: 进程生命周期稳定 UUID
+- `platform`: `macos` 或 `ios`
+- `memory`: 当前 phys_footprint 快照
+- 各关键路径延迟窗口（workspace_switch/file_tree_request/file_tree_expand/ai_session_list_request/ai_message_tail_flush/evidence_page_append）
+
+### 诊断规则
+
+| reason | scope | warning 阈值 | critical 阈值 |
+|--------|-------|------|------|
+| ws_pipeline_latency_high | system | last_ms ≥ 100ms | last_ms ≥ 500ms |
+| queue_backpressure_high | system | depth ≥ 50 | depth ≥ 200 |
+| core_memory_pressure | system | phys ≥ 512MB | phys ≥ 768MB |
+| file_tree_latency_high | workspace | p95 ≥ 500ms | p95 ≥ 2000ms |
+| client_memory_pressure | client_instance | macOS ≥ 400MB / iOS ≥ 250MB | macOS ≥ 700MB / iOS ≥ 400MB |
+| workspace_switch_latency_high | client_instance | — | p95 ≥ 1000ms |
+| ai_session_list_latency_high | client_instance | p95 ≥ 500ms | — |
+| message_flush_latency_high | client_instance | p95 ≥ 200ms | — |
+| cross_layer_latency_mismatch | client_instance | client/core 倍率 ≥ 3 | — |
