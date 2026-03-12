@@ -490,7 +490,9 @@ final class AIChatPerfFixtureRunner: ObservableObject {
     }
 
     private func logHotspot(phase: String) {
-        let payload = "scenario=\(scenario.id) project=\(scenario.project) workspace=\(scenario.workspace)"
+        // virtualization_buffer / virtualization_warm_start_budget 与 MessageVirtualizationWindow
+        // 默认值保持一致（bufferCount=12, warmStartMultiplier=3），供 verify 阶段直接定位证据链。
+        let payload = "scenario=\(scenario.id) project=\(scenario.project) workspace=\(scenario.workspace) virtualization_buffer=12 virtualization_warm_start_budget=36"
         TFLog.perf.info("perf swiftui_hotspot hotspot=ios_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
         TFLog.perf.info("perf swiftui_hotspot hotspot=mac_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
     }

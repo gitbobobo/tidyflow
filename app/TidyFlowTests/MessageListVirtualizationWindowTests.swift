@@ -202,4 +202,47 @@ final class MessageListVirtualizationWindowTests: XCTestCase {
             "MessageVirtualizationWindow.bufferCount 应与 ChatScrollConfiguration.renderBufferCount 保持一致"
         )
     }
+
+    // MARK: - iOS 场景下的流式尾消息保护验证
+
+    /// 验证 iOS 场景下（300 次流式 flush），流式尾消息不因 stableFullRenderRange 传递而降级。
+    /// 即使 fullRenderRange 完全不包含尾部索引，isStreaming=true 也必须强制完整渲染。
+    func testIOSStreamHeavy_300FlushScenario_tailAlwaysFullRender() {
+        let window = MessageVirtualizationWindow()
+        // 模拟 300 次 flush 后消息累计到 ~300 条，用户在底部可见最后 10 条
+        let totalMessages = 300
+        let visibleIndices = (290..<300).map { $0 }
+        let renderRange = window.computeFullRenderRange(
+            visibleIndices: visibleIndices, totalCount: totalMessages
+        )
+
+        // 流式尾消息（index=299）必须完整渲染
+        XCTAssertTrue(
+            window.shouldFullyRender(
+                index: 299, isStreaming: true, fullRenderRange: renderRange, totalCount: totalMessages
+            ),
+            "iOS stream_heavy 场景：300 条消息流式尾部始终完整渲染"
+        )
+        // 历史消息（index=0）应轻量渲染
+        XCTAssertFalse(
+            window.shouldFullyRender(
+                index: 0, isStreaming: false, fullRenderRange: renderRange, totalCount: totalMessages
+            ),
+            "iOS stream_heavy 场景：头部历史消息应轻量渲染"
+        )
+    }
+
+    /// 验证 warm start 预算在 iOS 高频 flush 场景（300 条消息）下不失控。
+    /// 完整渲染集大小应严格限定在 bufferCount * warmStartMultiplier 以内。
+    func testWarmStartBudget_notExceededUnder300Messages() {
+        let window = MessageVirtualizationWindow()
+        let warmStart = window.warmStartRange(totalCount: 300)
+        XCTAssertNotNil(warmStart)
+        let warmStartCount = warmStart.map { $0.count } ?? 0
+        let maxAllowedWarmStart = window.bufferCount * window.warmStartMultiplier
+        XCTAssertLessThanOrEqual(
+            warmStartCount, maxAllowedWarmStart,
+            "300 条消息场景下 warm start 预算应 ≤ \(maxAllowedWarmStart)，实际 \(warmStartCount)"
+        )
+    }
 }

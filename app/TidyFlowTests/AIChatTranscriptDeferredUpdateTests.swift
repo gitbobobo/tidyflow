@@ -118,4 +118,65 @@ final class AIChatTranscriptDeferredUpdateTests: XCTestCase {
 
         XCTAssertEqual(followUp, .none)
     }
+
+    // MARK: - 流式消息在 deferred flush 完成后不降级为轻量渲染
+
+    func testStreamingMessageAlwaysFullRenderAfterDeferredTailSync() {
+        // tailSync 刷新完成后，流式尾消息必须保持完整渲染，
+        // 不能因 flushDeferredUpdate(.tailSync) 触发的 synchronizeDisplayMessagesCacheAfterTailChange
+        // 将流式消息标记为非流式（这应由 AIChatTranscriptDisplayCacheSemantics 保证）。
+        let streamingMessage = AIChatMessage(
+            messageId: "m-stream",
+            role: .assistant,
+            parts: [AIChatPart(id: "p-stream", kind: .text, text: "流式输出中")],
+            isStreaming: true
+        )
+        let snapshot = AIChatTranscriptDisplayCacheSemantics.synchronizeAfterTailChange(
+            sourceMessages: [streamingMessage],
+            pendingQuestions: [:],
+            cachedDisplayMessages: [streamingMessage],
+            cachedSourceCount: 1
+        )
+        XCTAssertTrue(
+            snapshot.messages.first?.isStreaming == true,
+            "tailSync 刷新后流式消息不应变为非流式"
+        )
+    }
+
+    // MARK: - 多会话：deferred state 在会话切换时完全重置
+
+    func testSessionSwitch_resetClearsAllPendingState() {
+        // 会话 A 滚动中触发了 fullRefresh，切换到会话 B 后 deferred state 必须清空，
+        // 避免会话 A 的待处理刷新影响会话 B 的显示。
+        var state = AIChatTranscriptDeferredUpdateState()
+        state.beginScroll()
+        XCTAssertFalse(state.registerFullRefresh())
+        XCTAssertEqual(state.pendingAction, .fullRefresh)
+
+        // 模拟会话切换调用 reset()
+        state.reset()
+        XCTAssertFalse(state.isScrollInFlight)
+        XCTAssertEqual(state.pendingAction, .none)
+        XCTAssertNil(state.endScroll(), "reset 后 endScroll 应返回 nil，无残留 pending action")
+    }
+
+    // MARK: - tailSync 与 fullRefresh 的合并优先级
+
+    func testTailSyncThenFullRefresh_mergesToFullRefresh() {
+        var state = AIChatTranscriptDeferredUpdateState()
+        state.beginScroll()
+        XCTAssertFalse(state.registerTailChange())
+        XCTAssertFalse(state.registerFullRefresh())
+        // fullRefresh 应覆盖 tailSync
+        XCTAssertEqual(state.pendingAction, .fullRefresh)
+    }
+
+    func testFullRefreshThenTailSync_mergeStaysFullRefresh() {
+        var state = AIChatTranscriptDeferredUpdateState()
+        state.beginScroll()
+        XCTAssertFalse(state.registerFullRefresh())
+        XCTAssertFalse(state.registerTailChange())
+        // 已有 fullRefresh 不应被 tailSync 降级
+        XCTAssertEqual(state.pendingAction, .fullRefresh)
+    }
 }

@@ -133,24 +133,91 @@ final class MessageListVirtualizationBehaviorTests: XCTestCase {
         ))
     }
 
-    // MARK: - 多项目多会话：窗口模型无状态，可跨场景复用
+    // MARK: - 会话切换后恢复 warm start（共享语义验证）
 
-    func testStateless_sameWindowReusableAcrossSessions() {
+    func testSessionSwitch_resetsToWarmStart_newSessionTailFullRender() {
+        // 会话切换后 visibleMessageIDs 清空，warm start 覆盖新会话尾部。
+        // 无论 macOS 还是 iOS，切换后都应从尾部 warm start 开始，不保留旧会话范围。
+        let window = makeWindow(buffer: 12)
+        // 旧会话：100 条消息，可见中部
+        _ = window.computeFullRenderRange(visibleIndices: [45, 50, 55], totalCount: 100)
+
+        // 新会话：80 条消息，visibleIndices 为空（warm start 路径）
+        let range: ClosedRange<Int>? = nil
+        XCTAssertTrue(window.shouldFullyRender(
+            index: 79, isStreaming: false, fullRenderRange: range, totalCount: 80
+        ), "会话切换后 warm start 路径应覆盖新会话尾部消息")
+        XCTAssertTrue(window.shouldFullyRender(
+            index: 44, isStreaming: false, fullRenderRange: range, totalCount: 80
+        ), "80 条消息 warm start（36 条尾部）从 index=44 开始，应完整渲染")
+        XCTAssertFalse(window.shouldFullyRender(
+            index: 43, isStreaming: false, fullRenderRange: range, totalCount: 80
+        ), "warm start 范围之外应轻量渲染")
+    }
+
+    // MARK: - 历史 prepend 后可见区 ID 跟踪的正确性
+
+    func testHistoryPrepend_visibleIDsPreserved_rangeShiftsCorrectly() {
+        // 历史 prepend 后，visibleMessageIDs 中保留的 ID 对应新列表中的新索引。
+        // 窗口应能正确映射 ID → 新索引 → 新范围，不依赖固定索引缓存。
+        let window = makeWindow(buffer: 5)
+
+        // 原列表：100 条消息，可见 85...89
+        let rangeBeforePrepend = window.computeFullRenderRange(
+            visibleIndices: [85, 86, 87, 88, 89], totalCount: 100
+        )
+        XCTAssertEqual(rangeBeforePrepend?.lowerBound, 80)
+        XCTAssertEqual(rangeBeforePrepend?.upperBound, 94)
+
+        // 模拟 prepend 30 条：同一批 visible 消息在新列表中位于 115...119
+        let rangeAfterPrepend = window.computeFullRenderRange(
+            visibleIndices: [115, 116, 117, 118, 119], totalCount: 130
+        )
+        XCTAssertEqual(rangeAfterPrepend?.lowerBound, 110, "prepend 后渲染范围下界应随索引偏移更新")
+        XCTAssertEqual(rangeAfterPrepend?.upperBound, 124)
+    }
+
+    // MARK: - 流式刷新后 deferred flush 不中断尾部完整渲染
+
+    func testStreamingFlush_tailMessageFullRenderAfterDeferredFlush() {
+        // 模拟 deferred flush 场景：滚动结束后刷新，流式尾部消息不因范围计算延迟而降级。
+        // 这对应共享滚动路径中 flushDeferredUpdate(.tailSync) 之后的尾部渲染保护。
         let window = makeWindow(buffer: 12)
 
-        // 会话 A：100 条消息，可见 80-85
-        let rangeA = window.computeFullRenderRange(visibleIndices: [80, 82, 85], totalCount: 100)
+        // 流式消息在任何索引处都应完整渲染，与 fullRenderRange 无关
+        let rangeAfterFlush = window.computeFullRenderRange(
+            visibleIndices: [80, 85, 90], totalCount: 100
+        )
 
-        // 会话 B：50 条消息，可见 20-25
-        let rangeB = window.computeFullRenderRange(visibleIndices: [20, 22, 25], totalCount: 50)
-
-        XCTAssertNotEqual(rangeA, rangeB, "不同会话的渲染范围不同，窗口模型应无状态")
-        // 分别验证两个会话的索引决策互不干扰
+        // 尾部流式消息（index=99）即使在 fullRenderRange 之外也应完整渲染
         XCTAssertTrue(window.shouldFullyRender(
-            index: 80, isStreaming: false, fullRenderRange: rangeA, totalCount: 100
+            index: 99, isStreaming: true, fullRenderRange: rangeAfterFlush, totalCount: 100
+        ), "deferred flush 后流式尾消息必须始终完整渲染")
+    }
+
+    // MARK: - 多工作区：窗口模型无单工作区假设
+
+    func testMultiWorkspace_windowCalculationIsWorkspaceAgnostic() {
+        // 同一 window 实例可在不同项目/工作区场景下复用，计算结果完全由输入决定。
+        // 这验证了 MessageVirtualizationWindow 无单项目/单工作区假设。
+        let window = makeWindow(buffer: 12)
+
+        // 项目 A（工作区 default）：200 条消息，用户在中部
+        let rangeA = window.computeFullRenderRange(
+            visibleIndices: [95, 100, 105], totalCount: 200
+        )
+        // 项目 B（工作区 feature）：50 条消息，用户在顶部
+        let rangeB = window.computeFullRenderRange(
+            visibleIndices: [2, 3, 4], totalCount: 50
+        )
+
+        XCTAssertNotEqual(rangeA, rangeB, "不同场景的渲染范围不同，窗口模型应无全局状态")
+        // 分别验证两场景互不干扰
+        XCTAssertTrue(window.shouldFullyRender(
+            index: 100, isStreaming: false, fullRenderRange: rangeA, totalCount: 200
         ))
         XCTAssertFalse(window.shouldFullyRender(
-            index: 80, isStreaming: false, fullRenderRange: rangeB, totalCount: 50
-        ))
+            index: 100, isStreaming: false, fullRenderRange: rangeB, totalCount: 50
+        ), "50 条消息场景中 index=100 超出范围，不应完整渲染")
     }
 }

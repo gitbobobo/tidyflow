@@ -292,6 +292,16 @@ struct MessageListView: View {
     }
 }
 
+/// 聊天消息转录容器：macOS 与 iOS 共享的唯一消息列表虚拟化实现。
+///
+/// 职责边界：
+/// - 管理 `visibleMessageIDs` 可见区跟踪与 `stableFullRenderRange` 稳定化渲染窗口
+/// - 协调滚动策略（`ChatScrollPolicy`）、延迟刷新（`AIChatTranscriptDeferredUpdateState`）
+///   与显示缓存（`AIChatTranscriptDisplayCacheSemantics`）
+/// - 将稳定化渲染范围传递给 `AIChatTranscriptContent`，由后者执行行级渲染决策
+///
+/// iOS 与 macOS 通过各自的平台 chrome（`AIChatStagePlatformChrome`）传入不同的布局参数，
+/// 但核心虚拟化逻辑、滚动状态机和流式刷新策略保持完全一致，不存在平台分支。
 struct AIChatTranscriptContainer: View {
     @Environment(AIChatStore.self) var aiChatStore
     let messages: [AIChatMessage]
@@ -313,6 +323,10 @@ struct AIChatTranscriptContainer: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var lastAppliedSourceMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
+    /// 稳定化完整渲染范围：仅当可见区非空时更新，防止快速滚动期间 visibleMessageIDs
+    /// 瞬时清空导致窗口回退到 warm start 尾部预热区域，引发消息行连续重绘抖动。
+    /// 初始为 nil，触发 warm start 尾部预热；会话切换时同步重置，保证不同会话间完全隔离。
+    @State private var stableFullRenderRange: ClosedRange<Int>? = nil
     @State private var jumpToBottomRequestID: Int = 0
     @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
     @State private var pendingPrependAnchorID: String?
@@ -399,7 +413,7 @@ struct AIChatTranscriptContainer: View {
                     messages: displayMessages,
                     pendingQuestions: pendingQuestions,
                     virtualizationWindow: virtualizationWindow,
-                    visibleMessageIDs: visibleMessageIDs,
+                    fullRenderRange: stableFullRenderRange,
                     sessionId: aiChatStore.currentSessionId ?? "",
                     loadingOlderState: loadingOlderState,
                     bottomOverlayInset: bottomOverlayInset,
@@ -463,6 +477,19 @@ struct AIChatTranscriptContainer: View {
                 // 仅在 autoFollow 激活且 inset 增加时重新贴底，用无动画避免视觉跳动。
                 guard newValue > oldValue, isAutoFollowActive else { return }
                 scrollToBottom(proxy: proxy, animation: .none)
+            }
+            .onChange(of: visibleMessageIDs) { _, newVisibleIDs in
+                // 仅在可见区非空时更新稳定渲染范围，避免快速滚动期间 visibleMessageIDs
+                // 瞬时清空导致 stableFullRenderRange 被抹掉后触发 warm start 回退。
+                guard !newVisibleIDs.isEmpty else { return }
+                let msgs = displayMessages
+                let visibleIndices = msgs.indices.filter { newVisibleIDs.contains(msgs[$0].id) }
+                if let range = virtualizationWindow.computeFullRenderRange(
+                    visibleIndices: visibleIndices,
+                    totalCount: msgs.count
+                ) {
+                    stableFullRenderRange = range
+                }
             }
         }
         .tfRenderProbe("AIMessageList", metadata: [
@@ -547,6 +574,9 @@ struct AIChatTranscriptContainer: View {
         lastTailMessageID = displayMessages.last?.id
         lastAppliedSourceMessageCount = cachedDisplayMessageSourceCount
         lastKnownContentHeight = 0
+        // 会话切换时清空可见区跟踪与稳定渲染范围，确保新会话从 warm start 尾部预热开始。
+        visibleMessageIDs = []
+        stableFullRenderRange = nil
 
         guard decision.command != .noOp else { return }
         jumpToBottomRequestID += 1
@@ -782,7 +812,10 @@ struct AIChatTranscriptContent: View {
     let messages: [AIChatMessage]
     let pendingQuestions: [String: AIQuestionRequestInfo]
     let virtualizationWindow: MessageVirtualizationWindow
-    let visibleMessageIDs: Set<String>
+    /// 由 AIChatTranscriptContainer 预先计算并稳定化的完整渲染范围。
+    /// 仅在可见区非空时由上层更新，避免快速滚动期间的 warm start 抖动。
+    /// nil 时由 virtualizationWindow.shouldFullyRender 回退到 warm start 尾部预热。
+    let fullRenderRange: ClosedRange<Int>?
     let sessionId: String
     let loadingOlderState: AIChatLoadingOlderState
     let bottomOverlayInset: CGFloat
@@ -804,7 +837,7 @@ struct AIChatTranscriptContent: View {
     }
 
     var body: some View {
-        let renderRange = precomputeFullRenderRange(for: messages)
+        let renderRange = fullRenderRange
 
         // 用 VStack 包裹，将底部锚点放在 LazyVStack 外部，确保无论滚到多远都能被 proxy.scrollTo 找到。
         // 若锚点留在 LazyVStack 内部，惰性渲染会在远离底部时将其从视图树移除，导致 scrollTo 静默失败。
@@ -909,14 +942,6 @@ struct AIChatTranscriptContent: View {
             .padding(.top, 4)
             .padding(.bottom, 12)
         }
-    }
-
-    private func precomputeFullRenderRange(for msgs: [AIChatMessage]) -> ClosedRange<Int>? {
-        let visibleIndices = msgs.indices.filter { visibleMessageIDs.contains(msgs[$0].id) }
-        return virtualizationWindow.computeFullRenderRange(
-            visibleIndices: visibleIndices,
-            totalCount: msgs.count
-        )
     }
 
     private func cachedRowProjection(
