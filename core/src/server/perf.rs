@@ -65,6 +65,30 @@ static TERMINAL_RECLAIMED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `terminal_scrollback_trim_total`：因全局预算压力触发 scrollback 裁剪的次数（以终端数计）
 static TERMINAL_SCROLLBACK_TRIM_TOTAL: AtomicU64 = AtomicU64::new(0);
 
+// ── 三类热点路径延迟采样 ──
+// 预算阈值（含义说明）：
+//   workspace_file_index_refresh: 文件索引冷路径（全量扫描）预期 < 200ms（10k 文件量级），
+//     热路径（缓存命中 + 过滤）预期 < 2ms
+//   workspace_git_status_refresh: Git 状态冷路径（全量 gix 扫描）预期 < 500ms，
+//     热路径（指纹命中）预期 < 1ms
+//   workspace_ai_context_refresh: AI 上下文冷路径（适配器回源）无硬性上限，
+//     热路径（运行时缓存命中）预期 < 0.1ms
+
+/// 文件索引刷新延迟（工作区级采样，ms）
+static WORKSPACE_FILE_INDEX_REFRESH_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_FILE_INDEX_REFRESH_MAX_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_FILE_INDEX_REFRESH_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Git 状态刷新延迟（工作区级采样，ms）
+static WORKSPACE_GIT_STATUS_REFRESH_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_GIT_STATUS_REFRESH_MAX_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_GIT_STATUS_REFRESH_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// AI 会话上下文刷新延迟（工作区级采样，ms）
+static WORKSPACE_AI_CONTEXT_REFRESH_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_AI_CONTEXT_REFRESH_MAX_MS: AtomicU64 = AtomicU64::new(0);
+static WORKSPACE_AI_CONTEXT_REFRESH_COUNT: AtomicU64 = AtomicU64::new(0);
+
 const PERF_LOG_INTERVAL: u64 = 200;
 
 fn perf_logging_enabled() -> bool {
@@ -318,6 +342,57 @@ pub fn record_terminal_scrollback_trim(count: u64) {
     }
 }
 
+/// 记录文件索引刷新延迟（冷路径 = 全量扫描，热路径 = 缓存命中；ms）
+///
+/// 预算阈值：冷路径 < 200ms（10k 文件量级），热路径 < 2ms
+pub fn record_workspace_file_index_refresh(ms: u64) {
+    WORKSPACE_FILE_INDEX_REFRESH_MS.store(ms, Ordering::Relaxed);
+    let count = WORKSPACE_FILE_INDEX_REFRESH_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    update_max(&WORKSPACE_FILE_INDEX_REFRESH_MAX_MS, ms);
+    if perf_logging_enabled() && count % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf workspace_file_index_refresh_ms={} workspace_file_index_refresh_max_ms={} count={}",
+            ms,
+            WORKSPACE_FILE_INDEX_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count
+        );
+    }
+}
+
+/// 记录 Git 状态刷新延迟（冷路径 = 全量 gix 扫描，热路径 = 指纹命中；ms）
+///
+/// 预算阈值：冷路径 < 500ms，热路径 < 1ms（指纹比对本身 < 0.1ms）
+pub fn record_workspace_git_status_refresh(ms: u64) {
+    WORKSPACE_GIT_STATUS_REFRESH_MS.store(ms, Ordering::Relaxed);
+    let count = WORKSPACE_GIT_STATUS_REFRESH_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    update_max(&WORKSPACE_GIT_STATUS_REFRESH_MAX_MS, ms);
+    if perf_logging_enabled() && count % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf workspace_git_status_refresh_ms={} workspace_git_status_refresh_max_ms={} count={}",
+            ms,
+            WORKSPACE_GIT_STATUS_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count
+        );
+    }
+}
+
+/// 记录 AI 会话上下文刷新延迟（冷路径 = 适配器回源，热路径 = 运行时缓存命中；ms）
+///
+/// 预算阈值：热路径 < 0.1ms（内存 HashMap 查询），持久化快照命中 < 5ms（SQLite）
+pub fn record_workspace_ai_context_refresh(ms: u64) {
+    WORKSPACE_AI_CONTEXT_REFRESH_MS.store(ms, Ordering::Relaxed);
+    let count = WORKSPACE_AI_CONTEXT_REFRESH_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    update_max(&WORKSPACE_AI_CONTEXT_REFRESH_MAX_MS, ms);
+    if perf_logging_enabled() && count % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf workspace_ai_context_refresh_ms={} workspace_ai_context_refresh_max_ms={} count={}",
+            ms,
+            WORKSPACE_AI_CONTEXT_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count
+        );
+    }
+}
+
 /// 终端性能指标快照
 #[derive(Debug, Clone)]
 pub struct TerminalPerfSnapshot {
@@ -382,6 +457,13 @@ pub struct PerfMetricsSnapshot {
     pub evolution_cycle_update_emitted_total: u64,
     pub evolution_cycle_update_debounced_total: u64,
     pub evolution_snapshot_fallback_total: u64,
+    // -- 热点路径延迟 --
+    /// 文件索引刷新（冷路径全量扫描 / 热路径缓存命中）
+    pub workspace_file_index_refresh: WsPipelineMetrics,
+    /// Git 状态刷新（冷路径 gix 扫描 / 热路径指纹命中）
+    pub workspace_git_status_refresh: WsPipelineMetrics,
+    /// AI 会话上下文刷新（冷路径适配器回源 / 热路径运行时缓存命中）
+    pub workspace_ai_context_refresh: WsPipelineMetrics,
 }
 
 /// 读取所有性能计数器的统一快照
@@ -443,6 +525,21 @@ pub fn snapshot_perf_metrics() -> PerfMetricsSnapshot {
             .load(Ordering::Relaxed),
         evolution_snapshot_fallback_total: EVOLUTION_SNAPSHOT_FALLBACK_TOTAL
             .load(Ordering::Relaxed),
+        workspace_file_index_refresh: WsPipelineMetrics {
+            last_ms: WORKSPACE_FILE_INDEX_REFRESH_MS.load(Ordering::Relaxed),
+            max_ms: WORKSPACE_FILE_INDEX_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count: WORKSPACE_FILE_INDEX_REFRESH_COUNT.load(Ordering::Relaxed),
+        },
+        workspace_git_status_refresh: WsPipelineMetrics {
+            last_ms: WORKSPACE_GIT_STATUS_REFRESH_MS.load(Ordering::Relaxed),
+            max_ms: WORKSPACE_GIT_STATUS_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count: WORKSPACE_GIT_STATUS_REFRESH_COUNT.load(Ordering::Relaxed),
+        },
+        workspace_ai_context_refresh: WsPipelineMetrics {
+            last_ms: WORKSPACE_AI_CONTEXT_REFRESH_MS.load(Ordering::Relaxed),
+            max_ms: WORKSPACE_AI_CONTEXT_REFRESH_MAX_MS.load(Ordering::Relaxed),
+            count: WORKSPACE_AI_CONTEXT_REFRESH_COUNT.load(Ordering::Relaxed),
+        },
     }
 }
 

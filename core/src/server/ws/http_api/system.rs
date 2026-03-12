@@ -140,8 +140,13 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         (resource, info)
     };
 
-    let (workspace_items, cache_metrics) =
-        build_workspace_items_and_metrics(&ctx.app_state, &evo_index, &ctx.ai_state, &terminal_registry_info).await;
+    let (workspace_items, cache_metrics) = build_workspace_items_and_metrics(
+        &ctx.app_state,
+        &evo_index,
+        &ctx.ai_state,
+        &terminal_registry_info,
+    )
+    .await;
 
     // 聚合健康快照（含调度优化建议和预测异常）
     let health_snapshot = {
@@ -296,10 +301,14 @@ async fn build_workspace_items_and_metrics(
     };
 
     // 按 (project, workspace) 构建终端域聚合索引，复用已提取的 terminal_info
-    let terminal_map: HashMap<(String, String), &crate::server::terminal_registry::WorkspaceTerminalInfo> =
-        terminal_info.per_workspace.iter()
-            .map(|wi| ((wi.project.clone(), wi.workspace.clone()), wi))
-            .collect();
+    let terminal_map: HashMap<
+        (String, String),
+        &crate::server::terminal_registry::WorkspaceTerminalInfo,
+    > = terminal_info
+        .per_workspace
+        .iter()
+        .map(|wi| ((wi.project.clone(), wi.workspace.clone()), wi))
+        .collect();
 
     let mut items = Vec::new();
     let mut cache_metrics_list = Vec::new();
@@ -323,7 +332,8 @@ async fn build_workspace_items_and_metrics(
             let coordinator_terminal_default = build_coordinator_terminal_dto(
                 terminal_map.get(&(project_name.clone(), DEFAULT_WORKSPACE_NAME.to_string())),
             );
-            let coordinator_file_default = build_coordinator_file_dto(&project_name, DEFAULT_WORKSPACE_NAME);
+            let coordinator_file_default =
+                build_coordinator_file_dto(&project_name, DEFAULT_WORKSPACE_NAME);
             items.push(build_workspace_item_with_coordinator(
                 project_name.clone(),
                 default_info,
@@ -447,7 +457,9 @@ fn build_coordinator_file_dto(
     if phase == FileWorkspacePhase::Idle {
         return None;
     }
-    Some(crate::server::protocol::coordinator_file_dto_from_phase(phase))
+    Some(crate::server::protocol::coordinator_file_dto_from_phase(
+        phase,
+    ))
 }
 
 fn snapshot_to_metrics_info(snap: &WorkspaceCacheSnapshot) -> WorkspaceCacheMetricsInfo {
