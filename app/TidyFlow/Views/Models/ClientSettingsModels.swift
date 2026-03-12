@@ -83,17 +83,11 @@ enum EvolutionStageSemantics {
         if normalized.hasPrefix("implement.general.") { return "implement_general" }
         if normalized.hasPrefix("implement.visual.") { return "implement_visual" }
         if normalized.hasPrefix("verify.") { return "verify" }
-        if normalized.hasPrefix("reimplement.") {
-            let parts = normalized.split(separator: ".")
-            if parts.count == 2, let index = Int(parts[1]) {
-                return index <= 2 ? "implement_general" : "implement_advanced"
-            }
-            return "implement_general"
-        }
+        if normalized.hasPrefix("reimplement.") { return "implement_advanced" }
         if normalized == "implement.general" { return "implement_general" }
         if normalized == "implement.visual" { return "implement_visual" }
         if normalized == "implement" { return "implement_general" }
-        if normalized == "reimplement" { return "implement_general" }
+        if normalized == "reimplement" { return "implement_advanced" }
         return normalized
     }
 

@@ -157,13 +157,8 @@ pub(super) fn stage_profile_stage(stage: &str) -> Option<String> {
     if let Some((kind, _)) = parse_implement_stage_instance(normalized) {
         return Some(kind.profile_stage().to_string());
     }
-    if let Some(index) = parse_reimplement_stage_instance(normalized) {
-        let kind = if index <= 2 {
-            ImplementationStageKind::General
-        } else {
-            ImplementationStageKind::Advanced
-        };
-        return Some(kind.profile_stage().to_string());
+    if parse_reimplement_stage_instance(normalized).is_some() {
+        return Some(ImplementationStageKind::Advanced.profile_stage().to_string());
     }
     if parse_verify_stage_instance(normalized).is_some() {
         return Some("verify".to_string());
@@ -191,5 +186,27 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
             }
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stage_profile_stage;
+
+    #[test]
+    fn reimplement_stage_should_always_map_to_advanced_profile() {
+        assert_eq!(
+            stage_profile_stage("reimplement.1").as_deref(),
+            Some("implement_advanced")
+        );
+        assert_eq!(
+            stage_profile_stage("reimplement.2").as_deref(),
+            Some("implement_advanced")
+        );
+    }
+
+    #[test]
+    fn verify_stage_should_still_map_to_verify_profile() {
+        assert_eq!(stage_profile_stage("verify.1").as_deref(), Some("verify"));
     }
 }

@@ -135,7 +135,7 @@ fn should_attempt_idle_recovery(stall_recovery_attempts: u32) -> bool {
     stall_recovery_attempts < STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 struct PlanRoutingTables {
     criteria_to_checks: HashMap<String, Vec<String>>,
     check_to_stage_kinds: HashMap<String, HashSet<ImplementationStageKind>>,
@@ -402,12 +402,6 @@ fn verify_artifact_file_for_stage(stage: &str) -> Result<String, String> {
         return stage_artifact_file(stage).ok_or_else(|| format!("未知 verify stage: {}", stage));
     }
     Err(format!("stage 不是 verify 实例: {}", stage))
-}
-
-#[cfg(test)]
-fn verify_artifact_file_for_iteration(verify_iteration: u32) -> String {
-    stage_artifact_file(&verify_stage_name_for_iteration(verify_iteration))
-        .expect("verify instance should always map to artifact file")
 }
 
 fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
@@ -713,15 +707,6 @@ fn parse_plan_routing_tables_report(
     }
 }
 
-#[cfg(test)]
-fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTables, String> {
-    let (tables, report) = parse_plan_routing_tables_report(value);
-    report
-        .into_error("artifact_contract_violation")
-        .map_err(|err| err.to_stage_error())?;
-    tables.ok_or_else(|| "plan.jsonc.routing 缺少有效内容".to_string())
-}
-
 fn parse_plan_work_items(value: &serde_json::Value) -> Result<Vec<PlanWorkItem>, String> {
     let work_items = value
         .get("work_items")
@@ -930,22 +915,6 @@ fn merge_adjacent_implementation_stage_instances(
 
 fn validate_plan_markdown_artifact(cycle_dir: &Path) -> Result<(), String> {
     read_text_file(cycle_dir, PLAN_MARKDOWN_FILE).map(|_| ())
-}
-
-#[cfg(test)]
-fn is_criteria_failure_status(status: &str) -> bool {
-    matches!(
-        normalize_acceptance_evaluation_status(status),
-        Some("fail" | "insufficient_evidence")
-    )
-}
-
-#[cfg(test)]
-fn is_carryover_failure_status(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "missing" | "blocked"
-    )
 }
 
 fn normalize_acceptance_evaluation_status(status: &str) -> Option<&'static str> {
@@ -1944,11 +1913,6 @@ fn auto_commit_stage_template(cycle_id: &str) -> String {
     )
 }
 
-#[cfg(test)]
-fn should_force_advanced_reimplementation(verify_iteration: u32) -> bool {
-    verify_iteration >= 2
-}
-
 impl EvolutionManager {
     fn validate_plan_artifact(
         cycle_dir: &Path,
@@ -2173,41 +2137,22 @@ impl EvolutionManager {
         cycle_dir: &Path,
         verify_iteration: u32,
     ) -> Result<Vec<ImplementLane>, String> {
-        if verify_iteration >= 2 {
+        if verify_iteration > 0 {
             return Ok(vec![ImplementationStageKind::Advanced]);
         }
 
-        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
-        let tables = parse_plan_routing_tables(&plan)?;
-        if verify_iteration == 0 {
-            let instances = Self::resolve_initial_implementation_stage_instances(cycle_dir)?;
-            let mut kinds = Vec::new();
-            for instance in instances {
-                if !kinds.contains(&instance.kind) {
-                    kinds.push(instance.kind);
-                }
+        let instances = Self::resolve_initial_implementation_stage_instances(cycle_dir)?;
+        let mut kinds = Vec::new();
+        for instance in instances {
+            if !kinds.contains(&instance.kind) {
+                kinds.push(instance.kind);
             }
-            return Ok(if kinds.is_empty() {
-                vec![ImplementationStageKind::General]
-            } else {
-                kinds
-            });
         }
-
-        match Self::map_failed_agents_from_results(cycle_dir, verify_iteration, &tables)? {
-            Some(mut kinds) => {
-                let mut ordered = IMPLEMENTATION_STAGE_KINDS
-                    .iter()
-                    .copied()
-                    .filter(|kind| kinds.remove(kind))
-                    .collect::<Vec<ImplementationStageKind>>();
-                if ordered.is_empty() {
-                    ordered.push(ImplementationStageKind::General);
-                }
-                Ok(ordered)
-            }
-            None => Ok(vec![ImplementationStageKind::General]),
-        }
+        Ok(if kinds.is_empty() {
+            vec![ImplementationStageKind::General]
+        } else {
+            kinds
+        })
     }
 
     fn validate_implement_artifact(
@@ -3101,129 +3046,6 @@ impl EvolutionManager {
         }
         entry.cycle_title = cycle_title;
         Ok(())
-    }
-
-    #[cfg(test)]
-    fn map_failed_agents_from_results(
-        cycle_dir: &Path,
-        verify_iteration: u32,
-        tables: &PlanRoutingTables,
-    ) -> Result<Option<HashSet<ImplementationStageKind>>, String> {
-        let verify_file = verify_artifact_file_for_iteration(verify_iteration);
-        let verify = read_json_file(cycle_dir, &verify_file)?;
-
-        let mut failed_criteria_ids: Vec<String> = Vec::new();
-        if let Some(items) = verify
-            .pointer("/acceptance_evaluation")
-            .and_then(|v| v.as_array())
-        {
-            for item in items {
-                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                if !is_criteria_failure_status(status) {
-                    continue;
-                }
-                if let Some(criteria_id) = id_from_value(item, &["criteria_id"]) {
-                    failed_criteria_ids.push(criteria_id);
-                }
-            }
-        }
-        if let Some(items) = verify
-            .pointer("/adjudication/criteria_judgement")
-            .and_then(|v| v.as_array())
-        {
-            for item in items {
-                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                if !is_criteria_failure_status(status) {
-                    continue;
-                }
-                if let Some(criteria_id) = id_from_value(item, &["criteria_id"]) {
-                    failed_criteria_ids.push(criteria_id);
-                }
-            }
-        }
-
-        let mut failed_carryover_ids: Vec<String> = Vec::new();
-        if let Some(items) = verify
-            .pointer("/carryover_verification/items")
-            .and_then(|v| v.as_array())
-        {
-            for item in items {
-                let status = item
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("missing");
-                if !is_carryover_failure_status(status) {
-                    continue;
-                }
-                if let Some(item_id) = id_from_value(item, &["id", "item_id", "criteria_id"]) {
-                    failed_carryover_ids.push(item_id);
-                }
-            }
-        }
-
-        let mut mapped_agents: HashSet<ImplementationStageKind> = HashSet::new();
-        let mut incomplete_mapping = false;
-        let mut has_failure_signal = false;
-
-        for criteria_id in failed_criteria_ids {
-            has_failure_signal = true;
-            let Some(check_ids) = tables.criteria_to_checks.get(&criteria_id) else {
-                incomplete_mapping = true;
-                continue;
-            };
-            let mut mapped_in_this_criteria = false;
-            for check_id in check_ids {
-                if let Some(agents) = tables.check_to_stage_kinds.get(check_id) {
-                    mapped_agents.extend(agents.iter().copied());
-                    mapped_in_this_criteria = true;
-                } else {
-                    incomplete_mapping = true;
-                }
-            }
-            if !mapped_in_this_criteria {
-                incomplete_mapping = true;
-            }
-        }
-
-        for item_id in failed_carryover_ids {
-            has_failure_signal = true;
-            let mut item_mapped = false;
-
-            if let Some(agents) = tables.check_to_stage_kinds.get(&item_id) {
-                mapped_agents.extend(agents.iter().copied());
-                item_mapped = true;
-            }
-
-            if let Some(check_ids) = tables.criteria_to_checks.get(&item_id) {
-                let mut criteria_mapped = false;
-                for check_id in check_ids {
-                    if let Some(agents) = tables.check_to_stage_kinds.get(check_id) {
-                        mapped_agents.extend(agents.iter().copied());
-                        criteria_mapped = true;
-                    } else {
-                        incomplete_mapping = true;
-                    }
-                }
-                if criteria_mapped {
-                    item_mapped = true;
-                } else {
-                    incomplete_mapping = true;
-                }
-            }
-
-            if !item_mapped {
-                incomplete_mapping = true;
-            }
-        }
-
-        if !has_failure_signal || mapped_agents.is_empty() || incomplete_mapping {
-            return Ok(None);
-        }
-        Ok(Some(mapped_agents))
     }
 
     fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
@@ -5762,9 +5584,9 @@ mod tests {
         auto_commit_stage_template, check_workspace_boundary, direction_stage_template,
         ensure_schema_version, ensure_stage_field_matches, implement_stage_template,
         log_evolution_error, parse_adjudication_result_from_json, plan_stage_template,
-        reimplement_stage_template, should_force_advanced_reimplementation,
-        should_start_next_round, verify_stage_template, ArtifactValidationError, EvolutionManager,
-        ImplementLane, StageValidationContext, PLAN_MARKDOWN_FILE,
+        reimplement_stage_template, should_start_next_round, verify_stage_template,
+        ArtifactValidationError, EvolutionManager, ImplementLane, StageValidationContext,
+        PLAN_MARKDOWN_FILE,
     };
     use chrono::Utc;
     use std::path::Path;
@@ -8500,7 +8322,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_implement_lanes_should_map_only_general_on_reimplementation() {
+    fn resolve_implement_lanes_should_use_advanced_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8542,11 +8364,11 @@ mod tests {
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::General]);
+        assert_eq!(lanes, vec![ImplementLane::Advanced]);
     }
 
     #[test]
-    fn resolve_implement_lanes_should_map_only_visual_on_reimplementation() {
+    fn resolve_implement_lanes_should_use_advanced_even_when_mapping_unknown() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
             &dir.path().join("plan.jsonc"),
@@ -8588,159 +8410,15 @@ mod tests {
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::Visual]);
-    }
-
-    #[test]
-    fn resolve_implement_lanes_should_map_general_then_visual_on_reimplementation() {
-        let dir = tempdir().expect("tempdir should succeed");
-        write_json(
-            &dir.path().join("plan.jsonc"),
-            base_plan_json(vec![
-                serde_json::json!({
-                    "id": "w-1",
-                    "title": "x",
-                    "type": "code",
-                    "priority": "p0",
-                    "depends_on": [],
-                    "targets": ["core/src/lib.rs"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_general",
-                    "linked_check_ids": ["v-1"]
-                }),
-                serde_json::json!({
-                    "id": "w-2",
-                    "title": "y",
-                    "type": "code",
-                    "priority": "p1",
-                    "depends_on": [],
-                    "targets": ["app/TidyFlow/View.swift"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_visual",
-                    "linked_check_ids": ["v-2"]
-                }),
-            ]),
-        );
-        write_json(
-            &dir.path().join("verify.2.jsonc"),
-            serde_json::json!({
-                "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
-                "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
-            }),
-        );
-        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
-            .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Visual]);
-    }
-
-    #[test]
-    fn resolve_implement_lanes_should_reject_advanced_agent_in_plan_on_reimplementation() {
-        let dir = tempdir().expect("tempdir should succeed");
-        write_json(
-            &dir.path().join("plan.jsonc"),
-            base_plan_json(vec![
-                serde_json::json!({
-                    "id": "w-1",
-                    "title": "x",
-                    "type": "code",
-                    "priority": "p0",
-                    "depends_on": [],
-                    "targets": ["core/src/lib.rs"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_general",
-                    "linked_check_ids": ["v-1"]
-                }),
-                serde_json::json!({
-                    "id": "w-2",
-                    "title": "y",
-                    "type": "code",
-                    "priority": "p1",
-                    "depends_on": [],
-                    "targets": ["core/src/advanced.rs"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_advanced",
-                    "linked_check_ids": ["v-2"]
-                }),
-            ]),
-        );
-        write_json(
-            &dir.path().join("verify.2.jsonc"),
-            serde_json::json!({
-                "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
-                "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
-            }),
-        );
-        let err = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
-            .expect_err("advanced plan agent should be rejected");
-        assert!(err.contains("仅允许 general 或 visual"));
-    }
-
-    #[test]
-    fn resolve_implement_lanes_should_fallback_to_general_when_mapping_unknown() {
-        let dir = tempdir().expect("tempdir should succeed");
-        write_json(
-            &dir.path().join("plan.jsonc"),
-            base_plan_json(vec![
-                serde_json::json!({
-                    "id": "w-1",
-                    "title": "x",
-                    "type": "code",
-                    "priority": "p0",
-                    "depends_on": [],
-                    "targets": ["core/src/lib.rs"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_general",
-                    "linked_check_ids": ["v-1"]
-                }),
-                serde_json::json!({
-                    "id": "w-2",
-                    "title": "y",
-                    "type": "code",
-                    "priority": "p1",
-                    "depends_on": [],
-                    "targets": ["app/TidyFlow/View.swift"],
-                    "definition_of_done": ["done"],
-                    "risk": "low",
-                    "rollback": "git restore",
-                    "implementation_stage_kind": "implement_visual",
-                    "linked_check_ids": ["v-2"]
-                }),
-            ]),
-        );
-        write_json(
-            &dir.path().join("verify.2.jsonc"),
-            serde_json::json!({
-                "acceptance_evaluation": [{"criteria_id": "ac-404", "status": "fail"}],
-                "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
-            }),
-        );
-        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
-            .expect("lane resolve should succeed");
-        assert_eq!(lanes, vec![ImplementLane::General]);
-    }
-
-    #[test]
-    fn resolve_implement_lanes_should_use_advanced_after_second_reimplementation() {
-        let dir = tempdir().expect("tempdir should succeed");
-        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 2)
-            .expect("advanced lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::Advanced]);
     }
 
     #[test]
-    fn deterministic_policy_should_force_advanced_after_second_reimplementation() {
-        assert!(!should_force_advanced_reimplementation(1));
-        assert!(should_force_advanced_reimplementation(2));
+    fn resolve_implement_lanes_should_use_advanced_on_later_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 2)
+            .expect("advanced lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::Advanced]);
     }
 
     #[test]

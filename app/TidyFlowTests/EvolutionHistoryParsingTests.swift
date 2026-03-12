@@ -88,6 +88,17 @@ final class EvolutionHistoryParsingTests: XCTestCase {
 }
 
 final class EvolutionStageSemanticsTests: XCTestCase {
+    func testReimplementRuntimeStageMapsToAdvancedProfileStage() {
+        XCTAssertEqual(
+            EvolutionStageSemantics.profileStageKey(for: "reimplement.1"),
+            "implement_advanced"
+        )
+        XCTAssertEqual(
+            EvolutionStageSemantics.profileStageKey(for: "reimplement.2"),
+            "implement_advanced"
+        )
+    }
+
     func testVerifyRuntimeStageMapsToVerifyProfileStage() {
         XCTAssertEqual(EvolutionStageSemantics.runtimeStageKey("verify.2"), "verify")
         XCTAssertEqual(EvolutionStageSemantics.profileStageKey(for: "verify.2"), "verify")

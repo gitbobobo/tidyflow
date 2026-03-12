@@ -587,6 +587,53 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(execution?.stage, "implement.general.2")
     }
 
+    func testEvolutionWorkspaceItemLatestResolvedExecutionMapsReimplementToAdvancedProfile() {
+        let item = EvolutionWorkspaceItemV2(
+            project: "tidyflow",
+            workspace: "default",
+            cycleID: "cycle-3",
+            title: nil,
+            status: "running",
+            currentStage: "reimplement.1",
+            globalLoopRound: 1,
+            loopRoundLimit: 3,
+            verifyIteration: 1,
+            verifyIterationLimit: 5,
+            agents: [],
+            executions: [
+                EvolutionSessionExecutionEntryV2(
+                    stage: "implement.general.2",
+                    agent: "ImplementGeneralAgent",
+                    aiTool: "copilot",
+                    sessionID: "sess-general",
+                    status: "done",
+                    startedAt: "2026-03-09T09:00:00Z",
+                    completedAt: "2026-03-09T09:02:00Z",
+                    durationMs: 120_000,
+                    toolCallCount: 4
+                ),
+                EvolutionSessionExecutionEntryV2(
+                    stage: "reimplement.1",
+                    agent: "ReimplementAgent",
+                    aiTool: "copilot",
+                    sessionID: "sess-advanced",
+                    status: "running",
+                    startedAt: "2026-03-09T09:05:00Z",
+                    completedAt: nil,
+                    durationMs: nil,
+                    toolCallCount: 1
+                )
+            ],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            rateLimitErrorMessage: nil
+        )
+
+        let execution = item.latestResolvedExecution(forStage: "reimplement.1")
+        XCTAssertEqual(execution?.sessionID, "sess-advanced")
+        XCTAssertEqual(execution?.stage, "reimplement.1")
+    }
+
     func testEvolutionWorkspaceItemLatestResolvedExecutionByExactStageDoesNotCrossStageInstance() {
         let item = EvolutionWorkspaceItemV2(
             project: "tidyflow",
