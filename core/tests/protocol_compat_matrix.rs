@@ -884,11 +884,20 @@ fn test_file_workspace_phase_all_variants_roundtrip() {
         ("recovering", FileWorkspacePhase::Recovering),
     ];
     for (expected_str, variant) in &variants {
-        assert_eq!(&variant.to_string(), expected_str, "Display mismatch for {:?}", variant);
+        assert_eq!(
+            &variant.to_string(),
+            expected_str,
+            "Display mismatch for {:?}",
+            variant
+        );
         // serde roundtrip
         let json = serde_json::to_value(variant).unwrap();
         let parsed: FileWorkspacePhase = serde_json::from_value(json).unwrap();
-        assert_eq!(&parsed, variant, "serde roundtrip mismatch for {}", expected_str);
+        assert_eq!(
+            &parsed, variant,
+            "serde roundtrip mismatch for {}",
+            expected_str
+        );
     }
 }
 
@@ -932,16 +941,40 @@ fn test_file_change_kind_all_variants_roundtrip() {
 fn test_file_change_kind_from_watcher_str_aliases() {
     use tidyflow_core::server::protocol::file::FileChangeKind;
     // 标准值
-    assert_eq!(FileChangeKind::from_watcher_str("create"), FileChangeKind::Created);
-    assert_eq!(FileChangeKind::from_watcher_str("modify"), FileChangeKind::Modified);
-    assert_eq!(FileChangeKind::from_watcher_str("remove"), FileChangeKind::Removed);
-    assert_eq!(FileChangeKind::from_watcher_str("rename"), FileChangeKind::Renamed);
+    assert_eq!(
+        FileChangeKind::from_watcher_str("create"),
+        FileChangeKind::Created
+    );
+    assert_eq!(
+        FileChangeKind::from_watcher_str("modify"),
+        FileChangeKind::Modified
+    );
+    assert_eq!(
+        FileChangeKind::from_watcher_str("remove"),
+        FileChangeKind::Removed
+    );
+    assert_eq!(
+        FileChangeKind::from_watcher_str("rename"),
+        FileChangeKind::Renamed
+    );
     // 别名
-    assert_eq!(FileChangeKind::from_watcher_str("created"), FileChangeKind::Created);
-    assert_eq!(FileChangeKind::from_watcher_str("deleted"), FileChangeKind::Removed);
+    assert_eq!(
+        FileChangeKind::from_watcher_str("created"),
+        FileChangeKind::Created
+    );
+    assert_eq!(
+        FileChangeKind::from_watcher_str("deleted"),
+        FileChangeKind::Removed
+    );
     // 未知值回退为 Modified
-    assert_eq!(FileChangeKind::from_watcher_str("unknown"), FileChangeKind::Modified);
-    assert_eq!(FileChangeKind::from_watcher_str(""), FileChangeKind::Modified);
+    assert_eq!(
+        FileChangeKind::from_watcher_str("unknown"),
+        FileChangeKind::Modified
+    );
+    assert_eq!(
+        FileChangeKind::from_watcher_str(""),
+        FileChangeKind::Modified
+    );
 }
 
 // 注意：FileWorkspacePhaseTracker 使用全局 HashMap，
@@ -957,11 +990,20 @@ fn test_file_workspace_phase_subscribe_unsubscribe_cycle() {
     let ws = "ws_cycle";
 
     // Idle → subscribe → Watching → unsubscribe → Idle
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Idle);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Idle
+    );
     FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Watching);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Watching
+    );
     FileWorkspacePhaseTracker::on_watch_unsubscribed(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Idle);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Idle
+    );
 
     FileWorkspacePhaseTracker::remove(proj, ws);
 }
@@ -977,13 +1019,22 @@ fn test_file_workspace_phase_degraded_recovery_success() {
     // Watching → Degraded → Recovering → Watching
     FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
     FileWorkspacePhaseTracker::on_watcher_degraded(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Degraded);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Degraded
+    );
 
     FileWorkspacePhaseTracker::on_recovery_started(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Recovering);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Recovering
+    );
 
     FileWorkspacePhaseTracker::on_recovery_succeeded(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Watching);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Watching
+    );
 
     FileWorkspacePhaseTracker::remove(proj, ws);
 }
@@ -999,13 +1050,22 @@ fn test_file_workspace_phase_degraded_recovery_failure() {
     // Watching → Degraded → Recovering → Error
     FileWorkspacePhaseTracker::on_watch_subscribed(proj, ws);
     FileWorkspacePhaseTracker::on_watcher_degraded(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Degraded);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Degraded
+    );
 
     FileWorkspacePhaseTracker::on_recovery_started(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Recovering);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Recovering
+    );
 
     FileWorkspacePhaseTracker::on_recovery_failed(proj, ws);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, ws), FileWorkspacePhase::Error);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, ws),
+        FileWorkspacePhase::Error
+    );
 
     FileWorkspacePhaseTracker::remove(proj, ws);
 }
@@ -1024,8 +1084,14 @@ fn test_file_workspace_phase_disconnect_resets() {
     FileWorkspacePhaseTracker::on_disconnect_project(proj);
 
     // 断连后该项目的所有工作区相位都应为 Idle
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, "ws_dc_a"), FileWorkspacePhase::Idle);
-    assert_eq!(FileWorkspacePhaseTracker::current(proj, "ws_dc_b"), FileWorkspacePhase::Idle);
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, "ws_dc_a"),
+        FileWorkspacePhase::Idle
+    );
+    assert_eq!(
+        FileWorkspacePhaseTracker::current(proj, "ws_dc_b"),
+        FileWorkspacePhase::Idle
+    );
 
     FileWorkspacePhaseTracker::remove(proj, "ws_dc_a");
     FileWorkspacePhaseTracker::remove(proj, "ws_dc_b");

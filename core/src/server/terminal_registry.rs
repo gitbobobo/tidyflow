@@ -657,14 +657,16 @@ impl TerminalRegistry {
         project: &str,
         workspace: &str,
     ) -> Option<bool> {
-        self.terminals.get(term_id).map(|e| {
-            e.project == project && e.workspace == workspace
-        })
+        self.terminals
+            .get(term_id)
+            .map(|e| e.project == project && e.workspace == workspace)
     }
 
     /// 获取终端的当前订阅者数量
     pub fn subscriber_count(&self, term_id: &str) -> Option<u32> {
-        self.terminals.get(term_id).map(|e| e.flow_gate.subscriber_count())
+        self.terminals
+            .get(term_id)
+            .map(|e| e.flow_gate.subscriber_count())
     }
 
     /// 关闭指定终端

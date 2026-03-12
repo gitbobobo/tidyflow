@@ -137,9 +137,7 @@ impl ConsistencyCheckResult {
 // ============================================================================
 
 /// 对单个工作区协调状态执行一致性校验
-pub fn check_workspace_consistency(
-    state: &WorkspaceCoordinatorState,
-) -> ConsistencyCheckResult {
+pub fn check_workspace_consistency(state: &WorkspaceCoordinatorState) -> ConsistencyCheckResult {
     let mut inconsistencies = Vec::new();
     let mut decisions = Vec::new();
 
@@ -389,10 +387,7 @@ pub fn orchestrate_recovery(
 }
 
 /// 对单个状态应用恢复动作
-fn apply_recovery_action(
-    state: &mut WorkspaceCoordinatorState,
-    action: &RecoveryAction,
-) -> bool {
+fn apply_recovery_action(state: &mut WorkspaceCoordinatorState, action: &RecoveryAction) -> bool {
     match action {
         RecoveryAction::ResetDomainPhase { domain } => match domain.as_str() {
             "ai" => {
@@ -419,9 +414,7 @@ fn apply_recovery_action(
         RecoveryAction::ResyncDomainState { domain } => match domain.as_str() {
             "ai" => {
                 // 重新同步：如果活跃计数为 0 则回退到 Idle
-                if state.ai.active_session_count == 0
-                    && state.ai.phase == AiDomainPhase::Active
-                {
+                if state.ai.active_session_count == 0 && state.ai.phase == AiDomainPhase::Active {
                     state.ai.phase = AiDomainPhase::Idle;
                     state.health = state.compute_health();
                     true

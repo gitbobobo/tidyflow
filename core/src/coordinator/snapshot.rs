@@ -322,10 +322,8 @@ mod tests {
     fn restore_from_empty_scope_returns_no_snapshot() {
         let states = make_test_states();
         let snapshot = CoordinatorSnapshot::capture(&states);
-        let results = restore_from_snapshot(
-            &snapshot,
-            &CoordinatorScope::workspace("nonexistent", "ws"),
-        );
+        let results =
+            restore_from_snapshot(&snapshot, &CoordinatorScope::workspace("nonexistent", "ws"));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].status, RecoveryStatus::NoSnapshot);
     }

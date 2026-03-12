@@ -745,13 +745,34 @@ mod tests {
 
     #[test]
     fn change_kind_from_watcher_str() {
-        assert_eq!(FileChangeKind::from_watcher_str("created"), FileChangeKind::Created);
-        assert_eq!(FileChangeKind::from_watcher_str("create"), FileChangeKind::Created);
-        assert_eq!(FileChangeKind::from_watcher_str("removed"), FileChangeKind::Removed);
-        assert_eq!(FileChangeKind::from_watcher_str("deleted"), FileChangeKind::Removed);
-        assert_eq!(FileChangeKind::from_watcher_str("renamed"), FileChangeKind::Renamed);
-        assert_eq!(FileChangeKind::from_watcher_str("modify"), FileChangeKind::Modified);
-        assert_eq!(FileChangeKind::from_watcher_str("unknown"), FileChangeKind::Modified);
+        assert_eq!(
+            FileChangeKind::from_watcher_str("created"),
+            FileChangeKind::Created
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("create"),
+            FileChangeKind::Created
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("removed"),
+            FileChangeKind::Removed
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("deleted"),
+            FileChangeKind::Removed
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("renamed"),
+            FileChangeKind::Renamed
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("modify"),
+            FileChangeKind::Modified
+        );
+        assert_eq!(
+            FileChangeKind::from_watcher_str("unknown"),
+            FileChangeKind::Modified
+        );
     }
 
     #[test]
