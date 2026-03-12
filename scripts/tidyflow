@@ -19,6 +19,8 @@ print_usage() {
   bench [args...]
       运行 Core 性能基准测试（cargo bench --manifest-path core/Cargo.toml）
       示例：./scripts/tidyflow bench workspace_cache
+      热点三类路径基准：./scripts/tidyflow bench hotspot_perf_recording
+      文件索引过滤热路径：./scripts/tidyflow bench file_index_filter_hot
 
   test
       运行 Core 测试（cargo test --manifest-path core/Cargo.toml）
@@ -100,6 +102,44 @@ run_core_cargo() {
     return "$exit_code"
 }
 
+resolve_workspace_cache_bench_bin() {
+    local target_dir="$1"
+    find "$target_dir/release/deps" \
+        -maxdepth 1 \
+        -type f \
+        -name 'workspace_cache_bench-*' \
+        ! -name '*.d' \
+        ! -name '*.o' \
+        -print | sort | tail -n 1
+}
+
+run_bench_command() {
+    if [[ "${1:-}" == "workspace_cache" ]]; then
+        shift
+        local target_dir="$PROJECT_ROOT/core/target/bench-target"
+        local bench_bin
+        run_core_cargo \
+            bench \
+            env \
+            CARGO_TARGET_DIR="$target_dir" \
+            CARGO_PROFILE_BENCH_LTO=false \
+            CARGO_PROFILE_BENCH_CODEGEN_UNITS=16 \
+            cargo build --profile bench --manifest-path core/Cargo.toml --bench workspace_cache_bench
+        bench_bin="$(resolve_workspace_cache_bench_bin "$target_dir")"
+        if [[ -z "$bench_bin" ]]; then
+            echo "[tidyflow] 未找到 workspace_cache bench 可执行文件"
+            exit 1
+        fi
+        "$bench_bin" workspace_cache "$@"
+        return
+    fi
+
+    run_core_cargo \
+        bench \
+        env CARGO_TARGET_DIR="$PROJECT_ROOT/core/target/bench-target" \
+        cargo bench --manifest-path core/Cargo.toml "$@"
+}
+
 # 构建 macOS Debug
 build_macos() {
     local skip_core="${1:-1}"
@@ -140,10 +180,7 @@ case "$cmd" in
         exec ./scripts/run-app.sh "$@"
         ;;
     bench)
-        run_core_cargo \
-            bench \
-            env CARGO_TARGET_DIR="$PROJECT_ROOT/core/target/bench-target" \
-            cargo bench --manifest-path core/Cargo.toml "$@"
+        run_bench_command "$@"
         ;;
     test)
         ncpu="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -155,6 +192,7 @@ case "$cmd" in
         # Core 性能可观测定向测试（CHK-003 / CHK-004）
         # 等价于 CHK-003: cargo test system_snapshot_should_include_perf -- --nocapture
         # 等价于 CHK-004: cargo test perf -- --nocapture
+        # 热点三类路径护栏: cargo test hotspot_perf -- --nocapture
         echo "[tidyflow] 运行 Core 性能可观测定向测试..."
         run_core_cargo \
             test \
@@ -162,6 +200,9 @@ case "$cmd" in
         run_core_cargo \
             test \
             cargo test --manifest-path core/Cargo.toml perf -- --nocapture
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml hotspot_perf -- --nocapture
         ;;
     apple-perf-test)
         # Apple 性能可观测共享语义定向测试（CHK-005）
