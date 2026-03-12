@@ -280,6 +280,8 @@ struct EvolutionPipelineProjection: Equatable {
     let predictionProjection: WorkspacePredictionProjection
     /// v1.45：当前活跃工作区的分析摘要（从 Core 权威输出消费，不重新推导）
     let analysisSummaries: [EvolutionAnalysisSummary]
+    /// v1.46：面板性能投影（采样决策 + 当前工作区过滤后的实时指标），View 只消费此投影
+    let performance: EvolutionPipelinePerformanceProjection
 
     /// 当前工作区的瓶颈数量（UI 展示用）
     var activeBottleneckCount: Int {
@@ -313,7 +315,8 @@ struct EvolutionPipelineProjection: Equatable {
         currentCycleFailureSummary: nil,
         isCurrentCycleRetryable: false,
         predictionProjection: .empty,
-        analysisSummaries: []
+        analysisSummaries: [],
+        performance: .empty
     )
 }
 
@@ -364,7 +367,8 @@ enum EvolutionPipelineProjectionSemantics {
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace ?? ""
             ),
-            analysisSummaries: []
+            analysisSummaries: [],
+            performance: .empty
         )
     }
 #endif
@@ -415,7 +419,8 @@ enum EvolutionPipelineProjectionSemantics {
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace
             ),
-            analysisSummaries: []
+            analysisSummaries: [],
+            performance: .empty
         )
     }
 #endif
@@ -677,6 +682,8 @@ final class EvolutionPipelineProjectionStore {
     private var lastSourceSnapshot: SourceSnapshot?
     @ObservationIgnored
     private var cycleHistoryCache = CycleHistoryCache()
+    @ObservationIgnored
+    private var lastWorkspaceContextKey: String?
 
     private struct SourceSnapshot: Equatable {
         let project: String
@@ -686,6 +693,8 @@ final class EvolutionPipelineProjectionStore {
         let currentItemSignature: Int?
         let blockingSignature: Int
         let cycleHistorySignature: Int
+        /// 面板性能投影签名（只含当前工作区精简信息，不纳入原始全量快照）
+        let performanceSignature: Int
     }
 
     private struct CycleHistoryCache {
@@ -707,6 +716,7 @@ final class EvolutionPipelineProjectionStore {
         cancellables.removeAll()
         lastSourceSnapshot = nil
         cycleHistoryCache = CycleHistoryCache()
+        lastWorkspaceContextKey = nil
 
         let refresh = { [weak self, weak appState] in
             guard let self, let appState else { return }
@@ -772,6 +782,7 @@ final class EvolutionPipelineProjectionStore {
         cancellables.removeAll()
         lastSourceSnapshot = nil
         cycleHistoryCache = CycleHistoryCache()
+        lastWorkspaceContextKey = nil
 
         let refresh = { [weak self, weak appState] in
             guard let self, let appState else { return }
@@ -823,6 +834,7 @@ final class EvolutionPipelineProjectionStore {
     #if os(macOS)
     private func refreshIfNeeded(appState: AppState) {
         let snapshot = makeSourceSnapshot(appState: appState)
+        invalidateCachesIfNeeded(project: snapshot.project, workspace: snapshot.workspace)
         guard snapshot != lastSourceSnapshot else { return }
         refresh(appState: appState)
     }
@@ -848,7 +860,8 @@ final class EvolutionPipelineProjectionStore {
             ),
             cycleHistorySignature: cycleHistorySignature(
                 rawCycleHistories(appState: appState, project: project, workspace: workspace)
-            )
+            ),
+            performanceSignature: 0
         )
     }
     #endif
@@ -856,6 +869,7 @@ final class EvolutionPipelineProjectionStore {
     #if os(iOS)
     private func refreshIfNeeded(appState: MobileAppState, project: String, workspace: String) {
         let snapshot = makeSourceSnapshot(appState: appState, project: project, workspace: workspace)
+        invalidateCachesIfNeeded(project: snapshot.project, workspace: snapshot.workspace)
         guard snapshot != lastSourceSnapshot else { return }
         refresh(appState: appState, project: project, workspace: workspace)
     }
@@ -889,7 +903,8 @@ final class EvolutionPipelineProjectionStore {
             ),
             cycleHistorySignature: cycleHistorySignature(
                 rawCycleHistories(appState: appState, project: project, workspace: workspace)
-            )
+            ),
+            performanceSignature: 0
         )
     }
     #endif
@@ -942,7 +957,10 @@ final class EvolutionPipelineProjectionStore {
         rawCycleHistories: [EvolutionCycleHistoryItemV2],
         signature: Int
     ) -> [PipelineCycleHistory] {
-        guard let workspaceKey else { return [] }
+        guard let workspaceKey else {
+            cycleHistoryCache = CycleHistoryCache()
+            return []
+        }
         if cycleHistoryCache.workspaceKey == workspaceKey,
            cycleHistoryCache.signature == signature {
             return cycleHistoryCache.mapped
@@ -954,6 +972,14 @@ final class EvolutionPipelineProjectionStore {
             mapped: mapped
         )
         return mapped
+    }
+
+    private func invalidateCachesIfNeeded(project: String, workspace: String?) {
+        let workspaceContextKey = workspace.map { "\(project):\($0)" } ?? project
+        guard lastWorkspaceContextKey != workspaceContextKey else { return }
+        lastWorkspaceContextKey = workspaceContextKey
+        lastSourceSnapshot = nil
+        cycleHistoryCache = CycleHistoryCache()
     }
 
     private func cycleHistorySignature(_ histories: [EvolutionCycleHistoryItemV2]) -> Int {
@@ -991,6 +1017,35 @@ final class EvolutionPipelineProjectionStore {
     func updateProjection(_ next: EvolutionPipelineProjection) -> Bool {
         guard next != projection else { return false }
         projection = next
+        return true
+    }
+
+    /// 仅更新面板性能投影（采样决策与指标），签名未变时跳过
+    @discardableResult
+    func updatePerformanceProjection(_ next: EvolutionPipelinePerformanceProjection) -> Bool {
+        guard next != projection.performance else { return false }
+        // 构造新投影，只替换 performance 字段
+        let updated = EvolutionPipelineProjection(
+            project: projection.project,
+            workspace: projection.workspace,
+            workspaceReady: projection.workspaceReady,
+            workspaceContextKey: projection.workspaceContextKey,
+            scheduler: projection.scheduler,
+            control: projection.control,
+            currentItem: projection.currentItem,
+            blockingRequest: projection.blockingRequest,
+            cycleHistories: projection.cycleHistories,
+            runningAgents: projection.runningAgents,
+            standbyAgents: projection.standbyAgents,
+            totalDurationText: projection.totalDurationText,
+            isCurrentCycleFailed: projection.isCurrentCycleFailed,
+            currentCycleFailureSummary: projection.currentCycleFailureSummary,
+            isCurrentCycleRetryable: projection.isCurrentCycleRetryable,
+            predictionProjection: projection.predictionProjection,
+            analysisSummaries: projection.analysisSummaries,
+            performance: next
+        )
+        projection = updated
         return true
     }
 }

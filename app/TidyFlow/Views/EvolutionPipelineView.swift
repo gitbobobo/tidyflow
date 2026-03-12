@@ -85,6 +85,11 @@ struct EvolutionPipelineView: View {
     @State private var realtimeIndicatorsActive: Bool = false
     @State private var activeRealtimeConsumerID: String?
     @State private var lastRealtimeMetricsSignature: String = ""
+    /// 当前活跃的性能监控 key（用于追踪并在切换时取消旧任务）
+    @State private var activeMonitorKey: String = ""
+    /// 有界实时指标趋势缓冲（最多 60 个样本，切换工作区时清空）
+    @State private var realtimeTrendBuffer: [EvolutionRealtimeMetricsProjection] = []
+    private static let realtimeTrendBufferLimit = 60
     private let untitledCycleTitle = "Untitled"
 
     private struct EvolutionPipelineBlockerDraft {
@@ -136,6 +141,11 @@ struct EvolutionPipelineView: View {
     }
     private var shouldEnableRealtimeIndicators: Bool {
         workspaceReady && !runningAgentCards.isEmpty && appState.isSceneActive
+    }
+
+    /// 是否启用实时动画（来自性能投影，degraded/paused 档位时关闭以节省资源）
+    private var enableRealtimeAnimation: Bool {
+        projection.performance.enableAnimation && realtimeIndicatorsActive
     }
 
     /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
@@ -208,9 +218,11 @@ struct EvolutionPipelineView: View {
             syncStartOptions()
             refreshData()
             updateRealtimeIndicatorsActivation()
+            updatePerformanceMonitor()
         }
         .onDisappear {
             deactivateRealtimeIndicators()
+            stopPerformanceMonitor()
         }
         .tfRenderProbe("EvolutionPipelineView", metadata: [
             "project": project,
@@ -218,13 +230,17 @@ struct EvolutionPipelineView: View {
         ])
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetLocalTimeline()
+            clearRealtimeTrendBuffer()
             syncStartOptions()
             refreshData()
+            updatePerformanceMonitor()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             resetLocalTimeline()
+            clearRealtimeTrendBuffer()
             syncStartOptions()
             refreshData()
+            updatePerformanceMonitor()
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
@@ -232,9 +248,11 @@ struct EvolutionPipelineView: View {
         }
         .onChange(of: workspaceContextKey) { _, _ in
             updateRealtimeIndicatorsActivation()
+            updatePerformanceMonitor()
         }
         .onChange(of: appState.isSceneActive) { _, _ in
             updateRealtimeIndicatorsActivation()
+            updatePerformanceMonitor()
         }
         .onChange(of: currentItem?.statusStageRoundSignature) { _, _ in
             syncStartOptions()
@@ -244,9 +262,13 @@ struct EvolutionPipelineView: View {
         }
         .onChange(of: runningAgentCards) { _, _ in
             updateRealtimeIndicatorsActivation()
+            updatePerformanceMonitor()
         }
         .onChange(of: blockingRequest) { _, value in
             syncBlockerSheetState(value)
+        }
+        .onChange(of: projection.performance.metrics.signature) { _, _ in
+            appendRealtimeTrendSample()
         }
         .sheet(item: $selectedCycleDetail) { payload in
             cycleDetailSheet(payload)
@@ -1800,13 +1822,19 @@ struct EvolutionPipelineView: View {
         if realtimeIndicatorsActive != shouldActivate {
             realtimeIndicatorsActive = shouldActivate
         }
+        let animEnabled = enableRealtimeAnimation
         let metricsSignature =
-            "\(shouldActivate)|\(runningAgentCards.count)|\(appState.isSceneActive)|\(workspaceContextKey)"
+            "\(shouldActivate)|\(animEnabled)|\(runningAgentCards.count)|\(appState.isSceneActive)|\(workspaceContextKey)"
         guard metricsSignature != lastRealtimeMetricsSignature else { return }
         lastRealtimeMetricsSignature = metricsSignature
         TFLog.perf.info(
-            "perf evolution_realtime_indicators active=\(shouldActivate ? 1 : 0, privacy: .public) running_cards=\(runningAgentCards.count, privacy: .public) active_animation_count=\(shouldActivate ? runningAgentCards.count : 0, privacy: .public) scene_active=\(appState.isSceneActive ? 1 : 0, privacy: .public) key=\(workspaceContextKey, privacy: .public)"
+            "perf evolution_realtime_indicators active=\(shouldActivate ? 1 : 0, privacy: .public) animation=\(animEnabled ? 1 : 0, privacy: .public) tier=\(projection.performance.tier.rawValue, privacy: .public) running_cards=\(runningAgentCards.count, privacy: .public) scene_active=\(appState.isSceneActive ? 1 : 0, privacy: .public) key=\(workspaceContextKey, privacy: .public)"
         )
+        if !animEnabled && shouldActivate {
+            TFLog.perf.info(
+                "perf evolution_monitor animation_downgrade key=\(workspaceContextKey, privacy: .public) tier=\(projection.performance.tier.rawValue, privacy: .public)"
+            )
+        }
     }
 
     private func deactivateRealtimeIndicators() {
@@ -1815,6 +1843,65 @@ struct EvolutionPipelineView: View {
         }
         activeRealtimeConsumerID = nil
         realtimeIndicatorsActive = false
+    }
+
+    // MARK: - 性能监控管理（WI-002 / WI-003）
+
+    /// 启动或更新当前工作区的性能监控回路
+    private func updatePerformanceMonitor() {
+        let key = workspaceContextKey
+        let proj = project
+        guard let ws = workspace, workspaceReady, appState.isSceneActive else {
+            stopPerformanceMonitor()
+            return
+        }
+        guard key != activeMonitorKey || appState.evolutionPerformanceMonitorTasks[key] == nil else {
+            return
+        }
+        // 停止旧 key 的监控
+        if !activeMonitorKey.isEmpty && activeMonitorKey != key {
+            appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
+        }
+        let cycleID = currentItem?.cycleID
+        activeMonitorKey = key
+        appState.startEvolutionPerformanceMonitoring(
+            project: proj,
+            workspace: ws,
+            cycleID: cycleID,
+            contextKey: key
+        )
+    }
+
+    /// 停止当前性能监控回路
+    private func stopPerformanceMonitor() {
+        guard !activeMonitorKey.isEmpty else { return }
+        appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
+        activeMonitorKey = ""
+    }
+
+    // MARK: - 有界实时趋势缓冲（WI-003）
+
+    /// 将当前性能投影的指标追加到趋势缓冲（最多 60 个样本）
+    private func appendRealtimeTrendSample() {
+        let sample = projection.performance.metrics
+        guard sample.snapshotAt > 0 else { return }
+        realtimeTrendBuffer.append(sample)
+        if realtimeTrendBuffer.count > Self.realtimeTrendBufferLimit {
+            let trimCount = realtimeTrendBuffer.count - Self.realtimeTrendBufferLimit
+            realtimeTrendBuffer.removeFirst(trimCount)
+            TFLog.perf.info(
+                "perf evolution_monitor buffer_trim key=\(workspaceContextKey, privacy: .public) trimmed=\(trimCount, privacy: .public) remain=\(realtimeTrendBuffer.count, privacy: .public)"
+            )
+        }
+    }
+
+    /// 清空实时趋势缓冲（切换工作区时调用）
+    private func clearRealtimeTrendBuffer() {
+        guard !realtimeTrendBuffer.isEmpty else { return }
+        TFLog.perf.info(
+            "perf evolution_monitor buffer_clear key=\(workspaceContextKey, privacy: .public) cleared=\(realtimeTrendBuffer.count, privacy: .public)"
+        )
+        realtimeTrendBuffer.removeAll()
     }
 
     // MARK: - Stage Session
@@ -2309,6 +2396,8 @@ struct PipelineCycleDetailPayload: Identifiable, Equatable {
 
 struct PipelineProgressBar: View {
     @State private var offset: CGFloat = -1
+    /// 是否启用扫描动画（degraded 档位时为 false）
+    var enableAnimation: Bool = true
 
     var body: some View {
         GeometryReader { geo in
@@ -2325,12 +2414,13 @@ struct PipelineProgressBar: View {
                             )
                         )
                         .frame(width: geo.size.width * 0.3, height: 3)
-                        .offset(x: offset * geo.size.width * 0.7)
+                        .offset(x: enableAnimation ? offset * geo.size.width * 0.7 : 0)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 2))
         }
         .frame(height: 3)
         .onAppear {
+            guard enableAnimation else { return }
             withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                 offset = 1
             }

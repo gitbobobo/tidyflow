@@ -665,6 +665,11 @@ class AppState: ObservableObject {
     var evolutionSnapshotFallbackWorkItems: [String: DispatchWorkItem] = [:]
     var evolutionTargetedSnapshotMergeKeys: Set<String> = []
     var evolutionSnapshotFallbackTotal: Int = 0
+
+    /// Evolution 面板性能监控：按 workspaceContextKey 保存活跃监控任务
+    var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
+    /// Evolution 面板性能监控：当前采样决策（按 workspaceContextKey）
+    var evolutionPerformanceSamplingDecisions: [String: EvolutionRealtimeSamplingDecision] = [:]
     /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     /// Evidence：分块读取上下文（按 workspace key，仅串行读取）

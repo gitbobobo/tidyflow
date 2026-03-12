@@ -264,6 +264,11 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
     var pendingPlanDocumentReadPath: String?
+
+    /// Evolution 面板性能监控任务（按 workspaceContextKey，iOS 端同步支持）
+    var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
+    /// Evolution 面板性能采样决策（按 workspaceContextKey）
+    var evolutionPerformanceSamplingDecisions: [String: EvolutionRealtimeSamplingDecision] = [:]
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
@@ -1561,6 +1566,114 @@ final class MobileAppState: ObservableObject {
     func stopEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         wsClient.requestEvoStopWorkspace(project: project, workspace: normalizedWorkspace)
+    }
+
+    // MARK: - Evolution 面板性能监控（与 macOS 语义对齐）
+
+    @MainActor
+    func startEvolutionPerformanceMonitoring(
+        project: String,
+        workspace: String,
+        cycleID: String? = nil,
+        contextKey: String
+    ) {
+        guard !contextKey.isEmpty, !project.isEmpty, !workspace.isEmpty else { return }
+        if evolutionPerformanceMonitorTasks[contextKey] != nil { return }
+        TFLog.perf.info(
+            "perf evolution_monitor start key=\(contextKey, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public)"
+        )
+        let task = Task { @MainActor [weak self] in
+            await self?.runEvolutionPerformanceMonitorLoop(
+                project: project,
+                workspace: workspace,
+                cycleID: cycleID,
+                contextKey: contextKey
+            )
+        }
+        evolutionPerformanceMonitorTasks[contextKey] = task
+    }
+
+    @MainActor
+    func stopEvolutionPerformanceMonitoring(contextKey: String) {
+        guard let task = evolutionPerformanceMonitorTasks.removeValue(forKey: contextKey) else { return }
+        task.cancel()
+        evolutionPerformanceSamplingDecisions.removeValue(forKey: contextKey)
+        TFLog.perf.info("perf evolution_monitor stop key=\(contextKey, privacy: .public)")
+    }
+
+    @MainActor
+    func stopAllEvolutionPerformanceMonitoring() {
+        for (key, task) in evolutionPerformanceMonitorTasks {
+            task.cancel()
+            TFLog.perf.info("perf evolution_monitor stop_all key=\(key, privacy: .public)")
+        }
+        evolutionPerformanceMonitorTasks.removeAll()
+        evolutionPerformanceSamplingDecisions.removeAll()
+    }
+
+    @MainActor
+    private func runEvolutionPerformanceMonitorLoop(
+        project: String,
+        workspace: String,
+        cycleID: String?,
+        contextKey: String
+    ) async {
+        var currentDecision = evolutionPerformanceSamplingDecisions[contextKey] ?? .paused
+
+        while !Task.isCancelled {
+            let metrics = EvolutionRealtimeSamplingSemantics.filterMetrics(
+                snapshot: performanceObservability,
+                project: project,
+                workspace: workspace,
+                clientInstanceId: perfReporter.clientInstanceId
+            )
+            let runningAgentCount = evolutionItem(project: project, workspace: workspace)?.agents
+                .filter { $0.status.lowercased() == "running" }.count ?? 0
+            let wsConnected = isConnected
+
+            let newDecision = EvolutionRealtimeSamplingSemantics.computeDecision(
+                metrics: metrics,
+                runningAgentCount: runningAgentCount,
+                sceneActive: true,
+                panelVisible: true,
+                wsConnected: wsConnected,
+                currentDecision: currentDecision
+            )
+
+            if newDecision.tier != currentDecision.tier {
+                TFLog.perf.info(
+                    "perf evolution_monitor tier_change key=\(contextKey, privacy: .public) old=\(currentDecision.tier.rawValue, privacy: .public) new=\(newDecision.tier.rawValue, privacy: .public) reason=\(newDecision.reason, privacy: .public)"
+                )
+            }
+            currentDecision = newDecision
+            evolutionPerformanceSamplingDecisions[contextKey] = newDecision
+
+            guard let intervalMs = newDecision.tier.intervalMs, intervalMs > 0 else {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                continue
+            }
+
+            TFLog.perf.info(
+                "perf evolution_monitor snapshot_request key=\(contextKey, privacy: .public) tier=\(newDecision.tier.rawValue, privacy: .public)"
+            )
+            wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
+
+            let perfReport = perfReporter.buildReport(project: project, workspace: workspace)
+            let context = HealthContext(project: project, workspace: workspace, cycleId: cycleID)
+            wsClient.reportHealthStatus(
+                clientSessionId: perfReporter.clientInstanceId,
+                connectivity: wsConnected ? .good : .lost,
+                incidents: [],
+                context: context,
+                clientPerformanceReport: perfReport
+            )
+            TFLog.perf.info(
+                "perf evolution_monitor health_report_sent key=\(contextKey, privacy: .public) tier=\(newDecision.tier.rawValue, privacy: .public)"
+            )
+
+            let waitNs = UInt64(intervalMs) * 1_000_000
+            try? await Task.sleep(nanoseconds: waitNs)
+        }
     }
 
     func resumeEvolution(project: String, workspace: String) {
