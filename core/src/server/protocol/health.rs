@@ -447,6 +447,8 @@ pub enum GateFailureReason {
     CoreRegressionFailed,
     /// Apple 构建或回归失败
     AppleVerificationFailed,
+    /// 热点性能回归检查失败（measured_ns 超出 fail_ratio_limit 或 absolute_budget_ns）
+    PerformanceRegressionFailed,
     /// 自定义原因
     Custom(String),
 }

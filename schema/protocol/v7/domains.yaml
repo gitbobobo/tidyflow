@@ -201,6 +201,29 @@ domains:
   #   analyzed_at: 分析时间（Unix ms）
   #   expires_at: 有效期截止（Unix ms）
   # HTTP 端点：GET /api/v1/system/snapshot 响应新增 analysis_summaries 可选字段
+  #
+  # GateFailureReason（质量门禁失败原因码，机器可读稳定编码）：
+  #   system_unhealthy            - 系统健康状态为 Unhealthy
+  #   critical_incident           - 存在阻断性 critical incident
+  #   evidence_incomplete         - 证据完整性校验失败
+  #   protocol_inconsistent       - 协议一致性检查失败
+  #   core_regression_failed      - Core 回归测试失败
+  #   apple_verification_failed   - Apple 构建或回归失败
+  #   performance_regression_failed - 热点性能回归检查失败
+  #                                   (measured_ns 超出 fail_ratio_limit 或 absolute_budget_ns)
+  #                                   → 映射到 BottleneckKind::PerformanceDegradation
+  #
+  # quality-gate 阶段顺序（固定）：
+  #   1. protocol_check          - 协议一致性 / schema 同步
+  #   2. core_regression         - Core 单元测试与回归
+  #   3. performance_regression  - 热点路径性能回归检查（新增，顺序在 core_regression 之后）
+  #      - overall=fail → GateFailureReason::performance_regression_failed，阻断门禁
+  #      - overall=warn → 写入 warnings 字段，不阻断，阶段状态仍为 pass
+  #      - 阶段值仅 pass | fail | skipped（不引入第四种状态）
+  #   4. system_health           - 系统健康快照判定（需 Core 运行时）
+  #   5. evidence_integrity      - 证据索引完整性校验
+  #   6. apple_regression        - Apple 多工作区定向回归
+  #   7. apple_build             - macOS / iOS Simulator 构建验证
   - id: health
     action_rule: prefix("health_")
   # v1.46: 统一协调层（Coordinator）

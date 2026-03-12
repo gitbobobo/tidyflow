@@ -1081,6 +1081,11 @@ pub fn build_analysis_summary(
                         "apple_verification_failed",
                         "Apple 构建或回归失败",
                     ),
+                    GateFailureReason::PerformanceRegressionFailed => (
+                        BottleneckKind::PerformanceDegradation,
+                        "performance_regression_failed",
+                        "热点性能回归检查失败：measured_ns 超出 fail_ratio_limit 或 absolute_budget_ns",
+                    ),
                     GateFailureReason::Custom(msg) => (
                         BottleneckKind::Configuration,
                         "custom_gate_failure",

@@ -39,6 +39,19 @@
 - [ ] 若开启了 `TIDYFLOW_PERF_LOG`，确认 perf 日志路径可访问且不为空
 - [ ] 日志、指标与构建证据能共同支撑问题排查，而不是只保留单一日志文件
 
+## 3.6. 热点性能回归检查（v1.46 新增）
+
+- [ ] 执行：`./scripts/tidyflow perf-regression`
+  - **或**通过 `./scripts/tidyflow quality-gate --cycle <cycle_id> --step all` 间接执行（推荐）
+- [ ] 确认报告文件存在：`build/perf/hotspot-regression-report.json`
+- [ ] 确认报告 `overall` 字段 **不为 `fail`**（`pass` 或 `warn` 均可继续发布）
+- [ ] 若 `overall=warn`，检查 `warnings` 字段列出的场景，评估是否需要更新基线或优化热路径
+- [ ] **不允许** 在 verify 路径中自动更新基线文件；基线更新只允许显式本地命令触发：
+  ```bash
+  # 仅在明确接受新的性能测量值时手动更新基线
+  # 编辑 core/benches/baselines/hotspot_regression.json 并提交 code review
+  ```
+
 ## 4. 发布预演（无副作用）
 
 - [ ] 执行：`./scripts/tidyflow release --dry-run`

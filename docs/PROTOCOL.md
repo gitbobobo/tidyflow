@@ -142,6 +142,41 @@
 - 系统级建议的 `context` 中 `project` / `workspace` 为 null；工作区级建议携带具体隔离维度
 - 客户端只消费 Core 权威输出，不得根据零散指标重新推导瓶颈或建议
 
+### 质量门禁失败原因码（`GateFailureReason`）
+
+门禁失败原因为机器可读稳定编码，客户端和脚本不需要从日志文本推断。当前支持：
+
+| 原因码 | 含义 |
+|--------|------|
+| `system_unhealthy` | 系统健康状态为 Unhealthy |
+| `critical_incident` | 存在阻断性 critical incident |
+| `evidence_incomplete` | 证据完整性校验失败 |
+| `protocol_inconsistent` | 协议一致性检查失败 |
+| `core_regression_failed` | Core 回归测试失败 |
+| `apple_verification_failed` | Apple 构建或回归失败 |
+| `performance_regression_failed` | 热点性能回归检查失败（measured_ns 超出 fail_ratio_limit 或 absolute_budget_ns） |
+| `custom(<msg>)` | 自定义原因 |
+
+`performance_regression_failed` 映射到 `BottleneckKind::PerformanceDegradation`，瓶颈 `reason_code` 为 `performance_regression_failed`，证据直接引用比较器场景结果，携带 `(project, workspace, cycle_id)` 归属。
+
+### 质量门禁阶段（`quality-gate` phases）
+
+执行顺序固定为：
+
+1. `protocol_check` — 协议一致性 / schema 同步 / 版本一致性
+2. `core_regression` — Core 单元测试与回归
+3. **`performance_regression`** — 热点路径性能回归检查（新增，顺序在 `core_regression` 之后、`system_health` 之前）
+4. `system_health` — 系统健康快照判定（需 Core 运行时）
+5. `evidence_integrity` — 证据索引完整性校验
+6. `apple_regression` — Apple 多工作区定向回归
+7. `apple_build` — macOS / iOS Simulator 构建验证
+
+**`performance_regression` 裁决规则：**
+
+- 各场景 `measured_ns / baseline_ns > fail_ratio_limit` 或 `measured_ns > absolute_budget_ns` → `overall=fail`，映射到 `GateFailureReason::PerformanceRegressionFailed`，**阻断门禁**
+- 各场景 `measured_ns / baseline_ns > warn_ratio_limit`（但未超过 fail 限制）→ `overall=warn`，写入 `warnings` 字段与文本摘要，**不阻断门禁**
+- 阶段输出仅使用 `pass | fail | skipped`（不引入第四种状态）；`warn` 通过 `warnings` 字段单独表达
+
 ## 项目与工作区生命周期
 
 ### 工作区列表（`list_workspaces`）
