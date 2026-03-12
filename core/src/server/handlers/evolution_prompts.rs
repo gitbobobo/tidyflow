@@ -29,7 +29,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 阶段任务：
 1. 从 `direction.jsonc.direction_statement` 中获取本轮进化方向。
 2. 探索并对关键问题做出决策，直到你能清楚地说明：目标+成功标准、受众、范围内外、约束条件、当前状态以及关键偏好/权衡。
-3. 将计划输出到 `plan.md`。
+3. 将计划输出到 `plan.md` 中，无需复述 `plan.jsonc` 中的结构化内容。
 4. 根据 `plan.jsonc` 注释要求更新文件，并确保纯视觉任务项设置 implementation_stage_kind 为 visual。
 
 必须更新：
