@@ -75,16 +75,6 @@ struct ChatInputView: View {
     @State private var showImageImporter = false
     private let maxImageAttachmentCount = 9
 
-    #if os(macOS)
-    fileprivate enum MacInputCommand {
-        case submit
-        case acceptAutocomplete
-        case moveAutocompleteUp
-        case moveAutocompleteDown
-        case cancelAutocomplete
-    }
-    #endif
-
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
     }
@@ -460,13 +450,16 @@ struct ChatInputView: View {
             .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
             .clipShape(.rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
             .contentShape(.rect)
+            #if os(iOS)
             .onTapGesture {
                 inputFocused = true
             }
+            #endif
     }
 
     private var inputEditor: some View {
         ZStack(alignment: .topLeading) {
+            #if os(iOS)
             if text.isEmpty && !inputFocused {
                 Text(placeholderText)
                     .foregroundStyle(.secondary.opacity(0.6))
@@ -475,6 +468,7 @@ struct ChatInputView: View {
                     .padding(.vertical, editorVerticalInset)
                     .allowsHitTesting(false)
             }
+            #endif
 
             #if os(iOS)
             IOSPasteAwareTextView(
@@ -497,24 +491,28 @@ struct ChatInputView: View {
             .padding(.horizontal, editorHorizontalInset)
             .padding(.vertical, editorVerticalInset)
             #else
-            MacPasteAwareTextView(
-                text: $text,
-                isFocused: Binding(
-                    get: { inputFocused },
-                    set: { inputFocused = $0 }
-                ),
-                selectionOffset: textSelection?.utf16InsertionOffset(in: text),
-                fontSize: editorFontSize,
-                onSelectionChange: { location in
-                    let clampedLocation = min(max(0, location), text.utf16.count)
-                    let index = String.Index(utf16Offset: clampedLocation, in: text)
-                    textSelection = TextSelection(insertionPoint: index)
-                    onInputContextChange?(location, false)
-                },
-                onPasteAttachments: appendImageAttachments,
-                onCommand: handleMacInputCommand(_:)
-            )
-            .frame(minHeight: editorCollapsedMinHeight, maxHeight: editorExpandedMaxHeight)
+            VStack(alignment: .leading, spacing: 0) {
+                TextField(
+                    "",
+                    text: $text,
+                    selection: $textSelection,
+                    prompt: Text(placeholderText)
+                        .foregroundStyle(.secondary.opacity(0.6)),
+                    axis: .vertical
+                )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: editorFontSize))
+                    .lineLimit(1...6)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .focused($inputFocused)
+                    .onPasteCommand(of: [.image, .fileURL], perform: handlePastedImageProviders)
+                    .onKeyPress(phases: [.down]) { keyPress in
+                        handleKeyPress(keyPress)
+                    }
+
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: editorCollapsedMinHeight, maxHeight: editorExpandedMaxHeight, alignment: .topLeading)
             .padding(.horizontal, editorHorizontalInset)
             .padding(.vertical, editorVerticalInset)
             #endif
@@ -1193,52 +1191,55 @@ struct ChatInputView: View {
         .accessibilityIdentifier("tf.ai.input.action-button")
     }
 
-    #if os(macOS)
-    private func handleMacInputCommand(_ command: MacInputCommand) -> Bool {
+    private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
         if isTextInputComposing {
-            return false
+            return .ignored
         }
 
-        switch command {
-        case .submit:
+        switch keyPress.key {
+        case .return:
+            if keyPress.modifiers.contains(.shift) {
+                return .ignored
+            }
             if let autocomplete, autocomplete.isVisible, let item = autocomplete.selectedItem {
                 onSelectAutocomplete?(item)
-                return true
+                return .handled
             }
-            guard canSend && !isStreaming else { return true }
+            guard canSend && !isStreaming else { return .handled }
             onSend()
-            return true
-        case .acceptAutocomplete:
+            return .handled
+        case .tab:
             if let autocomplete, autocomplete.mode == .codeCompletion, autocomplete.completionSuggestion != nil {
                 onAcceptCodeCompletion?()
-                return true
+                return .handled
             }
             if let autocomplete, autocomplete.isVisible, let item = autocomplete.selectedItem {
                 onSelectAutocomplete?(item)
-                return true
+                return .handled
             }
-            return false
-        case .moveAutocompleteUp:
+            return .ignored
+        case .upArrow:
             if autocomplete?.isVisible == true {
                 autocomplete?.moveUp()
-                return true
+                return .handled
             }
-            return false
-        case .moveAutocompleteDown:
+            return .ignored
+        case .downArrow:
             if autocomplete?.isVisible == true {
                 autocomplete?.moveDown()
-                return true
+                return .handled
             }
-            return false
-        case .cancelAutocomplete:
+            return .ignored
+        case .escape:
             if autocomplete?.isVisible == true {
                 autocomplete?.reset()
-                return true
+                return .handled
             }
-            return false
+            return .ignored
+        default:
+            return .ignored
         }
     }
-    #endif
 
     private var isTextInputComposing: Bool {
         #if os(macOS)
@@ -1257,196 +1258,6 @@ struct ChatInputView: View {
         onInputContextChange?(text.utf16.count, false)
     }
 }
-
-#if os(macOS)
-private struct MacPasteAwareTextView: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var isFocused: Bool
-
-    let selectionOffset: Int?
-    let fontSize: CGFloat
-    let onSelectionChange: (Int) -> Void
-    let onPasteAttachments: ([ImageAttachment]) -> Void
-    let onCommand: (ChatInputView.MacInputCommand) -> Bool
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-
-        let textView = PasteAwareNSTextView()
-        textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: fontSize)
-        textView.textColor = .labelColor
-        textView.insertionPointColor = .controlAccentColor
-        textView.textContainerInset = .zero
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.isRichText = false
-        textView.importsGraphics = false
-        textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = true
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.string = text
-        textView.onPasteAttachments = onPasteAttachments
-        textView.onSelectionChange = onSelectionChange
-        textView.onFocusChange = { focused in
-            guard focused != isFocused else { return }
-            DispatchQueue.main.async {
-                self.isFocused = focused
-            }
-        }
-        textView.onCommand = onCommand
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? PasteAwareNSTextView else { return }
-
-        context.coordinator.parent = self
-        textView.onPasteAttachments = onPasteAttachments
-        textView.onSelectionChange = onSelectionChange
-        textView.onCommand = onCommand
-        textView.onFocusChange = { focused in
-            guard focused != isFocused else { return }
-            DispatchQueue.main.async {
-                self.isFocused = focused
-            }
-        }
-
-        if textView.string != text {
-            context.coordinator.isSyncingFromSwiftUI = true
-            textView.string = text
-            context.coordinator.isSyncingFromSwiftUI = false
-        }
-
-        if textView.font?.pointSize != fontSize {
-            textView.font = .systemFont(ofSize: fontSize)
-        }
-
-        if let selectionOffset {
-            let clampedLocation = min(max(0, selectionOffset), textView.string.utf16.count)
-            let selectedRange = textView.selectedRange()
-            if selectedRange.location != clampedLocation || selectedRange.length != 0 {
-                textView.setSelectedRange(NSRange(location: clampedLocation, length: 0))
-            }
-        }
-
-        if isFocused, textView.window?.firstResponder !== textView {
-            textView.window?.makeFirstResponder(textView)
-        } else if !isFocused, textView.window?.firstResponder === textView {
-            textView.window?.makeFirstResponder(nil)
-        }
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: MacPasteAwareTextView
-        var isSyncingFromSwiftUI = false
-
-        init(parent: MacPasteAwareTextView) {
-            self.parent = parent
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard !isSyncingFromSwiftUI,
-                  let textView = notification.object as? NSTextView
-            else {
-                return
-            }
-            let newText = textView.string
-            guard parent.text != newText else { return }
-            parent.text = newText
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.onSelectionChange(textView.selectedRange().location)
-        }
-    }
-}
-
-private final class PasteAwareNSTextView: NSTextView {
-    var onPasteAttachments: (([ImageAttachment]) -> Void)?
-    var onSelectionChange: ((Int) -> Void)?
-    var onFocusChange: ((Bool) -> Void)?
-    var onCommand: ((ChatInputView.MacInputCommand) -> Bool)?
-
-    override func becomeFirstResponder() -> Bool {
-        let becameFirstResponder = super.becomeFirstResponder()
-        if becameFirstResponder {
-            onFocusChange?(true)
-        }
-        return becameFirstResponder
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let resignedFirstResponder = super.resignFirstResponder()
-        if resignedFirstResponder {
-            onFocusChange?(false)
-        }
-        return resignedFirstResponder
-    }
-
-    override func setSelectedRange(_ charRange: NSRange, affinity: NSSelectionAffinity, stillSelecting flag: Bool) {
-        super.setSelectedRange(charRange, affinity: affinity, stillSelecting: flag)
-        onSelectionChange?(charRange.location)
-    }
-
-    override func paste(_ sender: Any?) {
-        let attachments = ChatInputView.makeImageAttachments(from: .general)
-        guard !attachments.isEmpty else {
-            super.paste(sender)
-            return
-        }
-        onPasteAttachments?(attachments)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        guard !hasMarkedText(),
-              let command = Self.command(for: event),
-              onCommand?(command) == true
-        else {
-            super.keyDown(with: event)
-            return
-        }
-    }
-
-    private static func command(for event: NSEvent) -> ChatInputView.MacInputCommand? {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let relevantModifiers = modifiers.intersection([.shift, .control, .option, .command])
-
-        switch event.keyCode {
-        case 36, 76:
-            if relevantModifiers.contains(.shift) {
-                return nil
-            }
-            return relevantModifiers.subtracting([.shift]).isEmpty ? .submit : nil
-        case 48:
-            return relevantModifiers.isEmpty ? .acceptAutocomplete : nil
-        case 126:
-            return relevantModifiers.isEmpty ? .moveAutocompleteUp : nil
-        case 125:
-            return relevantModifiers.isEmpty ? .moveAutocompleteDown : nil
-        case 53:
-            return relevantModifiers.isEmpty ? .cancelAutocomplete : nil
-        default:
-            return nil
-        }
-    }
-}
-#endif
 
 #if os(iOS)
 private struct IOSPasteAwareTextView: UIViewRepresentable {
