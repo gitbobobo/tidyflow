@@ -2457,6 +2457,9 @@ struct EvolutionRunningAgentsSectionView: View {
                 }
 
                 Spacer()
+
+                ProgressView()
+                    .controlSize(.small)
             }
 
             HStack(spacing: 12) {
@@ -2477,20 +2480,8 @@ struct EvolutionRunningAgentsSectionView: View {
                 }
 
                 Spacer()
-
-                if card.canOpenSession {
-                    Image(systemName: "bubble.left.and.text.bubble.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 28, height: 28)
-                        .background(
-                            Circle()
-                                .fill(Color.orange.opacity(0.12))
-                        )
-                }
             }
             .foregroundColor(.secondary)
-
-            PipelineProgressBar()
         }
         .padding(12)
         .background(
