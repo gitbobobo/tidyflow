@@ -47,6 +47,10 @@ class WSClient: NSObject, ObservableObject {
     var currentURL: URL?
     /// WebSocket 鉴权 token（由 Core 进程启动时注入）
     private(set) var wsAuthToken: String?
+    /// 远程 API key 连接的客户端实例标识；本地 macOS Core 连接保持为空
+    private(set) var authClientID: String?
+    /// 远程 API key 连接的设备名；仅用于服务端展示与订阅观察
+    private(set) var authDeviceName: String?
     /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
     private var pendingReconnectWorkItem: DispatchWorkItem?
     /// 最近一次已处理的服务端 seq（v9 包络），用于丢弃乱序/重复消息
@@ -238,7 +242,8 @@ class WSClient: NSObject, ObservableObject {
     /// 统一 HTTP Query 缓存层（SWR + in-flight 去重）
     let httpQueryClient = HTTPQueryClient()
     /// 测试注入：允许单测替换真实 HTTP 读取实现
-    var httpReadFetcherOverride: ((URL, String, [URLQueryItem], String?) async throws -> Data)?
+    var httpReadFetcherOverride:
+        ((URL, String, [URLQueryItem], String?, String?, String?) async throws -> Data)?
 
     /// 后台串行队列，用于 MessagePack 解码（避免阻塞主线程）
     private let decodeQueue: OperationQueue = {
@@ -280,13 +285,24 @@ class WSClient: NSObject, ObservableObject {
 
     /// Update the base URL using port number
     func updatePort(_ port: Int, reconnect: Bool = true) {
-        let url = AppConfig.makeWsURL(port: port, token: wsAuthToken)
+        let url = AppConfig.makeWsURL(
+            port: port,
+            token: wsAuthToken,
+            clientID: authClientID,
+            deviceName: authDeviceName
+        )
         updateBaseURL(url, reconnect: reconnect)
     }
 
     /// 更新 WebSocket 鉴权 token（用于后续 connect/reconnect）
     func updateAuthToken(_ token: String?) {
         wsAuthToken = token
+    }
+
+    /// 更新远程连接附加身份元数据；本地 Core 连接保持为空即可。
+    func updateAuthClientMetadata(clientID: String?, deviceName: String?) {
+        authClientID = clientID
+        authDeviceName = deviceName
     }
 
     // MARK: - Connection

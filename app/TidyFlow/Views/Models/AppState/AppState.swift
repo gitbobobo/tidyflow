@@ -238,14 +238,12 @@ class AppState: ObservableObject {
     var connectionState: ConnectionState { connectionPhase.legacyConnectionState }
     /// mac 启动门禁：首次 WS 连通前仅展示启动页
     @Published var startupPhase: StartupPhase = .loading
-    /// 最近一次生成的移动端配对码（6 位）
-    @Published var mobilePairCode: String?
-    /// 配对码过期时间文案（ISO8601 原文）
-    @Published var mobilePairCodeExpiresAt: String?
-    /// 配对码生成错误文案
-    @Published var mobilePairCodeError: String?
-    /// 正在请求配对码
-    @Published var mobilePairCodeLoading: Bool = false
+    /// Mac 本地管理的远程访问 API key 列表。
+    @Published var remoteAPIKeys: [RemoteAPIKeyRecord] = []
+    /// API key 列表加载/创建/删除的统一繁忙态。
+    @Published var remoteAPIKeysLoading: Bool = false
+    /// API key 管理错误文案。
+    @Published var remoteAPIKeysError: String?
 
     @Published var workspaceTabs: [String: TabSet] = [:]
     /// 工作区当前选中的底部面板类别。

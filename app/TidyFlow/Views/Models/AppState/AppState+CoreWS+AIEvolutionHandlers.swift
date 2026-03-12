@@ -1387,6 +1387,9 @@ extension AppState {
         }
 
         switch error.code {
+        case .authenticationFailed, .authenticationRevoked:
+            connectionPhase = .authenticationFailed(reason: error.message)
+            handleClientErrorMessage(error.message)
         case .evolutionError, .artifactContractViolation, .managedBacklogSyncFailed:
             handleEvolutionError(error.message, project: error.project, workspace: error.workspace)
         case .aiSessionError:

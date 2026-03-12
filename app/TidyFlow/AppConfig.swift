@@ -47,20 +47,49 @@ enum AppConfig {
     static let coreReadyTimeout: TimeInterval = 30
 
     /// Generate WebSocket URL for a given port
-    static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> URL {
+    static func makeWsURL(
+        host: String = coreHost,
+        port: Int,
+        token: String? = nil,
+        clientID: String? = nil,
+        deviceName: String? = nil,
+        secure: Bool = false
+    ) -> URL {
         var components = URLComponents()
         components.scheme = secure ? "wss" : "ws"
         components.host = host
         components.port = port
         components.path = "/ws"
+        var queryItems: [URLQueryItem] = []
         if let token, !token.isEmpty {
-            components.queryItems = [URLQueryItem(name: "token", value: token)]
+            queryItems.append(URLQueryItem(name: "token", value: token))
         }
+        if let clientID, !clientID.isEmpty {
+            queryItems.append(URLQueryItem(name: "client_id", value: clientID))
+        }
+        if let deviceName, !deviceName.isEmpty {
+            queryItems.append(URLQueryItem(name: "device_name", value: deviceName))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
         return components.url!
     }
 
     /// Generate WebSocket URL string for a given port
-    static func makeWsURLString(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> String {
-        makeWsURL(host: host, port: port, token: token, secure: secure).absoluteString
+    static func makeWsURLString(
+        host: String = coreHost,
+        port: Int,
+        token: String? = nil,
+        clientID: String? = nil,
+        deviceName: String? = nil,
+        secure: Bool = false
+    ) -> String {
+        makeWsURL(
+            host: host,
+            port: port,
+            token: token,
+            clientID: clientID,
+            deviceName: deviceName,
+            secure: secure
+        ).absoluteString
     }
 }

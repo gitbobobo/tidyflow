@@ -2,23 +2,130 @@ import Foundation
 import Darwin
 import TidyFlowShared
 
-private struct PairStartHTTPResponse: Decodable {
-    let pairCode: String
-    let expiresAt: String
+struct RemoteAPIKeyRecord: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let apiKey: String
+    let createdAt: String
+    let lastUsedAt: String?
 
-    enum CodingKeys: String, CodingKey {
-        case pairCode = "pair_code"
-        case expiresAt = "expires_at"
+    var maskedKey: String {
+        guard apiKey.count > 10 else { return apiKey }
+        let prefix = apiKey.prefix(8)
+        let suffix = apiKey.suffix(4)
+        return "\(prefix)••••\(suffix)"
     }
 }
 
-private struct PairErrorHTTPResponse: Decodable {
+private struct RemoteAPIKeyHTTPPayload: Decodable {
+    let keyID: String
+    let name: String
+    let apiKey: String
+    let createdAt: String
+    let lastUsedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case keyID = "key_id"
+        case name
+        case apiKey = "api_key"
+        case createdAt = "created_at"
+        case lastUsedAt = "last_used_at"
+    }
+}
+
+private struct RemoteAPIKeyListHTTPResponse: Decodable {
+    let items: [RemoteAPIKeyHTTPPayload]
+}
+
+private struct CreateRemoteAPIKeyHTTPBody: Encodable {
+    let name: String
+}
+
+private struct RemoteAPIKeyErrorHTTPResponse: Decodable {
     let error: String
     let message: String
 }
 
 extension AppState {
-    /// 当前会话是否允许生成并使用移动端连接信息（Core 运行即可）
+    // MARK: - GitCacheState 接线
+
+    func setupGitCache() {
+        gitCache.wsClient = wsClient
+        gitCache.getProjectName = { [weak self] in
+            self?.selectedProjectName ?? "default"
+        }
+        gitCache.getConnectionState = { [weak self] in
+            self?.connectionState ?? .disconnected
+        }
+        gitCache.getSelectedWorkspaceKey = { [weak self] in
+            self?.selectedWorkspaceKey
+        }
+        gitCache.onCloseAllDiffTabs = { [weak self] workspaceKey in
+            self?.closeAllDiffTabs(workspaceKey: workspaceKey)
+        }
+        gitCache.onCloseDiffTab = { [weak self] workspaceKey, path in
+            self?.closeDiffTab(workspaceKey: workspaceKey, path: path)
+        }
+        gitCache.onRefreshActiveDiff = { [weak self] in
+            self?.gitCache.refreshActiveDiff()
+        }
+        gitCache.getActiveDiffPath = { [weak self] in
+            self?.activeDiffPath
+        }
+        gitCache.getActiveDiffMode = { [weak self] in
+            self?.activeDiffMode ?? .working
+        }
+    }
+
+    // MARK: - Core Process Management
+
+    /// 设置 Core 进程生命周期回调。
+    func setupCoreCallbacks() {
+        coreProcessManager.onCoreReady = { [weak self] port in
+            self?.setupWSClient(port: port)
+        }
+
+        coreProcessManager.onCoreFailed = { [weak self] message in
+            TFLog.core.error("Core failed: \(message, privacy: .public)")
+            self?.connectionPhase = .intentionallyDisconnected
+            self?.markStartupFailedIfNeeded(message: message)
+        }
+
+        coreProcessManager.onCoreRestarting = { [weak self] attempt, maxAttempts in
+            TFLog.core.warning("Core restarting (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public))")
+            self?.wsClient.disconnect()
+            self?.connectionPhase = .intentionallyDisconnected
+        }
+
+        coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
+            TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
+            self?.connectionPhase = .intentionallyDisconnected
+            self?.markStartupFailedIfNeeded(message: message)
+        }
+    }
+
+    /// 在 Core 未运行时启动 Core。
+    func startCoreIfNeeded() {
+        guard !coreProcessManager.isRunning else {
+            return
+        }
+        coreProcessManager.start()
+    }
+
+    /// 手动重启 Core，并重置自动重启计数。
+    func restartCore() {
+        wsClient.disconnect()
+        coreProcessManager.restart(resetCounter: true)
+    }
+
+    /// 应用退出时停止 Core。
+    func stopCore() {
+        deferredAISessionReloadWorkItem?.cancel()
+        deferredAISessionReloadWorkItem = nil
+        coreProcessManager.stop()
+    }
+
+    /// 当前会话是否允许管理移动端连接信息（Core 运行即可）
     var remoteAccessReady: Bool {
         coreProcessManager.status.isRunning
     }
@@ -72,12 +179,10 @@ extension AppState {
             cursor = iface.ifa_next
         }
 
-        // 去重并保持顺序
         var seen = Set<String>()
         return (preferred + others).filter { seen.insert($0).inserted }
     }
 
-    /// 移动端连接展示用的局域网地址文案
     var mobileLanAddressDisplayText: String {
         let addresses = mobileLanIPv4Addresses
         if addresses.isEmpty {
@@ -86,7 +191,6 @@ extension AppState {
         return addresses.joined(separator: ", ")
     }
 
-    /// 移动端连接展示用的端口文案
     var mobileAccessPortDisplayText: String {
         if let wsPort = wsClient.currentURL?.port {
             return "\(wsPort)"
@@ -97,158 +201,126 @@ extension AppState {
         return "\(port)"
     }
 
-    // MARK: - GitCacheState 接线
-
-    func setupGitCache() {
-        gitCache.wsClient = wsClient
-        gitCache.getProjectName = { [weak self] in
-            self?.selectedProjectName ?? "default"
-        }
-        gitCache.getConnectionState = { [weak self] in
-            self?.connectionState ?? .disconnected
-        }
-        gitCache.getSelectedWorkspaceKey = { [weak self] in
-            self?.selectedWorkspaceKey
-        }
-        gitCache.onCloseAllDiffTabs = { [weak self] workspaceKey in
-            self?.closeAllDiffTabs(workspaceKey: workspaceKey)
-        }
-        gitCache.onCloseDiffTab = { [weak self] workspaceKey, path in
-            self?.closeDiffTab(workspaceKey: workspaceKey, path: path)
-        }
-        gitCache.onRefreshActiveDiff = { [weak self] in
-            self?.gitCache.refreshActiveDiff()
-        }
-        gitCache.getActiveDiffPath = { [weak self] in
-            self?.activeDiffPath
-        }
-        gitCache.getActiveDiffMode = { [weak self] in
-            self?.activeDiffMode ?? .working
-        }
-    }
-
-    // MARK: - Core Process Management
-
-    /// Setup callbacks for Core process events
-    func setupCoreCallbacks() {
-        coreProcessManager.onCoreReady = { [weak self] port in
-            self?.setupWSClient(port: port)
-        }
-
-        coreProcessManager.onCoreFailed = { [weak self] message in
-            TFLog.core.error("Core failed: \(message, privacy: .public)")
-            self?.connectionPhase = .intentionallyDisconnected
-            self?.markStartupFailedIfNeeded(message: message)
-        }
-
-        coreProcessManager.onCoreRestarting = { [weak self] attempt, maxAttempts in
-            TFLog.core.warning("Core restarting (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public))")
-            // Disconnect WebSocket during restart
-            self?.wsClient.disconnect()
-            self?.connectionPhase = .intentionallyDisconnected
-        }
-
-        coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
-            TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
-            self?.connectionPhase = .intentionallyDisconnected
-            self?.markStartupFailedIfNeeded(message: message)
-        }
-
-    }
-
-    /// Start Core process if not already running
-    func startCoreIfNeeded() {
-        guard !coreProcessManager.isRunning else {
-            return
-        }
-        coreProcessManager.start()
-    }
-
-    /// Restart Core process (for Cmd+R recovery)
-    /// Resets auto-restart counter for manual recovery
-    func restartCore() {
-        wsClient.disconnect()
-        coreProcessManager.restart(resetCounter: true)
-    }
-
-    /// 生成移动端配对码（仅本机调用 /pair/start）
-    func requestMobilePairCode() {
+    func refreshRemoteAPIKeys() {
         guard coreProcessManager.status.isRunning else {
-            mobilePairCodeError = "settings.mobile.error.coreNotReady".localized
+            remoteAPIKeysError = "settings.mobile.error.coreNotReady".localized
             return
         }
-        let readyPort = wsClient.currentURL?.port ?? coreProcessManager.runningPort
-        guard let port = readyPort else {
-            mobilePairCodeError = "settings.mobile.error.coreNotReady".localized
-            return
-        }
-        guard let url = URL(string: "http://127.0.0.1:\(port)/pair/start") else {
-            mobilePairCodeError = "settings.mobile.error.invalidPairURL".localized
+        guard let url = makeLocalAuthKeysURL() else {
+            remoteAPIKeysError = "settings.mobile.error.invalidPairURL".localized
             return
         }
 
-        mobilePairCodeLoading = true
-        mobilePairCodeError = nil
+        remoteAPIKeysLoading = true
+        remoteAPIKeysError = nil
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data("{}".utf8)
+        request.httpMethod = "GET"
 
         Task { [weak self] in
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    let appState = self
-                    await MainActor.run {
-                        appState?.mobilePairCodeLoading = false
-                        appState?.mobilePairCodeError = "settings.mobile.error.invalidResponse".localized
-                    }
-                    return
-                }
-
-                if (200..<300).contains(httpResponse.statusCode) {
-                    let decoded = try JSONDecoder().decode(PairStartHTTPResponse.self, from: data)
-                    let appState = self
-                    await MainActor.run {
-                        appState?.mobilePairCodeLoading = false
-                        appState?.mobilePairCode = decoded.pairCode
-                        appState?.mobilePairCodeExpiresAt = decoded.expiresAt
-                        appState?.mobilePairCodeError = nil
-                    }
-                    return
-                }
-
-                let serverError = try? JSONDecoder().decode(PairErrorHTTPResponse.self, from: data)
-                let appState = self
-                await MainActor.run {
-                    appState?.mobilePairCodeLoading = false
-                    if let serverError {
-                        appState?.mobilePairCodeError = "\(serverError.error): \(serverError.message)"
-                    } else {
-                        appState?.mobilePairCodeError = String(
-                            format: "settings.mobile.error.httpStatus".localized,
-                            httpResponse.statusCode
-                        )
-                    }
-                }
-            } catch {
-                let appState = self
-                await MainActor.run {
-                    appState?.mobilePairCodeLoading = false
-                    appState?.mobilePairCodeError = String(
-                        format: "settings.mobile.error.general".localized,
-                        error.localizedDescription
-                    )
-                }
+            await self?.performRemoteAPIKeyRequest(request) { data in
+                let response = try JSONDecoder().decode(RemoteAPIKeyListHTTPResponse.self, from: data)
+                return response.items.map(Self.remoteAPIKeyRecord(from:))
             }
         }
     }
 
-    /// Stop Core process (called on app termination)
-    func stopCore() {
-        deferredAISessionReloadWorkItem?.cancel()
-        deferredAISessionReloadWorkItem = nil
-        coreProcessManager.stop()
+    func createRemoteAPIKey(name: String) {
+        guard let url = makeLocalAuthKeysURL() else {
+            remoteAPIKeysError = "settings.mobile.error.invalidPairURL".localized
+            return
+        }
+
+        remoteAPIKeysLoading = true
+        remoteAPIKeysError = nil
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(CreateRemoteAPIKeyHTTPBody(name: name))
+
+        Task { [weak self] in
+            await self?.performRemoteAPIKeyRequest(request) { data in
+                let created = try JSONDecoder().decode(RemoteAPIKeyHTTPPayload.self, from: data)
+                var current = self?.remoteAPIKeys ?? []
+                current.insert(Self.remoteAPIKeyRecord(from: created), at: 0)
+                return current
+            }
+        }
     }
 
+    func deleteRemoteAPIKey(id: String) {
+        guard let url = makeLocalAuthKeysURL(pathComponent: id) else {
+            remoteAPIKeysError = "settings.mobile.error.invalidPairURL".localized
+            return
+        }
+
+        remoteAPIKeysLoading = true
+        remoteAPIKeysError = nil
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+
+        Task { [weak self] in
+            await self?.performRemoteAPIKeyRequest(request) { _ in
+                (self?.remoteAPIKeys ?? []).filter { $0.id != id }
+            }
+        }
+    }
+
+    private static func remoteAPIKeyRecord(from payload: RemoteAPIKeyHTTPPayload) -> RemoteAPIKeyRecord {
+        RemoteAPIKeyRecord(
+            id: payload.keyID,
+            name: payload.name,
+            apiKey: payload.apiKey,
+            createdAt: payload.createdAt,
+            lastUsedAt: payload.lastUsedAt
+        )
+    }
+
+    private func makeLocalAuthKeysURL(pathComponent: String? = nil) -> URL? {
+        let readyPort = wsClient.currentURL?.port ?? coreProcessManager.runningPort
+        guard let port = readyPort else { return nil }
+        let suffix = pathComponent.map { "/\($0)" } ?? ""
+        return URL(string: "http://127.0.0.1:\(port)/auth/keys\(suffix)")
+    }
+
+    private func performRemoteAPIKeyRequest(
+        _ request: URLRequest,
+        onSuccess: @escaping (Data) throws -> [RemoteAPIKeyRecord]
+    ) async {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                await MainActor.run {
+                    self.remoteAPIKeysLoading = false
+                    self.remoteAPIKeysError = "settings.mobile.error.invalidResponse".localized
+                }
+                return
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                let serverError = try? JSONDecoder().decode(RemoteAPIKeyErrorHTTPResponse.self, from: data)
+                await MainActor.run {
+                    self.remoteAPIKeysLoading = false
+                    self.remoteAPIKeysError = serverError.map { "\($0.error): \($0.message)" }
+                        ?? String(
+                            format: "settings.mobile.error.httpStatus".localized,
+                            httpResponse.statusCode
+                        )
+                }
+                return
+            }
+            let nextKeys = try onSuccess(data)
+            await MainActor.run {
+                self.remoteAPIKeys = nextKeys
+                self.remoteAPIKeysLoading = false
+                self.remoteAPIKeysError = nil
+            }
+        } catch {
+            await MainActor.run {
+                self.remoteAPIKeysLoading = false
+                self.remoteAPIKeysError = String(
+                    format: "settings.mobile.error.general".localized,
+                    error.localizedDescription
+                )
+            }
+        }
+    }
 }

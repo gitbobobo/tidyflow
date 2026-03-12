@@ -47,7 +47,9 @@ private struct CoreHTTPClient {
         baseURL: URL,
         path: String,
         queryItems: [URLQueryItem],
-        token: String?
+        token: String?,
+        clientID: String?,
+        deviceName: String?
     ) async throws -> Data {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw CoreHTTPClientError.invalidRequestURL
@@ -63,6 +65,12 @@ private struct CoreHTTPClient {
         request.timeoutInterval = requestTimeout
         if let token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let clientID, !clientID.isEmpty {
+            request.setValue(clientID, forHTTPHeaderField: "X-TidyFlow-Client-ID")
+        }
+        if let deviceName, !deviceName.isEmpty {
+            request.setValue(deviceName, forHTTPHeaderField: "X-TidyFlow-Device-Name")
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -996,13 +1004,22 @@ extension WSClient {
             ) { [self] in
                 onHTTPRequestScheduled?(domain, path, queryItems)
                 if let httpReadFetcherOverride {
-                    return try await httpReadFetcherOverride(baseURL, path, queryItems, token)
+                    return try await httpReadFetcherOverride(
+                        baseURL,
+                        path,
+                        queryItems,
+                        token,
+                        self.authClientID,
+                        self.authDeviceName
+                    )
                 }
                 return try await CoreHTTPClient.fetchData(
                     baseURL: baseURL,
                     path: path,
                     queryItems: queryItems,
-                    token: token
+                    token: token,
+                    clientID: self.authClientID,
+                    deviceName: self.authDeviceName
                 )
             }
             let json = try decodeHTTPResponseObject(from: data)

@@ -129,7 +129,7 @@ extension AppState {
     }
 
     func startAutoReconnect() {
-        // 使用共享语义层统一判断：排除已在重连、主动断开、配对失败、重连耗尽
+        // 使用共享语义层统一判断：排除已在重连、主动断开、认证失败、重连耗尽
         guard connectionPhase.allowsAutoReconnect else {
             TFLog.core.info("当前连接阶段不允许自动重连，跳过: phase=\(String(describing: self.connectionPhase), privacy: .public)")
             return

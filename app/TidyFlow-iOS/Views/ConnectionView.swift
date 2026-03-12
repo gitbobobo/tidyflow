@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 配对连接表单视图
+/// API key 连接表单视图
 struct ConnectionView: View {
     @EnvironmentObject var appState: MobileAppState
     private let isUITestMode: Bool = {
@@ -57,17 +57,12 @@ struct ConnectionView: View {
                 Toggle("HTTPS", isOn: $appState.useHTTPS)
                     .accessibilityIdentifier("tf.connection.https")
                 HStack {
-                    Text("配对码")
+                    Text("API key")
                         .frame(width: 50, alignment: .leading)
-                    TextField("6 位数字", text: $appState.pairCode)
-                        .keyboardType(.numberPad)
-                        .accessibilityIdentifier("tf.connection.pairCode")
-                }
-                HStack {
-                    Text("设备名")
-                        .frame(width: 50, alignment: .leading)
-                    TextField("iPhone", text: $appState.deviceName)
-                        .accessibilityIdentifier("tf.connection.deviceName")
+                    SecureField("tfk_...", text: $appState.apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .accessibilityIdentifier("tf.connection.apiKey")
                 }
             }
             .accessibilityIdentifier("tf.connection.form")
@@ -75,11 +70,11 @@ struct ConnectionView: View {
             Section {
                 Button {
                     Task {
-                        await appState.pairAndConnect()
+                        await appState.connectWithAPIKey()
                     }
                 } label: {
                     HStack {
-                        Text("配对并连接")
+                        Text("使用 API key 连接")
                         Spacer()
                         if appState.connecting {
                             ProgressView()

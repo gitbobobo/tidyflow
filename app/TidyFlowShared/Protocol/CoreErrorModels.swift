@@ -41,6 +41,8 @@ public enum CoreErrorCode: String, Hashable {
     case invalidPayload = "invalid_payload"
     case importError = "import_error"
     case workspaceError = "workspace_error"
+    case authenticationFailed = "authentication_failed"
+    case authenticationRevoked = "authentication_revoked"
 
     // MARK: 通用
     case internalError = "internal_error"

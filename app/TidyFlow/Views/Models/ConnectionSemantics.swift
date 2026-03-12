@@ -15,8 +15,8 @@ enum ConnectionPhase: Equatable {
     case reconnecting(attempt: Int, maxAttempts: Int)
     /// 重连耗尽，待人工手动恢复
     case reconnectFailed
-    /// 配对失败或 token 失效，需重新配对（iOS 配对流程场景）
-    case pairingFailed(reason: String)
+    /// 认证失败或 key 已失效，需重新输入有效凭据
+    case authenticationFailed(reason: String)
     /// 主动断开（由用户或应用主动发起，不触发自动重连）
     case intentionallyDisconnected
 
@@ -31,10 +31,10 @@ enum ConnectionPhase: Equatable {
         return false
     }
 
-    /// 是否需要人工干预才能恢复（重连耗尽或配对失败）
+    /// 是否需要人工干预才能恢复（重连耗尽或认证失败）
     var needsManualRecovery: Bool {
         switch self {
-        case .reconnectFailed, .pairingFailed:
+        case .reconnectFailed, .authenticationFailed:
             return true
         default:
             return false
@@ -65,11 +65,11 @@ enum ConnectionPhase: Equatable {
 
 extension ConnectionPhase {
     /// 是否允许发起自动重连。
-    /// 排除已在重连、主动断开、配对失败、重连耗尽的场景，
+    /// 排除已在重连、主动断开、认证失败、重连耗尽的场景，
     /// 防止自动重连误伤非意外断连状态。
     var allowsAutoReconnect: Bool {
         switch self {
-        case .reconnecting, .intentionallyDisconnected, .pairingFailed, .reconnectFailed:
+        case .reconnecting, .intentionallyDisconnected, .authenticationFailed, .reconnectFailed:
             return false
         case .connecting, .connected:
             return true

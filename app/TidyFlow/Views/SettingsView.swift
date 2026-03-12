@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -276,57 +277,142 @@ struct CustomCommandRow: View {
 private struct RemoteAccessStatusSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var coreProcessManager: CoreProcessManager
+    @State private var showCreateSheet = false
 
     var body: some View {
-        if appState.remoteAccessReady {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("settings.mobile.lanAddress".localized)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(appState.mobileLanAddressDisplayText)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            if appState.remoteAccessReady {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("settings.mobile.lanAddress".localized)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(appState.mobileLanAddressDisplayText)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("settings.mobile.port".localized)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(appState.mobileAccessPortDisplayText)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-        }
-
-        HStack(spacing: 12) {
-            Button(action: { appState.requestMobilePairCode() }) {
-                if appState.mobilePairCodeLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Label("settings.mobile.generateCode".localized, systemImage: "iphone.and.arrow.forward")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("settings.mobile.port".localized)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(appState.mobileAccessPortDisplayText)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
                 }
             }
-            .disabled(!appState.remoteAccessReady || appState.mobilePairCodeLoading)
 
-            if let code = appState.mobilePairCode {
-                Text(code)
-                    .font(.system(.body, design: .monospaced))
-                    .fontWeight(.semibold)
-                    .textSelection(.enabled)
+            HStack(spacing: 12) {
+                Button {
+                    appState.refreshRemoteAPIKeys()
+                } label: {
+                    if appState.remoteAPIKeysLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("settings.mobile.refreshKeys".localized, systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(!appState.remoteAccessReady || appState.remoteAPIKeysLoading)
+
+                Button {
+                    showCreateSheet = true
+                } label: {
+                    Label("settings.mobile.createKey".localized, systemImage: "plus")
+                }
+                .disabled(!appState.remoteAccessReady || appState.remoteAPIKeysLoading)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("settings.mobile.apiKeys".localized)
+                    .font(.headline)
+
+                if appState.remoteAPIKeys.isEmpty {
+                    Text("settings.mobile.noKeys".localized)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appState.remoteAPIKeys) { item in
+                        RemoteAPIKeyRow(item: item) {
+                            appState.deleteRemoteAPIKey(id: item.id)
+                        }
+                    }
+                }
+            }
+
+            if let error = appState.remoteAPIKeysError, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
         }
+        .onAppear {
+            guard appState.remoteAccessReady, appState.remoteAPIKeys.isEmpty else { return }
+            appState.refreshRemoteAPIKeys()
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            CreateRemoteAPIKeySheet { name in
+                appState.createRemoteAPIKey(name: name)
+            }
+        }
+    }
+}
 
-        if let expiresAt = appState.mobilePairCodeExpiresAt, !expiresAt.isEmpty {
-            Text(String(format: "settings.mobile.codeExpires".localized, expiresAt))
-                .font(.caption)
-                .foregroundColor(.secondary)
+private struct RemoteAPIKeyRow: View {
+    let item: RemoteAPIKeyRecord
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.system(size: 13, weight: .medium))
+                Text(item.maskedKey)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(item.createdAt)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button("settings.mobile.copyKey".localized) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(item.apiKey, forType: .string)
+            }
+
+            Button("common.delete".localized, role: .destructive, action: onDelete)
         }
-        if let error = appState.mobilePairCodeError, !error.isEmpty {
-            Text(error)
-                .font(.caption)
-                .foregroundColor(.red)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct CreateRemoteAPIKeySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String = ""
+    let onCreate: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("settings.mobile.createKey".localized)
+                .font(.headline)
+            TextField("settings.mobile.keyNamePlaceholder".localized, text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Spacer()
+                Button("common.cancel".localized) {
+                    dismiss()
+                }
+                Button("settings.mobile.createAction".localized) {
+                    onCreate(name.trimmingCharacters(in: .whitespacesAndNewlines))
+                    dismiss()
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
+        .padding(20)
+        .frame(width: 360)
     }
 }
 

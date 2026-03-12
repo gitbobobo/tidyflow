@@ -848,6 +848,9 @@ extension MobileAppState {
         if error.code.isRecoverable {
             return
         }
+        if error.code == .authenticationFailed || error.code == .authenticationRevoked {
+            connectionPhase = .authenticationFailed(reason: error.message)
+        }
         errorMessage = error.message
     }
 }

@@ -3,35 +3,6 @@ import SwiftUI
 import UIKit
 import TidyFlowShared
 
-private struct PairExchangeHTTPBody: Encodable {
-    let pairCode: String
-    let deviceName: String
-
-    enum CodingKeys: String, CodingKey {
-        case pairCode = "pair_code"
-        case deviceName = "device_name"
-    }
-}
-
-private struct PairExchangeHTTPResponse: Decodable {
-    let tokenId: String
-    let wsToken: String
-    let deviceName: String
-    let expiresAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case tokenId = "token_id"
-        case wsToken = "ws_token"
-        case deviceName = "device_name"
-        case expiresAt = "expires_at"
-    }
-}
-
-private struct PairErrorHTTPResponse: Decodable {
-    let error: String
-    let message: String
-}
-
 // MobileWorkspaceTaskType、MobileWorkspaceTaskStatus 和 MobileWorkspaceTask 已迁移至
 // WorkspaceTaskSemantics.swift（WorkspaceTaskType / WorkspaceTaskStatus / WorkspaceTaskItem）
 
@@ -170,10 +141,10 @@ final class MobileAppState: ObservableObject {
     // 连接表单
     @Published var host: String = ""
     @Published var port: String = "47999"
-    @Published var pairCode: String = ""
-    @Published var deviceName: String = UIDevice.current.name
+    @Published var apiKey: String = ""
     /// 是否通过 HTTPS/WSS 连接（反向代理场景）
     @Published var useHTTPS: Bool = false
+    let clientInstanceID: String = ClientIdentityStorage.loadOrCreate()
 
     // 连接状态
     @Published var connecting: Bool = false
@@ -556,7 +527,7 @@ final class MobileAppState: ObservableObject {
         if let saved = ConnectionStorage.load() {
             host = saved.host
             port = "\(saved.port)"
-            deviceName = saved.deviceName
+            apiKey = saved.apiKey
             useHTTPS = saved.useHTTPS
             hasSavedConnection = true
         }
@@ -580,7 +551,7 @@ final class MobileAppState: ObservableObject {
         terminalSink?.focusTerminal()
 
         guard hasSavedConnection, !wsClient.isIntentionalDisconnect else { return }
-        // 使用共享语义层：配对失败或重连耗尽时不自动重连，需用户手动介入
+        // 使用共享语义层：认证失败或重连耗尽时不自动重连，需用户手动介入
         guard connectionPhase.allowsAutoReconnect || connectionPhase.isConnected else { return }
 
         if wsClient.isStale || !isConnected {
@@ -615,15 +586,15 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 连接
 
-    func pairAndConnect() async {
+    func connectWithAPIKey() async {
         errorMessage = ""
         connectionMessage = ""
         connecting = true
         defer { connecting = false }
 
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedCode = pairCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedDeviceName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentDeviceName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedHost.isEmpty else {
             errorMessage = "请填写电脑地址"
@@ -633,44 +604,41 @@ final class MobileAppState: ObservableObject {
             errorMessage = "端口无效"
             return
         }
-        guard trimmedCode.count == 6 else {
-            errorMessage = "配对码必须是 6 位数字"
+        guard !trimmedAPIKey.isEmpty else {
+            errorMessage = "请填写 API key"
             return
         }
 
-        do {
-            let token = try await exchangePairCode(
+        wsClient.disconnect()
+        wsClient.updateAuthToken(trimmedAPIKey)
+        wsClient.updateAuthClientMetadata(
+            clientID: clientInstanceID,
+            deviceName: currentDeviceName.isEmpty ? "iOS Device" : currentDeviceName
+        )
+        wsClient.updateBaseURL(
+            AppConfig.makeWsURL(
                 host: trimmedHost,
                 port: portValue,
-                pairCode: trimmedCode,
-                deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName,
+                token: trimmedAPIKey,
+                clientID: clientInstanceID,
+                deviceName: currentDeviceName.isEmpty ? "iOS Device" : currentDeviceName,
                 secure: useHTTPS
-            )
+            ),
+            reconnect: false
+        )
+        wsClient.connect()
+        connectionPhase = .connecting
+        connectionMessage = "正在连接..."
 
-            wsClient.disconnect()
-            wsClient.updateAuthToken(token.wsToken)
-            wsClient.updateBaseURL(
-                AppConfig.makeWsURL(host: trimmedHost, port: portValue, token: token.wsToken, secure: useHTTPS),
-                reconnect: false
-            )
-            wsClient.connect()
-            connectionPhase = .connecting
-            connectionMessage = "已配对，正在连接..."
-
-            // 保存连接信息
-            ConnectionStorage.save(SavedConnection(
-                host: trimmedHost,
-                port: portValue,
-                wsToken: token.wsToken,
-                deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName,
-                savedAt: Date(),
-                useHTTPS: useHTTPS
-            ))
-            hasSavedConnection = true
-        } catch {
-            connectionPhase = .pairingFailed(reason: error.localizedDescription)
-            errorMessage = error.localizedDescription
-        }
+        ConnectionStorage.save(SavedConnection(
+            host: trimmedHost,
+            port: portValue,
+            apiKey: trimmedAPIKey,
+            clientInstanceID: clientInstanceID,
+            savedAt: Date(),
+            useHTTPS: useHTTPS
+        ))
+        hasSavedConnection = true
     }
 
     func disconnect() {
@@ -682,7 +650,7 @@ final class MobileAppState: ObservableObject {
         connectionMessage = "已断开"
     }
 
-    /// 使用保存的 token 自动重连
+    /// 使用保存的 API key 自动重连
     func autoReconnect() async {
         guard let saved = ConnectionStorage.load() else { return }
         errorMessage = ""
@@ -691,9 +659,20 @@ final class MobileAppState: ObservableObject {
         defer { autoConnecting = false }
 
         wsClient.disconnect()
-        wsClient.updateAuthToken(saved.wsToken)
+        wsClient.updateAuthToken(saved.apiKey)
+        wsClient.updateAuthClientMetadata(
+            clientID: saved.clientInstanceID,
+            deviceName: UIDevice.current.name
+        )
         wsClient.updateBaseURL(
-            AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken, secure: saved.useHTTPS),
+            AppConfig.makeWsURL(
+                host: saved.host,
+                port: saved.port,
+                token: saved.apiKey,
+                clientID: saved.clientInstanceID,
+                deviceName: UIDevice.current.name,
+                secure: saved.useHTTPS
+            ),
             reconnect: false
         )
         wsClient.connect()
@@ -706,13 +685,13 @@ final class MobileAppState: ObservableObject {
         }
         if !connectionPhase.isConnected {
             connectionPhase = .intentionallyDisconnected
-            connectionMessage = "自动连接超时，请手动配对"
+            connectionMessage = "自动连接超时，请手动重新输入 API key"
         }
     }
 
     /// 使用指数退避重连（共享 ReconnectPolicy：5 次尝试，退避 0.5s/1s/2s/4s/8s）
     func reconnectWithBackoff() {
-        // 配对失败或重连耗尽状态不应自动重连，需用户手动介入
+        // 认证失败或重连耗尽状态不应自动重连，需用户手动介入
         guard connectionPhase.allowsAutoReconnect || connectionPhase.isReconnecting else { return }
         reconnectTask?.cancel()
 
@@ -743,9 +722,20 @@ final class MobileAppState: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(ReconnectPolicy.disconnectDrainDelay * 1_000_000_000))
 
                 await MainActor.run {
-                    self.wsClient.updateAuthToken(saved.wsToken)
+                    self.wsClient.updateAuthToken(saved.apiKey)
+                    self.wsClient.updateAuthClientMetadata(
+                        clientID: saved.clientInstanceID,
+                        deviceName: UIDevice.current.name
+                    )
                     self.wsClient.updateBaseURL(
-                        AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken, secure: saved.useHTTPS),
+                        AppConfig.makeWsURL(
+                            host: saved.host,
+                            port: saved.port,
+                            token: saved.apiKey,
+                            clientID: saved.clientInstanceID,
+                            deviceName: UIDevice.current.name,
+                            secure: saved.useHTTPS
+                        ),
                         reconnect: false
                     )
                     self.wsClient.connect()
@@ -795,6 +785,7 @@ final class MobileAppState: ObservableObject {
     func clearSavedConnection() {
         ConnectionStorage.clear()
         hasSavedConnection = false
+        apiKey = ""
     }
 
     // MARK: - 项目/工作空间
@@ -4800,52 +4791,6 @@ final class MobileAppState: ObservableObject {
         for chunk in chunks {
             sink.writeOutput(chunk)
         }
-    }
-
-    // MARK: - HTTP 配对
-
-    private func exchangePairCode(
-        host: String,
-        port: Int,
-        pairCode: String,
-        deviceName: String,
-        secure: Bool = false
-    ) async throws -> PairExchangeHTTPResponse {
-        let scheme = secure ? "https" : "http"
-        guard let url = URL(string: "\(scheme)://\(host):\(port)/pair/exchange") else {
-            throw NSError(domain: "TidyFlowiOS", code: -1, userInfo: [
-                NSLocalizedDescriptionKey: "配对服务地址无效"
-            ])
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10
-        request.httpBody = try JSONEncoder().encode(
-            PairExchangeHTTPBody(pairCode: pairCode, deviceName: deviceName)
-        )
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "TidyFlowiOS", code: -2, userInfo: [
-                NSLocalizedDescriptionKey: "服务端响应异常"
-            ])
-        }
-
-        if (200..<300).contains(httpResponse.statusCode) {
-            return try JSONDecoder().decode(PairExchangeHTTPResponse.self, from: data)
-        }
-
-        if let serverError = try? JSONDecoder().decode(PairErrorHTTPResponse.self, from: data) {
-            throw NSError(domain: "TidyFlowiOS", code: httpResponse.statusCode, userInfo: [
-                NSLocalizedDescriptionKey: "\(serverError.error): \(serverError.message)"
-            ])
-        }
-
-        throw NSError(domain: "TidyFlowiOS", code: httpResponse.statusCode, userInfo: [
-            NSLocalizedDescriptionKey: "配对失败 (HTTP \(httpResponse.statusCode))"
-        ])
     }
 
     private func consumeCtrlIfNeeded(for data: String) -> String {
