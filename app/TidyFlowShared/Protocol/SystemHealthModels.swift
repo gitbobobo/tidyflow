@@ -1089,6 +1089,8 @@ public enum GateFailureReason: Codable, Equatable {
     case protocolInconsistent
     case coreRegressionFailed
     case appleVerificationFailed
+    /// 热点性能回归检查失败（measured_ns 超出 fail_ratio_limit 或 absolute_budget_ns）
+    case performanceRegressionFailed
     case custom(String)
 
     public init(from decoder: Decoder) throws {
@@ -1101,6 +1103,7 @@ public enum GateFailureReason: Codable, Equatable {
             case "protocol_inconsistent": self = .protocolInconsistent
             case "core_regression_failed": self = .coreRegressionFailed
             case "apple_verification_failed": self = .appleVerificationFailed
+            case "performance_regression_failed": self = .performanceRegressionFailed
             default: self = .custom(raw)
             }
         } else {
@@ -1119,6 +1122,7 @@ public enum GateFailureReason: Codable, Equatable {
         case .protocolInconsistent: try container.encode("protocol_inconsistent")
         case .coreRegressionFailed: try container.encode("core_regression_failed")
         case .appleVerificationFailed: try container.encode("apple_verification_failed")
+        case .performanceRegressionFailed: try container.encode("performance_regression_failed")
         case .custom(let value): try container.encode(value)
         }
     }
@@ -1173,6 +1177,7 @@ public struct GateDecision: Codable, Equatable {
             case "protocol_inconsistent": return .protocolInconsistent
             case "core_regression_failed": return .coreRegressionFailed
             case "apple_verification_failed": return .appleVerificationFailed
+            case "performance_regression_failed": return .performanceRegressionFailed
             default: return .custom(raw)
             }
         } ?? []

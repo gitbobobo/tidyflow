@@ -370,6 +370,152 @@ final class PerformanceObservabilitySemanticsTests: XCTestCase {
     }
 }
 
+// MARK: - GateFailureReason 性能回归失败语义测试（WI-004）
+
+/// 验证 `performanceRegressionFailed` 在 macOS/iOS 共享模型中的 Codable/JSON 映射，
+/// 确保新增 failure reason 后不会退回未知字符串路径。
+final class GateFailureReasonPerformanceRegressionTests: XCTestCase {
+
+    // MARK: - Codable 编码
+
+    func testPerformanceRegressionFailed_encodesToCorrectString() throws {
+        let reason = GateFailureReason.performanceRegressionFailed
+        let data = try JSONEncoder().encode(reason)
+        let raw = try JSONDecoder().decode(String.self, from: data)
+        XCTAssertEqual(raw, "performance_regression_failed",
+                       "performanceRegressionFailed 必须编码为 \"performance_regression_failed\"")
+    }
+
+    // MARK: - Codable 解码
+
+    func testPerformanceRegressionFailed_decodesFromString() throws {
+        let json = "\"performance_regression_failed\"".data(using: .utf8)!
+        let reason = try JSONDecoder().decode(GateFailureReason.self, from: json)
+        XCTAssertEqual(reason, .performanceRegressionFailed,
+                       "\"performance_regression_failed\" 必须解码为 .performanceRegressionFailed")
+    }
+
+    func testPerformanceRegressionFailed_notFallsBackToCustom() throws {
+        let json = "\"performance_regression_failed\"".data(using: .utf8)!
+        let reason = try JSONDecoder().decode(GateFailureReason.self, from: json)
+        if case .custom = reason {
+            XCTFail("performance_regression_failed 不应回退到 .custom(_)，必须使用正式枚举 case")
+        }
+    }
+
+    // MARK: - 往返一致性
+
+    func testPerformanceRegressionFailed_roundTrip() throws {
+        let original = GateFailureReason.performanceRegressionFailed
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(GateFailureReason.self, from: encoded)
+        XCTAssertEqual(original, decoded,
+                       "performanceRegressionFailed 往返编解码必须一致")
+    }
+
+    // MARK: - 现有 case 不受影响
+
+    func testExistingReasons_unaffectedByNewCase() throws {
+        let cases: [(GateFailureReason, String)] = [
+            (.systemUnhealthy, "system_unhealthy"),
+            (.criticalIncident, "critical_incident"),
+            (.evidenceIncomplete, "evidence_incomplete"),
+            (.protocolInconsistent, "protocol_inconsistent"),
+            (.coreRegressionFailed, "core_regression_failed"),
+            (.appleVerificationFailed, "apple_verification_failed"),
+            (.performanceRegressionFailed, "performance_regression_failed"),
+        ]
+        for (reason, expectedRaw) in cases {
+            let encoded = try JSONEncoder().encode(reason)
+            let raw = try JSONDecoder().decode(String.self, from: encoded)
+            XCTAssertEqual(raw, expectedRaw,
+                           "\(reason) 编码应为 \"\(expectedRaw)\"")
+            let decoded = try JSONDecoder().decode(GateFailureReason.self, from: encoded)
+            XCTAssertEqual(decoded, reason,
+                           "\"\(expectedRaw)\" 解码应为 \(reason)")
+        }
+    }
+
+    // MARK: - GateDecision 携带 performanceRegressionFailed
+
+    func testGateDecision_withPerformanceRegressionFailed_decodesCorrectly() throws {
+        let json = """
+        {
+            "verdict": "fail",
+            "failure_reasons": ["performance_regression_failed"],
+            "project": "tidyflow",
+            "workspace": "default",
+            "cycle_id": "2026-03-12T14-32-31-618Z",
+            "health_status": "healthy",
+            "retry_count": 0,
+            "bypassed": false,
+            "decided_at": 1741786351000
+        }
+        """.data(using: .utf8)!
+        let decision = try JSONDecoder().decode(GateDecision.self, from: json)
+        XCTAssertEqual(decision.verdict, .fail)
+        XCTAssertEqual(decision.failureReasons.count, 1)
+        XCTAssertEqual(decision.failureReasons.first, .performanceRegressionFailed,
+                       "GateDecision 携带的 performance_regression_failed 必须正确解码")
+    }
+
+    func testGateDecision_withPerformanceRegressionFailed_noCustomFallback() throws {
+        let json = """
+        {
+            "verdict": "fail",
+            "failure_reasons": ["performance_regression_failed"],
+            "project": "test",
+            "workspace": "ws",
+            "cycle_id": "test-cycle",
+            "health_status": "healthy",
+            "retry_count": 0,
+            "bypassed": false,
+            "decided_at": 0
+        }
+        """.data(using: .utf8)!
+        let decision = try JSONDecoder().decode(GateDecision.self, from: json)
+        for reason in decision.failureReasons {
+            if case .custom(let msg) = reason {
+                XCTFail("performance_regression_failed 不应落入 .custom(\(msg))")
+            }
+        }
+    }
+
+    // MARK: - 多工作区隔离：同名工作区不同项目的 performanceRegressionFailed 不串台
+
+    func testPerformanceRegressionFailed_multiProjectIsolation() throws {
+        // 两个不同项目同名工作区的 GateDecision，应保持独立归属
+        func makeDecision(project: String) throws -> GateDecision {
+            let json = """
+            {
+                "verdict": "fail",
+                "failure_reasons": ["performance_regression_failed"],
+                "project": "\(project)",
+                "workspace": "ws1",
+                "cycle_id": "cycle-test",
+                "health_status": "healthy",
+                "retry_count": 0,
+                "bypassed": false,
+                "decided_at": 0
+            }
+            """.data(using: .utf8)!
+            return try JSONDecoder().decode(GateDecision.self, from: json)
+        }
+
+        let decisionA = try makeDecision(project: "project_a")
+        let decisionB = try makeDecision(project: "project_b")
+
+        XCTAssertEqual(decisionA.project, "project_a")
+        XCTAssertEqual(decisionB.project, "project_b")
+        XCTAssertEqual(decisionA.workspace, "ws1")
+        XCTAssertEqual(decisionB.workspace, "ws1")
+        XCTAssertEqual(decisionA.failureReasons.first, .performanceRegressionFailed)
+        XCTAssertEqual(decisionB.failureReasons.first, .performanceRegressionFailed)
+        XCTAssertNotEqual(decisionA.project, decisionB.project,
+                          "同名工作区不同项目的 GateDecision 不应串台")
+    }
+}
+
 // MARK: - 私有扩展
 
 private extension String {
