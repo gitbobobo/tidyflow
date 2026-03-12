@@ -59,6 +59,10 @@ extension AppState {
             return
         }
 
+        // 捕获重连时刻的工作区快照，防止异步路径中工作区切换导致 session 状态回放到错误工作区
+        let workspaceSnapshot = workspace
+        let projectSnapshot = selectedProjectName
+
         // 通知舞台状态机进入恢复阶段
         if let sessionId = aiStore(for: aiChatTool).currentSessionId, !sessionId.isEmpty {
             aiChatStageLifecycle.apply(.resume(sessionId: sessionId))
@@ -67,15 +71,26 @@ extension AppState {
         _ = requestAISessionList(for: sessionPanelFilter, limit: Self.aiSessionListLimit, force: true)
 
         // 若某工具已有选中会话，则补拉详情，避免断线窗口内响应丢失导致空白。
+        // 工作区边界校验：仅在当前工作区未发生切换时继续回放，避免 session 状态串台。
         for tool in AIChatTool.allCases {
             let store = aiStore(for: tool)
             guard let sessionId = store.currentSessionId, !sessionId.isEmpty else { continue }
+
+            // 工作区快照一致性检查：防止重连期间工作区切换导致旧 session 回放到新工作区
+            guard selectedWorkspaceKey == workspaceSnapshot, selectedProjectName == projectSnapshot else {
+                TFLog.app.warning(
+                    "AI reconnect reload aborted: workspace changed during reload, tool=\(tool.rawValue, privacy: .public)"
+                )
+                aiChatStageLifecycle.apply(.forceReset)
+                return
+            }
+
             TFLog.app.info(
                 "AI reconnect reload: request session messages, tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public)"
             )
             let context = AISessionHistoryCoordinator.Context(
-                project: selectedProjectName,
-                workspace: workspace,
+                project: projectSnapshot,
+                workspace: workspaceSnapshot,
                 aiTool: tool,
                 sessionId: sessionId
             )

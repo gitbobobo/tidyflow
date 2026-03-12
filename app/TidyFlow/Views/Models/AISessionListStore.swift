@@ -193,4 +193,16 @@ final class AISessionListStore: ObservableObject {
             return updated
         }
     }
+
+    /// 清除指定工作区的所有 AI 会话分页状态（工作区切换时调用）。
+    /// 使用 `project::workspace::` 前缀匹配，隔离同名工作区在不同项目下的状态。
+    /// 同时重置 bootstrapWorkspaceKey，确保下次进入该工作区时强制重新拉取列表。
+    func clearWorkspace(project: String, workspace: String) {
+        let keyPrefix = "\(project)::\(workspace)::"
+        pageStates = pageStates.filter { !$0.key.hasPrefix(keyPrefix) }
+        let globalKey = WorkspaceKeySemantics.globalKey(project: project, workspace: workspace)
+        if bootstrapWorkspaceKey == globalKey {
+            bootstrapWorkspaceKey = nil
+        }
+    }
 }
