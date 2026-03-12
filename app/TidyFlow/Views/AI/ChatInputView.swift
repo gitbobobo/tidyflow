@@ -464,11 +464,9 @@ struct ChatInputView: View {
             .background(editorSurfaceBackgroundColor, in: .rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
             .clipShape(.rect(cornerRadius: editorSurfaceCornerRadius, style: .continuous))
             .contentShape(.rect)
-            #if os(iOS)
             .onTapGesture {
                 inputFocused = true
             }
-            #endif
     }
 
     private var inputEditor: some View {
@@ -1214,6 +1212,11 @@ struct ChatInputView: View {
         switch keyPress.key {
         case .return:
             if keyPress.modifiers.contains(.shift) {
+                #if os(macOS)
+                if insertLineBreakAtCurrentSelection() {
+                    return .handled
+                }
+                #endif
                 return .ignored
             }
             if let autocomplete, autocomplete.isVisible, let item = autocomplete.selectedItem {
@@ -1255,6 +1258,18 @@ struct ChatInputView: View {
             return .ignored
         }
     }
+
+    #if os(macOS)
+    private func insertLineBreakAtCurrentSelection() -> Bool {
+        let candidateWindows = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 }
+        for window in candidateWindows {
+            guard let textView = window.firstResponder as? NSTextView else { continue }
+            textView.insertNewlineIgnoringFieldEditor(nil)
+            return true
+        }
+        return false
+    }
+    #endif
 
     private var isTextInputComposing: Bool {
         #if os(macOS)
