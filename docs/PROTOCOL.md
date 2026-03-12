@@ -1482,3 +1482,39 @@ Core 对工作区协调状态执行以下校验规则：
 1. 协调层通过 `WorkspaceCoordinatorId` 精确寻址，不同项目下的同名工作区绝不共享状态。
 2. 一致性校验和恢复编排按工作区独立执行。
 3. 客户端消费协调层状态时，必须使用 `global_key`（`"project:workspace"`）做缓存键。
+
+### 协调层可观测性与客户端缓存语义
+
+本节描述客户端如何安全消费协调层状态，确保多工作区场景下无串台。
+
+#### 客户端 CoordinatorStateCache 缓存规则
+
+客户端通过 `CoordinatorStateCache`（TidyFlowShared）维护协调层状态，遵守以下规则：
+
+1. **唯一索引键**：缓存键格式为 `"project:workspace"`，与 `WorkspaceCoordinatorId.global_key` 语义一致。
+   - 不允许仅用 workspace 名称作为键（避免不同项目同名工作区混淆）。
+2. **状态更新入口**：所有状态变更通过 `CoordinatorStateCache.apply(_:)` 驱动，不允许直接修改内部字段。
+3. **断线清除规则**：WebSocket 断开时，客户端必须调用 `apply(.clear)` 清除所有缓存。
+   - 重连后通过 `coordinator_snapshot` 事件重建缓存。
+4. **工作区删除规则**：收到工作区删除通知时，调用 `apply(.removeWorkspace(id))` 清除对应条目。
+5. **项目删除规则**：项目删除时通过 `removeProject(_:)` 批量清除该项目下所有工作区状态。
+
+#### 多域聚合投影（WorkspaceAggregatedSummary）
+
+客户端概览视图通过 `aggregatedSummary(for:)` 获取以下聚合信息，不在视图层重复推导：
+
+| 字段 | 语义 |
+|------|------|
+| `health` | 三域综合健康度（由 Core 权威计算） |
+| `hasActiveAISessions` | 是否有 AI 会话正在执行（`ai.phase == active`） |
+| `hasActiveTerminals` | 是否有终端正在运行（`terminal.phase == active`） |
+| `fileIsReady` | 文件系统是否就绪（`file.phase == ready`） |
+| `aiActiveSessionCount` | 活跃 AI 会话数（由 Core 计算，客户端只读） |
+| `terminalAliveCount` | 存活终端数（由 Core 计算，客户端只读） |
+
+macOS 与 iOS 双端消费同一 `WorkspaceAggregatedSummary` 类型，不各自推导状态。
+
+#### 版本号语义
+
+- `version` 字段单调递增，客户端仅在收到更高版本时更新缓存（避免乱序覆盖）。
+- 断线清除后，版本号归零。

@@ -237,6 +237,30 @@ domains:
     required_boundary_fields:
       - project
       - workspace
+    # 协调层可观测性字段（WorkspaceCoordinatorState 权威字段定义）
+    # 客户端只消费，不自行推导健康度或活跃资源计数。
+    coordinator_observability_fields:
+      workspace_id:
+        description: "工作区身份 { project, workspace }，所有 coordinator 消息中条件必须"
+      ai_phase:
+        values: [idle, active, faulted]
+        description: "AI 领域相位；active 表示至少一个会话正在执行"
+      terminal_phase:
+        values: [idle, active, faulted]
+        description: "终端领域相位；active 表示至少一个终端正在运行"
+      file_phase:
+        values: [idle, ready, degraded, error]
+        description: "文件领域相位；ready 对应 FileWorkspacePhase::Watching"
+      health:
+        values: [healthy, degraded, faulted]
+        description: "三域综合健康度；由 Core 计算，客户端只读"
+      version:
+        type: uint64
+        description: "状态版本号（单调递增），用于增量更新判断，不回退"
+    # 多工作区边界约束：
+    # - 每条 coordinator_snapshot 消息只携带一个工作区的状态（非全局快照）
+    # - 客户端按 "project:workspace" 全局键维护本地缓存，不允许只用 workspace 名称路由
+    # - 工作区删除时，客户端应调用本地缓存的 removeWorkspace 清除对应条目
   # v1.40: 冲突向导（Git conflict wizard）
   # git_conflict_detail / git_conflict_accept_ours / git_conflict_accept_theirs
   # git_conflict_accept_both / git_conflict_mark_resolved

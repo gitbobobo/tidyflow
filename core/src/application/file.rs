@@ -147,6 +147,25 @@ impl FileWorkspacePhaseTracker {
         );
     }
 
+    /// 断线重连恢复时调用。
+    /// 与 `on_recovery_started` 的区别：接受更宽泛的前置相位（含 Watching），
+    /// 覆盖断线期间 watcher 已就绪但连接中断的场景，确保重连后可以重新进入 Recovering。
+    pub fn on_reconnect_recovery(project: &str, workspace: &str) {
+        Self::transition(
+            project,
+            workspace,
+            |c| {
+                matches!(
+                    c,
+                    FileWorkspacePhase::Watching
+                        | FileWorkspacePhase::Degraded
+                        | FileWorkspacePhase::Error
+                )
+            },
+            FileWorkspacePhase::Recovering,
+        );
+    }
+
     /// 连接断开时重置所有工作区相位为 Idle。
     pub fn on_disconnect() {
         if let Ok(mut map) = FILE_WORKSPACE_PHASES.lock() {

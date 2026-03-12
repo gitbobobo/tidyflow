@@ -53,3 +53,23 @@ if rg -q "Protocol v2|MessagePack v2" "${legacy_scan_targets[@]}"; then
 fi
 
 echo "[check_protocol] OK: 协议版本一致 (v$core_version)"
+# 协调层域检查：schema 与文档必须同时声明 coordinator 域
+schema_file="schema/protocol/v7/domains.yaml"
+if [ ! -f "$schema_file" ]; then
+    echo "[check_protocol] WARNING: schema 文件 $schema_file 不存在，跳过 coordinator 域检查"
+else
+    if ! rg -q "id: coordinator" "$schema_file"; then
+        echo "[check_protocol] ERROR: $schema_file 未声明 coordinator 域"
+        exit 1
+    fi
+    if ! rg -q "coordinator" "$docs_protocol"; then
+        echo "[check_protocol] ERROR: $docs_protocol 未包含 coordinator 域说明"
+        exit 1
+    fi
+    # 验证 coordinator 域在文档中包含必要的多工作区边界约束说明
+    if ! rg -q "global_key|project:workspace" "$docs_protocol"; then
+        echo "[check_protocol] ERROR: $docs_protocol 缺少 coordinator 域的多工作区边界字段说明"
+        exit 1
+    fi
+    echo "[check_protocol] OK: coordinator 域一致性检查通过"
+fi
