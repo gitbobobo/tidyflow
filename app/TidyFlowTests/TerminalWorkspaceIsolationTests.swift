@@ -477,4 +477,126 @@ final class TerminalListDisplayPhaseTests: XCTestCase {
             XCTFail("p1/w1 应有终端内容")
         }
     }
+
+    // MARK: - trim 退化路径：clearWorkspaceDisplayInfo 工作区边界隔离
+
+    func testClearWorkspaceDisplayInfo_onlyClearsTargetWorkspace() {
+        let infoA = TerminalDisplayInfo(
+            termId: "t-a", project: "proj-a", workspace: "ws",
+            icon: "terminal", name: "A", sourceCommand: nil, isPinned: false
+        )
+        let infoB = TerminalDisplayInfo(
+            termId: "t-b", project: "proj-b", workspace: "ws",
+            icon: "terminal", name: "B", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoA)
+        store.setDisplayInfo(infoB)
+
+        store.clearWorkspaceDisplayInfo(project: "proj-a", workspace: "ws")
+
+        XCTAssertNil(store.displayInfo(for: "t-a"), "proj-a/ws 的终端应被清除")
+        XCTAssertNotNil(store.displayInfo(for: "t-b"), "proj-b/ws 的终端不应受影响")
+    }
+
+    func testClearWorkspaceDisplayInfo_sameProjectDifferentWorkspace() {
+        let infoWs1 = TerminalDisplayInfo(
+            termId: "t-ws1", project: "proj", workspace: "ws1",
+            icon: "terminal", name: "WS1", sourceCommand: nil, isPinned: false
+        )
+        let infoWs2 = TerminalDisplayInfo(
+            termId: "t-ws2", project: "proj", workspace: "ws2",
+            icon: "terminal", name: "WS2", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoWs1)
+        store.setDisplayInfo(infoWs2)
+
+        store.clearWorkspaceDisplayInfo(project: "proj", workspace: "ws1")
+
+        XCTAssertNil(store.displayInfo(for: "t-ws1"), "proj/ws1 的终端应被清除")
+        XCTAssertNotNil(store.displayInfo(for: "t-ws2"), "proj/ws2 的终端不应受影响")
+    }
+
+    // MARK: - trim 退化路径：trimStaleTerminals 精确裁剪
+
+    func testTrimStaleTerminals_keepsLiveTerminals() {
+        let infoLive = TerminalDisplayInfo(
+            termId: "t-live", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Live", sourceCommand: nil, isPinned: false
+        )
+        let infoStale1 = TerminalDisplayInfo(
+            termId: "t-stale-1", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Stale1", sourceCommand: nil, isPinned: false
+        )
+        let infoStale2 = TerminalDisplayInfo(
+            termId: "t-stale-2", project: "proj", workspace: "ws",
+            icon: "terminal", name: "Stale2", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoLive)
+        store.setDisplayInfo(infoStale1)
+        store.setDisplayInfo(infoStale2)
+
+        store.trimStaleTerminals(survivingIds: ["t-live"], project: "proj", workspace: "ws")
+
+        XCTAssertNotNil(store.displayInfo(for: "t-live"), "存活终端应保留")
+        XCTAssertNil(store.displayInfo(for: "t-stale-1"), "过期终端应被清除")
+        XCTAssertNil(store.displayInfo(for: "t-stale-2"), "过期终端应被清除")
+    }
+
+    func testTrimStaleTerminals_doesNotAffectOtherWorkspace() {
+        let infoTarget = TerminalDisplayInfo(
+            termId: "t-target", project: "proj", workspace: "ws-target",
+            icon: "terminal", name: "Target", sourceCommand: nil, isPinned: false
+        )
+        let infoOther = TerminalDisplayInfo(
+            termId: "t-other", project: "proj", workspace: "ws-other",
+            icon: "terminal", name: "Other", sourceCommand: nil, isPinned: false
+        )
+        store.setDisplayInfo(infoTarget)
+        store.setDisplayInfo(infoOther)
+
+        // trim 仅针对 ws-target，survivingIds 不包含 t-target
+        store.trimStaleTerminals(survivingIds: [], project: "proj", workspace: "ws-target")
+
+        XCTAssertNil(store.displayInfo(for: "t-target"), "target 工作区的过期终端应被清除")
+        XCTAssertNotNil(store.displayInfo(for: "t-other"), "其他工作区终端不应受影响")
+    }
+
+    // MARK: - WorkspaceEventBoundary 校验器
+
+    func testWorkspaceEventBoundary_accepts_correctContext() {
+        XCTAssertTrue(
+            WorkspaceEventBoundary.accepts(
+                project: "proj", workspace: "ws",
+                expectedProject: "proj", expectedWorkspace: "ws"
+            )
+        )
+    }
+
+    func testWorkspaceEventBoundary_rejects_wrongProject() {
+        XCTAssertFalse(
+            WorkspaceEventBoundary.accepts(
+                project: "proj-a", workspace: "ws",
+                expectedProject: "proj-b", expectedWorkspace: "ws"
+            )
+        )
+    }
+
+    func testWorkspaceEventBoundary_rejects_wrongWorkspace() {
+        XCTAssertFalse(
+            WorkspaceEventBoundary.accepts(
+                project: "proj", workspace: "ws-1",
+                expectedProject: "proj", expectedWorkspace: "ws-2"
+            )
+        )
+    }
+
+    func testWorkspaceEventBoundary_staleTerminals_computedCorrectly() {
+        let current: Set<String> = ["t1", "t2", "t3"]
+        let surviving: Set<String> = ["t1", "t3"]
+        let stale = WorkspaceEventBoundary.staleTerminals(
+            currentDisplayIds: current,
+            survivingIds: surviving
+        )
+        XCTAssertEqual(stale, ["t2"], "只有不在存活列表中的终端是过期的")
+    }
 }

@@ -133,4 +133,70 @@ final class FileWorkspacePhaseTests: XCTestCase {
         XCTAssertEqual(cache.phase(for: "proj:ws1"), .idle)
         XCTAssertEqual(cache.phase(for: "proj:ws2"), .idle)
     }
+
+    // MARK: - 恢复路径相位迁移语义（与 Core FileWorkspacePhaseTracker.on_reconnect_recovery 对齐）
+
+    func testRecoveryPhaseAllowsWrite() {
+        // recovering 相位下仍允许写操作（与 degraded 一致，非 error）
+        XCTAssertTrue(FileWorkspacePhase.recovering.allowsWrite)
+        XCTAssertFalse(FileWorkspacePhase.error.allowsWrite)
+    }
+
+    func testRecoveryPhaseNeedsAttention() {
+        // recovering 相位需要关注（用户可能需要等待恢复完成）
+        XCTAssertTrue(FileWorkspacePhase.recovering.needsAttention)
+    }
+
+    func testRecoveringPhaseNotReady() {
+        // recovering 相位未就绪，不能作为 watching 的等价状态
+        XCTAssertFalse(FileWorkspacePhase.recovering.isReady)
+    }
+
+    func testDegradedToIdleTransition() {
+        // 测试 degraded → idle（断连重置路径）
+        let cache = FileCacheState()
+        cache.setPhase(.degraded, for: "proj:ws")
+        cache.resetAllPhasesOnDisconnect()
+        XCTAssertEqual(cache.phase(for: "proj:ws"), .idle)
+    }
+
+    func testMultiProjectRecoveryPhaseIsolation() {
+        // 验证多项目并行时恢复相位互不干扰
+        let cache = FileCacheState()
+        cache.setPhase(.recovering, for: "proj-a:ws")
+        cache.setPhase(.watching, for: "proj-b:ws")
+        cache.setPhase(.error, for: "proj-c:ws")
+
+        // 断连只重置全部相位，不做跨项目合并
+        cache.resetAllPhasesOnDisconnect()
+
+        XCTAssertEqual(cache.phase(for: "proj-a:ws"), .idle)
+        XCTAssertEqual(cache.phase(for: "proj-b:ws"), .idle)
+        XCTAssertEqual(cache.phase(for: "proj-c:ws"), .idle)
+    }
+
+    func testRecoveryPhaseTransition_degradedToRecovering() {
+        let cache = FileCacheState()
+        cache.setPhase(.degraded, for: "proj:ws")
+        // 模拟 Core 发来 recovering 相位（on_recovery_started 触发）
+        cache.setPhase(.recovering, for: "proj:ws")
+        XCTAssertEqual(cache.phase(for: "proj:ws"), .recovering)
+    }
+
+    func testRecoveryPhaseTransition_recoveringToWatching() {
+        let cache = FileCacheState()
+        cache.setPhase(.recovering, for: "proj:ws")
+        // 模拟 Core on_recovery_succeeded → Watching
+        cache.onWatchSubscribed(globalKey: "proj:ws")
+        XCTAssertEqual(cache.phase(for: "proj:ws"), .watching)
+    }
+
+    func testRecoveryPhaseTransition_recoveringToError() {
+        let cache = FileCacheState()
+        cache.setPhase(.recovering, for: "proj:ws")
+        // 模拟 Core on_recovery_failed → Error
+        cache.setPhase(.error, for: "proj:ws")
+        XCTAssertEqual(cache.phase(for: "proj:ws"), .error)
+        XCTAssertFalse(cache.phase(for: "proj:ws").allowsWrite)
+    }
 }

@@ -215,4 +215,120 @@ final class CoordinatorStateCacheTests: XCTestCase {
         let state = WorkspaceCoordinatorState.from(json: json)
         XCTAssertNil(state)
     }
+
+    // MARK: - 项目级操作
+
+    func testRemoveProject_removesAllWorkspacesForProject() {
+        let cache = CoordinatorStateCache()
+        let id1 = CoordinatorWorkspaceId(project: "proj-a", workspace: "default")
+        let id2 = CoordinatorWorkspaceId(project: "proj-a", workspace: "feature-1")
+        let id3 = CoordinatorWorkspaceId(project: "proj-b", workspace: "default")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(id: id1, version: 1)))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(id: id2, version: 2)))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(id: id3, version: 3)))
+
+        let removed = cache.removeProject("proj-a")
+        XCTAssertEqual(removed, 2, "proj-a 下应有 2 个工作区被移除")
+        XCTAssertNil(cache.state(for: id1), "proj-a/default 应被移除")
+        XCTAssertNil(cache.state(for: id2), "proj-a/feature-1 应被移除")
+        XCTAssertNotNil(cache.state(for: id3), "proj-b/default 不应受影响")
+    }
+
+    func testRemoveProject_nonexistentProject_returnsZero() {
+        let cache = CoordinatorStateCache()
+        let removed = cache.removeProject("nonexistent")
+        XCTAssertEqual(removed, 0)
+    }
+
+    func testAllWorkspaceIds_forProject() {
+        let cache = CoordinatorStateCache()
+        let id1 = CoordinatorWorkspaceId(project: "proj-a", workspace: "ws1")
+        let id2 = CoordinatorWorkspaceId(project: "proj-a", workspace: "ws2")
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(id: id1, version: 1)))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(id: id2, version: 2)))
+
+        let ids = cache.allWorkspaceIds(forProject: "proj-a")
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertTrue(ids.contains(id1))
+        XCTAssertTrue(ids.contains(id2))
+    }
+
+    // MARK: - 多域聚合投影
+
+    func testAggregatedSummary_noState_returnsHealthyDefaults() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "default")
+        let summary = cache.aggregatedSummary(for: id)
+
+        XCTAssertEqual(summary.health, .healthy)
+        XCTAssertFalse(summary.hasActiveAISessions)
+        XCTAssertFalse(summary.hasActiveTerminals)
+        XCTAssertFalse(summary.fileIsReady)
+        XCTAssertEqual(summary.aiActiveSessionCount, 0)
+        XCTAssertEqual(summary.terminalAliveCount, 0)
+        XCTAssertFalse(summary.hasActiveResources)
+        XCTAssertFalse(summary.needsAttention)
+    }
+
+    func testAggregatedSummary_activeAI_reflectsCorrectly() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "default")
+        let state = WorkspaceCoordinatorState(
+            id: id,
+            ai: AiDomainState(phase: .active, activeSessionCount: 2, totalSessionCount: 5),
+            terminal: TerminalDomainState(phase: .active, aliveCount: 3, totalCount: 4),
+            file: FileDomainState(phase: .ready, watcherActive: true, indexingInProgress: false),
+            health: .healthy,
+            version: 1
+        )
+        cache.apply(.updateWorkspace(state))
+        let summary = cache.aggregatedSummary(for: id)
+
+        XCTAssertTrue(summary.hasActiveAISessions)
+        XCTAssertTrue(summary.hasActiveTerminals)
+        XCTAssertTrue(summary.fileIsReady)
+        XCTAssertEqual(summary.aiActiveSessionCount, 2)
+        XCTAssertEqual(summary.terminalAliveCount, 3)
+        XCTAssertTrue(summary.hasActiveResources)
+        XCTAssertFalse(summary.needsAttention)
+    }
+
+    func testAggregatedSummary_faultedHealth_needsAttention() {
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "default")
+        let state = WorkspaceCoordinatorState(id: id, health: .faulted, version: 1)
+        cache.apply(.updateWorkspace(state))
+
+        let summary = cache.aggregatedSummary(for: id)
+        XCTAssertTrue(summary.needsAttention)
+        XCTAssertEqual(summary.health, .faulted)
+    }
+
+    func testAggregatedSummary_multiWorkspace_isolation() {
+        let cache = CoordinatorStateCache()
+        let id1 = CoordinatorWorkspaceId(project: "proj", workspace: "ws1")
+        let id2 = CoordinatorWorkspaceId(project: "proj", workspace: "ws2")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id1,
+            ai: AiDomainState(phase: .active, activeSessionCount: 1, totalSessionCount: 1),
+            health: .degraded,
+            version: 1
+        )))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id2,
+            ai: AiDomainState(phase: .idle, activeSessionCount: 0, totalSessionCount: 0),
+            health: .healthy,
+            version: 2
+        )))
+
+        let summary1 = cache.aggregatedSummary(for: id1)
+        let summary2 = cache.aggregatedSummary(for: id2)
+
+        XCTAssertTrue(summary1.hasActiveAISessions, "ws1 应有活跃 AI 会话")
+        XCTAssertFalse(summary2.hasActiveAISessions, "ws2 无活跃 AI 会话")
+        XCTAssertEqual(summary1.health, .degraded)
+        XCTAssertEqual(summary2.health, .healthy)
+    }
 }
