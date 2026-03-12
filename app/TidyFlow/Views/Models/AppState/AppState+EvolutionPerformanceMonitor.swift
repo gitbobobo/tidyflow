@@ -9,6 +9,7 @@ import TidyFlowShared
 /// - 每个 workspaceContextKey 最多只有一个活跃监控任务。
 /// - 监控任务按动态档位间隔请求 system_snapshot（forceRefresh）并发送 health_report。
 /// - 该回路与 SharedSecondTicker 完全分离，避免秒级 UI 刷新与网络采样耦合。
+#if os(macOS)
 extension AppState {
 
     // MARK: - 公共接口
@@ -146,3 +147,4 @@ extension AppState {
         }
     }
 }
+#endif

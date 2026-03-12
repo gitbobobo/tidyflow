@@ -1666,6 +1666,8 @@ struct MobileEvolutionView: View {
     @State private var isPlanDocumentSheetPresented: Bool = false
     @State private var selectedPlanDocumentCycleID: String?
     @State private var selectedCycleDetail: MobileCycleDetailPayload?
+    /// 当前活跃的性能监控 key（workspaceContextKey），用于生命周期管理
+    @State private var activeMonitorKey: String = ""
 
     private struct EvolutionBlockerDraft {
         var selected: Bool
@@ -2079,6 +2081,8 @@ struct MobileEvolutionView: View {
             }
             // v1.45: 分析摘要（从 Core 权威输出消费）
             analysisStatusSection
+            // WI-002: 实时性能卡片（仅在有性能数据时显示）
+            mobilePerformanceSection
             // 历史循环
             mobileCycleHistorySection
         }
@@ -2106,6 +2110,10 @@ struct MobileEvolutionView: View {
             loadProfiles()
             syncStartOptionsFromItem()
             appState.requestEvolutionCycleHistory(project: project, workspace: workspace)
+            startPerformanceMonitor()
+        }
+        .onDisappear {
+            stopPerformanceMonitor()
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             loadProfiles()
@@ -2121,6 +2129,14 @@ struct MobileEvolutionView: View {
             appState.refreshEvolution(project: project, workspace: workspace)
             projectionStore.refresh(appState: appState, project: project, workspace: workspace)
             loadProfiles()
+        }
+        .onChange(of: projection.workspaceContextKey) { _, _ in
+            // 工作区上下文变化时，重启性能监控（停旧 key → 启新 key）
+            startPerformanceMonitor()
+        }
+        .onChange(of: appState.isSceneActive) { _, _ in
+            // Scene 活跃状态变化：重新评估性能监控回路
+            startPerformanceMonitor()
         }
     }
 
@@ -2800,6 +2816,88 @@ struct MobileEvolutionView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 实时性能卡片（WI-002）
+
+    @ViewBuilder
+    private var mobilePerformanceSection: some View {
+        let perf = projection.performance
+        let tier = perf.tier
+        // 仅在非 paused 档位且有性能数据时展示
+        if tier != .paused {
+            Section("evolution.page.performance.section".localized) {
+                LabeledContent("evolution.page.performance.samplingTier".localized) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(performanceTierColor(tier))
+                            .frame(width: 8, height: 8)
+                        Text(tier.displayName)
+                            .foregroundStyle(performanceTierColor(tier))
+                    }
+                }
+                if perf.metrics.clientMemoryDeltaBytes != 0 {
+                    let deltaMB = perf.metrics.clientMemoryDeltaBytes / (1024 * 1024)
+                    LabeledContent("evolution.page.performance.memoryDelta".localized) {
+                        Text("\(deltaMB) MB")
+                            .foregroundStyle(abs(deltaMB) >= 96 ? .orange : .secondary)
+                    }
+                }
+                if !perf.metrics.diagnoses.isEmpty {
+                    ForEach(perf.metrics.diagnoses, id: \.diagnosisId) { diag in
+                        HStack(spacing: 6) {
+                            Image(systemName: diag.severity == .critical ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(diag.severity == .critical ? .red : .orange)
+                            Text(diag.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func performanceTierColor(_ tier: EvolutionRealtimeSamplingTier) -> Color {
+        switch tier {
+        case .live:     return .green
+        case .balanced: return .yellow
+        case .degraded: return .orange
+        case .paused:   return .secondary
+        }
+    }
+
+    // MARK: - 性能监控生命周期（WI-003）
+
+    /// 启动或切换当前工作区的性能监控（单 key 约束：同 key 不重复创建）
+    private func startPerformanceMonitor() {
+        let key = projection.workspaceContextKey
+        guard !key.isEmpty, appState.isSceneActive else {
+            stopPerformanceMonitor()
+            return
+        }
+        // 上下文 key 未变且任务仍存活，无需重建
+        guard key != activeMonitorKey || appState.evolutionPerformanceMonitorTasks[key] == nil else {
+            return
+        }
+        // 停止旧 key 监控
+        if !activeMonitorKey.isEmpty && activeMonitorKey != key {
+            appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
+        }
+        activeMonitorKey = key
+        appState.startEvolutionPerformanceMonitoring(
+            project: project,
+            workspace: workspace,
+            cycleID: item?.cycleID,
+            contextKey: key
+        )
+    }
+
+    /// 停止当前性能监控回路
+    private func stopPerformanceMonitor() {
+        guard !activeMonitorKey.isEmpty else { return }
+        appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
+        activeMonitorKey = ""
     }
 
     @ViewBuilder

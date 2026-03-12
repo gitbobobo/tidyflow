@@ -303,6 +303,10 @@ final class MobileAppState: ObservableObject {
     /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
     @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
 
+    /// iOS scene 活跃状态（由 App 入口在 scenePhase 变更时同步写入）
+    /// 与 macOS AppState.isSceneActive 语义对齐，供性能监控采样决策使用
+    @Published var isSceneActive: Bool = true
+
     // MARK: - 调度优化与预测故障消费（v1.44）
 
     /// 获取指定工作区的预测投影。
@@ -542,6 +546,7 @@ final class MobileAppState: ObservableObject {
 
     /// 进入后台时标记连接为 stale，确保回到前台时能正确触发探活/重连
     func handleEnterBackground() {
+        isSceneActive = false
         guard !wsClient.isIntentionalDisconnect else { return }
         if Self.perfTerminalAutoDetachEnabled, !currentTermId.isEmpty {
             terminalSessionStore.recordDetachRequest(termId: currentTermId)
@@ -552,6 +557,7 @@ final class MobileAppState: ObservableObject {
 
     /// 回到前台：探活 → 重连 → 恢复键盘焦点
     func handleReturnToForeground() {
+        isSceneActive = true
         // 恢复终端键盘焦点（无论连接状态，先让键盘弹出来）
         terminalSink?.focusTerminal()
 
@@ -1583,7 +1589,8 @@ final class MobileAppState: ObservableObject {
             "perf evolution_monitor start key=\(contextKey, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public)"
         )
         let task = Task { @MainActor [weak self] in
-            await self?.runEvolutionPerformanceMonitorLoop(
+            guard let self else { return }
+            await self.runEvolutionPerformanceMonitorLoop(
                 project: project,
                 workspace: workspace,
                 cycleID: cycleID,
@@ -1634,8 +1641,8 @@ final class MobileAppState: ObservableObject {
             let newDecision = EvolutionRealtimeSamplingSemantics.computeDecision(
                 metrics: metrics,
                 runningAgentCount: runningAgentCount,
-                sceneActive: true,
-                panelVisible: true,
+                sceneActive: isSceneActive,
+                panelVisible: true, // 面板 visible 由调用方保证（onDisappear 时已 stop）
                 wsConnected: wsConnected,
                 currentDecision: currentDecision
             )

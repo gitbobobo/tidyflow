@@ -379,7 +379,8 @@ enum EvolutionPipelineProjectionSemantics {
         appState: MobileAppState,
         project: String,
         workspace: String,
-        mappedCycleHistories: [PipelineCycleHistory]? = nil
+        mappedCycleHistories: [PipelineCycleHistory]? = nil,
+        performance: EvolutionPipelinePerformanceProjection = .empty
     ) -> EvolutionPipelineProjection {
         let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace)
         let workspaceKey = appState.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
@@ -420,7 +421,29 @@ enum EvolutionPipelineProjectionSemantics {
                 project: project, workspace: workspace
             ),
             analysisSummaries: [],
-            performance: .empty
+            performance: performance
+        )
+    }
+
+    /// 从 MobileAppState 中构建当前工作区的性能投影（采样决策 + 过滤指标）
+    @MainActor
+    static func buildPerformanceProjection(
+        appState: MobileAppState,
+        project: String,
+        workspace: String
+    ) -> EvolutionPipelinePerformanceProjection {
+        let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace)
+        let contextKey = "\(project)/\(normalizedWorkspace)"
+        let currentDecision = appState.evolutionPerformanceSamplingDecisions[contextKey] ?? .paused
+        let filteredMetrics = EvolutionRealtimeSamplingSemantics.filterMetrics(
+            snapshot: appState.performanceObservability,
+            project: project,
+            workspace: normalizedWorkspace,
+            clientInstanceId: appState.perfReporter.clientInstanceId
+        )
+        return EvolutionPipelinePerformanceProjection(
+            decision: currentDecision,
+            metrics: filteredMetrics
         )
     }
 #endif
@@ -795,7 +818,8 @@ final class EvolutionPipelineProjectionStore {
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
+            appState.$performanceObservability.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }
@@ -812,6 +836,11 @@ final class EvolutionPipelineProjectionStore {
             workspace: workspace
         )
         lastSourceSnapshot = snapshot
+        let performance = EvolutionPipelineProjectionSemantics.buildPerformanceProjection(
+            appState: appState,
+            project: project,
+            workspace: workspace
+        )
         _ = updateProjection(
             EvolutionPipelineProjectionSemantics.make(
                 appState: appState,
@@ -825,7 +854,8 @@ final class EvolutionPipelineProjectionStore {
                     ),
                     rawCycleHistories: rawCycleHistories,
                     signature: snapshot.cycleHistorySignature
-                )
+                ),
+                performance: performance
             )
         )
     }
@@ -904,7 +934,7 @@ final class EvolutionPipelineProjectionStore {
             cycleHistorySignature: cycleHistorySignature(
                 rawCycleHistories(appState: appState, project: project, workspace: workspace)
             ),
-            performanceSignature: 0
+            performanceSignature: Int(appState.performanceObservability.snapshotAt & 0x7FFF_FFFF_FFFF_FFFF)
         )
     }
     #endif
