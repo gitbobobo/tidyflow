@@ -20,6 +20,12 @@ extension WSClient {
             )
             onSystemSnapshot?(cacheMetrics)
             onObservabilitySnapshot?(observability)
+            // WI-001: 全链路性能可观测快照
+            if let perfObsJson = json["performance_observability"] as? [String: Any],
+               let perfObsData = try? JSONSerialization.data(withJSONObject: perfObsJson),
+               let perfObs = try? JSONDecoder().decode(PerformanceObservabilitySnapshot.self, from: perfObsData) {
+                onPerformanceObservability?(perfObs)
+            }
             // 工作区恢复状态与 Evolution 摘要：从 workspace_items 提取，按 (project, workspace) 隔离
             if let workspaceItems = json["workspace_items"] as? [[String: Any]] {
                 let evolutionSummaries = workspaceItems.compactMap {

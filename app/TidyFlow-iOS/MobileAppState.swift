@@ -324,6 +324,8 @@ final class MobileAppState: ObservableObject {
 
     // v1.42: 统一可观测性快照（与 macOS 共享同一模型，Core 权威真源）
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
+    /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
+    @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
 
     // MARK: - 调度优化与预测故障消费（v1.44）
 
@@ -400,6 +402,8 @@ final class MobileAppState: ObservableObject {
 
     /// 共享性能追踪器，与 macOS 暴露同一套观测语义。
     let performanceTracer = TFPerformanceTracer()
+    /// 客户端性能采样与上报器（WI-003，进程生命周期稳定）
+    let perfReporter = TFClientPerfReporter(platform: "ios")
 
     /// 原生终端输出目标（SwiftTerm）
     weak var terminalSink: MobileTerminalOutputSink?
@@ -4351,6 +4355,13 @@ final class MobileAppState: ObservableObject {
         wsClient.onObservabilitySnapshot = { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.observabilitySnapshot = snapshot
+            }
+        }
+
+        // WI-001: 全链路性能可观测快照
+        wsClient.onPerformanceObservability = { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.performanceObservability = snapshot
             }
         }
 

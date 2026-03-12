@@ -350,6 +350,8 @@ class AppState: ObservableObject {
 
     /// 共享性能追踪器，macOS/iOS 双端通过此对象暴露统一的性能观测结果。
     let performanceTracer = TFPerformanceTracer()
+    /// 客户端性能采样与上报器（WI-003，进程生命周期稳定）
+    let perfReporter = TFClientPerfReporter(platform: "macos")
     let aiSessionListStore = AISessionListStore()
     // WS 领域 handler 强引用（WSClient 侧为 weak）
     var wsGitMessageHandler: GitMessageHandler?
@@ -374,6 +376,8 @@ class AppState: ObservableObject {
 
     // v1.42: 统一可观测性快照（聚合 perf_metrics + log_context + cache_metrics，Core 权威真源）
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
+    /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
+    @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
 
     // MARK: - 调度优化与预测故障消费（v1.44）
 

@@ -79,6 +79,26 @@ struct DebugPanelView: View {
 
                         Divider()
 
+                        // Core Runtime 性能区块（全链路可观测 - WI-005）
+                        perfCoreRuntimeSection
+
+                        Divider()
+
+                        // Workspace 关键路径区块（WI-005）
+                        perfWorkspaceSection
+
+                        Divider()
+
+                        // Client Instance 区块（WI-005）
+                        perfClientInstanceSection
+
+                        Divider()
+
+                        // 性能诊断结果区块（WI-005）
+                        perfDiagnosisSection
+
+                        Divider()
+
                         // Log Context Section (v1.42 日志关联)
                         logContextSection
 
@@ -90,7 +110,7 @@ struct DebugPanelView: View {
                     .padding()
                 }
             }
-            .frame(width: 700, height: 550)
+            .frame(width: 700, height: 700)
             .background(Color(NSColor.windowBackgroundColor))
             .cornerRadius(12)
             .shadow(radius: 20)
@@ -174,6 +194,224 @@ struct DebugPanelView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Core Runtime 性能区块（WI-005）
+
+    private var perfCoreRuntimeSection: some View {
+        let perf = appState.performanceObservability
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Core Runtime")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
+                GridRow {
+                    Text("WS Pipeline p95:").foregroundColor(.secondary)
+                    LatencyWindowLabel(window: perf.wsPipelineLatency)
+                }
+                GridRow {
+                    Text("Core Resident:").foregroundColor(.secondary)
+                    Text(formatBytes(perf.coreMemory.residentBytes))
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Core Phys Footprint:").foregroundColor(.secondary)
+                    Text(formatBytes(perf.coreMemory.physFootprintBytes))
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                GridRow {
+                    Text("Core Virtual:").foregroundColor(.secondary)
+                    Text(formatBytes(perf.coreMemory.virtualBytes))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                GridRow {
+                    Text("Snapshot At:").foregroundColor(.secondary)
+                    Text(perf.snapshotAt == 0 ? "-" : "\(perf.snapshotAt)ms")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Workspace 关键路径区块（WI-005）
+
+    private var perfWorkspaceSection: some View {
+        let metrics = appState.performanceObservability.workspaceMetrics
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Workspace Metrics (\(metrics.count))")
+                .font(.headline)
+
+            if metrics.isEmpty {
+                Text("暂无工作区数据")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(metrics) { ws in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(ws.project)/\(ws.workspace)")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.primary)
+
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                            GridRow {
+                                Text("  snapshot_build:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: ws.systemSnapshotBuild)
+                            }
+                            GridRow {
+                                Text("  file_index:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: ws.workspaceFileIndexRefresh)
+                            }
+                            GridRow {
+                                Text("  git_status:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: ws.workspaceGitStatusRefresh)
+                            }
+                            GridRow {
+                                Text("  evolution_read:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: ws.evolutionSnapshotRead)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+            }
+        }
+    }
+
+    // MARK: - Client Instance 区块（WI-005）
+
+    private var perfClientInstanceSection: some View {
+        let clients = appState.performanceObservability.clientMetrics
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Client Instances (\(clients.count))")
+                .font(.headline)
+
+            if clients.isEmpty {
+                Text("暂无客户端上报数据")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(clients, id: \.clientInstanceId) { client in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(client.platform)
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.blue.opacity(0.15))
+                                .cornerRadius(3)
+                            Text(client.clientInstanceId.prefix(8) + "…")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            Text("\(client.project)/\(client.workspace)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                            GridRow {
+                                Text("  phys_footprint:").foregroundColor(.secondary)
+                                Text(formatBytes(client.memory.currentBytes))
+                                    .font(.system(size: 11, design: .monospaced))
+                            }
+                            GridRow {
+                                Text("  ws_switch p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.workspaceSwitch)
+                            }
+                            GridRow {
+                                Text("  file_tree p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.fileTreeRequest)
+                            }
+                            GridRow {
+                                Text("  ai_session_list p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.aiSessionListRequest)
+                            }
+                            GridRow {
+                                Text("  msg_tail_flush p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.aiMessageTailFlush)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+            }
+        }
+    }
+
+    // MARK: - 性能诊断结果区块（WI-005）
+
+    private var perfDiagnosisSection: some View {
+        let diagnoses = appState.performanceObservability.diagnoses
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Performance Diagnoses (\(diagnoses.count))")
+                    .font(.headline)
+                if diagnoses.contains(where: { $0.severity == .critical }) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                } else if diagnoses.contains(where: { $0.severity == .warning }) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                }
+            }
+
+            if diagnoses.isEmpty {
+                Text("无性能诊断问题")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(diagnoses) { diag in
+                    HStack(alignment: .top, spacing: 8) {
+                        severityIcon(diag.severity)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(diag.reason.rawValue)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                Text("[\(diag.scope.rawValue)]")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(diag.summary)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                            if !diag.recommendedAction.isEmpty {
+                                Text("→ \(diag.recommendedAction)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    // MARK: - 辅助方法（WI-005）
+
+    private func formatBytes(_ bytes: UInt64) -> String {
+        guard bytes > 0 else { return "-" }
+        let mb = Double(bytes) / (1024 * 1024)
+        if mb >= 1024 {
+            return String(format: "%.1f GB", mb / 1024)
+        }
+        return String(format: "%.1f MB", mb)
+    }
+
+    private func severityIcon(_ severity: PerformanceDiagnosisSeverity) -> some View {
+        let (icon, color): (String, Color) = {
+            switch severity {
+            case .critical: return ("exclamationmark.triangle.fill", .red)
+            case .warning: return ("exclamationmark.triangle", .orange)
+            case .info: return ("info.circle", .blue)
+            }
+        }()
+        return Image(systemName: icon)
+            .foregroundColor(color)
+            .font(.system(size: 11))
+            .frame(width: 14)
     }
 
     // MARK: - Log Context Section (v1.42)
@@ -370,6 +608,29 @@ private struct DebugCoreStatusSection: View {
             return String(pid)
         }
         return "-"
+    }
+}
+
+/// 延迟指标窗口简洁标签（WI-005 可复用辅助视图）
+private struct LatencyWindowLabel: View {
+    let window: LatencyMetricWindow
+
+    var body: some View {
+        if window.sampleCount == 0 {
+            Text("-")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+        } else {
+            Text("p95=\(window.p95Ms)ms avg=\(window.avgMs)ms max=\(window.maxMs)ms n=\(window.sampleCount)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(latencyColor)
+        }
+    }
+
+    private var latencyColor: Color {
+        if window.p95Ms > 500 { return .red }
+        if window.p95Ms > 200 { return .orange }
+        return .primary
     }
 }
 #endif

@@ -105,6 +105,11 @@ extension AppState {
             self?.observabilitySnapshot = snapshot
         }
 
+        // WI-001: 全链路性能可观测快照
+        wsClient.onPerformanceObservability = { [weak self] snapshot in
+            self?.performanceObservability = snapshot
+        }
+
         // v1.41: 系统健康快照（Core 权威真源）- 更新共享健康状态，双端统一消费
         wsClient.onHealthSnapshot = { [weak self] snapshot in
             self?.systemHealthSnapshot = snapshot

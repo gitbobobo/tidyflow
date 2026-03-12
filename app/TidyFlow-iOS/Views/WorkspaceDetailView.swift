@@ -302,6 +302,9 @@ struct WorkspaceDetailView: View {
 
             // v1.44: 预测与调度优化摘要（通过共享投影消费，不在 View 层推导规则）
             predictionSection
+
+            // 性能诊断（WI-005：消费 Core 权威诊断结果，视图不自行推导阈值）
+            perfObservabilitySection
         }
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)
@@ -329,6 +332,112 @@ struct WorkspaceDetailView: View {
             projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.selectWorkspaceContext(project: project, workspace: workspace)
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
+        }
+    }
+
+    // MARK: - WI-005 性能诊断可视化
+
+    /// 性能诊断区块：消费 Core 权威 `performanceObservability`，不在视图层自行推导阈值或诊断结论。
+    @ViewBuilder
+    private var perfObservabilitySection: some View {
+        let perf = appState.performanceObservability
+
+        let wsMetrics = perf.workspaceMetrics.first { $0.project == project && $0.workspace == workspace }
+        let wsDiagnoses = perf.diagnoses.filter { diag in
+            diag.scope == .workspace && diag.context.project == project && diag.context.workspace == workspace
+        }
+        let sysDiagnoses = perf.diagnoses.filter { $0.scope == .system }
+        let relevantDiagnoses = sysDiagnoses + wsDiagnoses
+
+        if wsMetrics != nil || !relevantDiagnoses.isEmpty || perf.coreMemory.physFootprintBytes > 0 {
+            Section("性能诊断") {
+                if perf.coreMemory.physFootprintBytes > 0 {
+                    HStack {
+                        Label("Core 内存", systemImage: "memorychip")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(mobileFormatBytes(perf.coreMemory.physFootprintBytes))
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if perf.wsPipelineLatency.sampleCount > 0 {
+                    HStack {
+                        Label("WS 延迟 p95", systemImage: "network")
+                            .font(.subheadline)
+                        Spacer()
+                        Text("\(perf.wsPipelineLatency.p95Ms)ms")
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(perf.wsPipelineLatency.p95Ms > 500 ? .red :
+                                             perf.wsPipelineLatency.p95Ms > 200 ? .orange : .secondary)
+                    }
+                }
+
+                if let ws = wsMetrics {
+                    if ws.workspaceFileIndexRefresh.sampleCount > 0 {
+                        HStack {
+                            Label("文件索引 p95", systemImage: "folder")
+                                .font(.subheadline)
+                            Spacer()
+                            Text("\(ws.workspaceFileIndexRefresh.p95Ms)ms")
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(ws.workspaceFileIndexRefresh.p95Ms > 500 ? .red :
+                                                 ws.workspaceFileIndexRefresh.p95Ms > 200 ? .orange : .secondary)
+                        }
+                    }
+                    if ws.workspaceGitStatusRefresh.sampleCount > 0 {
+                        HStack {
+                            Label("Git 状态 p95", systemImage: "arrow.triangle.branch")
+                                .font(.subheadline)
+                            Spacer()
+                            Text("\(ws.workspaceGitStatusRefresh.p95Ms)ms")
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(ws.workspaceGitStatusRefresh.p95Ms > 500 ? .red :
+                                                 ws.workspaceGitStatusRefresh.p95Ms > 200 ? .orange : .secondary)
+                        }
+                    }
+                }
+
+                ForEach(relevantDiagnoses) { diag in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: mobileDiagIcon(diag.severity))
+                            .foregroundColor(mobileDiagColor(diag.severity))
+                            .font(.subheadline)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(diag.reason.rawValue)
+                                .font(.caption.weight(.semibold).monospaced())
+                            Text(diag.summary)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    private func mobileFormatBytes(_ bytes: UInt64) -> String {
+        guard bytes > 0 else { return "-" }
+        let mb = Double(bytes) / (1024 * 1024)
+        if mb >= 1024 { return String(format: "%.1f GB", mb / 1024) }
+        return String(format: "%.0f MB", mb)
+    }
+
+    private func mobileDiagIcon(_ severity: PerformanceDiagnosisSeverity) -> String {
+        switch severity {
+        case .critical: return "exclamationmark.triangle.fill"
+        case .warning: return "exclamationmark.triangle"
+        case .info: return "info.circle"
+        }
+    }
+
+    private func mobileDiagColor(_ severity: PerformanceDiagnosisSeverity) -> Color {
+        switch severity {
+        case .critical: return .red
+        case .warning: return .orange
+        case .info: return .blue
         }
     }
 

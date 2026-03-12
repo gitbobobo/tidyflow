@@ -188,6 +188,8 @@ class WSClient: NSObject, ObservableObject {
     var onEvolutionWorkspaceSummaries: (([SystemSnapshotEvolutionWorkspaceSummary]) -> Void)?
     /// v1.42: 统一可观测性快照（聚合 perf_metrics + log_context + cache_metrics）
     var onObservabilitySnapshot: ((ObservabilitySnapshot) -> Void)?
+    /// WI-001: 全链路性能可观测快照
+    var onPerformanceObservability: ((PerformanceObservabilitySnapshot) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     /// 结构化 Core 错误回调（含错误码与上下文）

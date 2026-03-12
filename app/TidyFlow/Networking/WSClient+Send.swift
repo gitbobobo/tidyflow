@@ -2531,7 +2531,8 @@ extension WSClient {
         clientSessionId: String,
         connectivity: ClientConnectivity,
         incidents: [HealthIncident] = [],
-        context: HealthContext = .system
+        context: HealthContext = .system,
+        clientPerformanceReport: ClientPerformanceReport? = nil
     ) {
         let incidentsJson = incidents.compactMap { incident -> [String: Any]? in
             guard let data = try? JSONEncoder().encode(incident),
@@ -2539,7 +2540,7 @@ extension WSClient {
             else { return nil }
             return dict
         }
-        send([
+        var payload: [String: Any] = [
             "type": "health_report",
             "client_session_id": clientSessionId,
             "connectivity": connectivity.rawValue,
@@ -2551,7 +2552,14 @@ extension WSClient {
                 "cycle_id": context.cycleId as Any
             ],
             "reported_at": UInt64(Date().timeIntervalSince1970 * 1000)
-        ])
+        ]
+        // WI-001: 附加客户端性能上报
+        if let report = clientPerformanceReport,
+           let data = try? JSONEncoder().encode(report),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            payload["client_performance_report"] = dict
+        }
+        send(payload)
     }
 
     /// 请求执行修复动作（含上下文，确保 project/workspace 边界）
