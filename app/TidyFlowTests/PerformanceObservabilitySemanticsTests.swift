@@ -516,6 +516,96 @@ final class GateFailureReasonPerformanceRegressionTests: XCTestCase {
     }
 }
 
+// MARK: - WI-004 扩展：采样决策与隔离语义
+
+extension PerformanceObservabilitySemanticsTests {
+
+    // clientInstanceId 过滤正确性
+    func testFilterMetrics_clientInstanceId_correctIsolation() {
+        let reportSelf = makeClientReport(project: "p", workspace: "ws", clientId: "self-id")
+        let reportOther = makeClientReport(project: "p", workspace: "ws", clientId: "other-id")
+
+        let snapshot = PerformanceObservabilitySnapshot(clientMetrics: [reportSelf, reportOther])
+        let result = EvolutionRealtimeSamplingSemantics.filterMetrics(
+            snapshot: snapshot, project: "p", workspace: "ws", clientInstanceId: "self-id"
+        )
+
+        XCTAssertEqual(result.clientMetrics.count, 1, "只应保留 self-id 的报告")
+        XCTAssertEqual(result.clientMetrics.first?.clientInstanceId, "self-id")
+    }
+
+    // 诊断 reason → tier 映射：clientMemoryPressure → degraded
+    func testDiagnosisReason_clientMemoryPressure_mapsToDegradedTier() {
+        let decision = makeDecisionWithDiagnosis(reason: .clientMemoryPressure)
+        XCTAssertEqual(decision.tier, .degraded, "clientMemoryPressure 应映射到 degraded 档位")
+    }
+
+    // 诊断 reason → tier 映射：memoryGrowthUnbounded → degraded
+    func testDiagnosisReason_memoryGrowthUnbounded_mapsToDegradedTier() {
+        let decision = makeDecisionWithDiagnosis(reason: .memoryGrowthUnbounded)
+        XCTAssertEqual(decision.tier, .degraded, "memoryGrowthUnbounded 应映射到 degraded 档位")
+    }
+
+    // 诊断 reason → tier 映射：wsPipelineLatencyHigh → degraded
+    func testDiagnosisReason_wsPipelineLatencyHigh_mapsToDegradedTier() {
+        let decision = makeDecisionWithDiagnosis(reason: .wsPipelineLatencyHigh)
+        XCTAssertEqual(decision.tier, .degraded, "wsPipelineLatencyHigh 应映射到 degraded 档位")
+    }
+
+    // 无诊断时默认 balanced
+    func testNoDiagnosis_defaultsToBalancedTier() {
+        let snapshot = PerformanceObservabilitySnapshot()
+        let metrics = EvolutionRealtimeSamplingSemantics.filterMetrics(
+            snapshot: snapshot, project: "p", workspace: "ws", clientInstanceId: "c"
+        )
+        let decision = EvolutionRealtimeSamplingSemantics.computeDecision(
+            metrics: metrics,
+            runningAgentCount: 1,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true,
+            currentDecision: .paused
+        )
+        XCTAssertEqual(decision.tier, .balanced, "无诊断代理 1 个时应默认 balanced")
+    }
+
+    // MARK: - 私有辅助
+
+    private func makeClientReport(project: String, workspace: String, clientId: String) -> ClientPerformanceReport {
+        ClientPerformanceReport(
+            clientInstanceId: clientId,
+            platform: "macos",
+            project: project,
+            workspace: workspace
+        )
+    }
+
+    private func makeDecisionWithDiagnosis(reason: PerformanceDiagnosisReason) -> EvolutionRealtimeSamplingDecision {
+        let diag = PerformanceDiagnosis(
+            diagnosisId: UUID().uuidString,
+            scope: .system,
+            severity: .critical,
+            reason: reason,
+            summary: "test",
+            recommendedAction: "none",
+            context: HealthContext(project: nil, workspace: nil),
+            clientInstanceId: nil
+        )
+        let snapshot = PerformanceObservabilitySnapshot(diagnoses: [diag])
+        let metrics = EvolutionRealtimeSamplingSemantics.filterMetrics(
+            snapshot: snapshot, project: "p", workspace: "ws", clientInstanceId: "c"
+        )
+        return EvolutionRealtimeSamplingSemantics.computeDecision(
+            metrics: metrics,
+            runningAgentCount: 1,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true,
+            currentDecision: .paused
+        )
+    }
+}
+
 // MARK: - 私有扩展
 
 private extension String {

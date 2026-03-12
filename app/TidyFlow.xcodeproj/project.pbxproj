@@ -23,6 +23,7 @@
 		SHR0200E /* WorkspaceOverviewProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01010 /* WorkspaceOverviewProjection.swift */; };
 		SHR0200F /* HTTPQueryCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01011 /* HTTPQueryCache.swift */; };
 		SHR02010 /* CoordinatorProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01012 /* CoordinatorProtocolModels.swift */; };
+		SHR02014 /* EvolutionPerformanceProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01014 /* EvolutionPerformanceProjection.swift */; };
 		SHR02011 /* CoordinatorStateCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01013 /* CoordinatorStateCache.swift */; };
 		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
 		CCST0001 /* CoordinatorStateCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCST0011 /* CoordinatorStateCacheTests.swift */; };
@@ -183,6 +184,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		MDL000316 /* AppState+CoreWS+MessageHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000116 /* AppState+CoreWS+MessageHandlers.swift */; };
 		MDL000317 /* AppState+CoreWS+AIEvolutionHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000117 /* AppState+CoreWS+AIEvolutionHandlers.swift */; };
 		MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000118 /* AppState+CoreWS+WSClientBinder.swift */; };
+		MDL00031C /* AppState+EvolutionPerformanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011C /* AppState+EvolutionPerformanceMonitor.swift */; };
 		MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */; };
 		MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011A /* AppState+CoreWS+AIReconnect.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
@@ -241,6 +243,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */; };
 			CSTH0002 /* CoreShutdownTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSTH0001 /* CoreShutdownTestSupport.swift */; };
 			EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
+			ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */; };
+			EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */; };
 		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
 		POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = POBS0011 /* PerformanceObservabilitySemanticsTests.swift */; };
 		SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SYHS0011 /* SystemHealthSemanticsTests.swift */; };
@@ -328,6 +332,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01010 /* WorkspaceOverviewProjection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjection.swift; sourceTree = "<group>"; };
 		SHR01011 /* HTTPQueryCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HTTPQueryCache.swift; sourceTree = "<group>"; };
 		SHR01012 /* CoordinatorProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorProtocolModels.swift; sourceTree = "<group>"; };
+		SHR01014 /* EvolutionPerformanceProjection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceProjection.swift; sourceTree = "<group>"; };
 		SHR01013 /* CoordinatorStateCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCache.swift; sourceTree = "<group>"; };
 		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
 		CCST0011 /* CoordinatorStateCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCacheTests.swift; sourceTree = "<group>"; };
@@ -500,6 +505,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		MDL000116 /* AppState+CoreWS+MessageHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+MessageHandlers.swift"; sourceTree = "<group>"; };
 		MDL000117 /* AppState+CoreWS+AIEvolutionHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIEvolutionHandlers.swift"; sourceTree = "<group>"; };
 		MDL000118 /* AppState+CoreWS+WSClientBinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+WSClientBinder.swift"; sourceTree = "<group>"; };
+		MDL00011C /* AppState+EvolutionPerformanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EvolutionPerformanceMonitor.swift"; sourceTree = "<group>"; };
 		MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+EvolutionSupport.swift"; sourceTree = "<group>"; };
 		MDL00011A /* AppState+CoreWS+AIReconnect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIReconnect.swift"; sourceTree = "<group>"; };
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
@@ -559,6 +565,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISelectorHTTPFailureHandlingTests.swift; sourceTree = "<group>"; };
 			CSTH0001 /* CoreShutdownTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreShutdownTestSupport.swift; sourceTree = "<group>"; };
 			EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
+			ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRealtimeSamplingSemanticsTests.swift; sourceTree = "<group>"; };
+			EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStoreTests.swift; sourceTree = "<group>"; };
 		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
 		POBS0011 /* PerformanceObservabilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceObservabilitySemanticsTests.swift; sourceTree = "<group>"; };
 		SYHS0011 /* SystemHealthSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemHealthSemanticsTests.swift; sourceTree = "<group>"; };
@@ -608,6 +616,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			isa = PBXGroup;
 			children = (
 				SHR0100D /* WorkspaceViewState.swift */,
+				SHR01014 /* EvolutionPerformanceProjection.swift */,
 				SHR0100E /* WorkspaceViewStateMachine.swift */,
 				SHR0100F /* SidebarProjectionModels.swift */,
 				SHR01010 /* WorkspaceOverviewProjection.swift */,
@@ -847,6 +856,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 					AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
 					CSTH0001 /* CoreShutdownTestSupport.swift */,
 					EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
+					ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */,
+					EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */,
 					POBS0011 /* PerformanceObservabilitySemanticsTests.swift */,
 					SYHS0011 /* SystemHealthSemanticsTests.swift */,
 				HQTC0011 /* HTTPQueryClientTests.swift */,
@@ -989,7 +1000,8 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000116 /* AppState+CoreWS+MessageHandlers.swift */,
 				MDL000117 /* AppState+CoreWS+AIEvolutionHandlers.swift */,
 				MDL000118 /* AppState+CoreWS+WSClientBinder.swift */,
-				MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */,
+				MDL00011C /* AppState+EvolutionPerformanceMonitor.swift */,
+					MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */,
 				MDL00011A /* AppState+CoreWS+AIReconnect.swift */,
 				MDL000111 /* AppState+EditorTerminal.swift */,
 				TMS00002 /* TerminalStore.swift */,
@@ -1230,7 +1242,8 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000316 /* AppState+CoreWS+MessageHandlers.swift in Sources */,
 				MDL000317 /* AppState+CoreWS+AIEvolutionHandlers.swift in Sources */,
 				MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */,
-				MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */,
+				MDL00031C /* AppState+EvolutionPerformanceMonitor.swift in Sources */,
+					MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */,
 				MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */,
 				MDL00031B /* WorkspaceKeySemantics.swift in Sources */,
 				MDL00030C /* AppState+FileOps.swift in Sources */,
@@ -1396,6 +1409,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
 					CSTH0002 /* CoreShutdownTestSupport.swift in Sources */,
 					EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
+					ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */,
+					EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */,
 					POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */,
 					SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */,
 				HQTC0001 /* HTTPQueryClientTests.swift in Sources */,
@@ -1441,6 +1456,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR0200E /* WorkspaceOverviewProjection.swift in Sources */,
 				SHR0200F /* HTTPQueryCache.swift in Sources */,
 				SHR02010 /* CoordinatorProtocolModels.swift in Sources */,
+				SHR02014 /* EvolutionPerformanceProjection.swift in Sources */,
 				SHR02011 /* CoordinatorStateCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

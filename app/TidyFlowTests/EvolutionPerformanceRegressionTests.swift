@@ -476,4 +476,134 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
         }
         wait(for: [exp], timeout: 1.0)
     }
+
+    // MARK: - WI-004 回归测试扩展
+
+    /// performanceObservability 高频变化不应触发额外 snapshot fallback（WI-004）
+    func testHighFrequencyPerformanceObservabilityUpdateDoesNotTriggerFallback() {
+        let appState = AppState()
+        defer { tearDownAppState(appState) }
+
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+
+        var scheduledRequests: [(String, String, [URLQueryItem])] = []
+        appState.wsClient.onHTTPRequestScheduled = { domain, path, queryItems in
+            if domain == "evolution" {
+                scheduledRequests.append((domain, path, queryItems))
+            }
+        }
+
+        let existing = makeItem(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            status: "running",
+            currentStage: "plan",
+            globalLoopRound: 1
+        )
+        appState.replaceEvolutionWorkspaceItems([existing])
+
+        // 模拟高频 performanceObservability 更新（不应触发 Evolution snapshot fallback）
+        for i in 0..<10 {
+            appState.performanceObservability = PerformanceObservabilitySnapshot(
+                snapshotAt: UInt64(i + 1)
+            )
+        }
+
+        let exp = expectation(description: "等待无回退请求")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 1.0)
+
+        XCTAssertTrue(scheduledRequests.isEmpty, "高频 performanceObservability 更新不应触发 Evolution snapshot fallback")
+    }
+
+    /// 监控状态变化不应导致已知工作区投影崩溃（WI-004）
+    func testMonitorRebindDoesNotCrashOrCorruptProjection() {
+        let appState = AppState()
+        defer {
+            MainActor.assumeIsolated { appState.stopAllEvolutionPerformanceMonitoring() }
+            tearDownAppState(appState)
+        }
+
+        appState.selectedProjectName = "proj"
+        appState.selectedWorkspaceKey = "ws"
+        appState.wsClient.currentURL = URL(string: "ws://127.0.0.1:8439/ws")
+
+        let existing = makeItem(
+            project: "proj",
+            workspace: "ws",
+            cycleID: "cycle-1",
+            status: "running",
+            currentStage: "plan",
+            globalLoopRound: 1
+        )
+        appState.replaceEvolutionWorkspaceItems([existing])
+
+        // 模拟监控启动
+        Task { @MainActor in
+            appState.startEvolutionPerformanceMonitoring(
+                project: "proj",
+                workspace: "ws",
+                contextKey: "proj/ws"
+            )
+        }
+
+        // 模拟切换工作区后停止旧监控
+        Task { @MainActor in
+            appState.stopEvolutionPerformanceMonitoring(contextKey: "proj/ws")
+        }
+
+        // 再启动新工作区监控
+        Task { @MainActor in
+            appState.startEvolutionPerformanceMonitoring(
+                project: "proj",
+                workspace: "ws-2",
+                contextKey: "proj/ws-2"
+            )
+            appState.stopEvolutionPerformanceMonitoring(contextKey: "proj/ws-2")
+        }
+
+        let exp = expectation(description: "等待监控操作完成")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+
+        // 投影不应崩溃，工作区项应保持一致
+        let item = appState.evolutionItem(project: "proj", workspace: "ws")
+        XCTAssertNotNil(item, "监控重绑后工作区投影不应丢失")
+        XCTAssertEqual(item?.currentStage, "plan")
+    }
+
+    /// 重复 startEvolutionPerformanceMonitoring 同一 key 不创建并行任务（WI-004）
+    func testStartMonitoring_duplicateKeyDoesNotCreateParallelTasks() {
+        let appState = AppState()
+        defer {
+            MainActor.assumeIsolated { appState.stopAllEvolutionPerformanceMonitoring() }
+            tearDownAppState(appState)
+        }
+
+        let contextKey = "proj/ws"
+
+        Task { @MainActor in
+            appState.startEvolutionPerformanceMonitoring(
+                project: "proj", workspace: "ws", contextKey: contextKey
+            )
+            let countAfterFirst = appState.evolutionPerformanceMonitorTasks.count
+
+            appState.startEvolutionPerformanceMonitoring(
+                project: "proj", workspace: "ws", contextKey: contextKey
+            )
+            let countAfterSecond = appState.evolutionPerformanceMonitorTasks.count
+
+            XCTAssertEqual(countAfterFirst, 1, "第一次启动应创建一个任务")
+            XCTAssertEqual(countAfterSecond, 1, "重复启动同一 key 不应创建并行任务")
+        }
+
+        let exp = expectation(description: "等待任务检查完成")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+    }
 }
