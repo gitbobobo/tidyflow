@@ -1400,6 +1400,43 @@ fn value_as_string(value: Option<&serde_json::Value>) -> Option<String> {
     }
 }
 
+fn first_non_empty_input_string(
+    input: &HashMap<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value_as_string(input.get(*key)))
+}
+
+fn first_non_empty_input_array_string(
+    input: &HashMap<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter().find_map(|key| {
+        input.get(*key).and_then(|value| match value {
+            serde_json::Value::Array(items) => items.iter().find_map(|item| value_as_string(Some(item))),
+            _ => None,
+        })
+    })
+}
+
+fn tool_content_display_title(
+    tool_id: &str,
+    input: &HashMap<String, serde_json::Value>,
+) -> Option<String> {
+    match tool_id {
+        "read" | "edit" => first_non_empty_input_string(
+            input,
+            &["path", "file", "filePath", "file_path"],
+        )
+        .or_else(|| first_non_empty_input_array_string(input, &["paths", "files"])),
+        "search" | "websearch" => {
+            first_non_empty_input_string(input, &["pattern", "query", "search"])
+        }
+        _ => None,
+    }
+}
+
 fn value_as_f64(value: Option<&serde_json::Value>) -> Option<f64> {
     match value {
         Some(serde_json::Value::Number(number)) => number.as_f64(),
@@ -2370,45 +2407,19 @@ fn build_tool_view(part: &crate::ai::AiPart) -> Option<crate::server::protocol::
     } else {
         None
     };
-    let display_title = title.unwrap_or_else(|| {
-        if tool_id == "websearch" {
-            input
-                .get("query")
-                .and_then(|value| value_as_string(Some(value)))
-                .unwrap_or_else(|| {
-                    part.tool_kind
-                        .clone()
-                        .or_else(|| part.tool_name.clone())
-                        .unwrap_or_else(|| tool_display_name(&tool_id))
-                })
-        } else if tool_id == "search" {
-            input
-                .get("pattern")
-                .and_then(|value| value_as_string(Some(value)))
-                .or_else(|| {
-                    input
-                        .get("query")
-                        .and_then(|value| value_as_string(Some(value)))
-                })
-                .map(|pattern| format!("grep({})", pattern))
-                .unwrap_or_else(|| {
-                    part.tool_kind
-                        .clone()
-                        .unwrap_or_else(|| tool_display_name(&tool_id))
-                })
-        } else if matches!(
-            tool_id.as_str(),
-            "read" | "edit" | "terminal" | "switch_mode"
-        ) {
-            part.tool_kind
-                .clone()
-                .unwrap_or_else(|| tool_display_name(&tool_id))
-        } else {
-            part.tool_kind
-                .clone()
-                .or_else(|| part.tool_name.clone())
-                .unwrap_or_else(|| tool_display_name(&tool_id))
-        }
+    let display_title = tool_content_display_title(&tool_id, &input).unwrap_or_else(|| {
+        title.unwrap_or_else(|| {
+            if matches!(tool_id.as_str(), "read" | "edit" | "terminal" | "switch_mode") {
+                part.tool_kind
+                    .clone()
+                    .unwrap_or_else(|| tool_display_name(&tool_id))
+            } else {
+                part.tool_kind
+                    .clone()
+                    .or_else(|| part.tool_name.clone())
+                    .unwrap_or_else(|| tool_display_name(&tool_id))
+            }
+        })
     });
 
     Some(crate::server::protocol::ai::ToolView {
@@ -2977,6 +2988,71 @@ mod tests {
             tool_view.display_title,
             "https://moonshotai.github.io/kimi-cli/zh/customization/wire-mode.html"
         );
+    }
+
+    #[test]
+    fn normalize_part_for_wire_read_title_prefers_target_path() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-read".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("read".to_string()),
+            tool_kind: Some("read".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "title": "Viewing ../src/lib.rs",
+                "input": {
+                    "path": "/tmp/src/lib.rs"
+                }
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.display_title, "/tmp/src/lib.rs");
+    }
+
+    #[test]
+    fn normalize_part_for_wire_edit_title_prefers_target_path() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-edit".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("edit".to_string()),
+            tool_kind: Some("edit".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "title": "Editing ../src/lib.rs",
+                "input": {
+                    "path": "/tmp/src/lib.rs",
+                    "old_str": "before",
+                    "new_str": "after"
+                }
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.display_title, "/tmp/src/lib.rs");
+    }
+
+    #[test]
+    fn normalize_part_for_wire_search_title_prefers_query_text() {
+        let part = normalize_part_for_wire(crate::ai::AiPart {
+            id: "tool-search".to_string(),
+            part_type: "tool".to_string(),
+            tool_name: Some("grep".to_string()),
+            tool_kind: Some("search".to_string()),
+            tool_state: Some(serde_json::json!({
+                "status": "completed",
+                "title": "Searching for TODO",
+                "input": {
+                    "pattern": "TODO"
+                }
+            })),
+            ..Default::default()
+        });
+
+        let tool_view = part.tool_view.expect("tool_view should exist");
+        assert_eq!(tool_view.display_title, "TODO");
     }
 
     #[test]
