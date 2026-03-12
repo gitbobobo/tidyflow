@@ -59,6 +59,8 @@ struct EvolutionRunningAgentCardModel: Identifiable, Equatable {
 /// 自主进化的流水线视图，显示在右侧 Inspector 面板中
 /// 聚焦当前轮次执行流程，以流水线动画展示代理执行状态
 struct EvolutionPipelineView: View {
+    private static let contentHorizontalPadding: CGFloat = 12
+
     let appState: AppState
     @State private var projectionStore = EvolutionPipelineProjectionStore()
 
@@ -194,7 +196,7 @@ struct EvolutionPipelineView: View {
                         cycleListArea
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, Self.contentHorizontalPadding)
                     .padding(.vertical, 10)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -445,6 +447,7 @@ struct EvolutionPipelineView: View {
                 }
             }
         }
+        .padding(.leading, -Self.contentHorizontalPadding)
     }
 
     // MARK: - 上方内容区（当前循环）
@@ -1229,12 +1232,20 @@ struct EvolutionPipelineView: View {
         if let item = currentItem {
             let normalized = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let isTerminal = ["interrupted", "failed_exhausted", "failed_system", "completed", "done", "success"].contains(normalized)
-            if isTerminal {
+            let isFailed = projection.isCurrentCycleFailed
+            let terminalReason = trimmedNonEmptyText(item.terminalReasonCode)
+            let terminalError = trimmedNonEmptyText(item.terminalErrorMessage)
+            let rateLimitMessage = trimmedNonEmptyText(item.rateLimitErrorMessage)
+            let failureSummary = projection.currentCycleFailureSummary
+            let shouldShowBanner = isFailed
+                || terminalReason != nil
+                || terminalError != nil
+                || rateLimitMessage != nil
+            if isTerminal, shouldShowBanner {
                 let statusInfo = cycleStatusInfo(item.status)
-                let isFailed = projection.isCurrentCycleFailed
                 VStack(alignment: .leading, spacing: 4) {
                     // 终止原因
-                    if let reason = trimmedNonEmptyText(item.terminalReasonCode) {
+                    if let reason = terminalReason {
                         HStack(spacing: 4) {
                             Image(systemName: statusInfo.icon)
                                 .font(.system(size: 9))
@@ -1247,7 +1258,7 @@ struct EvolutionPipelineView: View {
                     }
 
                     // 失败诊断摘要
-                    if isFailed, let summary = projection.currentCycleFailureSummary {
+                    if isFailed, let summary = failureSummary {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 9))
@@ -1258,7 +1269,7 @@ struct EvolutionPipelineView: View {
                                 .lineLimit(4)
                                 .textSelection(.enabled)
                         }
-                    } else if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
+                    } else if let terminalError {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "text.bubble.fill")
                                 .font(.system(size: 9))
@@ -1271,7 +1282,7 @@ struct EvolutionPipelineView: View {
                     }
 
                     // 限流错误信息
-                    if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
+                    if let rateLimitMsg = rateLimitMessage {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "clock.badge.exclamationmark")
                                 .font(.system(size: 9))
