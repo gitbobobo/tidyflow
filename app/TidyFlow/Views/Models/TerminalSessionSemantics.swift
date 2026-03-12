@@ -513,3 +513,58 @@ extension WorkspaceTerminalAIStatusProjection {
         }
     }
 }
+
+// MARK: - 工作区终端事件边界校验器
+
+/// 终端事件工作区隔离校验器。
+///
+/// 在 reconnect、reclaim、trim 等退化路径下，验证终端事件是否属于当前活跃工作区上下文，
+/// 防止跨工作区事件污染状态机。macOS 与 iOS 双端通过同一规则做事件准入判断。
+///
+/// 设计原则：
+/// - 不持有状态，纯函数式设计，无副作用
+/// - 按 (project, workspace, termId) 三元组做精确隔离
+/// - 宽进策略：termId 不在当前工作区，拒绝（返回 false）
+enum WorkspaceEventBoundary {
+
+    /// 校验终端事件是否来自预期的工作区上下文。
+    /// - Parameters:
+    ///   - project: 事件携带的项目名
+    ///   - workspace: 事件携带的工作区名
+    ///   - expectedProject: 当前活跃工作区项目名
+    ///   - expectedWorkspace: 当前活跃工作区名
+    /// - Returns: `true` 表示允许处理该事件，`false` 表示应丢弃
+    static func accepts(
+        project: String,
+        workspace: String,
+        expectedProject: String,
+        expectedWorkspace: String
+    ) -> Bool {
+        project == expectedProject && workspace == expectedWorkspace
+    }
+
+    /// 校验 termId 是否属于预期工作区（通过生命周期状态机验证）。
+    static func accepts(
+        termId: String,
+        expectedProject: String,
+        expectedWorkspace: String,
+        lifecycle: TerminalLifecycleStateMachine?
+    ) -> Bool {
+        guard let lifecycle else { return false }
+        let state = lifecycle.state
+        guard state.phase != .idle else { return false }
+        return state.project == expectedProject && state.workspace == expectedWorkspace
+    }
+
+    /// 在 term_list 回调后计算需要 trim 的过期终端集合。
+    /// - Parameters:
+    ///   - currentDisplayIds: 当前缓存的终端 ID 集合（属于指定工作区）
+    ///   - survivingIds: Core 权威的存活终端 ID 集合
+    /// - Returns: 应被清除的过期终端 ID 集合
+    static func staleTerminals(
+        currentDisplayIds: Set<String>,
+        survivingIds: Set<String>
+    ) -> Set<String> {
+        currentDisplayIds.subtracting(survivingIds)
+    }
+}

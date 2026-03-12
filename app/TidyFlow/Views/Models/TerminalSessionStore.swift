@@ -218,6 +218,36 @@ final class TerminalSessionStore: ObservableObject {
         }
     }
 
+    /// 清除指定工作区的全部终端展示信息（工作区删除或项目移除时调用）。
+    /// 置顶状态与展示缓存一并清除，同时终止对应终端的生命周期状态机。
+    func clearWorkspaceDisplayInfo(project: String, workspace: String) {
+        let toRemove = displayInfoById.filter { _, info in
+            info.project == project && info.workspace == workspace
+        }.map(\.key)
+        for termId in toRemove {
+            displayInfoById.removeValue(forKey: termId)
+            pinnedIds.remove(termId)
+            lifecycleByTermId[termId]?.apply(.close(termId: termId))
+            lifecycleByTermId.removeValue(forKey: termId)
+        }
+        let wsKey = "\(project):\(workspace)"
+        workspaceOpenTime.removeValue(forKey: wsKey)
+    }
+
+    /// trim 退化路径：移除不在存活列表中的指定工作区终端。
+    /// 用于 term_list 回调后的精确裁剪，仅清理指定工作区内的过期终端，不影响其他工作区。
+    func trimStaleTerminals(survivingIds: Set<String>, project: String, workspace: String) {
+        let toRemove = displayInfoById.filter { termId, info in
+            info.project == project && info.workspace == workspace && !survivingIds.contains(termId)
+        }.map(\.key)
+        for termId in toRemove {
+            displayInfoById.removeValue(forKey: termId)
+            pinnedIds.remove(termId)
+            lifecycleByTermId[termId]?.apply(.close(termId: termId))
+            lifecycleByTermId.removeValue(forKey: termId)
+        }
+    }
+
     // MARK: - ACK 追踪
 
     /// 重置指定终端的 ACK 计数（attach 时调用）
