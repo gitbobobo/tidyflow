@@ -2,12 +2,16 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::pty::PtySession;
 use crate::server::protocol::TerminalInfo;
+
+// chrono は chrono::Utc 経由で使用
+use chrono;
 
 /// 默认 scrollback 缓冲区大小：256KB（终端初始容量）
 const DEFAULT_SCROLLBACK_CAPACITY: usize = 256 * 1024;
@@ -145,6 +149,7 @@ pub enum TerminalStatus {
 ///   spawn → Entering → (首个订阅者) → Active
 ///   detach/断连(最后订阅者) → Idle
 ///   attach/重连 → Resuming → Active
+///   Core 重启/恢复元数据存在 → Recovering → Active | RecoveryFailed
 ///   close/reclaim → 移除
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalLifecyclePhase {
@@ -156,6 +161,10 @@ pub enum TerminalLifecyclePhase {
     Resuming,
     /// 无活跃订阅者，终端保持运行但处于空闲
     Idle,
+    /// Core 重启后从持久化恢复元数据重建终端中（区别于 Resuming 的 WS 断连场景）
+    Recovering,
+    /// 从持久化恢复失败，等待客户端确认或清除
+    RecoveryFailed,
 }
 
 impl TerminalLifecyclePhase {
@@ -166,8 +175,41 @@ impl TerminalLifecyclePhase {
             Self::Active => "active",
             Self::Resuming => "resuming",
             Self::Idle => "idle",
+            Self::Recovering => "recovering",
+            Self::RecoveryFailed => "recovery_failed",
         }
     }
+}
+
+/// 终端恢复元数据（Core 权威持久化字段）
+///
+/// 只存储恢复所需的最小字段，不持久化 scrollback、订阅计数等运行时数据。
+/// 按 `(project, workspace, term_id)` 三元组严格隔离，禁止跨工作区共享。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalRecoveryMeta {
+    /// 终端 ID（Core 生成的 UUID）
+    pub term_id: String,
+    /// 所属项目名
+    pub project: String,
+    /// 所属工作区名
+    pub workspace: String,
+    /// 终端工作目录（用于重建 PTY）
+    pub cwd: String,
+    /// Shell 名称（如 "zsh", "bash"）
+    pub shell: String,
+    /// 用户自定义展示名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 用户自定义图标
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// 恢复状态：`pending` | `recovering` | `recovered` | `failed`
+    pub recovery_state: String,
+    /// 恢复失败原因（仅 recovery_state=failed 时有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_reason: Option<String>,
+    /// 记录创建时间（用于清理过期恢复记录）
+    pub created_at: String,
 }
 
 /// 环形 scrollback 缓冲区，保留最近的终端输出用于重连回放
@@ -257,6 +299,8 @@ pub struct TerminalEntry {
     pub name: Option<String>,
     /// 客户端自定义图标标识
     pub icon: Option<String>,
+    /// 终端恢复元数据（Core 重启后持久化恢复所需最小字段）
+    pub recovery_meta: Option<TerminalRecoveryMeta>,
     /// 多订阅者广播通道（term_id, data）
     pub output_tx: broadcast::Sender<(String, Vec<u8>)>,
     pub scrollback: ScrollbackBuffer,
@@ -393,6 +437,7 @@ impl TerminalRegistry {
             lifecycle_phase: TerminalLifecyclePhase::Entering,
             name,
             icon,
+            recovery_meta: None,
             output_tx,
             scrollback: ScrollbackBuffer::new(DEFAULT_SCROLLBACK_CAPACITY),
             flow_gate,
@@ -709,8 +754,93 @@ impl TerminalRegistry {
                 shell: e.shell.clone(),
                 name: e.name.clone(),
                 icon: e.icon.clone(),
+                recovery_phase: if matches!(
+                    e.lifecycle_phase,
+                    TerminalLifecyclePhase::Recovering | TerminalLifecyclePhase::RecoveryFailed
+                ) {
+                    Some(e.lifecycle_phase.as_str().to_string())
+                } else {
+                    None
+                },
+                recovery_failed_reason: e
+                    .recovery_meta
+                    .as_ref()
+                    .and_then(|m| m.failed_reason.clone()),
                 remote_subscribers: Vec::new(),
             })
+            .collect()
+    }
+
+    /// 收集当前所有活跃终端的恢复元数据，用于 Core 关闭前持久化
+    pub fn collect_recovery_metas(&self) -> Vec<TerminalRecoveryMeta> {
+        self.terminals
+            .values()
+            .filter(|e| matches!(e.status, TerminalStatus::Running))
+            .map(|e| TerminalRecoveryMeta {
+                term_id: e.term_id.clone(),
+                project: e.project.clone(),
+                workspace: e.workspace.clone(),
+                cwd: e.cwd.to_string_lossy().to_string(),
+                shell: e.shell.clone(),
+                name: e.name.clone(),
+                icon: e.icon.clone(),
+                recovery_state: "pending".to_string(),
+                failed_reason: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .collect()
+    }
+
+    /// 为终端注册恢复元数据（从持久化加载，Core 重启后使用）
+    pub fn set_recovery_meta(&mut self, term_id: &str, meta: TerminalRecoveryMeta) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.recovery_meta = Some(meta);
+        }
+    }
+
+    /// 将终端相位推进到 Recovering（Core 重启恢复编排调用）
+    pub fn mark_recovering(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::Recovering;
+            if let Some(meta) = &mut entry.recovery_meta {
+                meta.recovery_state = "recovering".to_string();
+            }
+        }
+    }
+
+    /// 将终端相位推进到 RecoveryFailed（恢复编排失败时调用）
+    pub fn mark_recovery_failed(&mut self, term_id: &str, reason: String) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::RecoveryFailed;
+            if let Some(meta) = &mut entry.recovery_meta {
+                meta.recovery_state = "failed".to_string();
+                meta.failed_reason = Some(reason);
+            }
+        }
+    }
+
+    /// 将终端相位从 Recovering 推进到 Active（恢复成功）
+    pub fn mark_recovery_succeeded(&mut self, term_id: &str) {
+        if let Some(entry) = self.terminals.get_mut(term_id) {
+            entry.lifecycle_phase = TerminalLifecyclePhase::Active;
+            if let Some(meta) = &mut entry.recovery_meta {
+                meta.recovery_state = "recovered".to_string();
+                meta.failed_reason = None;
+            }
+        }
+    }
+
+    /// 列出处于 Recovering 或 RecoveryFailed 相位的终端 ID
+    pub fn recovering_term_ids(&self) -> Vec<String> {
+        self.terminals
+            .values()
+            .filter(|e| {
+                matches!(
+                    e.lifecycle_phase,
+                    TerminalLifecyclePhase::Recovering | TerminalLifecyclePhase::RecoveryFailed
+                )
+            })
+            .map(|e| e.term_id.clone())
             .collect()
     }
 
