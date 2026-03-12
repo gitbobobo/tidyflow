@@ -48,8 +48,16 @@ print_usage() {
   e2e [--device iphone|ipad|mac|all] [--run-id <run_id>]
       运行端到端测试，并由测试代码自动产出证据与 evidence.index.json
 
-  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|protocol_check|core_regression|system_health|evidence_integrity|apple_regression|apple_build] [--dry-run] [--verify-only] [--project <name>] [--workspace <name>] [--json] [--skip-apple]
+  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|protocol_check|core_regression|performance_regression|system_health|evidence_integrity|apple_regression|apple_build] [--dry-run] [--verify-only] [--project <name>] [--workspace <name>] [--json] [--skip-apple]
       统一质量门禁入口，明确阶段划分和失败语义，所有链路共享
+
+  perf-regression [--json]
+      热点性能回归检查（自动执行守卫二进制 + 比较器）：
+        1. cargo run --bin hotspot_perf_guard -- --output build/perf/hotspot-measurements.json
+        2. python3 scripts/tools/check_hotspot_perf_regression.py
+      输出: build/perf/hotspot-regression-report.json
+      --json: 打印 JSON 比较报告到 stdout
+      overall=fail 返回非 0（阻断门禁）
 
   apple-build [macos|ios] [--skip-core]
       构建 Apple 客户端（Debug），用于验证改动不破坏编译：
@@ -242,6 +250,29 @@ case "$cmd" in
         ;;
     e2e)
         exec ./scripts/e2e/main.sh "$@"
+        ;;
+    perf-regression)
+        # 热点性能回归检查：守卫二进制 + 比较器
+        json_flag=0
+        for arg in "$@"; do
+            [[ "$arg" == "--json" ]] && json_flag=1
+        done
+        echo "[tidyflow] 运行热点性能守卫..."
+        mkdir -p "$PROJECT_ROOT/build/perf"
+        cargo run \
+            --manifest-path "$PROJECT_ROOT/core/Cargo.toml" \
+            --bin hotspot_perf_guard \
+            -- --output "$PROJECT_ROOT/build/perf/hotspot-measurements.json"
+        echo "[tidyflow] 运行回归比较器..."
+        comparator_args=(
+            --baseline "$PROJECT_ROOT/core/benches/baselines/hotspot_regression.json"
+            --measurements "$PROJECT_ROOT/build/perf/hotspot-measurements.json"
+            --report "$PROJECT_ROOT/build/perf/hotspot-regression-report.json"
+        )
+        if [[ $json_flag -eq 1 ]]; then
+            comparator_args+=(--json)
+        fi
+        python3 "$PROJECT_ROOT/scripts/tools/check_hotspot_perf_regression.py" "${comparator_args[@]}"
         ;;
     quality-gate)
         exec ./scripts/e2e/quality-gate.sh "$@"

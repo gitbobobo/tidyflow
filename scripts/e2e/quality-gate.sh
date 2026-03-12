@@ -55,7 +55,8 @@ print_usage() {
 可选参数：
   --run-id <run_id>        运行 ID（默认取 cycle_id）
   --step <阶段>            执行阶段：all | protocol_check | core_regression |
-                           system_health | evidence_integrity | apple_regression |
+                           performance_regression | system_health |
+                           evidence_integrity | apple_regression |
                            apple_build（默认: all）
   --dry-run                干运行模式，仅打印将执行的命令
   --verify-only            跳过测试执行，仅运行证据校验
@@ -100,12 +101,14 @@ fi
 # 阶段结果数组（bash 3.2 兼容：使用变量前缀）
 gate_result_protocol_check="skipped"
 gate_result_core_regression="skipped"
+gate_result_performance_regression="skipped"
 gate_result_system_health="skipped"
 gate_result_evidence_integrity="skipped"
 gate_result_apple_regression="skipped"
 gate_result_apple_build="skipped"
 gate_overall="pass"
 gate_failure_reasons=""
+gate_warnings=""
 
 record_phase_result() {
     local phase="$1"
@@ -120,6 +123,13 @@ record_phase_result() {
             gate_failure_reasons="${gate_failure_reasons:+${gate_failure_reasons}; }${phase}"
         fi
     fi
+}
+
+record_phase_warning() {
+    local phase="$1"
+    local detail="${2:-}"
+    local msg="${phase}: ${detail}"
+    gate_warnings="${gate_warnings:+${gate_warnings}; }${msg}"
 }
 
 should_run_phase() {
@@ -144,12 +154,14 @@ emit_gate_summary() {
     "phases": {
       "protocol_check": "${gate_result_protocol_check}",
       "core_regression": "${gate_result_core_regression}",
+      "performance_regression": "${gate_result_performance_regression}",
       "system_health": "${gate_result_system_health}",
       "evidence_integrity": "${gate_result_evidence_integrity}",
       "apple_regression": "${gate_result_apple_regression}",
       "apple_build": "${gate_result_apple_build}"
     },
     "failure_reasons": "${gate_failure_reasons}",
+    "warnings": "${gate_warnings}",
     "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "analysis_engine_version": "v1.45"
   }
@@ -163,6 +175,7 @@ ENDJSON
         echo "[quality-gate]   workspace=${workspace}"
         echo "[quality-gate]   protocol_check=${gate_result_protocol_check}"
         echo "[quality-gate]   core_regression=${gate_result_core_regression}"
+        echo "[quality-gate]   performance_regression=${gate_result_performance_regression}"
         echo "[quality-gate]   system_health=${gate_result_system_health}"
         echo "[quality-gate]   evidence_integrity=${gate_result_evidence_integrity}"
         echo "[quality-gate]   apple_regression=${gate_result_apple_regression}"
@@ -170,6 +183,9 @@ ENDJSON
         echo "[quality-gate]   overall=${gate_overall}"
         if [[ -n "$gate_failure_reasons" ]]; then
             echo "[quality-gate]   failure_reasons=${gate_failure_reasons}"
+        fi
+        if [[ -n "$gate_warnings" ]]; then
+            echo "[quality-gate]   warnings=${gate_warnings}"
         fi
         echo "[quality-gate] ===================="
     fi
@@ -199,6 +215,7 @@ if [[ $dry_run -eq 1 ]]; then
     echo "[quality-gate] DRY RUN: 以下为将执行的门禁阶段"
     should_run_phase protocol_check && echo "  [1] protocol_check: ./scripts/tidyflow check"
     should_run_phase core_regression && echo "  [2] core_regression: ./scripts/tidyflow test"
+    should_run_phase performance_regression && echo "  [2.5] performance_regression: ./scripts/tidyflow perf-regression"
     should_run_phase system_health && echo "  [3] system_health: (需要 Core 运行时，dry-run 跳过)"
     should_run_phase evidence_integrity && echo "  [4] evidence_integrity: python3 scripts/e2e/verify_evidence_index.py --run-id ${run_id}"
     if [[ $skip_apple -eq 0 ]]; then
@@ -209,6 +226,7 @@ if [[ $dry_run -eq 1 ]]; then
     fi
     record_phase_result "protocol_check" "pass"
     record_phase_result "core_regression" "pass"
+    record_phase_result "performance_regression" "pass"
     record_phase_result "system_health" "pass"
     record_phase_result "evidence_integrity" "pass"
     record_phase_result "apple_regression" "pass"
@@ -233,7 +251,7 @@ fi
 
 # 阶段 2：Core 回归测试
 if should_run_phase core_regression; then
-    echo "[quality-gate] [2/6] Core 回归测试..."
+    echo "[quality-gate] [2/7] Core 回归测试..."
     if "$PROJECT_ROOT/scripts/tidyflow" test; then
         record_phase_result "core_regression" "pass"
     else
@@ -241,9 +259,42 @@ if should_run_phase core_regression; then
     fi
 fi
 
+# 阶段 2.5：性能回归检查（顺序：core_regression 之后、system_health 之前）
+#
+# 裁决规则：
+# - overall=pass  → 记录 pass
+# - overall=warn  → 记录 pass，但写入 gate_warnings（warn 不阻断门禁）
+# - overall=fail  → 记录 fail（阻断门禁，映射到 performance_regression_failed）
+if should_run_phase performance_regression; then
+    echo "[quality-gate] [2.5/7] 性能回归检查..."
+    mkdir -p "$PROJECT_ROOT/build/perf"
+    perf_exit=0
+    perf_report="$PROJECT_ROOT/build/perf/hotspot-regression-report.json"
+
+    if "$PROJECT_ROOT/scripts/tidyflow" perf-regression; then
+        # 检查 overall 字段（warn 需要提升到 warnings）
+        if [[ -f "$perf_report" ]]; then
+            perf_overall="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
+            if [[ "$perf_overall" == "warn" ]]; then
+                perf_warnings="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
+                record_phase_result "performance_regression" "pass"
+                record_phase_warning "performance_regression" "${perf_warnings}"
+                echo "[quality-gate]   性能回归：warn（不阻断，详见 build/perf/hotspot-regression-report.json）"
+            else
+                record_phase_result "performance_regression" "pass"
+            fi
+        else
+            record_phase_result "performance_regression" "pass"
+        fi
+    else
+        record_phase_result "performance_regression" "fail" "性能回归检测：overall=fail（performance_regression_failed）"
+        echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json"
+    fi
+fi
+
 # 阶段 3：系统健康判定（需要 Core 运行时，非 dry-run 但无运行时时记为 skipped）
 if should_run_phase system_health; then
-    echo "[quality-gate] [3/6] 系统健康判定..."
+    echo "[quality-gate] [3/7] 系统健康判定..."
     # 系统健康检查通过 Core HTTP API 执行；如果 Core 未运行则标记为跳过
     if curl -sf http://127.0.0.1:45818/api/v1/health >/dev/null 2>&1; then
         health_status="$(curl -sf http://127.0.0.1:45818/api/v1/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("overall_status","unknown"))' 2>/dev/null || echo "unknown")"
@@ -260,7 +311,7 @@ fi
 
 # 阶段 4：证据完整性校验
 if should_run_phase evidence_integrity; then
-    echo "[quality-gate] [4/6] 证据完整性校验..."
+    echo "[quality-gate] [4/7] 证据完整性校验..."
     if python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
         --evidence-root "$TF_EVIDENCE_ROOT" \
         --run-id "$run_id" \
@@ -276,7 +327,7 @@ fi
 
 # 阶段 5：Apple 多工作区回归
 if should_run_phase apple_regression && [[ $skip_apple -eq 0 ]]; then
-    echo "[quality-gate] [5/6] Apple 多工作区回归（串行）..."
+    echo "[quality-gate] [5/7] Apple 多工作区回归（串行）..."
     if "$PROJECT_ROOT/scripts/tidyflow" apple-regression --macos-only; then
         record_phase_result "apple_regression" "pass"
     else
@@ -288,7 +339,7 @@ fi
 
 # 阶段 6：Apple 构建验证
 if should_run_phase apple_build && [[ $skip_apple -eq 0 ]]; then
-    echo "[quality-gate] [6/6] Apple 构建验证（串行: macOS → iOS）..."
+    echo "[quality-gate] [6/7] Apple 构建验证（串行: macOS → iOS）..."
     build_failed=0
     if ! "$PROJECT_ROOT/scripts/tidyflow" apple-build macos --skip-core; then
         build_failed=1

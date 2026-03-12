@@ -893,4 +893,96 @@ mod tests {
         let mut reg = registry.blocking_write();
         reg.active_incidents.remove("gate_isolation_critical");
     }
+
+    // MARK: - WI-004 性能回归失败映射测试
+
+    /// `GateFailureReason::PerformanceRegressionFailed` 序列化为 snake_case 字符串
+    #[test]
+    fn gate_failure_reason_performance_regression_failed_serde() {
+        use crate::server::protocol::health::GateFailureReason;
+        let reason = GateFailureReason::PerformanceRegressionFailed;
+        let serialized = serde_json::to_string(&reason).unwrap();
+        assert_eq!(
+            serialized, "\"performance_regression_failed\"",
+            "PerformanceRegressionFailed 必须序列化为 \"performance_regression_failed\""
+        );
+        let deserialized: GateFailureReason = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, GateFailureReason::PerformanceRegressionFailed);
+    }
+
+    /// `performance_regression_failed` 不属于 `custom` 变体
+    #[test]
+    fn gate_failure_reason_performance_regression_not_custom() {
+        use crate::server::protocol::health::GateFailureReason;
+        let raw = "\"performance_regression_failed\"";
+        let reason: GateFailureReason = serde_json::from_str(raw).unwrap();
+        assert!(
+            !matches!(reason, GateFailureReason::Custom(_)),
+            "performance_regression_failed 不应反序列化为 Custom(_)"
+        );
+        assert_eq!(reason, GateFailureReason::PerformanceRegressionFailed);
+    }
+
+    /// `GateDecision` 携带 `performance_regression_failed` 时正确解析 failure_reasons
+    #[test]
+    fn gate_decision_with_performance_regression_failed() {
+        use crate::server::protocol::health::{GateDecision, GateFailureReason, GateVerdict};
+        let decision = GateDecision {
+            verdict: GateVerdict::Fail,
+            failure_reasons: vec![GateFailureReason::PerformanceRegressionFailed],
+            project: "tidyflow".to_string(),
+            workspace: "default".to_string(),
+            cycle_id: "cycle-test".to_string(),
+            health_status: crate::server::protocol::health::SystemHealthStatus::Healthy,
+            retry_count: 0,
+            bypassed: false,
+            bypass_reason: None,
+            decided_at: 0,
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(
+            json.contains("\"performance_regression_failed\""),
+            "GateDecision JSON 必须包含 performance_regression_failed"
+        );
+        let roundtrip: GateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip.failure_reasons.len(), 1);
+        assert_eq!(
+            roundtrip.failure_reasons[0],
+            GateFailureReason::PerformanceRegressionFailed
+        );
+    }
+
+    /// 多项目同名工作区下 GateDecision failure_reason 归属不串台
+    #[test]
+    fn gate_decision_multi_project_same_workspace_isolation() {
+        use crate::server::protocol::health::{GateDecision, GateFailureReason, GateVerdict};
+
+        let make_decision = |project: &str| -> GateDecision {
+            GateDecision {
+                verdict: GateVerdict::Fail,
+                failure_reasons: vec![GateFailureReason::PerformanceRegressionFailed],
+                project: project.to_string(),
+                workspace: "ws1".to_string(),
+                cycle_id: "cycle-multi".to_string(),
+                health_status: crate::server::protocol::health::SystemHealthStatus::Healthy,
+                retry_count: 0,
+                bypassed: false,
+                bypass_reason: None,
+                decided_at: 0,
+            }
+        };
+
+        let da = make_decision("project_a");
+        let db = make_decision("project_b");
+        assert_ne!(da.project, db.project, "不同项目的 GateDecision 不应串台");
+        assert_eq!(da.workspace, db.workspace, "同名工作区");
+        assert_eq!(
+            da.failure_reasons[0],
+            GateFailureReason::PerformanceRegressionFailed
+        );
+        assert_eq!(
+            db.failure_reasons[0],
+            GateFailureReason::PerformanceRegressionFailed
+        );
+    }
 }
