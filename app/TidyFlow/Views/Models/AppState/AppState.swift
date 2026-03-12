@@ -303,6 +303,11 @@ class AppState: ObservableObject {
     /// 平台层的 selectedProjectId / selectedProjectName / selectedWorkspaceKey 保持向后兼容；
     /// 新业务逻辑通过此状态机读取选中状态，不再各自拼装 project + workspace 组合。
     let workspaceViewStateMachine = WorkspaceViewStateMachine()
+
+    /// 跨平台协调层状态缓存（与 iOS MobileAppState 使用同一类型）。
+    /// 按 project/workspace 隔离 AI/终端/文件三域的聚合健康状态。
+    /// 断线时通过 WSClientBinder 自动清除，确保多工作区切换时无串台。
+    let coordinatorStateCache = CoordinatorStateCache()
     // UX-2: Project Import State
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?

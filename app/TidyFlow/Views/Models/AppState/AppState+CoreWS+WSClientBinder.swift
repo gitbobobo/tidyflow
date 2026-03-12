@@ -41,6 +41,8 @@ extension AppState {
                 self.forceResetAIChatStage()
                 // 断连时重置所有文件相位，避免残留的 watching/indexing 状态
                 self.fileCache.resetAllPhasesOnDisconnect()
+                // 断连时清除协调层状态缓存，防止旧工作区协调状态残留到重连后的新会话
+                self.coordinatorStateCache.apply(.clear)
 
                 if let phase = ConnectionPhase.evaluateDisconnect(
                     isIntentional: self.wsClient.isIntentionalDisconnect,

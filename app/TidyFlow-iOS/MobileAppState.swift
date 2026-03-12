@@ -466,6 +466,11 @@ final class MobileAppState: ObservableObject {
     /// 外部读取器通过 `workspaceViewStateMachine.selected` 获取当前选中状态。
     let workspaceViewStateMachine = WorkspaceViewStateMachine()
 
+    /// 跨平台协调层状态缓存（与 macOS AppState 使用同一类型）。
+    /// 按 project/workspace 隔离 AI/终端/文件三域的聚合健康状态。
+    /// 断线时通过 `coordinatorStateCache.apply(.clear)` 清除残留状态，确保多工作区切换时无串台。
+    let coordinatorStateCache = CoordinatorStateCache()
+
     /// 当前选中的工作区身份标识（共享语义层），与 macOS 的 `selectedWorkspaceIdentity` 对齐。
     /// iOS 端在进入 WorkspaceDetailView 时通过 `selectWorkspaceContext(project:workspace:)` 设置。
     var selectedWorkspaceIdentity: WorkspaceIdentity? {
@@ -4255,6 +4260,8 @@ final class MobileAppState: ObservableObject {
                 for key in self.fileWorkspacePhases.keys {
                     self.fileWorkspacePhases[key] = .idle
                 }
+                // 断连时清除协调层状态缓存，防止旧工作区协调状态残留到重连后的新会话
+                self.coordinatorStateCache.apply(.clear)
 
                 self.connectionMessage = "连接断开"
                 if let phase = ConnectionPhase.evaluateDisconnect(

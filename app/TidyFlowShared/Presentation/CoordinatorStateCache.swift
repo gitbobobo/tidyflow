@@ -156,6 +156,50 @@ public final class CoordinatorStateCache: @unchecked Sendable {
             .filter { $0.health != .healthy }
             .map { $0.id }
     }
+
+    // MARK: - 项目级操作
+
+    /// 移除整个项目下所有工作区的协调状态（项目删除时调用）。
+    /// - Returns: 移除的工作区数量
+    @discardableResult
+    public func removeProject(_ project: String) -> Int {
+        let prefix = "\(project):"
+        let toRemove = cache.keys.filter { $0.hasPrefix(prefix) }
+        toRemove.forEach { cache.removeValue(forKey: $0) }
+        return toRemove.count
+    }
+
+    /// 获取指定项目下所有工作区的 ID 列表
+    public func allWorkspaceIds(forProject project: String) -> [CoordinatorWorkspaceId] {
+        states(forProject: project).map { $0.id }
+    }
+
+    // MARK: - 多域聚合投影
+
+    /// 获取指定工作区的多域聚合摘要，供工作区概览视图消费。
+    /// 双端通过此投影获取文件/终端/AI 三域状态，不在视图层重复推导。
+    public func aggregatedSummary(for id: CoordinatorWorkspaceId) -> WorkspaceAggregatedSummary {
+        guard let state = state(for: id) else {
+            return WorkspaceAggregatedSummary(
+                id: id,
+                health: .healthy,
+                hasActiveAISessions: false,
+                hasActiveTerminals: false,
+                fileIsReady: false,
+                aiActiveSessionCount: 0,
+                terminalAliveCount: 0
+            )
+        }
+        return WorkspaceAggregatedSummary(
+            id: id,
+            health: state.health,
+            hasActiveAISessions: state.ai.phase == .active,
+            hasActiveTerminals: state.terminal.phase == .active,
+            fileIsReady: state.file.phase == .ready,
+            aiActiveSessionCount: state.ai.activeSessionCount,
+            terminalAliveCount: state.terminal.aliveCount
+        )
+    }
 }
 
 // MARK: - 状态输入事件
@@ -188,5 +232,37 @@ public struct CoordinatorStateChangeResult: Equatable, Sendable {
     /// 健康度是否发生了变化
     public var healthChanged: Bool {
         previousHealth != currentHealth
+    }
+}
+
+// MARK: - 多域聚合摘要
+
+/// 工作区多域聚合摘要——供工作区概览视图消费的共享投影类型。
+/// macOS 与 iOS 双端通过同一结构体表达工作区的健康度与活跃资源概况，
+/// 不在视图层对 AI/终端/文件三域状态各自重复推导。
+public struct WorkspaceAggregatedSummary: Equatable, Sendable {
+    /// 工作区身份
+    public let id: CoordinatorWorkspaceId
+    /// 三域综合健康度
+    public let health: CoordinatorHealth
+    /// 是否有活跃 AI 会话
+    public let hasActiveAISessions: Bool
+    /// 是否有活跃终端
+    public let hasActiveTerminals: Bool
+    /// 文件系统是否就绪（watching 相位）
+    public let fileIsReady: Bool
+    /// 活跃 AI 会话数量
+    public let aiActiveSessionCount: Int
+    /// 存活终端数量
+    public let terminalAliveCount: Int
+
+    /// 工作区是否有任何活跃资源
+    public var hasActiveResources: Bool {
+        hasActiveAISessions || hasActiveTerminals
+    }
+
+    /// 工作区是否需要关注（健康度非 healthy）
+    public var needsAttention: Bool {
+        health != .healthy
     }
 }
