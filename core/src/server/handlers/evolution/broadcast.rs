@@ -207,8 +207,9 @@ mod tests {
     use crate::server::remote_sub_registry::RemoteSubRegistry;
     use crate::server::terminal_registry::TerminalRegistry;
     use crate::workspace::state::AppState;
+    use crate::workspace::state_store::StateStore;
 
-    fn make_handler_context(
+    async fn make_handler_context(
         task_broadcast_tx: broadcast::Sender<TaskBroadcastEvent>,
     ) -> HandlerContext {
         let (save_tx, _) = mpsc::channel(1);
@@ -219,6 +220,11 @@ mod tests {
         let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
         let running_ai_tasks: SharedRunningAITasks = Arc::new(Mutex::new(HashMap::new()));
         let task_history: SharedTaskHistory = Arc::new(Mutex::new(Vec::new()));
+        let state_store = Arc::new(
+            StateStore::open_in_memory_for_test()
+                .await
+                .expect("test state store"),
+        );
 
         HandlerContext {
             app_state,
@@ -240,6 +246,7 @@ mod tests {
             },
             remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
             ai_state: Arc::new(Mutex::new(AIState::new())),
+            state_store,
         }
     }
 
@@ -293,7 +300,7 @@ mod tests {
             .await;
 
         let (tx, mut rx) = broadcast::channel(8);
-        let ctx = make_handler_context(tx);
+        let ctx = make_handler_context(tx).await;
         manager.broadcast_cycle_update(&key, &ctx, "agent").await;
         sleep(Duration::from_millis(280)).await;
 
@@ -324,7 +331,7 @@ mod tests {
         }
 
         let (tx, mut rx) = broadcast::channel(8);
-        let ctx = make_handler_context(tx);
+        let ctx = make_handler_context(tx).await;
         manager.broadcast_cycle_update(&key, &ctx, "agent").await;
         {
             let mut state = manager.state.lock().await;
@@ -369,7 +376,7 @@ mod tests {
         }
 
         let (tx, mut rx) = broadcast::channel(8);
-        let ctx = make_handler_context(tx);
+        let ctx = make_handler_context(tx).await;
         manager.broadcast_cycle_update(&key, &ctx, "agent").await;
         manager.broadcast_cycle_update(&key, &ctx, "system").await;
 
