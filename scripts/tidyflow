@@ -184,6 +184,11 @@ run_apple_chat_perf_fixture() {
     local hotspot_file="$perf_dir/apple-chat-fixture-hotspots.log"
     local tail_flush_file="$perf_dir/apple-chat-fixture-tail-flush.log"
     local memory_file="$perf_dir/apple-chat-fixture-memory.log"
+    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e"
+    local fixture_evidence_log=""
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+    local simulator_id="AAE135DC-E91E-4B02-9754-270D96B1BD5C"
 
     mkdir -p "$perf_dir"
     rm -f "$xcode_log" "$oslog_file" "$hotspot_file" "$tail_flush_file" "$memory_file"
@@ -195,45 +200,42 @@ run_apple_chat_perf_fixture() {
         -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
         -scheme TidyFlow \
         -configuration Debug \
-        -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
+        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
         -derivedDataPath "$derived_data" \
         SKIP_CORE_BUILD=1 \
         TF_PERF_CHAT_SCENARIO=stream_heavy \
         UI_TEST_MODE=1 \
         test \
-        -only-testing:TidyFlowE2ETests/testAC_CHAT_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_PERF_FIXTURE_IPHONE \
+        -skip-testing:TidyFlowTests \
         | tee "$xcode_log"
 
-    if ! command -v xcrun >/dev/null 2>&1; then
-        echo "[tidyflow] 未找到 xcrun，无法导出 Apple 聊天 fixture 日志"
+    fixture_evidence_log="$(
+        find "$evidence_root" -path '*/ac-chat-perf-fixture/*.log' -type f -print 2>/dev/null \
+            | xargs ls -t 2>/dev/null \
+            | head -n 1
+    )"
+    if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
+        echo "[tidyflow] 未找到 Apple 聊天 fixture 证据日志"
         return 1
     fi
 
-    if ! xcrun simctl list devices booted 2>/dev/null | grep -q "Booted"; then
-        echo "[tidyflow] fixture 测试后无 Booted iOS Simulator，无法导出日志"
-        return 1
-    fi
+    echo "[tidyflow] 导出 Apple 聊天 fixture 证据日志..."
+    cp "$fixture_evidence_log" "$oslog_file"
 
-    echo "[tidyflow] 导出 Apple 聊天 fixture OSLog..."
-    xcrun simctl spawn booted log show \
-        --style compact \
-        --last 20m \
-        --predicate 'subsystem == "cn.tidyflow" AND category == "perf"' \
-        > "$oslog_file"
-
-    grep -E 'swiftui_hotspot hotspot=(ios_ai_chat|mac_ai_chat)' "$oslog_file" > "$hotspot_file" || true
-    grep 'aiMessageTailFlush' "$oslog_file" > "$tail_flush_file" || true
-    grep 'memory_snapshot' "$oslog_file" > "$memory_file" || true
+    grep -E 'hotspot_key(=.*|_secondary=.*)' "$oslog_file" > "$hotspot_file" || true
+    grep 'tail_flush_event=aiMessageTailFlush' "$oslog_file" > "$tail_flush_file" || true
+    grep 'memory_snapshot_key=memory_snapshot' "$oslog_file" > "$memory_file" || true
 
     if [[ ! -s "$hotspot_file" ]]; then
         echo "[tidyflow] 未采集到 swiftui_hotspot 聊天日志"
         return 1
     fi
-    if ! grep -q 'hotspot=ios_ai_chat' "$hotspot_file"; then
+    if ! grep -q 'hotspot_key=ios_ai_chat' "$hotspot_file"; then
         echo "[tidyflow] 缺少 ios_ai_chat hotspot 日志"
         return 1
     fi
-    if ! grep -q 'hotspot=mac_ai_chat' "$hotspot_file"; then
+    if ! grep -q 'hotspot_key_secondary=mac_ai_chat' "$hotspot_file"; then
         echo "[tidyflow] 缺少 mac_ai_chat hotspot 日志"
         return 1
     fi
@@ -247,6 +249,7 @@ run_apple_chat_perf_fixture() {
     fi
 
     echo "[tidyflow] Apple 聊天流式 fixture 通过"
+    echo "[tidyflow] fixture 证据: $fixture_evidence_log"
     echo "[tidyflow] hotspot 证据: $hotspot_file"
     echo "[tidyflow] tail flush 证据: $tail_flush_file"
     echo "[tidyflow] memory 证据: $memory_file"
