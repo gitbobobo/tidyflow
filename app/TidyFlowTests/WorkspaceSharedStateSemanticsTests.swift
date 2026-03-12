@@ -259,8 +259,7 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
     func testSwitchWorkspace_restoresOwnLayout() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let project = makeProject(
@@ -295,8 +294,7 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
     func testFirstVisitWorkspace_usesDefaultLayout() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let project = makeProject(
@@ -323,8 +321,7 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
     func testSameWorkspaceNameAcrossProjects_keepsLayoutsIsolated() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let projectA = makeProject(name: "ProjectA", workspaces: ["default"])
@@ -356,8 +353,7 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
     func testReselectSameWorkspace_doesNotResetLayout() throws {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let project = makeProject(name: "ProjectA", workspaces: ["ws-a"])
@@ -386,8 +382,7 @@ final class MacWorkspaceLayoutPersistenceTests: XCTestCase {
     func testCleanupClearsStoredLayoutsForWorkspaceAndProject() throws {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let projectA = makeProject(name: "ProjectA", workspaces: ["ws-a", "ws-b"])

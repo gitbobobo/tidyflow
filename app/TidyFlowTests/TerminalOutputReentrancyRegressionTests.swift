@@ -6,8 +6,7 @@ final class TerminalOutputReentrancyRegressionTests: XCTestCase {
     func testReentrantTerminalOutputDuringFlushDoesNotDropBufferedChunks() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let tabId = UUID()

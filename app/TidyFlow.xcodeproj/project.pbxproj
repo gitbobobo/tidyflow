@@ -236,9 +236,10 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
 		MDL00031B /* WorkspaceKeySemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011B /* WorkspaceKeySemantics.swift */; };
 		WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WKS10011 /* WorkspaceKeySemanticsTests.swift */; };
-		WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */; };
-		AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */; };
-		EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
+			WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */; };
+			AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */; };
+			CSTH0002 /* CoreShutdownTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSTH0001 /* CoreShutdownTestSupport.swift */; };
+			EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
 		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
 /* End PBXBuildFile section */
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
@@ -546,9 +547,10 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		UX100015 /* ProjectCommandsMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsMenuView.swift; sourceTree = "<group>"; };
 		MDL00011B /* WorkspaceKeySemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemantics.swift; sourceTree = "<group>"; };
 		WKS10011 /* WorkspaceKeySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKeySemanticsTests.swift; sourceTree = "<group>"; };
-		WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCacheMetricsSemanticsTests.swift; sourceTree = "<group>"; };
-		AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISelectorHTTPFailureHandlingTests.swift; sourceTree = "<group>"; };
-		EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
+			WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCacheMetricsSemanticsTests.swift; sourceTree = "<group>"; };
+			AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISelectorHTTPFailureHandlingTests.swift; sourceTree = "<group>"; };
+			CSTH0001 /* CoreShutdownTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreShutdownTestSupport.swift; sourceTree = "<group>"; };
+			EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
 		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -827,10 +829,11 @@ WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 TSLT011 /* TerminalSessionSemanticLayerTests.swift */,
 TSST013 /* TerminalSessionStoreTests.swift */,
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
-				WKS10011 /* WorkspaceKeySemanticsTests.swift */,
-				WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */,
-				AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
-				EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
+					WKS10011 /* WorkspaceKeySemanticsTests.swift */,
+					WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */,
+					AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
+					CSTH0001 /* CoreShutdownTestSupport.swift */,
+					EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
 				HQTC0011 /* HTTPQueryClientTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
 				SHR0100A /* SharedProtocolModelsTests.swift */,
@@ -1370,10 +1373,11 @@ WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
 TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */,
 TSST003 /* TerminalSessionStoreTests.swift in Sources */,
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
-				WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
-				WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */,
-				AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
-				EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
+					WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
+					WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */,
+					AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
+					CSTH0002 /* CoreShutdownTestSupport.swift in Sources */,
+					EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
 				HQTC0001 /* HTTPQueryClientTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				TST10040 /* AIChatTextRunGroupingTests.swift in Sources */,

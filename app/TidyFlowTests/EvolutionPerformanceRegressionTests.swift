@@ -6,8 +6,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testKnownStageChangeDoesNotFallbackToSnapshot() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -59,8 +58,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testMissingWorkspaceStatusEventFallsBackToTargetedSnapshot() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -106,8 +104,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testBackgroundCycleUpdateAppliesWithoutCrashingOrFallback() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -167,8 +164,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testMissingCycleUpdateFallsBackToTargetedSnapshotFromBackground() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -218,8 +214,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testCycleUpdateAndSnapshotKeepProjectionConsistent() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let existing = makeItem(
@@ -320,8 +315,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testAnalysisProjectionDoesNotTriggerSnapshotFallback() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -376,8 +370,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testSystemEvolutionSummariesSeedWorkspaceItems() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.handleSystemEvolutionWorkspaceSummaries([
@@ -413,8 +406,7 @@ final class EvolutionPerformanceRegressionTests: XCTestCase {
     func testSystemEvolutionSummariesPreserveDetailForSameCycle() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let detailed = EvolutionWorkspaceItemV2(

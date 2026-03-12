@@ -133,8 +133,7 @@ final class WSSetupIdempotenceTests: XCTestCase {
     func testSetupWSClientSkipsDuplicateConnectForSameTargetWhileConnecting() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let port = 65534

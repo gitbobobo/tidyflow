@@ -43,8 +43,7 @@ final class AISessionVisibilityTests: XCTestCase {
     func testSetAISessionsKeepsHiddenCacheButHidesFromDefaultList() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         let visible = makeSession(id: "visible", origin: .user)
         let hidden = makeSession(id: "hidden", origin: .evolutionSystem)
@@ -66,8 +65,7 @@ final class AISessionVisibilityTests: XCTestCase {
     func testUpsertHiddenSessionDoesNotLeakIntoPageState() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         appState.selectedProjectName = "demo"
         appState.selectedWorkspaceKey = "default"
@@ -314,8 +312,7 @@ final class AISessionSemanticsTests: XCTestCase {
     func testMultiWorkspaceSessionKeysAreIndependent() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         let ws1Session = AISessionInfo(projectName: "proj", workspaceName: "ws1", aiTool: .codex, id: "s-shared", title: "A", updatedAt: 10, origin: .user)
         let ws2Session = AISessionInfo(projectName: "proj", workspaceName: "ws2", aiTool: .codex, id: "s-shared", title: "B", updatedAt: 20, origin: .user)
@@ -387,8 +384,7 @@ final class AISessionListSemanticsTests: XCTestCase {
     func testRequestAISessionList_preventsDoubleInitialLoad() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         appState.selectedProjectName = "proj"
         appState.selectedWorkspaceKey = "ws"
@@ -406,8 +402,7 @@ final class AISessionListSemanticsTests: XCTestCase {
     func testRequestAISessionList_dedupsRecentSuccessButForceBypasses() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         appState.selectedProjectName = "proj"
         appState.selectedWorkspaceKey = "ws"
@@ -436,8 +431,7 @@ final class AISessionListSemanticsTests: XCTestCase {
     func testClearPageStates_resetsAllKeys() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
         appState.selectedProjectName = "proj"
         appState.selectedWorkspaceKey = "ws"
@@ -454,8 +448,7 @@ final class AISessionListSemanticsTests: XCTestCase {
     func testSelectWorkspace_sameSelectionKeepsExistingSessionPageState() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         let projectId = UUID()

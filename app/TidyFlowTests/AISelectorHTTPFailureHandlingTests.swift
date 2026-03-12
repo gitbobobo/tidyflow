@@ -6,8 +6,7 @@ final class AISelectorHTTPFailureHandlingTests: XCTestCase {
     func testProviderFailureClearsCurrentToolModelLoading() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -28,8 +27,7 @@ final class AISelectorHTTPFailureHandlingTests: XCTestCase {
     func testAgentFailureDoesNotClearDifferentToolLoading() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "proj"
@@ -50,8 +48,7 @@ final class AISelectorHTTPFailureHandlingTests: XCTestCase {
     func testBootstrapProviderFailureConsumesOnlyProviderPendingFlag() {
         let appState = AppState()
         defer {
-            appState.wsClient.disconnect()
-            appState.coreProcessManager.stop()
+            tearDownAppState(appState)
         }
 
         appState.selectedProjectName = "other"
