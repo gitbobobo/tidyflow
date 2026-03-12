@@ -2570,8 +2570,8 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
 
     // v1.47: 注册文件相位变化回调，驱动文件域 Coordinator 快照广播。
     // 仅在文件相位实际变化时触发，避免无效广播推高 WS 管线延迟。
-    crate::application::file::FileWorkspacePhaseTracker::set_on_phase_change(
-        std::sync::Arc::new(move |project, workspace, new_phase| {
+    crate::application::file::FileWorkspacePhaseTracker::set_on_phase_change(std::sync::Arc::new(
+        move |project, workspace, new_phase| {
             use crate::server::protocol::coordinator_file_dto_from_phase;
             let file_dto = coordinator_file_dto_from_phase(new_phase);
             let coordinator_msg = ServerMessage::CoordinatorSnapshot {
@@ -2601,8 +2601,8 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
                     skip_when_single_receiver: false,
                 },
             );
-        }),
-    );
+        },
+    ));
 }
 
 pub(crate) async fn normalize_ai_image_parts(

@@ -83,38 +83,47 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
                 None => continue,
             };
 
-            // Skip hidden files (starting with .)
+            // 跳过隐藏文件（以 . 开头）
             if file_name.starts_with('.') {
                 continue;
             }
 
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
+            // 优先使用 file_type()（不发起额外 syscall），仅对符号链接再 canonicalize
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
                 Err(_) => continue,
             };
 
-            if metadata.is_dir() {
-                // Check if directory should be ignored
+            if file_type.is_symlink() {
+                // 解析符号链接目标，检查是否越界，然后按目标类型分流
+                if let Ok(canonical) = path.canonicalize() {
+                    if !canonical.starts_with(&root_canonical) {
+                        warn!("Skipping symlink escaping root: {:?}", path);
+                        continue;
+                    }
+                    // 读取链接目标的 metadata（一次 stat）
+                    match std::fs::metadata(&canonical) {
+                        Ok(m) if m.is_dir() => {
+                            let target_name =
+                                canonical.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                            if !should_ignore_dir(target_name) {
+                                stack.push(canonical);
+                            }
+                        }
+                        Ok(m) if m.is_file() => {
+                            if let Ok(relative) = canonical.strip_prefix(&root_canonical) {
+                                items.push(relative.to_string_lossy().to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else if file_type.is_dir() {
                 if should_ignore_dir(&file_name) {
                     continue;
                 }
-
-                // 仅对符号链接调用 canonicalize 做安全检查，普通目录直接入栈
-                // 注意：entry.file_type() 不跟随符号链接（使用 lstat），
-                // 而 entry.metadata() 跟随符号链接（使用 stat），因此用 file_type 检测
-                let is_symlink = entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false);
-                if is_symlink {
-                    if let Ok(canonical) = path.canonicalize() {
-                        if canonical.starts_with(&root_canonical) {
-                            stack.push(canonical);
-                        } else {
-                            warn!("Skipping symlink escaping root: {:?}", path);
-                        }
-                    }
-                } else {
-                    stack.push(path);
-                }
-            } else if metadata.is_file() {
+                stack.push(path);
+            } else if file_type.is_file() {
                 // Get relative path from root
                 if let Ok(relative) = path.strip_prefix(&root_canonical) {
                     items.push(relative.to_string_lossy().to_string());

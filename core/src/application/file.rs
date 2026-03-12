@@ -6,6 +6,7 @@ use tracing::debug;
 
 use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
+use crate::server::perf as perf_counters;
 use crate::server::protocol::file::FileWorkspacePhase;
 use crate::server::protocol::{FileEntryInfo, ServerMessage};
 use crate::workspace::cache_metrics;
@@ -243,11 +244,21 @@ impl FileWorkspacePhaseTracker {
 
 const FILE_INDEX_CACHE_TTL_SECS: u64 = 15;
 
-struct FileIndexCacheEntry {
+/// 文件索引不可变快照——缓存命中只需 Arc 克隆，不再复制整份列表。
+///
+/// `items` 与 `search_keys` 一一对应，均按 lowercase key 排序。
+/// 写入路径（`write_file_index_cache` / `update_file_index_incrementally`）创建新 Arc；
+/// 读取路径（`read_file_index_cache`）仅克隆 Arc 指针，O(1) 开销。
+struct FileIndexSnapshot {
     items: Vec<String>,
-    item_search_keys: Vec<String>,
+    search_keys: Vec<String>,
     truncated: bool,
     created_at: Instant,
+}
+
+/// 内部缓存条目：持有共享快照，便于读写路径共享同一份数据
+struct FileIndexCacheEntry {
+    snapshot: Arc<FileIndexSnapshot>,
 }
 
 static FILE_INDEX_CACHE: LazyLock<Mutex<HashMap<String, FileIndexCacheEntry>>> =
@@ -274,6 +285,7 @@ pub fn invalidate_file_index_cache(root: &Path) {
 ///
 /// 仅在缓存命中时生效；缓存未命中时退化为下次请求时的全量重建（正常兜底路径）。
 /// TTL 不重置，保持原有 15s 过期逻辑。
+/// 更新时从现有快照克隆数据到可变 Vec，修改后创建新的 Arc 快照写回缓存。
 pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: &str) {
     let key = file_index_cache_key(root);
     let Ok(mut cache) = FILE_INDEX_CACHE.lock() else {
@@ -300,27 +312,32 @@ pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: 
         return;
     }
 
+    // 从现有快照克隆可变工作 Vec（增量更新不频繁，此处 O(n) 拷贝可接受）
+    let snap = &entry.snapshot;
+    let mut items = snap.items.clone();
+    let mut search_keys = snap.search_keys.clone();
+
     match kind {
         "removed" | "deleted" => {
             // 批量删除：构建待删除集合后过滤，O(n) 而非 O(n*m)
             let to_remove: std::collections::HashSet<&str> =
                 rel_paths.iter().map(|p| p.as_str()).collect();
-            let mut new_items = Vec::with_capacity(entry.items.len());
-            let mut new_keys = Vec::with_capacity(entry.items.len());
-            for (item, key_str) in entry.items.iter().zip(entry.item_search_keys.iter()) {
+            let mut new_items = Vec::with_capacity(items.len());
+            let mut new_keys = Vec::with_capacity(items.len());
+            for (item, key_str) in items.iter().zip(search_keys.iter()) {
                 if !to_remove.contains(item.as_str()) {
                     new_items.push(item.clone());
                     new_keys.push(key_str.clone());
                 }
             }
-            entry.items = new_items;
-            entry.item_search_keys = new_keys;
+            items = new_items;
+            search_keys = new_keys;
         }
         "created" | "renamed" => {
             // 新增文件：先收集不重复的待插入项，再批量插入
             let to_insert: Vec<String> = {
                 let existing: std::collections::HashSet<&str> =
-                    entry.items.iter().map(|s| s.as_str()).collect();
+                    items.iter().map(|s| s.as_str()).collect();
                 rel_paths
                     .iter()
                     .filter(|rel| {
@@ -329,62 +346,60 @@ pub fn update_file_index_incrementally(root: &Path, abs_paths: &[String], kind: 
                     .cloned()
                     .collect()
             };
-            // 此时 `existing` 已释放，可以安全地修改 entry
             for rel in to_insert {
                 let lower = rel.to_lowercase();
-                let pos = entry
-                    .item_search_keys
+                let pos = search_keys
                     .binary_search_by(|k| k.as_str().cmp(lower.as_str()))
                     .unwrap_or_else(|i| i);
-                entry.items.insert(pos, rel);
-                entry.item_search_keys.insert(pos, lower);
+                items.insert(pos, rel);
+                search_keys.insert(pos, lower);
             }
         }
         // "modified" 及其他类型：路径未变，无需调整索引
-        _ => {}
+        _ => return,
     }
+
+    let new_count = items.len();
+    // 创建新快照，保持原有 created_at（TTL 不重置）
+    entry.snapshot = Arc::new(FileIndexSnapshot {
+        items,
+        search_keys,
+        truncated: snap.truncated,
+        created_at: snap.created_at,
+    });
 
     debug!(
         "Incremental file index update: root={:?}, kind={}, paths={:?}, cached_count={}",
-        root,
-        kind,
-        rel_paths,
-        entry.items.len()
+        root, kind, rel_paths, new_count
     );
-    cache_metrics::record_file_cache_incremental_update(
-        &file_index_cache_key(root),
-        entry.items.len(),
-    );
+    cache_metrics::record_file_cache_incremental_update(&file_index_cache_key(root), new_count);
 }
 
-fn read_file_index_cache(root: &Path) -> Option<(Vec<String>, Vec<String>, bool)> {
+/// 读取文件索引缓存。缓存命中时返回 Arc 指针克隆（O(1)，不复制数据）。
+fn read_file_index_cache(root: &Path) -> Option<Arc<FileIndexSnapshot>> {
     let key = file_index_cache_key(root);
     let mut cache = FILE_INDEX_CACHE.lock().ok()?;
     let entry = cache.get(&key)?;
-    if entry.created_at.elapsed().as_secs() >= FILE_INDEX_CACHE_TTL_SECS {
+    if entry.snapshot.created_at.elapsed().as_secs() >= FILE_INDEX_CACHE_TTL_SECS {
         cache.remove(&key);
         cache_metrics::record_file_cache_eviction(&key, "ttl_expired");
         return None;
     }
     cache_metrics::record_file_cache_hit(&key);
-    Some((
-        entry.items.clone(),
-        entry.item_search_keys.clone(),
-        entry.truncated,
-    ))
+    Some(Arc::clone(&entry.snapshot))
 }
 
 fn write_file_index_cache(root: &Path, items: &[String], truncated: bool) {
     let key = file_index_cache_key(root);
     let item_count = items.len();
-    let entry = FileIndexCacheEntry {
+    let snapshot = Arc::new(FileIndexSnapshot {
         items: items.to_vec(),
-        item_search_keys: items.iter().map(|item| item.to_lowercase()).collect(),
+        search_keys: items.iter().map(|item| item.to_lowercase()).collect(),
         truncated,
         created_at: Instant::now(),
-    };
+    });
     if let Ok(mut cache) = FILE_INDEX_CACHE.lock() {
-        cache.insert(key.clone(), entry);
+        cache.insert(key.clone(), FileIndexCacheEntry { snapshot });
     }
     cache_metrics::record_file_cache_rebuild(&key, item_count);
 }
@@ -518,15 +533,25 @@ pub async fn file_index_message(
         .filter(|q| !q.is_empty())
         .map(|q| q.to_lowercase());
 
-    if let Some((mut items, search_keys, truncated)) = read_file_index_cache(&root) {
+    if let Some(snapshot) = read_file_index_cache(&root) {
         let filter_started = Instant::now();
-        if let Some(q) = normalized_query.as_ref() {
-            items = items
-                .into_iter()
-                .zip(search_keys.into_iter())
-                .filter_map(|(item, key)| if key.contains(q) { Some(item) } else { None })
-                .collect();
-        }
+        let items: Vec<String> = if let Some(q) = normalized_query.as_ref() {
+            // 过滤阶段只为结果集分配内存，不复制整份缓存
+            snapshot
+                .items
+                .iter()
+                .zip(snapshot.search_keys.iter())
+                .filter_map(|(item, key)| {
+                    if key.contains(q) {
+                        Some(item.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            snapshot.items.clone()
+        };
         debug!(
             "file_index cache_hit=true items={} filter_ms={}",
             items.len(),
@@ -536,7 +561,7 @@ pub async fn file_index_message(
             project: project.to_string(),
             workspace: workspace.to_string(),
             items,
-            truncated,
+            truncated: snapshot.truncated,
         };
     }
 
@@ -555,7 +580,8 @@ pub async fn file_index_message(
 
     match result {
         Ok(Ok(mut index_result)) => {
-            let walk_ms = walk_started.elapsed().as_millis();
+            let walk_ms = walk_started.elapsed().as_millis() as u64;
+            perf_counters::record_workspace_file_index_refresh(walk_ms);
             write_file_index_cache(root.as_path(), &index_result.items, index_result.truncated);
             let filter_started = Instant::now();
             if let Some(q) = normalized_query.as_ref() {
@@ -851,5 +877,93 @@ mod tests {
         assert_eq!(json, "\"renamed\"");
         let parsed: FileChangeKind = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, kind);
+    }
+
+    // ── 热点路径定向测试（WI-005 / CHK-002）──
+
+    #[test]
+    fn hotspot_perf_file_index_arc_cache_no_data_clone() {
+        // 验证 read_file_index_cache 命中时只克隆 Arc 指针，不复制底层数据
+        use std::sync::Arc;
+        let root = Path::new("/tmp/hotspot_test_arc");
+
+        // 写入缓存
+        write_file_index_cache(
+            root,
+            &["src/main.rs".to_string(), "src/lib.rs".to_string()],
+            false,
+        );
+
+        // 连续两次读取，应返回同一个 Arc 指向的相同数据
+        let snap1 = read_file_index_cache(root);
+        let snap2 = read_file_index_cache(root);
+        assert!(snap1.is_some());
+        assert!(snap2.is_some());
+        let snap1 = snap1.unwrap();
+        let snap2 = snap2.unwrap();
+        // 两次读取返回的 Arc 指向同一底层对象
+        assert!(
+            Arc::ptr_eq(&snap1, &snap2),
+            "cache read should return the same Arc"
+        );
+        assert_eq!(snap1.items.len(), 2);
+
+        // 清理
+        invalidate_file_index_cache(root);
+    }
+
+    #[test]
+    fn hotspot_perf_incremental_update_creates_new_snapshot() {
+        // 验证增量更新后，旧快照与新快照是不同对象（快照隔离），旧 Arc 持有者不受影响
+        use std::sync::Arc;
+        let root = Path::new("/tmp/hotspot_test_incr");
+
+        write_file_index_cache(root, &["src/main.rs".to_string()], false);
+
+        let old_snap = read_file_index_cache(root).unwrap();
+
+        // 模拟 created 事件（文件不存在时会被忽略，走 removed 兜底即可）
+        update_file_index_incrementally(
+            root,
+            &["/tmp/hotspot_test_incr/src/main.rs".to_string()],
+            "removed",
+        );
+
+        let new_snap = read_file_index_cache(root).unwrap();
+
+        // 新旧快照是不同 Arc 对象（写时复制语义）
+        assert!(
+            !Arc::ptr_eq(&old_snap, &new_snap),
+            "incremental update must create a new Arc snapshot"
+        );
+        // 旧快照内容不受影响（快照隔离）
+        assert_eq!(old_snap.items.len(), 1);
+        // 新快照已移除
+        assert_eq!(new_snap.items.len(), 0);
+
+        invalidate_file_index_cache(root);
+    }
+
+    #[test]
+    fn hotspot_perf_multi_workspace_cache_isolation() {
+        // 验证不同工作区路径缓存互不污染（多项目同名工作区隔离）
+        let root_a = Path::new("/tmp/hotspot_iso/proj_a/default");
+        let root_b = Path::new("/tmp/hotspot_iso/proj_b/default");
+
+        write_file_index_cache(root_a, &["a.rs".to_string()], false);
+        write_file_index_cache(root_b, &["b.rs".to_string(), "c.rs".to_string()], false);
+
+        let snap_a = read_file_index_cache(root_a).unwrap();
+        let snap_b = read_file_index_cache(root_b).unwrap();
+
+        assert_eq!(
+            snap_a.items,
+            vec!["a.rs"],
+            "proj_a cache should not contain proj_b items"
+        );
+        assert_eq!(snap_b.items.len(), 2, "proj_b cache should be independent");
+
+        invalidate_file_index_cache(root_a);
+        invalidate_file_index_cache(root_b);
     }
 }

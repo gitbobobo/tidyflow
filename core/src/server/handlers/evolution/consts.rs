@@ -158,7 +158,11 @@ pub(super) fn stage_profile_stage(stage: &str) -> Option<String> {
         return Some(kind.profile_stage().to_string());
     }
     if parse_reimplement_stage_instance(normalized).is_some() {
-        return Some(ImplementationStageKind::Advanced.profile_stage().to_string());
+        return Some(
+            ImplementationStageKind::Advanced
+                .profile_stage()
+                .to_string(),
+        );
     }
     if parse_verify_stage_instance(normalized).is_some() {
         return Some("verify".to_string());

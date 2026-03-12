@@ -1,17 +1,69 @@
+use crate::ai::context_usage::AiSessionContextUsageCacheEntry;
 use crate::ai::session_status::{AiSessionStatus, AiSessionStatusMeta};
 use crate::server::ws::OutboundTx as WebSocket;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::ai::CompletionAgent;
 use crate::server::context::SharedAppState;
+use crate::server::perf as perf_counters;
 use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
 use super::utils::*;
 use super::SharedAIState;
+
+// ── AI 会话上下文使用率运行时缓存 ──
+
+/// 容量上限：2048 条（超限时按最旧 cached_at 淘汰）
+const AI_CONTEXT_USAGE_CACHE_CAPACITY: usize = 2048;
+
+/// 全局运行时缓存，key 格式：`"project\0workspace\0ai_tool\0session_id"`
+static AI_CONTEXT_USAGE_CACHE: LazyLock<Mutex<HashMap<String, AiSessionContextUsageCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 构造 AI 上下文缓存 key（\0 分隔，避免与路径冲突）
+fn ai_context_cache_key(project: &str, workspace: &str, ai_tool: &str, session_id: &str) -> String {
+    format!("{}\0{}\0{}\0{}", project, workspace, ai_tool, session_id)
+}
+
+/// 从运行时缓存读取，命中返回 `Some(Option<f64>)`，未命中或过期返回 `None`
+fn get_ai_context_from_cache(key: &str) -> Option<Option<f64>> {
+    AI_CONTEXT_USAGE_CACHE.lock().ok().and_then(|cache| {
+        cache
+            .get(key)
+            .filter(|e| e.is_valid())
+            .map(|e| e.context_remaining_percent)
+    })
+}
+
+/// 写入运行时缓存，超容量时淘汰最旧条目
+fn put_ai_context_to_cache(key: String, value: Option<f64>) {
+    let Ok(mut cache) = AI_CONTEXT_USAGE_CACHE.lock() else {
+        return;
+    };
+    if cache.len() >= AI_CONTEXT_USAGE_CACHE_CAPACITY && !cache.contains_key(&key) {
+        // 淘汰 cached_at 最早的条目
+        if let Some(oldest_key) = cache
+            .iter()
+            .min_by_key(|(_, e)| e.cached_at)
+            .map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest_key);
+        }
+    }
+    cache.insert(
+        key,
+        AiSessionContextUsageCacheEntry {
+            context_remaining_percent: value,
+            cached_at: Instant::now(),
+        },
+    );
+}
 
 fn map_session_config_options(
     options: Vec<crate::ai::AiSessionConfigOption>,
@@ -573,12 +625,63 @@ pub(crate) async fn query_ai_session_status(
         }
     }
 
-    let context_remaining_percent = agent
-        .get_session_context_usage(&directory, session_id)
+    // AI 会话上下文使用率三级读取：
+    // 1. 运行时缓存（O(1)，TTL 2s）
+    // 2. 持久化快照（SQLite，Core 重启后 warm start）
+    // 3. 适配器回源（最慢，仅缓存和快照均未命中时调用）
+    let context_cache_key =
+        ai_context_cache_key(project_name, workspace_name, &ai_tool, session_id);
+    let refresh_started = Instant::now();
+
+    let context_remaining_percent =
+        if let Some(cached) = get_ai_context_from_cache(&context_cache_key) {
+            // 命中运行时缓存
+            cached
+        } else if let Ok(Some(snap)) = super::get_session_context_snapshot(
+            ai_state,
+            project_name,
+            workspace_name,
+            &ai_tool,
+            session_id,
+        )
         .await
-        .ok()
-        .flatten()
-        .and_then(|usage| usage.context_remaining_percent);
+        {
+            // 命中持久化快照（Core 重启后首次读取）
+            let pct = snap.context_remaining_percent;
+            put_ai_context_to_cache(context_cache_key.clone(), pct);
+            pct
+        } else {
+            // 适配器回源（冷路径）
+            let pct = agent
+                .get_session_context_usage(&directory, session_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|usage| usage.context_remaining_percent);
+            put_ai_context_to_cache(context_cache_key, pct);
+            // 同步更新持久化快照，确保 Core 重启后可以 warm start
+            if let Some(pct_val) = pct {
+                let snapshot = super::session_index_store::AiSessionContextSnapshotStored {
+                    snapshot_at_ms: now_ms(),
+                    message_count: 0,
+                    context_summary: None,
+                    selection_hint: None,
+                    context_remaining_percent: Some(pct_val),
+                };
+                let _ = super::save_session_context_snapshot(
+                    ai_state,
+                    project_name,
+                    workspace_name,
+                    &ai_tool,
+                    session_id,
+                    &snapshot,
+                )
+                .await;
+            }
+            pct
+        };
+
+    perf_counters::record_workspace_ai_context_refresh(refresh_started.elapsed().as_millis() as u64);
 
     store.set_status_with_meta(
         AiSessionStatusMeta {
@@ -1677,5 +1780,62 @@ mod tests {
             }
             _ => panic!("expected ai_session_list response"),
         }
+    }
+
+    // ── 热点路径定向测试（WI-005 / CHK-002）──
+
+    #[test]
+    fn hotspot_perf_ai_context_cache_hit_returns_same_value() {
+        // 验证运行时缓存命中返回相同值，不透传到下游
+        let key = ai_context_cache_key("proj_test", "ws_test", "claude", "session_abc");
+
+        // 写入缓存
+        put_ai_context_to_cache(key.clone(), Some(85.5));
+
+        // 命中读取
+        let result = get_ai_context_from_cache(&key);
+        assert_eq!(
+            result,
+            Some(Some(85.5)),
+            "cache hit should return the stored value"
+        );
+    }
+
+    #[test]
+    fn hotspot_perf_ai_context_cache_cross_project_isolation() {
+        // 验证不同 project/workspace 下相同 session_id 缓存互不污染
+        let key_a = ai_context_cache_key("proj_alpha", "default", "claude", "sess_1");
+        let key_b = ai_context_cache_key("proj_beta", "default", "claude", "sess_1");
+
+        put_ai_context_to_cache(key_a.clone(), Some(60.0));
+        put_ai_context_to_cache(key_b.clone(), Some(30.0));
+
+        assert_eq!(
+            get_ai_context_from_cache(&key_a),
+            Some(Some(60.0)),
+            "proj_alpha cache polluted"
+        );
+        assert_eq!(
+            get_ai_context_from_cache(&key_b),
+            Some(Some(30.0)),
+            "proj_beta cache polluted"
+        );
+    }
+
+    #[test]
+    fn hotspot_perf_ai_context_cache_capacity_eviction() {
+        // 验证超容量时淘汰旧条目，不 panic，缓存大小不超上限
+        for i in 0..AI_CONTEXT_USAGE_CACHE_CAPACITY + 10 {
+            let key =
+                ai_context_cache_key(&format!("proj_{}", i), "default", "claude", "sess_evict");
+            put_ai_context_to_cache(key, Some(i as f64));
+        }
+        let cache = AI_CONTEXT_USAGE_CACHE.lock().unwrap();
+        assert!(
+            cache.len() <= AI_CONTEXT_USAGE_CACHE_CAPACITY,
+            "cache size {} exceeds capacity {}",
+            cache.len(),
+            AI_CONTEXT_USAGE_CACHE_CAPACITY
+        );
     }
 }

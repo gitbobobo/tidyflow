@@ -5,6 +5,30 @@ pub struct AiSessionContextUsage {
     pub context_remaining_percent: Option<f64>,
 }
 
+/// AI 会话上下文使用率运行时缓存条目。
+///
+/// key 使用 `(project_name, workspace_name, ai_tool, session_id)` 四元组，
+/// 严格按多项目、多工作区隔离，不同项目/工作区下相同 session_id 不会串值。
+///
+/// ## 预算
+/// - 运行时缓存命中：O(1) HashMap 查询，预期 < 0.1ms
+/// - TTL: 2s（热路径重复轮询时几乎全部命中）
+/// - 容量上限：2048 条（超限时淘汰最旧访问条目）
+#[derive(Debug, Clone)]
+pub struct AiSessionContextUsageCacheEntry {
+    pub context_remaining_percent: Option<f64>,
+    pub cached_at: std::time::Instant,
+}
+
+impl AiSessionContextUsageCacheEntry {
+    /// 缓存 TTL（2 秒）
+    pub const CACHE_TTL_SECS: u64 = 2;
+
+    pub fn is_valid(&self) -> bool {
+        self.cached_at.elapsed().as_secs() < Self::CACHE_TTL_SECS
+    }
+}
+
 fn canonical_key(raw: &str) -> String {
     raw.chars()
         .filter(|ch| *ch != '_' && *ch != '-')
