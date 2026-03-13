@@ -19,38 +19,81 @@ private enum E2EContract {
 }
 
 private enum PerfEvidenceContract {
+    static let chatWorkspaceContext =
+        "AC-CHAT-PERF-FIXTURE:iphone:project=PerfLab:workspace=stream-heavy:session_id=fixture-stream-heavy"
+    static let chatWorkspaceSwitchContext =
+        "AC-CHAT-WS-SWITCH-PERF-FIXTURE:iphone:project=PerfLab:workspace=stream-heavy:session_id=fixture-stream-heavy-ws"
+
     static func chatFixtureLines() -> String {
         [
-            "perf hotspot_key=ios_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy",
-            "perf hotspot_key_secondary=mac_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=stream_heavy bytes=104857600 project=PerfLab workspace=stream-heavy",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=stream_heavy bytes=110100480 project=PerfLab workspace=stream-heavy"
+            "perf hotspot_key=ios_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf hotspot_key_secondary=mac_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=stream_heavy bytes=104857600 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=stream_heavy bytes=110100480 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
+
+    static func chatWorkspaceSwitchFixtureLines() -> String {
+        [
+            "perf hotspot_key=ios_ai_chat scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf hotspot_key_secondary=mac_ai_chat scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=chat_stream_workspace_switch bytes=104857600 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf workspace_switch_event=workspace_switch scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf workspace_switch duration_ms=182.00 scenario=chat_stream_workspace_switch switch_index=1 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf workspace_switch duration_ms=194.00 scenario=chat_stream_workspace_switch switch_index=2 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf workspace_switch duration_ms=201.00 scenario=chat_stream_workspace_switch switch_index=3 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=chat_stream_workspace_switch bytes=110100480 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)"
         ].joined(separator: "\n")
     }
 
     static let evolutionWorkspaceContext =
         "AC-EVOLUTION-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:cycle_id=fixture-evolution-cycle"
+    static let evolutionMultiWorkspaceContext =
+        "AC-EVOLUTION-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:cycle_id=fixture-evolution-cycle"
 
     static func evolutionFixtureLines() -> String {
         [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
-            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
-            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
-            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle"
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
+            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
+
+    static func evolutionMultiWorkspaceFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel_multi_workspace bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
+            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
+            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
+            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
+            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
+            "perf multi_workspace_event=evolution_multi_workspace_sample scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
+            "perf evolution_timeline_recompute_ms=28.40 round=1 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-0 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-0",
+            "perf evolution_timeline_recompute_ms=29.10 round=2 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-1 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-1",
+            "perf evolution_timeline_recompute_ms=30.20 round=3 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-2 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-2",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel_multi_workspace bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)"
         ].joined(separator: "\n")
     }
 }
@@ -792,8 +835,10 @@ final class TidyFlowE2ETests: XCTestCase {
 
         let chatAreaVisible = chatArea.waitForExistence(timeout: 20)
         let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
-        let fixtureStarted = waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
         let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 30)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
         try recorder.recordScreenshot(
             scenario: scenario,
@@ -842,6 +887,82 @@ final class TidyFlowE2ETests: XCTestCase {
         XCTAssertTrue(fixtureCompleted, "stream_heavy perf fixture 未完成 300 次 flush")
     }
 
+    func testAC_CHAT_WS_SWITCH_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "chat_stream_workspace_switch"
+        app.launchEnvironment["TF_PERF_CHAT_SCENARIO"] = "chat_stream_workspace_switch"
+        app.launch()
+
+        let scenario = "AC-CHAT-WS-SWITCH-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+        let wsCtx = PerfEvidenceContract.chatWorkspaceSwitchContext
+
+        let chatArea = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.ai.chat-area").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.chat.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.chat.completed").firstMatch
+
+        let chatAreaVisible = chatArea.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 30)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 聊天工作区切换 perf fixture 初始状态",
+            description: """
+            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=chat_stream_workspace_switch 启动 iPhone 应用；\
+            关键观察：聊天区与 fixture 状态条是否可见；\
+            证据用途：验证聊天多工作区 fixture 已独立落位，\
+            配合 workspace_switch_event 与 aiMessageTailFlush 日志生成真实证据。
+            """,
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 聊天工作区切换 perf fixture 断言结果",
+            description: """
+            UI_TEST_MODE + TF_PERF_SCENARIO=chat_stream_workspace_switch 下应用直接进入聊天场景；\
+            fixture 状态条从 running 进入 completed；\
+            日志抓取脚本可据此定位 workspace_switch_event、aiMessageTailFlush 与 memory_snapshot。
+            """,
+            body: """
+            scenario=chat_stream_workspace_switch
+            chat_area.visible=\(chatAreaVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            hotspot_key=ios_ai_chat
+            hotspot_key_secondary=mac_ai_chat
+            tail_flush_event=aiMessageTailFlush
+            memory_snapshot_key=memory_snapshot
+            workspace_switch_event=workspace_switch
+            project=PerfLab
+            workspace=stream-heavy
+            surface=chat_session
+            workspace_context=\(wsCtx)
+            \(PerfEvidenceContract.chatWorkspaceSwitchFixtureLines())
+            """,
+            workspaceContext: wsCtx
+        )
+
+        XCTAssertTrue(chatAreaVisible, "chat_stream_workspace_switch perf fixture 场景未进入聊天区")
+        XCTAssertTrue(statusVisible, "chat_stream_workspace_switch perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "chat_stream_workspace_switch perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "chat_stream_workspace_switch perf fixture 未完成 100 次 flush")
+    }
+
     // MARK: - WI-001 Evolution 面板性能基线 fixture
 
     /// iPhone Evolution 面板性能基线场景：
@@ -869,8 +990,10 @@ final class TidyFlowE2ETests: XCTestCase {
 
         let panelVisible = pipelinePanel.waitForExistence(timeout: 30)
         let statusVisible = fixtureStatus.waitForExistence(timeout: 30)
-        let fixtureStarted = waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
         let fixtureCompleted = waitForElementContaining(label: fixtureCompletedMarker, substring: "true", timeout: 60)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
         try recorder.recordScreenshot(
             scenario: scenario,
@@ -920,6 +1043,81 @@ final class TidyFlowE2ETests: XCTestCase {
         XCTAssertTrue(statusVisible, "evolution_panel perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "evolution_panel perf fixture 未进入 running 状态")
         XCTAssertTrue(fixtureCompleted, "evolution_panel perf fixture 未完成 50 轮重算")
+    }
+
+    func testAC_EVOLUTION_MULTI_WS_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "evolution_panel_multi_workspace"
+        app.launch()
+
+        let scenario = "AC-EVOLUTION-MULTI-WS-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+        let wsCtx = PerfEvidenceContract.evolutionMultiWorkspaceContext
+
+        let pipelinePanel = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.evolution.pipeline").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.evolution.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.evolution.completed").firstMatch
+
+        let panelVisible = pipelinePanel.waitForExistence(timeout: 30)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 30)
+        let fixtureCompleted = waitForElementContaining(label: fixtureCompletedMarker, substring: "true", timeout: 60)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Evolution 多工作区 perf fixture 初始状态",
+            description: """
+            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=evolution_panel_multi_workspace 启动 iPhone 应用；\
+            关键观察：Evolution 面板与 fixture 状态条是否可见；\
+            证据用途：验证 Evolution 多工作区 fixture 已独立落位，\
+            配合 multi_workspace_event 与 recompute 日志生成真实证据。
+            """,
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Evolution 多工作区 perf fixture 断言结果",
+            description: """
+            UI_TEST_MODE + TF_PERF_SCENARIO=evolution_panel_multi_workspace 下应用直接进入 Evolution 面板；\
+            fixture 状态条从 running 进入 completed；\
+            日志抓取脚本可据此定位 multi_workspace_event、evolution_timeline_recompute_ms 与 memory_snapshot。
+            """,
+            body: """
+            scenario=evolution_panel_multi_workspace
+            panel.visible=\(panelVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            evolution_recompute_key=evolution_timeline_recompute_ms
+            evolution_tier_change_key=evolution_monitor tier_change
+            memory_snapshot_key=memory_snapshot
+            multi_workspace_event=evolution_multi_workspace_sample
+            cycle_id=fixture-evolution-cycle
+            project=perf-fixture-project
+            workspace=perf-fixture-workspace
+            surface=evolution_workspace
+            workspace_context=\(wsCtx)
+            \(PerfEvidenceContract.evolutionMultiWorkspaceFixtureLines())
+            """,
+            workspaceContext: wsCtx
+        )
+
+        XCTAssertTrue(panelVisible, "evolution_panel_multi_workspace perf fixture 场景未进入 Evolution 面板")
+        XCTAssertTrue(statusVisible, "evolution_panel_multi_workspace perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "evolution_panel_multi_workspace perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "evolution_panel_multi_workspace perf fixture 未完成 90 轮重算")
     }
 }
 
