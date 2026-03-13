@@ -11,6 +11,7 @@ enum EvidenceArtifactType: String, Codable {
 
 struct EvidenceItem: Codable {
     let id: String
+    let runID: String
     let deviceType: String
     let type: EvidenceArtifactType
     let order: Int
@@ -26,6 +27,7 @@ struct EvidenceItem: Codable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case runID = "run_id"
         case deviceType = "device_type"
         case type
         case order
@@ -85,7 +87,20 @@ enum EvidenceRecorderError: LocalizedError {
 
 /// 在 UI 测试执行期间实时落盘证据并增量更新 evidence.index.json。
 final class EvidenceRecorder {
-    static let shared = EvidenceRecorder()
+    private static let sharedLock = NSLock()
+    private static var sharedInstance: EvidenceRecorder = EvidenceRecorder()
+
+    static var shared: EvidenceRecorder {
+        sharedLock.lock()
+        defer { sharedLock.unlock() }
+        return sharedInstance
+    }
+
+    static func rebuildSharedFromCurrentProcessEnvironment() {
+        sharedLock.lock()
+        defer { sharedLock.unlock() }
+        sharedInstance = EvidenceRecorder()
+    }
 
     private let lock = NSLock()
     private let fileManager = FileManager.default
@@ -166,8 +181,13 @@ final class EvidenceRecorder {
             try screenshot.pngRepresentation.write(to: fileURL, options: .atomic)
 
             let relativePath = try makeRelativePath(for: fileURL)
+            let resolvedWorkspaceContext = enrichWorkspaceContext(
+                scenario: scenario,
+                workspaceContext: workspaceContext
+            )
             let item = EvidenceItem(
                 id: makeEvidenceID(scenarioSlug: scenarioSlug, order: order),
+                runID: runID,
                 deviceType: deviceType,
                 type: .screenshot,
                 order: order,
@@ -177,7 +197,7 @@ final class EvidenceRecorder {
                 scenario: scenario,
                 subsystem: subsystem,
                 createdAt: nowUTC(),
-                workspaceContext: workspaceContext
+                workspaceContext: resolvedWorkspaceContext
             )
             try append(item: item)
             return item
@@ -213,7 +233,11 @@ final class EvidenceRecorder {
             [title] \(title)
             [description] \(description)
             """
-            if let ctx = workspaceContext {
+            let resolvedWorkspaceContext = enrichWorkspaceContext(
+                scenario: scenario,
+                workspaceContext: workspaceContext
+            )
+            if let ctx = resolvedWorkspaceContext {
                 logContent += "\n[workspace_context] \(ctx)"
             }
             logContent += "\n[detail]\n\(body)"
@@ -222,6 +246,7 @@ final class EvidenceRecorder {
             let relativePath = try makeRelativePath(for: fileURL)
             let item = EvidenceItem(
                 id: makeEvidenceID(scenarioSlug: scenarioSlug, order: order),
+                runID: runID,
                 deviceType: deviceType,
                 type: .log,
                 order: order,
@@ -231,7 +256,7 @@ final class EvidenceRecorder {
                 scenario: scenario,
                 subsystem: subsystem,
                 createdAt: nowUTC(),
-                workspaceContext: workspaceContext
+                workspaceContext: resolvedWorkspaceContext
             )
             try append(item: item)
             return item
@@ -345,7 +370,7 @@ final class EvidenceRecorder {
             return 10
         }
         let maxOrder = index.items
-            .filter { $0.deviceType == deviceType && $0.id.contains("-\(runID)-") }
+            .filter { $0.deviceType == deviceType && $0.runID == runID }
             .map(\.order)
             .max() ?? 0
         return maxOrder + 10
@@ -445,6 +470,12 @@ final class EvidenceRecorder {
     }
 
     private static func resolveRunID(env: [String: String], runContext: EvidenceRunContext?) -> String {
+        if let fromEnv = normalizeValue(env["EVIDENCE_RUN_ID"]) {
+            return fromEnv
+        }
+        if let fromEnv = normalizeValue(env["CYCLE_RUN_ID"]) {
+            return fromEnv
+        }
         if let fromEnv = normalizeValue(env["TF_E2E_RUN_ID"]) {
             return fromEnv
         }

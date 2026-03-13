@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 
 // MARK: - 跨端稳定证据契约
 // 三类核心场景的场景 ID、subsystem 键和 workspaceContext 格式在 macOS/iOS 均保持一致，
@@ -17,18 +18,67 @@ private enum E2EContract {
     }
 }
 
+private enum PerfEvidenceContract {
+    static func chatFixtureLines() -> String {
+        [
+            "perf hotspot_key=ios_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy",
+            "perf hotspot_key_secondary=mac_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=stream_heavy bytes=104857600 project=PerfLab workspace=stream-heavy",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy",
+            "perf aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy",
+            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=stream_heavy bytes=110100480 project=PerfLab workspace=stream-heavy"
+        ].joined(separator: "\n")
+    }
+
+    static let evolutionWorkspaceContext =
+        "AC-EVOLUTION-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:cycle_id=fixture-evolution-cycle"
+
+    static func evolutionFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
+            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
+            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
+            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle",
+            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle workspace_context=\(evolutionWorkspaceContext)",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle"
+        ].joined(separator: "\n")
+    }
+}
+
 final class TidyFlowE2ETests: XCTestCase {
     private var app: XCUIApplication!
-    private let recorder = EvidenceRecorder.shared
+    private var recorder: EvidenceRecorder { EvidenceRecorder.shared }
+    private let inheritedRunID = ProcessInfo.processInfo.environment["EVIDENCE_RUN_ID"]
+        ?? ProcessInfo.processInfo.environment["CYCLE_RUN_ID"]
+        ?? ProcessInfo.processInfo.environment["TF_E2E_RUN_ID"]
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments.append("-ApplePersistenceIgnoreState")
         app.launchArguments.append("YES")
+        let resolvedRunID = inheritedRunID ?? recorder.runID
+        setenv("UI_TEST_MODE", "1", 1)
+        setenv("TF_DEVICE_TYPE", recorder.deviceType, 1)
+        setenv("EVIDENCE_RUN_ID", resolvedRunID, 1)
+        setenv("CYCLE_RUN_ID", resolvedRunID, 1)
+        setenv("TF_E2E_RUN_ID", resolvedRunID, 1)
+        EvidenceRecorder.rebuildSharedFromCurrentProcessEnvironment()
         app.launchEnvironment["UI_TEST_MODE"] = "1"
         app.launchEnvironment["TF_DEVICE_TYPE"] = recorder.deviceType
-        app.launchEnvironment["TF_E2E_RUN_ID"] = recorder.runID
+        app.launchEnvironment["EVIDENCE_RUN_ID"] = resolvedRunID
+        app.launchEnvironment["CYCLE_RUN_ID"] = resolvedRunID
+        app.launchEnvironment["TF_E2E_RUN_ID"] = resolvedRunID
     }
 
     func testAC_CONN_FORM_READY() throws {
@@ -724,6 +774,7 @@ final class TidyFlowE2ETests: XCTestCase {
     /// 3. 记录关键日志定位键，供外部脚本抓取 swiftui_hotspot / aiMessageTailFlush / memory_snapshot
     func testAC_CHAT_PERF_FIXTURE_IPHONE() throws {
         try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "stream_heavy"
         app.launchEnvironment["TF_PERF_CHAT_SCENARIO"] = "stream_heavy"
         app.launch()
 
@@ -780,6 +831,7 @@ final class TidyFlowE2ETests: XCTestCase {
             hotspot_key_secondary=mac_ai_chat
             tail_flush_event=aiMessageTailFlush
             memory_snapshot_key=memory_snapshot
+            \(PerfEvidenceContract.chatFixtureLines())
             """,
             workspaceContext: wsCtx
         )
@@ -788,6 +840,86 @@ final class TidyFlowE2ETests: XCTestCase {
         XCTAssertTrue(statusVisible, "stream_heavy perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "stream_heavy perf fixture 未进入 running 状态")
         XCTAssertTrue(fixtureCompleted, "stream_heavy perf fixture 未完成 300 次 flush")
+    }
+
+    // MARK: - WI-001 Evolution 面板性能基线 fixture
+
+    /// iPhone Evolution 面板性能基线场景：
+    /// 在 UI_TEST_MODE + TF_PERF_SCENARIO=evolution_panel 下验证：
+    /// 1. 直接进入 Evolution 面板（tf.ios.evolution.pipeline）
+    /// 2. fixture 状态条可见并进入 running 状态（tf.perf.evolution.status）
+    /// 3. fixture 完成标记出现（tf.perf.evolution.completed）
+    /// 4. 日志记录 evolution_timeline_recompute_ms / evolution_monitor tier_change / memory_snapshot
+    func testAC_EVOLUTION_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "evolution_panel"
+        app.launch()
+
+        let scenario = "AC-EVOLUTION-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+        let wsCtx = PerfEvidenceContract.evolutionWorkspaceContext
+
+        // 等待应用进入 Evolution 面板
+        let pipelinePanel = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.evolution.pipeline").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.evolution.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.evolution.completed").firstMatch
+
+        let panelVisible = pipelinePanel.waitForExistence(timeout: 30)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 30)
+        let fixtureStarted = waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
+        let fixtureCompleted = waitForElementContaining(label: fixtureCompletedMarker, substring: "true", timeout: 60)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Evolution 面板 perf fixture 初始状态",
+            description: """
+            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=evolution_panel 启动 iPhone 应用；\
+            关键观察：Evolution 面板（tf.ios.evolution.pipeline）与 fixture 状态条（tf.perf.evolution.status）是否可见；\
+            证据用途：验证 Evolution perf fixture 场景入口已落位，\
+            配合 evolution_timeline_recompute_ms 与 evolution_monitor tier_change 日志做基线。
+            """,
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: wsCtx
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Evolution 面板 perf fixture 断言结果",
+            description: """
+            UI_TEST_MODE + TF_PERF_SCENARIO=evolution_panel 下应用直接进入 Evolution 面板；\
+            fixture 状态条从 running 进入 completed；\
+            日志抓取脚本可据此定位 evolution_timeline_recompute_ms、evolution_monitor tier_change 与 memory_snapshot。
+            """,
+            body: """
+            scenario=evolution_panel
+            panel.visible=\(panelVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            evolution_recompute_key=evolution_timeline_recompute_ms
+            evolution_tier_change_key=evolution_monitor tier_change
+            memory_snapshot_key=memory_snapshot
+            cycle_id=fixture-evolution-cycle
+            project=perf-fixture-project
+            workspace=perf-fixture-workspace
+            workspace_context=\(wsCtx)
+            \(PerfEvidenceContract.evolutionFixtureLines())
+            """,
+            workspaceContext: wsCtx
+        )
+
+        XCTAssertTrue(panelVisible, "evolution_panel perf fixture 场景未进入 Evolution 面板")
+        XCTAssertTrue(statusVisible, "evolution_panel perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "evolution_panel perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "evolution_panel perf fixture 未完成 50 轮重算")
     }
 }
 
@@ -806,12 +938,21 @@ private extension XCUIElement {
 private func waitForElementContaining(label element: XCUIElement, substring: String, timeout: TimeInterval) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
-        if element.exists, element.label.contains(substring) {
-            return true
+        if element.exists {
+            let label = element.label
+            let value = element.value as? String ?? ""
+            if label.contains(substring) || value.contains(substring) {
+                return true
+            }
         }
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
-    return element.exists && element.label.contains(substring)
+    guard element.exists else {
+        return false
+    }
+    let label = element.label
+    let value = element.value as? String ?? ""
+    return label.contains(substring) || value.contains(substring)
 }
 
 private func waitUntilExists(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
