@@ -61,6 +61,11 @@ struct EvolutionRunningAgentCardModel: Identifiable, Equatable {
 struct EvolutionPipelineView: View {
     private static let contentHorizontalPadding: CGFloat = 12
 
+    private enum LoopRoundAdjustmentKind {
+        case increase
+        case decrease
+    }
+
     let appState: AppState
     @State private var projectionStore = EvolutionPipelineProjectionStore()
 
@@ -70,9 +75,13 @@ struct EvolutionPipelineView: View {
     @State private var lastLoopRoundWorkspaceContext: String = ""
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isPlanDocumentSheetPresented: Bool = false
+    @State private var isRoundAdjustmentSheetPresented: Bool = false
     @State private var selectedPlanDocumentCycleID: String?
     @State private var selectedCycleDetail: PipelineCycleDetailPayload?
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
+    @State private var pendingLoopRoundAdjustmentKind: LoopRoundAdjustmentKind?
+    @State private var loopRoundAdjustmentDeltaText: String = ""
+    @State private var loopRoundAdjustmentValidationMessage: String?
 
     /// 已完成会话的时间线记录（本轮）
     @State private var completedTimeline: [PipelineTimelineEntry] = []
@@ -177,6 +186,53 @@ struct EvolutionPipelineView: View {
 
     private let loopRoundOptions = [1, 2, 3, 5, 10, 16, 20]
 
+    private var showsRuntimeRoundIndicator: Bool {
+        primaryControlShowsStop && currentItem != nil
+    }
+
+    private var runtimeRoundIndicatorText: String {
+        guard let item = currentItem else { return "" }
+        return String(
+            format: "evolution.page.workspace.roundProgressCompact".localized,
+            max(1, item.globalLoopRound),
+            max(1, item.loopRoundLimit)
+        )
+    }
+
+    private var moreActionsHelpText: String {
+        actionHelpText("evolution.page.action.more".localized, reason: controlCapability.stopReason)
+    }
+
+    private var roundAdjustmentSheetTitle: String {
+        switch pendingLoopRoundAdjustmentKind {
+        case .increase:
+            return "evolution.page.roundAdjust.title.increase".localized
+        case .decrease:
+            return "evolution.page.roundAdjust.title.decrease".localized
+        case .none:
+            return "evolution.page.action.more".localized
+        }
+    }
+
+    private var roundAdjustmentSheetMessage: String {
+        let base: String
+        switch pendingLoopRoundAdjustmentKind {
+        case .increase:
+            base = "evolution.page.roundAdjust.message.increase".localized
+        case .decrease:
+            base = "evolution.page.roundAdjust.message.decrease".localized
+        case .none:
+            base = "evolution.page.roundAdjust.validation.runtimeOnly".localized
+        }
+
+        guard let item = currentItem else { return base }
+        return base + "\n" + String(
+            format: "evolution.page.roundAdjust.currentState".localized,
+            max(1, item.globalLoopRound),
+            max(1, item.loopRoundLimit)
+        )
+    }
+
     // MARK: - 代理颜色映射
 
     private func stageColor(_ stage: String) -> Color {
@@ -279,6 +335,9 @@ struct EvolutionPipelineView: View {
         .sheet(isPresented: $isPlanDocumentSheetPresented) {
             planDocumentSheet
         }
+        .sheet(isPresented: $isRoundAdjustmentSheetPresented) {
+            roundAdjustmentSheet
+        }
     }
 
     private static func debugPrintChangesIfNeeded() {
@@ -320,23 +379,6 @@ struct EvolutionPipelineView: View {
                 .foregroundColor(.secondary)
             analysisStatusIndicator
             Spacer()
-            if let item = currentItem {
-                // 当前轮次指示
-                Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.secondary.opacity(0.1)))
-            }
-            Button {
-                refreshData()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.borderless)
-            .help("evolution.page.refreshStatusHelp".localized)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -363,8 +405,17 @@ struct EvolutionPipelineView: View {
     private var controlSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                // WI-004：循环轮次选择（Picker + 运行中支持 +1/-1 增减按钮）
-                HStack(spacing: 2) {
+                if showsRuntimeRoundIndicator {
+                    Text(runtimeRoundIndicatorText)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.secondary.opacity(0.10))
+                        )
+                } else {
                     Picker("", selection: $loopRoundLimit) {
                         ForEach(loopRoundOptions, id: \.self) { count in
                             Text("\(count) " + "evolution.page.pipeline.rounds".localized)
@@ -375,53 +426,7 @@ struct EvolutionPipelineView: View {
                     .pickerStyle(.menu)
                     .frame(maxWidth: 100)
                     .controlSize(.small)
-                    .disabled(!controlCapability.canStart && !controlCapability.canStop)
-                    .onChange(of: loopRoundLimit) { _, newLimit in
-                        // 运行中时实时同步轮次调整到服务端
-                        guard controlCapability.canStop,
-                              let workspace else { return }
-                        appState.adjustEvolutionLoopRound(
-                            project: project,
-                            workspace: workspace,
-                            loopRoundLimit: newLimit
-                        )
-                    }
-
-                    // 运行中时显示 -1/+1 快捷按钮，支持动态调整循环轮次
-                    if controlCapability.canStop, let workspace {
-                        Button {
-                            let newLimit = max(1, loopRoundLimit - 1)
-                            loopRoundLimit = newLimit
-                            appState.adjustEvolutionLoopRound(
-                                project: project,
-                                workspace: workspace,
-                                loopRoundLimit: newLimit
-                            )
-                        } label: {
-                            Image(systemName: "minus")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .buttonStyle(.borderless)
-                        .controlSize(.mini)
-                        .help("evolution.page.action.decreaseRound".localized)
-                        .disabled(loopRoundLimit <= 1)
-
-                        Button {
-                            let newLimit = loopRoundLimit + 1
-                            loopRoundLimit = newLimit
-                            appState.adjustEvolutionLoopRound(
-                                project: project,
-                                workspace: workspace,
-                                loopRoundLimit: newLimit
-                            )
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .buttonStyle(.borderless)
-                        .controlSize(.mini)
-                        .help("evolution.page.action.increaseRound".localized)
-                    }
+                    .disabled(!controlCapability.canStart)
                 }
 
                 Spacer(minLength: 4)
@@ -457,15 +462,20 @@ struct EvolutionPipelineView: View {
 
                     Divider().frame(height: 14)
 
-                    Button {
-                        loadPlanDocumentAndPresent()
+                    Menu {
+                        Button("evolution.page.action.increaseRound".localized) {
+                            presentLoopRoundAdjustmentSheet(.increase)
+                        }
+                        Button("evolution.page.action.decreaseRound".localized) {
+                            presentLoopRoundAdjustmentSheet(.decrease)
+                        }
                     } label: {
-                        Image(systemName: "doc.text")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("evolution.page.action.previewPlanDocument".localized)
-                    .disabled(currentItem == nil)
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help(moreActionsHelpText)
+                    .disabled(!controlCapability.canStop)
                 }
             }
         }
@@ -769,10 +779,6 @@ struct EvolutionPipelineView: View {
                     .buttonStyle(.borderless)
                     .help("evolution.page.action.previewPlanDocument".localized)
                 }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(color)
             }
 
             HStack(spacing: 8) {
@@ -1965,11 +1971,6 @@ struct EvolutionPipelineView: View {
 
     // MARK: - 计划文档
 
-    private func loadPlanDocumentAndPresent() {
-        guard let item = currentItem else { return }
-        openPlanDocumentSheet(for: item.cycleID)
-    }
-
     private var planDocumentSheet: some View {
         NavigationStack {
             Group {
@@ -2029,6 +2030,44 @@ struct EvolutionPipelineView: View {
             }
         }
         .frame(minWidth: 560, minHeight: 420)
+    }
+
+    private var roundAdjustmentSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(roundAdjustmentSheetTitle)
+                .font(.headline)
+
+            Text(roundAdjustmentSheetMessage)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField(
+                "evolution.page.roundAdjust.deltaPlaceholder".localized,
+                text: $loopRoundAdjustmentDeltaText
+            )
+            .textFieldStyle(.roundedBorder)
+
+            if let validationMessage = loopRoundAdjustmentValidationMessage,
+               !validationMessage.isEmpty {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("common.cancel".localized) {
+                    resetLoopRoundAdjustmentState()
+                }
+                Button("common.confirm".localized) {
+                    submitLoopRoundAdjustment()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
     }
 
     // MARK: - Blocker Sheet
@@ -2173,6 +2212,61 @@ struct EvolutionPipelineView: View {
             workspace: blocking.workspace,
             resolutions: resolutions
         )
+    }
+
+    // MARK: - 轮次调整
+
+    private func presentLoopRoundAdjustmentSheet(_ kind: LoopRoundAdjustmentKind) {
+        guard controlCapability.canStop,
+              currentItem != nil else {
+            loopRoundAdjustmentValidationMessage = "evolution.page.roundAdjust.validation.runtimeOnly".localized
+            return
+        }
+
+        pendingLoopRoundAdjustmentKind = kind
+        loopRoundAdjustmentDeltaText = ""
+        loopRoundAdjustmentValidationMessage = nil
+        isRoundAdjustmentSheetPresented = true
+    }
+
+    private func submitLoopRoundAdjustment() {
+        guard let kind = pendingLoopRoundAdjustmentKind,
+              let item = currentItem,
+              let workspace else {
+            loopRoundAdjustmentValidationMessage = "evolution.page.roundAdjust.validation.runtimeOnly".localized
+            return
+        }
+
+        let trimmed = loopRoundAdjustmentDeltaText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let delta = Int(trimmed), delta > 0 else {
+            loopRoundAdjustmentValidationMessage = "evolution.page.roundAdjust.validation.invalid".localized
+            return
+        }
+
+        let currentRound = max(1, item.globalLoopRound)
+        let currentLimit = max(1, item.loopRoundLimit)
+        let newLimit: Int
+
+        switch kind {
+        case .increase:
+            newLimit = currentLimit + delta
+        case .decrease:
+            newLimit = max(currentRound, currentLimit - delta)
+        }
+
+        appState.adjustEvolutionLoopRound(
+            project: project,
+            workspace: workspace,
+            loopRoundLimit: newLimit
+        )
+        resetLoopRoundAdjustmentState()
+    }
+
+    private func resetLoopRoundAdjustmentState() {
+        isRoundAdjustmentSheetPresented = false
+        pendingLoopRoundAdjustmentKind = nil
+        loopRoundAdjustmentDeltaText = ""
+        loopRoundAdjustmentValidationMessage = nil
     }
 
     // MARK: - 启动逻辑
