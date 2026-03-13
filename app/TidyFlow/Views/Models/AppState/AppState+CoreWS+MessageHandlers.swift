@@ -1,5 +1,23 @@
 import Foundation
 
+private func reconcileDiscoveryPairingState(
+    items: [NodeDiscoveryItemV2],
+    peers: [NodePeerInfoV2]
+) -> [NodeDiscoveryItemV2] {
+    let pairedNodeIDs = Set(peers.map(\.peerNodeID))
+    return items.map { item in
+        NodeDiscoveryItemV2(
+            nodeID: item.nodeID,
+            nodeName: item.nodeName,
+            host: item.host,
+            port: item.port,
+            protocolVersion: item.protocolVersion,
+            lastSeenAtUnix: item.lastSeenAtUnix,
+            paired: pairedNodeIDs.contains(item.nodeID)
+        )
+    }
+}
+
 final class AppStateGitMessageHandlerAdapter: GitMessageHandler {
     weak var appState: AppState?
 
@@ -157,13 +175,26 @@ final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
     }
 
     func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
-        appState?.nodeDiscoveryItems = items
+        guard let appState else { return }
+        appState.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+            items: items,
+            peers: appState.nodeNetworkPeers
+        )
     }
 
     func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2) {
+        if appState?.nodePairingInFlight == true {
+            TFLog.app.info(
+                "配对期间收到节点网络更新: peers=\(snapshot.peers.count, privacy: .public), self=\(snapshot.identity.nodeID, privacy: .public)"
+            )
+        }
         appState?.nodeSelfInfo = snapshot.identity
         appState?.nodeNetworkPeers = snapshot.peers
         appState?.nodeActiveLocks = snapshot.activeLocks
+        appState?.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+            items: appState?.nodeDiscoveryItems ?? [],
+            peers: snapshot.peers
+        )
         appState?.recordServerNodeProfile(
             nodeName: snapshot.identity.nodeName,
             discoveryEnabled: snapshot.identity.discoveryEnabled
@@ -171,6 +202,15 @@ final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
     }
 
     func handleNodePairingResult(_ result: NodePairingResultV2) {
+        if result.ok {
+            TFLog.app.info(
+                "收到节点配对结果: ok=true, peer=\(result.peer?.peerNodeID ?? "nil", privacy: .public)"
+            )
+        } else {
+            TFLog.app.warning(
+                "收到节点配对结果: ok=false, message=\(result.message ?? "未知错误", privacy: .public)"
+            )
+        }
         appState?.nodeLastPairingResult = result
         appState?.nodePairingInFlight = false
         if result.ok {

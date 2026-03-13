@@ -102,6 +102,9 @@ extension AppState {
             return
         }
 
+        TFLog.app.info(
+            "发起节点配对: host=\(trimmedHost, privacy: .public), port=\(port, privacy: .public), key_len=\(trimmedKey.count, privacy: .public)"
+        )
         nodeLastPairingResult = nil
         nodePairingInFlight = true
         wsClient.requestNodePairPeer(host: host, port: port, pairKey: pairKey)

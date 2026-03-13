@@ -6,6 +6,24 @@ import TidyFlowShared
 // 将 WSClient handler 协议方法转发到 MobileAppState 实例方法。
 // WSClient 在解码队列回调协议方法，此处统一切回主线程，避免 UI 状态跨线程写入。
 
+private func reconcileDiscoveryPairingState(
+    items: [NodeDiscoveryItemV2],
+    peers: [NodePeerInfoV2]
+) -> [NodeDiscoveryItemV2] {
+    let pairedNodeIDs = Set(peers.map(\.peerNodeID))
+    return items.map { item in
+        NodeDiscoveryItemV2(
+            nodeID: item.nodeID,
+            nodeName: item.nodeName,
+            host: item.host,
+            port: item.port,
+            protocolVersion: item.protocolVersion,
+            lastSeenAtUnix: item.lastSeenAtUnix,
+            paired: pairedNodeIDs.contains(item.nodeID)
+        )
+    }
+}
+
 final class MobileAppStateGitMessageHandlerAdapter: GitMessageHandler {
     weak var appState: MobileAppState?
 
@@ -150,7 +168,10 @@ final class MobileAppStateNodeMessageHandlerAdapter: NodeMessageHandler {
 
     func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
         dispatchToMain { state in
-            state.nodeDiscoveryItems = items
+            state.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+                items: items,
+                peers: state.nodeNetworkPeers
+            )
         }
     }
 
@@ -159,6 +180,10 @@ final class MobileAppStateNodeMessageHandlerAdapter: NodeMessageHandler {
             state.nodeSelfInfo = snapshot.identity
             state.nodeNetworkPeers = snapshot.peers
             state.nodeActiveLocks = snapshot.activeLocks
+            state.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+                items: state.nodeDiscoveryItems,
+                peers: snapshot.peers
+            )
         }
     }
 
