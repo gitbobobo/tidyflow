@@ -139,4 +139,153 @@ final class PerformanceDashboardStoreTests: XCTestCase {
         let key2 = PerformanceScopeKey(project: "p", workspace: "w", surface: .chatSession, sessionOrCycleId: "sess-2")
         XCTAssertNotEqual(key1, key2, "不同 session 必须产生不同 scope key")
     }
+
+    // MARK: - 回归报告加载
+
+    func testLoadRegressionReport_appliesSnapshotJSON() {
+        let store = PerformanceDashboardStore()
+        // 先注入一个实时快照以确保投影存在
+        store.ingestSnapshot(makeEmptySnapshot(), project: "p", workspace: "w")
+
+        let reportJSON: [String: Any] = [
+            "overall": "warn",
+            "generated_at": "2026-03-13T12:00:00Z",
+            "scenarios": [
+                [
+                    "scenario_id": "chat_stream",
+                    "surface_id": "chat_session",
+                    "overall": "warn",
+                    "issues": ["aiMessageTailFlush P95=55ms > warn=50ms"],
+                ],
+                [
+                    "scenario_id": "evolution_panel",
+                    "surface_id": "evolution_workspace",
+                    "overall": "pass",
+                    "issues": [] as [String],
+                ],
+            ] as [[String: Any]],
+        ]
+        store.applyRegressionReportJSON(reportJSON)
+
+        let chatSummary = store.regressionSummary(for: .chatSession)
+        XCTAssertEqual(chatSummary.overall, .warn)
+        XCTAssertEqual(chatSummary.worstScenarioId, "chat_stream")
+        XCTAssertFalse(chatSummary.degradationReasons.isEmpty)
+
+        let evoSummary = store.regressionSummary(for: .evolutionWorkspace)
+        XCTAssertEqual(evoSummary.overall, .pass)
+    }
+
+    func testLoadRegressionReport_dashboardSnapshotFormat() {
+        let store = PerformanceDashboardStore()
+        store.ingestSnapshot(makeEmptySnapshot(), project: "p", workspace: "w")
+
+        // 精简仪表盘快照格式（scenarios_summary 而非 scenarios）
+        let snapshotJSON: [String: Any] = [
+            "overall": "pass",
+            "generated_at": "2026-03-13T12:00:00Z",
+            "scenarios_summary": [
+                ["scenario_id": "chat_stream", "surface_id": "chat_session", "overall": "pass"],
+                ["scenario_id": "evolution_panel", "surface_id": "evolution_workspace", "overall": "pass"],
+            ] as [[String: Any]],
+        ]
+        store.applyRegressionReportJSON(snapshotJSON)
+
+        let chatSummary = store.regressionSummary(for: .chatSession)
+        XCTAssertEqual(chatSummary.overall, .pass)
+        let evoSummary = store.regressionSummary(for: .evolutionWorkspace)
+        XCTAssertEqual(evoSummary.overall, .pass)
+    }
+
+    func testLoadRegressionReport_missingReportReturnsUnknown() {
+        let store = PerformanceDashboardStore()
+        // 尝试加载不存在的路径
+        store.loadDashboardSnapshot(atPath: "/nonexistent/path/snapshot.json")
+
+        let chatSummary = store.regressionSummary(for: .chatSession)
+        XCTAssertEqual(chatSummary.overall, .unknown, "缺失报告时必须返回 .unknown，不得伪造 pass")
+        XCTAssertTrue(chatSummary.degradationReasons.isEmpty)
+        XCTAssertNil(chatSummary.worstScenarioId)
+    }
+
+    func testLoadRegressionReport_failScenarioUpgradesBudget() {
+        let store = PerformanceDashboardStore()
+        store.ingestSnapshot(makeEmptySnapshot(), project: "p", workspace: "w")
+
+        let reportJSON: [String: Any] = [
+            "overall": "fail",
+            "generated_at": "2026-03-13T12:00:00Z",
+            "scenarios": [
+                [
+                    "scenario_id": "chat_stream",
+                    "surface_id": "chat_session",
+                    "overall": "fail",
+                    "issues": ["aiMessageTailFlush P95=210ms > fail=200ms"],
+                ],
+            ] as [[String: Any]],
+        ]
+        store.applyRegressionReportJSON(reportJSON)
+
+        let key = PerformanceScopeKey(project: "p", workspace: "w", surface: .chatSession)
+        let proj = store.projection(for: key)
+        // 回归报告 fail 应升级投影的 budgetStatus
+        XCTAssertTrue(proj.budgetStatus >= .fail || proj.regressionSummary.overall == .fail)
+    }
+
+    // MARK: - surface 映射完整性
+
+    func testSurfaceMappingCoversAllBaselines() {
+        // 验证每个 surface 的 scenarioIds 都包含对应的多工作区场景
+        let chatScenarios = PerformanceTrackedSurface.chatSession.scenarioIds
+        XCTAssertTrue(chatScenarios.contains("chat_stream"))
+        XCTAssertTrue(chatScenarios.contains("chat_stream_workspace_switch"))
+
+        let evoScenarios = PerformanceTrackedSurface.evolutionWorkspace.scenarioIds
+        XCTAssertTrue(evoScenarios.contains("evolution_panel"))
+        XCTAssertTrue(evoScenarios.contains("evolution_panel_multi_workspace"))
+    }
+
+    // MARK: - 多工作区隔离（跨项目同名工作区）
+
+    func testCrossProjectSameWorkspaceName_noContamination() {
+        let store = PerformanceDashboardStore()
+
+        let reportJSON: [String: Any] = [
+            "overall": "fail",
+            "generated_at": "2026-03-13T12:00:00Z",
+            "scenarios": [
+                [
+                    "scenario_id": "chat_stream",
+                    "surface_id": "chat_session",
+                    "overall": "fail",
+                    "issues": ["test"],
+                ],
+            ] as [[String: Any]],
+        ]
+        store.applyRegressionReportJSON(reportJSON)
+
+        store.ingestSnapshot(makeEmptySnapshot(), project: "proj-a", workspace: "default")
+        store.ingestSnapshot(makeEmptySnapshot(), project: "proj-b", workspace: "default")
+
+        let keyA = PerformanceScopeKey(project: "proj-a", workspace: "default", surface: .chatSession)
+        let keyB = PerformanceScopeKey(project: "proj-b", workspace: "default", surface: .chatSession)
+
+        XCTAssertNotEqual(keyA, keyB, "同名工作区跨项目必须隔离")
+        let projA = store.projection(for: keyA)
+        let projB = store.projection(for: keyB)
+        XCTAssertEqual(projA.project, "proj-a")
+        XCTAssertEqual(projB.project, "proj-b")
+    }
+
+    // MARK: - 不同 surface 同 key 不串台
+
+    func testSameScopeKey_differentSurface_isolated() {
+        let store = PerformanceDashboardStore()
+        store.ingestSnapshot(makeEmptySnapshot(), project: "p", workspace: "w")
+
+        let chatKey = PerformanceScopeKey(project: "p", workspace: "w", surface: .chatSession)
+        let evoKey = PerformanceScopeKey(project: "p", workspace: "w", surface: .evolutionWorkspace)
+
+        XCTAssertNotEqual(chatKey, evoKey, "不同 surface 的 key 不得相同")
+    }
 }

@@ -262,6 +262,88 @@ final class EvolutionRealtimeSamplingSemanticsTests: XCTestCase {
         XCTAssertFalse(EvolutionRealtimeSamplingTier.paused.enableAnimation)
     }
 
+    // MARK: - WI-003: Evolution 采样决策与预算状态关系
+
+    func testSamplingDecision_panelVisibilityChange_doesNotCauseBudgetFlutter() {
+        // 从 live 开始
+        let liveDecision = EvolutionRealtimeSamplingDecision(
+            tier: .live, reason: "healthy", consecutiveHealthyCount: 0
+        )
+
+        // 面板隐藏 → paused
+        let hiddenDecision = computeDecision(
+            runningAgentCount: 1,
+            sceneActive: true,
+            panelVisible: false,
+            wsConnected: true,
+            currentDecision: liveDecision
+        )
+        XCTAssertEqual(hiddenDecision.tier, .paused)
+
+        // 面板重新可见 → 应恢复但经过迟滞（balanced 而非直接 live）
+        let resumedDecision = computeDecision(
+            runningAgentCount: 1,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true,
+            currentDecision: hiddenDecision
+        )
+        // 从 paused 恢复时，live 目标通过迟滞先到 balanced
+        XCTAssertTrue(resumedDecision.tier == .balanced || resumedDecision.tier == .live,
+                       "从 paused 恢复应到 balanced 或 live，不应抖动到 degraded")
+    }
+
+    func testSamplingDecision_runningAgentCountChange_predictable() {
+        // 1 个 agent: live
+        let live1 = computeDecision(
+            runningAgentCount: 1,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true
+        )
+        XCTAssertEqual(live1.tier, .live)
+
+        // 3 个 agent: balanced
+        let balanced3 = computeDecision(
+            runningAgentCount: 3,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true
+        )
+        XCTAssertEqual(balanced3.tier, .balanced)
+
+        // 0 个 agent: paused
+        let paused0 = computeDecision(
+            runningAgentCount: 0,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true
+        )
+        XCTAssertEqual(paused0.tier, .paused)
+    }
+
+    func testSamplingDecision_wsConnectionChange_noUnexpectedBudgetState() {
+        // WS 连接断开 → paused
+        let disconnected = computeDecision(
+            runningAgentCount: 2,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: false
+        )
+        XCTAssertEqual(disconnected.tier, .paused, "WS 断连应 paused")
+
+        // WS 重连 → 恢复（不应直接到 degraded）
+        let reconnected = computeDecision(
+            runningAgentCount: 2,
+            sceneActive: true,
+            panelVisible: true,
+            wsConnected: true,
+            currentDecision: disconnected
+        )
+        XCTAssertNotEqual(reconnected.tier, .degraded,
+                          "WS 重连后无诊断时不应出现 degraded")
+    }
+
     // MARK: - 辅助
 
     private func computeDecision(

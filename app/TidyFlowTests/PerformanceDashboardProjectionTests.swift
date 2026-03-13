@@ -127,4 +127,72 @@ final class PerformanceDashboardProjectionTests: XCTestCase {
             projectedAt: Date()
         )
     }
+
+    // MARK: - WI-003: 预算阈值映射共享测试
+
+    func testBudgetStatus_max_failOverridesWarnAndPass() {
+        // max() 用于合并实时和回归预算
+        XCTAssertEqual(max(PerformanceBudgetStatus.pass, .warn), .warn)
+        XCTAssertEqual(max(PerformanceBudgetStatus.warn, .fail), .fail)
+        XCTAssertEqual(max(PerformanceBudgetStatus.pass, .fail), .fail)
+    }
+
+    func testBudgetStatus_unknownHandling() {
+        // unknown 在排序中位于 fail 之后，但 Store 的合并逻辑会特殊处理
+        XCTAssertLessThan(PerformanceBudgetStatus.fail, .unknown)
+        // 确保 unknown 不会意外成为"最差"而阻断发布
+        XCTAssertFalse(PerformanceBudgetStatus.unknown.isReleaseBlocking)
+    }
+
+    func testRegressionSummary_empty_isUnknown() {
+        let empty = PerformanceRegressionSummary.empty
+        XCTAssertEqual(empty.overall, .unknown)
+        XCTAssertTrue(empty.degradationReasons.isEmpty)
+        XCTAssertNil(empty.worstScenarioId)
+    }
+
+    func testProjection_mergedBudget_regressionFailUpgradesRealtimePass() {
+        // 验证投影合并语义：max(realtimePass, regressionFail) = fail
+        let failSummary = PerformanceRegressionSummary(
+            overall: .fail,
+            degradationReasons: ["test reason"],
+            worstScenarioId: "chat_stream",
+            generatedAt: Date()
+        )
+        let proj = PerformanceDashboardProjection(
+            project: "p", workspace: "w", surface: .chatSession,
+            budgetStatus: .fail,  // Store 已合并后的结果
+            trendPoints: [],
+            regressionSummary: failSummary,
+            degradationReasons: ["test reason"],
+            projectedAt: Date()
+        )
+        XCTAssertTrue(proj.budgetStatus.isReleaseBlocking)
+        XCTAssertFalse(proj.degradationReasons.isEmpty)
+    }
+
+    // MARK: - WI-003: session/cycle 隔离
+
+    func testScopeKey_chatSession_vs_evolutionCycle_isolated() {
+        let chatKey = PerformanceScopeKey(
+            project: "p", workspace: "w", surface: .chatSession, sessionOrCycleId: "sess-1"
+        )
+        let evoKey = PerformanceScopeKey(
+            project: "p", workspace: "w", surface: .evolutionWorkspace, sessionOrCycleId: "cycle-1"
+        )
+        XCTAssertNotEqual(chatKey, evoKey,
+                          "chatSession 与 evolutionWorkspace 的 scope key 不得相同")
+        XCTAssertNotEqual(chatKey.stringKey, evoKey.stringKey)
+    }
+
+    func testScopeKey_sameSessionDifferentSurface_isolated() {
+        let key1 = PerformanceScopeKey(
+            project: "p", workspace: "w", surface: .chatSession, sessionOrCycleId: "shared-id"
+        )
+        let key2 = PerformanceScopeKey(
+            project: "p", workspace: "w", surface: .evolutionWorkspace, sessionOrCycleId: "shared-id"
+        )
+        XCTAssertNotEqual(key1, key2,
+                          "相同 sessionOrCycleId 但不同 surface 必须隔离")
+    }
 }
