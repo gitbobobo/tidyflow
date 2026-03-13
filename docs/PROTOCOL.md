@@ -354,6 +354,22 @@ idle → entering → active ⇄ resuming
   - `node_name`
   - `node_discovery_enabled`
 
+## 节点发现实现（v10）
+
+- 节点发现读取接口仍为 `GET /api/v1/node/discovery`，返回结构不变。
+- Core 内部发现后端改为 `DNS-SD/mDNS`，服务类型固定为 `"_tidyflow-node._tcp.local."`。
+- 广告发布条件：
+  - `remote_access_enabled = true`
+  - `node_discovery_enabled = true`
+  - `node_name` 非空
+  - Core 已拿到实际监听端口
+- 广告 TXT 记录包含：
+  - `node_id`
+  - `node_name`
+  - `protocol_version`
+- 发现项中的 `host` 来自解析后的服务地址，优先 IPv4。
+- 协议版本不匹配的节点会被 Core 过滤，不进入 discovery 列表。
+
 ## 兼容策略
 
 - 本版本不向后兼容 v6。

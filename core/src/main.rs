@@ -134,6 +134,7 @@ async fn resolve_server_port_and_bind(
     let state = state_store.load().await.unwrap_or_default();
     let fixed_port = state.client_settings.fixed_port;
     let remote_access_enabled = state.client_settings.remote_access_enabled;
+    let env_bind_addr = sanitize_bind_addr(env::var("TIDYFLOW_BIND_ADDR").ok());
 
     let port = cli_port
         .or_else(parse_env_port)
@@ -144,8 +145,8 @@ async fn resolve_server_port_and_bind(
         })
         .unwrap_or_else(default_port);
 
-    let bind_addr = sanitize_bind_addr(cli_bind_addr)
-        .or_else(|| sanitize_bind_addr(env::var("TIDYFLOW_BIND_ADDR").ok()))
+    let bind_addr = sanitize_bind_addr(cli_bind_addr.clone())
+        .or_else(|| env_bind_addr.clone())
         .unwrap_or_else(|| {
             if remote_access_enabled {
                 "0.0.0.0".to_string()
@@ -153,6 +154,17 @@ async fn resolve_server_port_and_bind(
                 "127.0.0.1".to_string()
             }
         });
+
+    info!(
+        cli_port = ?cli_port,
+        cli_bind_addr = ?cli_bind_addr,
+        fixed_port,
+        remote_access_enabled,
+        env_bind_addr = ?env_bind_addr,
+        resolved_port = port,
+        resolved_bind_addr = %bind_addr,
+        "resolved core startup bind configuration"
+    );
 
     (port, bind_addr)
 }
