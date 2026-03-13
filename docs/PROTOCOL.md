@@ -1482,6 +1482,12 @@ idle → entering → active ⇄ resuming
 
 终端标签栏专用显示状态，由 Core `aggregate_workspace_ai_domain_state()` 纯函数聚合计算，客户端直接消费不自行推导。
 
+> **权威源声明**：`coordinator_snapshot.ai`（通过客户端 `CoordinatorStateCache` 缓存）是终端标签栏 AI 状态展示的**唯一权威源**。
+> 客户端不得自行从 AI 会话事件（如 `AIChatDone`、`AIChatError`）推导六态优先级或展示状态；本地事件映射仅在首次快照未到达或重连短暂过渡期内作为兜底，且不得覆盖版本更高的 Coordinator 状态。
+>
+> **展示粒度**：AI 状态展示粒度为**工作区级**，同一工作区内所有终端标签显示同一 AI 状态。
+> 这是 Core 领域模型的有意设计——AI 会话归属于工作区，不绑定到单个终端 tab，因此终端标签栏 AI 指示器展示的是"该工作区当前 AI 执行状态"，而非"某一终端的 AI 状态"。
+
 | 状态 | 含义 |
 |------|------|
 | `idle` | 无活跃 AI 执行，空闲 |

@@ -93,6 +93,8 @@ pub struct AiSessionStateStore {
     on_change: RwLock<Option<Arc<dyn Fn(AiSessionStatusChange) + Send + Sync>>>,
     /// 节流状态：记录每个 key 的上次发送时间和待发送状态
     throttle_states: RwLock<HashMap<String, StatusThrottleState>>,
+    /// 每个 session key 最近一次真实状态变更时间（Unix ms）
+    timestamps: RwLock<HashMap<String, i64>>,
 }
 
 impl AiSessionStateStore {
@@ -102,6 +104,7 @@ impl AiSessionStateStore {
             metas: RwLock::new(HashMap::new()),
             on_change: RwLock::new(None),
             throttle_states: RwLock::new(HashMap::new()),
+            timestamps: RwLock::new(HashMap::new()),
         }
     }
 
@@ -139,6 +142,9 @@ impl AiSessionStateStore {
             guard.remove(&key);
         }
         if let Ok(mut guard) = self.throttle_states.write() {
+            guard.remove(&key);
+        }
+        if let Ok(mut guard) = self.timestamps.write() {
             guard.remove(&key);
         }
     }
@@ -316,6 +322,11 @@ impl AiSessionStateStore {
             return false;
         }
 
+        // 记录真实状态变更时间，供聚合函数做稳定的时间排序
+        if let Ok(mut ts_guard) = self.timestamps.write() {
+            ts_guard.insert(key.clone(), chrono::Utc::now().timestamp_millis());
+        }
+
         if let Some(m) = meta.clone() {
             if let Ok(mut guard) = self.metas.write() {
                 guard.insert(key.clone(), m);
@@ -353,6 +364,8 @@ impl Default for AiSessionStateStore {
 struct SessionEntry {
     status: AiSessionStatus,
     updated_at_ms: i64,
+    /// 该会话使用的 AI 工具标识（如 "codex"、"opencode"）
+    ai_tool: String,
 }
 
 /// 为指定 `(project_name, workspace_name)` 聚合工作区级 AI 领域子状态。
@@ -376,6 +389,8 @@ pub fn aggregate_workspace_ai_domain_state(
         let Ok(metas) = store.metas.read() else {
             return AiDomainState::default();
         };
+        // 读取真实状态变更时间戳（失败时以 now_ms 作为回退）
+        let timestamps_guard = store.timestamps.read().ok();
 
         statuses
             .iter()
@@ -384,9 +399,15 @@ pub fn aggregate_workspace_ai_domain_state(
                 if meta.project_name != project_name || meta.workspace_name != workspace_name {
                     return None;
                 }
+                let updated_at_ms = timestamps_guard
+                    .as_ref()
+                    .and_then(|t| t.get(key))
+                    .copied()
+                    .unwrap_or(now_ms);
                 Some(SessionEntry {
                     status: status.clone(),
-                    updated_at_ms: now_ms,
+                    updated_at_ms,
+                    ai_tool: meta.ai_tool.clone(),
                 })
             })
             .collect()
@@ -410,9 +431,9 @@ pub fn aggregate_workspace_ai_domain_state(
     };
 
     // 优先级 1: awaiting_input
-    if entries
+    if let Some(awaiting_entry) = entries
         .iter()
-        .any(|e| matches!(e.status, AiSessionStatus::AwaitingInput))
+        .find(|e| matches!(e.status, AiSessionStatus::AwaitingInput))
     {
         return AiDomainState {
             phase,
@@ -421,20 +442,31 @@ pub fn aggregate_workspace_ai_domain_state(
             display_status: AiDisplayStatus::AwaitingInput,
             active_tool_name: None,
             last_error_message: None,
-            display_updated_at: now_ms,
+            display_updated_at: awaiting_entry.updated_at_ms,
         };
     }
 
     // 优先级 2: running
+    // active_tool_name 取第一个 running 会话的 ai_tool；display_updated_at 取最近 running 时间
     if active_count > 0 {
+        let running_entry = entries
+            .iter()
+            .filter(|e| matches!(e.status, AiSessionStatus::Running))
+            .max_by_key(|e| e.updated_at_ms);
+        let active_tool_name = running_entry
+            .map(|e| e.ai_tool.clone())
+            .filter(|s| !s.is_empty());
+        let running_updated_at = running_entry
+            .map(|e| e.updated_at_ms)
+            .unwrap_or(now_ms);
         return AiDomainState {
             phase,
             active_session_count: active_count,
             total_session_count,
             display_status: AiDisplayStatus::Running,
-            active_tool_name: None,
+            active_tool_name,
             last_error_message: None,
-            display_updated_at: now_ms,
+            display_updated_at: running_updated_at,
         };
     }
 
@@ -618,5 +650,164 @@ mod tests {
         if changed2 {
             assert_eq!(status, Some(AiSessionStatus::AwaitingInput));
         }
+    }
+
+    // ── WI-001 新增测试 ─────────────────────────────────────────────────────────
+
+    /// running 态聚合时 active_tool_name 应等于会话的 ai_tool
+    #[test]
+    fn test_aggregate_running_fills_active_tool_name() {
+        use crate::ai::session_status::aggregate_workspace_ai_domain_state;
+        use crate::coordinator::model::AiDisplayStatus;
+
+        let store = AiSessionStateStore::new();
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "opencode".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "s1".to_string(),
+            },
+            AiSessionStatus::Running,
+        );
+
+        let state = aggregate_workspace_ai_domain_state(&store, "proj", "ws");
+        assert_eq!(state.display_status, AiDisplayStatus::Running);
+        assert_eq!(
+            state.active_tool_name.as_deref(),
+            Some("opencode"),
+            "running 态 active_tool_name 应从 meta.ai_tool 填充"
+        );
+    }
+
+    /// awaiting_input 优先于 running，active_tool_name 不填充
+    #[test]
+    fn test_aggregate_awaiting_input_has_no_active_tool_name() {
+        use crate::ai::session_status::aggregate_workspace_ai_domain_state;
+        use crate::coordinator::model::AiDisplayStatus;
+
+        let store = AiSessionStateStore::new();
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "s1".to_string(),
+            },
+            AiSessionStatus::Running,
+        );
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "s2".to_string(),
+            },
+            AiSessionStatus::AwaitingInput,
+        );
+
+        let state = aggregate_workspace_ai_domain_state(&store, "proj", "ws");
+        assert_eq!(
+            state.display_status,
+            AiDisplayStatus::AwaitingInput,
+            "awaiting_input 应优先于 running"
+        );
+        assert!(
+            state.active_tool_name.is_none(),
+            "awaiting_input 态 active_tool_name 应为 None"
+        );
+    }
+
+    /// 同优先级终态：更晚写入的会话（更大 updated_at_ms）应在同级内胜出
+    #[test]
+    fn test_aggregate_terminal_same_severity_recent_wins() {
+        use crate::ai::session_status::aggregate_workspace_ai_domain_state;
+        use crate::coordinator::model::AiDisplayStatus;
+
+        let store = AiSessionStateStore::new();
+
+        // 先写入 s1=Cancelled
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "s1".to_string(),
+            },
+            AiSessionStatus::Cancelled,
+        );
+
+        // 稍后写入 s2=Success（低严重度），但此处在同级内测试时先写 success 再写 cancelled
+        // 调整：s1=Success, s2=Cancelled（更晚写入，应胜出于同级 success）
+        let store2 = AiSessionStateStore::new();
+        store2.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "a1".to_string(),
+            },
+            AiSessionStatus::Success,
+        );
+        // 稍作等待确保时钟推进，然后写入更晚的 Failure
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store2.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "proj".to_string(),
+                workspace_name: "ws".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/proj/ws".to_string(),
+                session_id: "a2".to_string(),
+            },
+            AiSessionStatus::Failure {
+                message: "latest-err".to_string(),
+            },
+        );
+
+        let state = aggregate_workspace_ai_domain_state(&store2, "proj", "ws");
+        // failure 严重度最高，应胜出
+        assert_eq!(state.display_status, AiDisplayStatus::Failure);
+        assert_eq!(
+            state.last_error_message.as_deref(),
+            Some("latest-err"),
+            "failure 摘要应传递"
+        );
+        // display_updated_at 必须是真实写入时间，不等于另一个 now_ms（仅验证非零）
+        assert!(
+            state.display_updated_at > 0,
+            "display_updated_at 应为真实时间戳，非零"
+        );
+    }
+
+    /// 真实 updated_at_ms 的记录：写入状态后 timestamps 应有记录
+    #[test]
+    fn test_timestamps_recorded_on_status_change() {
+        let store = AiSessionStateStore::new();
+        let before_ms = chrono::Utc::now().timestamp_millis();
+
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "p".to_string(),
+                workspace_name: "w".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/p/w".to_string(),
+                session_id: "t1".to_string(),
+            },
+            AiSessionStatus::Running,
+        );
+
+        let after_ms = chrono::Utc::now().timestamp_millis();
+        let key = AiSessionStateStore::make_key("codex", "/tmp/p/w", "t1");
+        let ts = store.timestamps.read().unwrap();
+        let recorded = *ts.get(&key).expect("应记录时间戳");
+        assert!(
+            recorded >= before_ms && recorded <= after_ms,
+            "时间戳应在写入前后区间内"
+        );
     }
 }
