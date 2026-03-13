@@ -4083,13 +4083,19 @@ final class MobileAppState: ObservableObject {
 
     /// 查询指定工作区的终端 AI 状态（六态）。
     /// iOS 端以工作区粒度（非 tab 粒度）存储，与 macOS 共享同一语义枚举。
+    /// WI-002：优先从 CoordinatorStateCache 读取 Core 权威状态，本地缓存仅作兜底。
     func terminalAIStatus(projectName: String, workspaceName: String) -> TerminalAIStatus {
         let key = "\(projectName):\(workspaceName)"
+        // 若 Coordinator 已有该工作区的 Core 权威状态，优先使用
+        if let state = coordinatorStateCache.state(forGlobalKey: key) {
+            return TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        }
         return terminalAIStatusByWorkspaceKey[key] ?? .idle
     }
 
     /// 将 AI 会话状态更新到对应工作区的终端 AI 状态存储。
     /// 使用共享语义层 TerminalSessionSemantics 映射，保证 macOS 与 iOS 语义一致。
+    /// WI-002：若 Coordinator 已有该工作区状态，降级为兜底，不覆盖 Core 权威状态。
     private func syncAIStatusToWorkspace(
         projectName: String,
         workspaceName: String,
@@ -4099,6 +4105,8 @@ final class MobileAppState: ObservableObject {
         toolName: String?
     ) {
         let key = "\(projectName):\(workspaceName)"
+        // 若 CoordinatorStateCache 已有该工作区的 Core 权威状态，跳过本地同步
+        guard !coordinatorStateCache.hasState(forGlobalKey: key) else { return }
         let mapped = TerminalSessionSemantics.terminalAIStatus(
             from: status,
             errorMessage: errorMessage,
