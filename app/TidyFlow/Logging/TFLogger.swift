@@ -376,6 +376,17 @@ struct AIChatPerfFixtureScenario {
     let seedMessages: [AIChatMessage]
     let deltaFlushes: [String]
 
+    var surface: String { "chat_session" }
+
+    var workspaceContext: String {
+        switch id {
+        case "chat_stream_workspace_switch":
+            return "AC-CHAT-WS-SWITCH-PERF-FIXTURE:iphone:project=\(project):workspace=\(workspace):session_id=\(sessionId)"
+        default:
+            return "AC-CHAT-PERF-FIXTURE:iphone:project=\(project):workspace=\(workspace):session_id=\(sessionId)"
+        }
+    }
+
     static let streamHeavy: AIChatPerfFixtureScenario = {
         let project = "PerfLab"
         let workspace = "stream-heavy"
@@ -622,35 +633,46 @@ extension AIChatPerfFixtureScenario {
     func evidenceLogLines() -> [String] {
         let samples = [0.82, 1.14, 1.27, 1.33, 1.41]
         var lines = [
-            TFLog.perfEvidenceLine("hotspot_key=ios_ai_chat scenario=\(id) project=\(project) workspace=\(workspace)"),
-            TFLog.perfEvidenceLine("hotspot_key_secondary=mac_ai_chat scenario=\(id) project=\(project) workspace=\(workspace)"),
-            TFLog.perfEvidenceLine("memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=104857600 project=\(project) workspace=\(workspace)")
+            TFLog.perfEvidenceLine(
+                "hotspot_key=ios_ai_chat scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "hotspot_key_secondary=mac_ai_chat scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=104857600 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            )
         ]
         for (index, sample) in samples.enumerated() {
             let text = String(format: "%.2f", sample)
             lines.append(
                 TFLog.perfEvidenceLine(
                     "aiMessageTailFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace)"
+                    + " surface=\(surface) workspace_context=\(workspaceContext)"
                 )
             )
             lines.append(
                 TFLog.perfEvidenceLine(
-                    "tail_flush_event=aiMessageTailFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace)"
+                    "tail_flush_event=aiMessageTailFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
                 )
             )
         }
         lines.append(
-            TFLog.perfEvidenceLine("memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=110100480 project=\(project) workspace=\(workspace)")
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=110100480 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            )
         )
         if id == "chat_stream_workspace_switch" {
             lines.append(
-                TFLog.perfEvidenceLine("workspace_switch_event=workspace_switch scenario=\(id) project=\(project) workspace=\(workspace)")
+                TFLog.perfEvidenceLine(
+                    "workspace_switch_event=workspace_switch scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+                )
             )
             for (index, sample) in [182.0, 194.0, 201.0].enumerated() {
                 let text = String(format: "%.2f", sample)
                 lines.append(
                     TFLog.perfEvidenceLine(
-                        "workspace_switch duration_ms=\(text) scenario=\(id) switch_index=\(index + 1) project=\(project) workspace=\(workspace)"
+                        "workspace_switch duration_ms=\(text) scenario=\(id) switch_index=\(index + 1) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
                     )
                 )
             }
@@ -701,6 +723,8 @@ struct EvolutionPerfFixtureScenario {
     let roundCount: Int
     let workspaceContext: String
 
+    var surface: String { "evolution_workspace" }
+
     static let evolutionPanel: EvolutionPerfFixtureScenario = {
         let project = "perf-fixture-project"
         let workspace = "perf-fixture-workspace"
@@ -729,41 +753,41 @@ struct EvolutionPerfFixtureScenario {
     func evidenceLogLines() -> [String] {
         var lines = [
             TFLog.perfEvidenceLine(
-                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=125829120 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=125829120 project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_monitor tier_change key=\(workspaceContext) old=paused new=active reason=fixture_start project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                "evolution_monitor tier_change key=\(workspaceContext) old=paused new=active reason=fixture_start project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_timeline_recompute_ms=3.20 round=1 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+                "evolution_timeline_recompute_ms=3.20 round=1 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_timeline_recompute_ms=4.05 round=25 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+                "evolution_timeline_recompute_ms=4.05 round=25 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_monitor tier_change key=\(workspaceContext) old=active new=throttled reason=fixture_midpoint project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                "evolution_monitor tier_change key=\(workspaceContext) old=active new=throttled reason=fixture_midpoint project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_monitor tier_change key=\(workspaceContext) old=throttled new=active reason=fixture_resume project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                "evolution_monitor tier_change key=\(workspaceContext) old=throttled new=active reason=fixture_resume project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface)"
             ),
             TFLog.perfEvidenceLine(
-                "evolution_timeline_recompute_ms=3.61 round=50 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+                "evolution_timeline_recompute_ms=3.61 round=50 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
             ),
             TFLog.perfEvidenceLine(
-                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=132120576 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=132120576 project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
             )
         ]
         if id == "evolution_panel_multi_workspace" {
             lines.append(
                 TFLog.perfEvidenceLine(
-                    "multi_workspace_event=evolution_multi_workspace_sample scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                    "multi_workspace_event=evolution_multi_workspace_sample scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) surface=\(surface) workspace_context=\(workspaceContext)"
                 )
             )
             for (round, workspaceID, value) in [(1, "ws-0", 28.40), (2, "ws-1", 29.10), (3, "ws-2", 30.20)] {
                 let text = String(format: "%.2f", value)
                 lines.append(
                     TFLog.perfEvidenceLine(
-                        "evolution_timeline_recompute_ms=\(text) round=\(round) scenario=\(id) project=\(project) workspace=\(workspaceID) cycle_id=\(cycleID) workspace_context=derived-\(workspaceID)"
+                        "evolution_timeline_recompute_ms=\(text) round=\(round) scenario=\(id) project=\(project) workspace=\(workspaceID) cycle_id=\(cycleID) surface=\(surface) workspace_context=derived-\(workspaceID)"
                     )
                 )
             }
