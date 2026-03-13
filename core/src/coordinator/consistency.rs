@@ -683,4 +683,123 @@ mod tests {
             assert!(recheck.is_consistent);
         }
     }
+
+    // ---- WI-003: 多项目同名工作区隔离与恢复闭环 ----
+
+    #[test]
+    fn recovery_isolation_same_workspace_name_different_projects() {
+        let mut states = std::collections::HashMap::new();
+
+        // 两个项目使用同名工作区 "feature"
+        let id_a = WorkspaceCoordinatorId::new("proj-alpha", "feature");
+        let mut state_a = WorkspaceCoordinatorState::new(id_a.clone());
+        state_a.terminal.phase = TerminalDomainPhase::Active;
+        state_a.terminal.alive_count = 0; // 不一致：需要恢复
+        states.insert(id_a.global_key(), state_a);
+
+        let id_b = WorkspaceCoordinatorId::new("proj-beta", "feature");
+        let state_b = WorkspaceCoordinatorState::new(id_b.clone()); // 一致
+        states.insert(id_b.global_key(), state_b);
+
+        // 校验：只有 proj-alpha 不一致
+        let check_a = check_workspace_consistency(states.get(&id_a.global_key()).unwrap());
+        let check_b = check_workspace_consistency(states.get(&id_b.global_key()).unwrap());
+        assert!(!check_a.is_consistent, "proj-alpha 应不一致");
+        assert!(check_b.is_consistent, "proj-beta 应一致");
+
+        // 对 proj-alpha 执行恢复
+        let result = orchestrate_recovery(&check_a.recovery_decisions, &mut states);
+        assert!(result.executed > 0, "应执行恢复动作");
+
+        // 验证隔离：恢复只影响 proj-alpha，不影响 proj-beta
+        let recheck_a = check_workspace_consistency(states.get(&id_a.global_key()).unwrap());
+        let recheck_b = check_workspace_consistency(states.get(&id_b.global_key()).unwrap());
+        assert!(recheck_a.is_consistent, "恢复后 proj-alpha 应一致");
+        assert!(recheck_b.is_consistent, "proj-beta 应始终一致");
+
+        // 验证 state_changes 只涉及 proj-alpha
+        for change in &result.state_changes {
+            assert_eq!(
+                change.workspace_id.project, "proj-alpha",
+                "state_change 只应包含 proj-alpha"
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_full_pipeline_probe_repair_recheck() {
+        let mut states = std::collections::HashMap::new();
+
+        // 第 1 步：创建不一致状态（模拟探针发现）
+        let id = WorkspaceCoordinatorId::new("pipeline-proj", "ws-pipeline");
+        let mut state = WorkspaceCoordinatorState::new(id.clone());
+        state.ai.phase = AiDomainPhase::Active;
+        state.ai.active_session_count = 0; // AI 相位与计数不一致
+        state.file.phase = FileDomainPhase::Error;
+        // 故意不更新 health 制造多重不一致
+        states.insert(id.global_key(), state);
+
+        // 第 2 步：检测
+        let check = check_workspace_consistency(states.get(&id.global_key()).unwrap());
+        assert!(!check.is_consistent);
+        assert!(
+            check.inconsistencies.len() >= 2,
+            "应检测到多个不一致: {:?}",
+            check.inconsistencies
+        );
+
+        // 第 3 步：按优先级排序恢复
+        for window in check.recovery_decisions.windows(2) {
+            assert!(
+                window[0].priority <= window[1].priority,
+                "恢复决策应按优先级排序"
+            );
+        }
+
+        // 第 4 步：执行恢复
+        let result = orchestrate_recovery(&check.recovery_decisions, &mut states);
+        assert!(result.executed > 0);
+
+        // 第 5 步：重新检查 — 应一致
+        let recheck = check_workspace_consistency(states.get(&id.global_key()).unwrap());
+        assert!(recheck.is_consistent, "恢复后应一致");
+
+        // 第 6 步：幂等验证 — 再次执行不应改变状态
+        let result2 = orchestrate_recovery(&check.recovery_decisions, &mut states);
+        assert_eq!(result2.executed, 0, "幂等执行不应再次修改");
+    }
+
+    #[test]
+    fn recovery_project_scope_does_not_cross_project_boundary() {
+        let mut states = std::collections::HashMap::new();
+
+        // proj-x 和 proj-y 各有一个同名工作区
+        let id_x = WorkspaceCoordinatorId::new("proj-x", "shared-ws");
+        let mut state_x = WorkspaceCoordinatorState::new(id_x.clone());
+        state_x.terminal.phase = TerminalDomainPhase::Active;
+        state_x.terminal.alive_count = 0;
+        states.insert(id_x.global_key(), state_x);
+
+        let id_y = WorkspaceCoordinatorId::new("proj-y", "shared-ws");
+        let mut state_y = WorkspaceCoordinatorState::new(id_y.clone());
+        state_y.ai.phase = AiDomainPhase::Active;
+        state_y.ai.active_session_count = 0;
+        states.insert(id_y.global_key(), state_y);
+
+        // 只修复 proj-x 的问题
+        let check_x = check_workspace_consistency(states.get(&id_x.global_key()).unwrap());
+        let result = orchestrate_recovery(&check_x.recovery_decisions, &mut states);
+        assert!(result.executed > 0);
+
+        // proj-x 已修复
+        let recheck_x = check_workspace_consistency(states.get(&id_x.global_key()).unwrap());
+        assert!(recheck_x.is_consistent);
+
+        // proj-y 仍然不一致（没被修复）
+        let recheck_y = check_workspace_consistency(states.get(&id_y.global_key()).unwrap());
+        assert!(
+            !recheck_y.is_consistent,
+            "proj-y 不应被 proj-x 的恢复影响"
+        );
+    }
 }

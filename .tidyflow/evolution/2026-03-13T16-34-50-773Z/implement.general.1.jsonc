@@ -1,0 +1,107 @@
+{
+  "$schema_version": "2.0",
+  "stage": "implement.general.1",
+  "cycle_id": "2026-03-13T16-34-50-773Z",
+  "status": "done",
+  "decision": {
+    "result": "n/a",
+    "reason": ""
+  },
+  "summary": "为节点配对、跨节点同步调度、故障恢复隔离补齐自动化测试覆盖。新增 24 个测试（WI-001: 12, WI-002: 5, WI-003: 7），全量回归 888 通过，双端构建成功。",
+  "work_item_results": [
+    {
+      "work_item_id": "WI-001",
+      "status": "done",
+      "summary": "在 ws/http_api/node.rs 新增 12 个 handler 级测试，覆盖节点握手、pair key 校验、auth token 绑定、自配对拒绝、register/unregister 副作用与广播、远端不可达降级。在 node.rs 添加 init_test_runtime() 和 shared_app_state_for_test() 测试基础设施。",
+      "evidence_paths": [
+        "core/src/server/ws/http_api/node.rs",
+        "core/src/server/node.rs"
+      ]
+    },
+    {
+      "work_item_id": "WI-002",
+      "status": "done",
+      "summary": "在 manager_stage.rs 测试模块新增 5 个 should_schedule_network_sync 分支规则测试，覆盖非默认工作区、无 repo_coordination_key、无配对节点、全条件满足、工作区缺失场景。添加 make_handler_context_with_state、workspace_run_state_for_sync、app_state_with_project_and_remote 辅助函数。",
+      "evidence_paths": [
+        "core/src/server/handlers/evolution/manager_stage.rs"
+      ]
+    },
+    {
+      "work_item_id": "WI-003",
+      "status": "done",
+      "summary": "在 health.rs 新增 4 个测试（跨项目 incident 隔离、repair audit 上下文、幂等修复、gate decision 项目隔离），在 consistency.rs 新增 3 个测试（同名工作区不同项目隔离、探针→修复→复检全链路、项目边界不穿越）。",
+      "evidence_paths": [
+        "core/src/server/health.rs",
+        "core/src/coordinator/consistency.rs"
+      ]
+    },
+    {
+      "work_item_id": "WI-004",
+      "status": "done",
+      "summary": "验证新增测试命名与 CHK ID 对应关系：CHK-001(node_)匹配 14 测试、CHK-002(should_schedule_network_sync)匹配 5 测试、CHK-003(recovery)匹配 17 测试。统一验证入口与双端构建均通过。",
+      "evidence_paths": [
+        "core/src/server/ws/http_api/node.rs",
+        "core/src/server/handlers/evolution/manager_stage.rs",
+        "core/src/server/health.rs",
+        "core/src/coordinator/consistency.rs"
+      ]
+    }
+  ],
+  "changed_files": [
+    "core/src/server/node.rs",
+    "core/src/server/ws/http_api/node.rs",
+    "core/src/server/handlers/evolution/manager_stage.rs",
+    "core/src/server/health.rs",
+    "core/src/coordinator/consistency.rs"
+  ],
+  "commands_executed": [
+    "cargo check --manifest-path core/Cargo.toml",
+    "cargo test --manifest-path core/Cargo.toml node_",
+    "cargo test --manifest-path core/Cargo.toml should_schedule_network_sync -- --nocapture",
+    "cargo test --manifest-path core/Cargo.toml recovery -- --nocapture",
+    "./scripts/tidyflow check",
+    "./scripts/tidyflow test",
+    "xcodebuild ... -destination 'platform=macOS' ... build",
+    "xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' ... build"
+  ],
+  "quick_checks": [
+    {
+      "name": "CHK-001: cargo test --manifest-path core/Cargo.toml node_",
+      "result": "pass",
+      "details": "14 passed, 0 failed"
+    },
+    {
+      "name": "CHK-002: cargo test --manifest-path core/Cargo.toml should_schedule_network_sync",
+      "result": "pass",
+      "details": "5 passed, 0 failed"
+    },
+    {
+      "name": "CHK-003: cargo test --manifest-path core/Cargo.toml recovery",
+      "result": "pass",
+      "details": "17 passed, 0 failed"
+    },
+    {
+      "name": "CHK-004: ./scripts/tidyflow check",
+      "result": "pass",
+      "details": "exit_code=0"
+    },
+    {
+      "name": "CHK-005: ./scripts/tidyflow test",
+      "result": "pass",
+      "details": "888 passed (853 unit + 27 protocol_compat + 8 protocol_v1), 0 failed, 1 ignored"
+    },
+    {
+      "name": "CHK-006: macOS Debug 构建",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED"
+    },
+    {
+      "name": "CHK-007: iOS Simulator Debug 构建",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED"
+    }
+  ],
+  "verify_iteration": 0,
+  "backlog_contract_version": 2,
+  "updated_at": ""
+}

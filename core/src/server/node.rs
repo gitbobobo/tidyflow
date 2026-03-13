@@ -1256,6 +1256,27 @@ pub fn now_unix_ts() -> u64 {
         .as_secs()
 }
 
+/// 仅用于测试：初始化全局 NodeRuntime（不启动后台 mDNS 等任务）
+#[cfg(test)]
+pub async fn init_test_runtime() -> Arc<NodeRuntime> {
+    let app_state: SharedAppState =
+        Arc::new(tokio::sync::RwLock::new(crate::workspace::state::AppState::default()));
+    let (save_tx, _) = tokio::sync::mpsc::channel(8);
+    let runtime = NODE_RUNTIME
+        .get_or_init(|| Arc::new(NodeRuntime::new(app_state, save_tx, "0.0.0.0".to_string())))
+        .clone();
+    runtime.ensure_identity().await;
+    runtime
+}
+
+#[cfg(test)]
+impl NodeRuntime {
+    /// 返回运行时内部共享的 AppState（测试专用）
+    pub fn shared_app_state_for_test(&self) -> SharedAppState {
+        self.app_state.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

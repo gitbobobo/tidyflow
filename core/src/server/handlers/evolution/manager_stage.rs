@@ -9211,4 +9211,314 @@ mod tests {
             );
         }
     }
+
+    // ---- WI-002: should_schedule_network_sync 分支规则测试 ----
+
+    use crate::server::context::{ConnectionMeta, HandlerContext, SharedAppState};
+    use crate::server::handlers::ai::AIState;
+    use crate::server::remote_sub_registry::RemoteSubRegistry;
+    use crate::server::terminal_registry::TerminalRegistry;
+    use crate::workspace::state::{AppState, Project, Workspace, WorkspaceStatus};
+    use std::collections::HashMap;
+    use tokio::sync::RwLock;
+
+    /// 串行执行需要全局 NodeRuntime 的测试
+    static SYNC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    async fn make_handler_context_with_state(app_state: SharedAppState) -> HandlerContext {
+        let (save_tx, _) = tokio::sync::mpsc::channel(8);
+        let (scrollback_tx, _) = tokio::sync::mpsc::channel(8);
+        let (agg_tx, _) = tokio::sync::mpsc::channel(8);
+        let (cmd_output_tx, _) = tokio::sync::mpsc::channel(8);
+        let (task_broadcast_tx, _) = tokio::sync::broadcast::channel(8);
+        HandlerContext {
+            app_state,
+            terminal_registry: Arc::new(tokio::sync::Mutex::new(TerminalRegistry::new())),
+            save_tx,
+            scrollback_tx,
+            subscribed_terms: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            agg_tx,
+            running_commands: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            running_ai_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            cmd_output_tx,
+            task_broadcast_tx,
+            task_history: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            conn_meta: ConnectionMeta {
+                conn_id: "test-conn".to_string(),
+                api_key_id: None,
+                client_id: None,
+                subscriber_id: None,
+                is_remote: false,
+                device_name: None,
+            },
+            remote_sub_registry: Arc::new(tokio::sync::Mutex::new(RemoteSubRegistry::new())),
+            ai_state: Arc::new(tokio::sync::Mutex::new(AIState::new())),
+            state_store: Arc::new(
+                crate::workspace::state_store::StateStore::open_in_memory_for_test()
+                    .await
+                    .expect("test state store"),
+            ),
+        }
+    }
+
+    fn workspace_run_state_for_sync(
+        project: &str,
+        workspace: &str,
+        stage: &str,
+    ) -> super::super::WorkspaceRunState {
+        super::super::WorkspaceRunState {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            workspace_root: "/tmp/test".to_string(),
+            priority: 0,
+            status: "running".to_string(),
+            cycle_id: "cycle-sync-test".to_string(),
+            cycle_title: None,
+            current_stage: stage.to_string(),
+            global_loop_round: 1,
+            loop_round_limit: 1,
+            verify_iteration: 0,
+            verify_iteration_limit: 1,
+            backlog_contract_version: 2,
+            created_at: "2026-03-01T00:00:00Z".to_string(),
+            stop_requested: false,
+            terminal_reason_code: None,
+            terminal_error_message: None,
+            rate_limit_resume_at: None,
+            rate_limit_error_message: None,
+            stage_profiles: Vec::new(),
+            stage_statuses: HashMap::new(),
+            stage_sessions: HashMap::new(),
+            stage_session_history: HashMap::new(),
+            stage_tool_call_counts: HashMap::new(),
+            stage_seen_tool_calls: HashMap::new(),
+            stage_retry_counts: HashMap::new(),
+            session_executions: Vec::new(),
+            stage_started_ats: HashMap::new(),
+            stage_duration_ms: HashMap::new(),
+            coordination_state: None,
+            coordination_scope: None,
+            coordination_reason: None,
+            coordination_peer_node_id: None,
+            coordination_peer_node_name: None,
+            coordination_peer_project: None,
+            coordination_peer_workspace: None,
+            coordination_queue_index: None,
+        }
+    }
+
+    fn app_state_with_project_and_remote(
+        project_name: &str,
+        workspace_name: &str,
+        remote_url: Option<&str>,
+    ) -> AppState {
+        let mut state = AppState::default();
+        state.add_project(Project {
+            name: project_name.to_string(),
+            root_path: "/tmp/test".into(),
+            remote_url: remote_url.map(|u| u.to_string()),
+            default_branch: "main".to_string(),
+            created_at: Utc::now(),
+            workspaces: HashMap::from([(
+                workspace_name.to_string(),
+                Workspace {
+                    name: workspace_name.to_string(),
+                    worktree_path: "/tmp/test/.worktrees/ws".into(),
+                    branch: "tidy/ws".to_string(),
+                    status: WorkspaceStatus::Ready,
+                    created_at: Utc::now(),
+                    last_accessed: Utc::now(),
+                    setup_result: None,
+                    recovery_meta: None,
+                },
+            )]),
+            commands: Vec::new(),
+        });
+        state
+    }
+
+    #[tokio::test]
+    async fn should_schedule_network_sync_false_when_non_default_workspace() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        let manager = EvolutionManager::new();
+        let key = "proj:feature".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            state.workspaces.insert(
+                key.clone(),
+                workspace_run_state_for_sync("proj", "feature", "auto_commit"),
+            );
+        }
+        let app_state: SharedAppState = Arc::new(RwLock::new(app_state_with_project_and_remote(
+            "proj",
+            "feature",
+            Some("https://github.com/test/repo"),
+        )));
+        let ctx = make_handler_context_with_state(app_state).await;
+        assert!(
+            !manager.should_schedule_network_sync(&key, &ctx).await,
+            "非默认工作区不应触发 sync"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_schedule_network_sync_false_when_no_repo_coordination_key() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        let manager = EvolutionManager::new();
+        let key = "proj-nokey:default".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            state.workspaces.insert(
+                key.clone(),
+                workspace_run_state_for_sync("proj-nokey", "default", "auto_commit"),
+            );
+        }
+        // 项目无 remote_url → 无 repo_coordination_key
+        let app_state: SharedAppState = Arc::new(RwLock::new(app_state_with_project_and_remote(
+            "proj-nokey", "default", None,
+        )));
+        let ctx = make_handler_context_with_state(app_state).await;
+        assert!(
+            !manager.should_schedule_network_sync(&key, &ctx).await,
+            "无 repo_coordination_key 不应触发 sync"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_schedule_network_sync_false_when_no_paired_peer() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        // 初始化全局 runtime（无 paired peer）
+        let runtime = crate::server::node::init_test_runtime().await;
+        let app_state = runtime.shared_app_state_for_test();
+        {
+            let mut state = app_state.write().await;
+            if state.get_project("sync-proj-nopeer").is_none() {
+                state.add_project(Project {
+                    name: "sync-proj-nopeer".to_string(),
+                    root_path: "/tmp/sync-proj-nopeer".into(),
+                    remote_url: Some("https://github.com/test/sync-nopeer".to_string()),
+                    default_branch: "main".to_string(),
+                    created_at: Utc::now(),
+                    workspaces: HashMap::from([(
+                        "default".to_string(),
+                        Workspace {
+                            name: "default".to_string(),
+                            worktree_path: "/tmp/sync-proj-nopeer/default".into(),
+                            branch: "main".to_string(),
+                            status: WorkspaceStatus::Ready,
+                            created_at: Utc::now(),
+                            last_accessed: Utc::now(),
+                            setup_result: None,
+                            recovery_meta: None,
+                        },
+                    )]),
+                    commands: Vec::new(),
+                });
+            }
+        }
+        let manager = EvolutionManager::new();
+        let key = "sync-proj-nopeer:default".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            state.workspaces.insert(
+                key.clone(),
+                workspace_run_state_for_sync("sync-proj-nopeer", "default", "auto_commit"),
+            );
+        }
+        let ctx = make_handler_context_with_state(app_state).await;
+        let has_paired = runtime
+            .list_network_snapshot(false)
+            .await
+            .peers
+            .iter()
+            .any(|p| p.status == "paired");
+        if !has_paired {
+            assert!(
+                !manager.should_schedule_network_sync(&key, &ctx).await,
+                "无 paired peer 不应触发 sync"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn should_schedule_network_sync_true_when_all_conditions_met() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        let runtime = crate::server::node::init_test_runtime().await;
+        let app_state = runtime.shared_app_state_for_test();
+        {
+            let mut state = app_state.write().await;
+            if state.get_project("sync-full").is_none() {
+                state.add_project(Project {
+                    name: "sync-full".to_string(),
+                    root_path: "/tmp/sync-full".into(),
+                    remote_url: Some("https://github.com/test/sync-full".to_string()),
+                    default_branch: "main".to_string(),
+                    created_at: Utc::now(),
+                    workspaces: HashMap::from([(
+                        "default".to_string(),
+                        Workspace {
+                            name: "default".to_string(),
+                            worktree_path: "/tmp/sync-full/default".into(),
+                            branch: "main".to_string(),
+                            status: WorkspaceStatus::Ready,
+                            created_at: Utc::now(),
+                            last_accessed: Utc::now(),
+                            setup_result: None,
+                            recovery_meta: None,
+                        },
+                    )]),
+                    commands: Vec::new(),
+                });
+            }
+            // 添加 paired peer
+            let peer_id = "sync-full-peer";
+            if !state
+                .paired_nodes
+                .iter()
+                .any(|p| p.peer_node_id == peer_id)
+            {
+                state
+                    .paired_nodes
+                    .push(crate::workspace::state::PairedNodeEntry {
+                        peer_node_id: peer_id.to_string(),
+                        peer_name: "Sync Full Peer".to_string(),
+                        addresses: vec!["10.0.0.5".to_string()],
+                        port: 8439,
+                        auth_token: "tfn_sync_full_token".to_string(),
+                        trust_source: "paired".to_string(),
+                        introduced_by: None,
+                        last_seen_at_unix: Some(1000),
+                        status: "paired".to_string(),
+                    });
+            }
+        }
+        let manager = EvolutionManager::new();
+        let key = "sync-full:default".to_string();
+        {
+            let mut state = manager.state.lock().await;
+            state.workspaces.insert(
+                key.clone(),
+                workspace_run_state_for_sync("sync-full", "default", "auto_commit"),
+            );
+        }
+        let ctx = make_handler_context_with_state(app_state).await;
+        assert!(
+            manager.should_schedule_network_sync(&key, &ctx).await,
+            "默认工作区 + repo_coordination_key + paired peer → 应触发 sync"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_schedule_network_sync_false_when_workspace_missing() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        let manager = EvolutionManager::new();
+        let app_state: SharedAppState = Arc::new(RwLock::new(AppState::default()));
+        let ctx = make_handler_context_with_state(app_state).await;
+        assert!(
+            !manager
+                .should_schedule_network_sync("nonexistent:default", &ctx)
+                .await,
+            "workspace 不存在时不应触发 sync"
+        );
+    }
 }

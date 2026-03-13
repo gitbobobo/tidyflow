@@ -1050,4 +1050,138 @@ mod tests {
             GateFailureReason::PerformanceRegressionFailed
         );
     }
+
+    // ---- WI-003: 故障恢复闭环与多工作区隔离 ----
+
+    #[test]
+    fn recovery_incident_isolation_across_projects_same_workspace() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
+        let mut reg = HealthRegistry::new();
+
+        // project-a/ws 和 project-b/ws 各有一个 incident
+        reg.active_incidents.insert(
+            "recovery_iso_a".to_string(),
+            make_incident(
+                "recovery_iso_a",
+                IncidentSeverity::Critical,
+                Some("project-a"),
+                Some("ws"),
+            ),
+        );
+        reg.active_incidents.insert(
+            "recovery_iso_b".to_string(),
+            make_incident(
+                "recovery_iso_b",
+                IncidentSeverity::Warning,
+                Some("project-b"),
+                Some("ws"),
+            ),
+        );
+
+        // 只清除 project-a/ws 的 incident
+        reg.resolve_workspace_incidents("project-a", "ws");
+
+        assert!(
+            !reg.active_incidents.contains_key("recovery_iso_a"),
+            "project-a/ws 的 incident 应被清除"
+        );
+        assert!(
+            reg.active_incidents.contains_key("recovery_iso_b"),
+            "project-b/ws 的 incident 不应被误清除"
+        );
+
+        // 清理
+        reg.active_incidents.remove("recovery_iso_b");
+    }
+
+    #[test]
+    fn repair_audit_records_context_correctly() {
+        let mut reg = HealthRegistry::new();
+        let audit = RepairAuditEntry {
+            request_id: "repair-ctx-test".to_string(),
+            action: RepairActionKind::InvalidateWorkspaceCache,
+            context: HealthContext {
+                project: Some("proj-x".to_string()),
+                workspace: Some("ws-y".to_string()),
+                session_id: None,
+                cycle_id: None,
+            },
+            incident_id: Some("inc-001".to_string()),
+            outcome: RepairOutcome::Success,
+            trigger: "auto_heal".to_string(),
+            started_at: 1000,
+            duration_ms: 50,
+            result_summary: Some("缓存已刷新".to_string()),
+            incident_resolved: true,
+        };
+        reg.append_audit(audit.clone());
+
+        let recent = reg.recent_repairs(10);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].context.project.as_deref(), Some("proj-x"));
+        assert_eq!(recent[0].context.workspace.as_deref(), Some("ws-y"));
+        assert!(recent[0].incident_resolved);
+    }
+
+    #[test]
+    fn repair_idempotent_does_not_double_resolve() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
+        let mut reg = HealthRegistry::new();
+        reg.active_incidents.insert(
+            "idem_test".to_string(),
+            make_incident(
+                "idem_test",
+                IncidentSeverity::Warning,
+                Some("proj-idem"),
+                Some("ws-idem"),
+            ),
+        );
+        // 第一次 resolve
+        reg.resolve_incident("idem_test");
+        assert!(!reg.active_incidents.contains_key("idem_test"));
+
+        // 第二次 resolve 不应 panic 或改变状态
+        reg.resolve_incident("idem_test");
+        assert!(!reg.active_incidents.contains_key("idem_test"));
+    }
+
+    #[test]
+    fn gate_decision_critical_in_project_a_does_not_affect_project_b_same_workspace() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
+        let registry = global();
+        let mut reg = registry.blocking_write();
+        let incident_id = "cross_proj_gate_iso";
+        reg.active_incidents.insert(
+            incident_id.to_string(),
+            make_incident(
+                incident_id,
+                IncidentSeverity::Critical,
+                Some("gate-proj-a"),
+                Some("shared-ws"),
+            ),
+        );
+        drop(reg);
+
+        use crate::server::protocol::health::GateVerdict;
+
+        // gate-proj-b/shared-ws 不应受 gate-proj-a/shared-ws 影响
+        let decision_b = evaluate_gate_decision("gate-proj-b", "shared-ws", "cycle-iso", 0);
+        assert!(
+            decision_b.verdict == GateVerdict::Pass || decision_b.verdict == GateVerdict::Skip,
+            "project-b 不应受 project-a 的 critical incident 影响: {:?}",
+            decision_b.verdict
+        );
+
+        // gate-proj-a/shared-ws 应受影响
+        let decision_a = evaluate_gate_decision("gate-proj-a", "shared-ws", "cycle-iso", 0);
+        assert_eq!(
+            decision_a.verdict,
+            GateVerdict::Fail,
+            "project-a 应因 critical incident 失败"
+        );
+
+        // 清理
+        let mut reg = registry.blocking_write();
+        reg.active_incidents.remove(incident_id);
+    }
 }
