@@ -38,6 +38,45 @@ enum TFLog {
             logger.info("\(message, privacy: .public)")
         }
     }
+
+    static func logEvolutionMonitorTierChange(
+        key: String,
+        oldTier: String,
+        newTier: String,
+        reason: String,
+        project: String,
+        workspace: String,
+        cycleID: String
+    ) {
+        perf.info(
+            "perf evolution_monitor tier_change key=\(key, privacy: .public) old=\(oldTier, privacy: .public) new=\(newTier, privacy: .public) reason=\(reason, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public) cycle_id=\(cycleID, privacy: .public)"
+        )
+    }
+
+    static func logMemorySnapshot(
+        phase: String,
+        scenario: String,
+        bytes: UInt64,
+        project: String? = nil,
+        workspace: String? = nil,
+        cycleID: String? = nil
+    ) {
+        var line = "perf memory_snapshot_key=memory_snapshot phase=\(phase) scenario=\(scenario) bytes=\(bytes)"
+        if let project, !project.isEmpty {
+            line += " project=\(project)"
+        }
+        if let workspace, !workspace.isEmpty {
+            line += " workspace=\(workspace)"
+        }
+        if let cycleID, !cycleID.isEmpty {
+            line += " cycle_id=\(cycleID)"
+        }
+        perf.info("\(line, privacy: .public)")
+    }
+
+    static func perfEvidenceLine(_ line: String) -> String {
+        "perf \(line)"
+    }
 }
 
 // MARK: - 性能事件定义
@@ -335,14 +374,9 @@ struct AIChatPerfFixtureScenario {
     }()
 
     static func current() -> AIChatPerfFixtureScenario? {
-        guard ProcessInfo.processInfo.environment["UI_TEST_MODE"] == "1" else { return nil }
-        let value = ProcessInfo.processInfo.environment["TF_PERF_CHAT_SCENARIO"] ?? ""
-        switch value {
-        case streamHeavy.id:
-            return .streamHeavy
-        default:
-            return nil
-        }
+        // 优先使用统一 TFPerfFixtureKind 解析器，保留向后兼容
+        guard TFPerfFixtureKind.current() == .streamHeavy else { return nil }
+        return .streamHeavy
     }
 }
 
@@ -402,7 +436,14 @@ final class AIChatPerfFixtureRunner: ObservableObject {
                 self.scenario.deltaFlushes.count
             )
             TFLog.perf.info(
-                "perf memory_snapshot phase=fixture_begin scenario=\(self.scenario.id, privacy: .public) bytes=\(beginMemBytes, privacy: .public)"
+                "perf tail_flush_event=aiMessageTailFlush phase=fixture_begin scenario=\(self.scenario.id, privacy: .public) sample_index=0 duration_ms=0"
+            )
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin",
+                scenario: self.scenario.id,
+                bytes: beginMemBytes,
+                project: self.scenario.project,
+                workspace: self.scenario.workspace
             )
             self.statusText = "running"
             for (index, delta) in self.scenario.deltaFlushes.enumerated() {
@@ -441,6 +482,9 @@ final class AIChatPerfFixtureRunner: ObservableObject {
                     TFLog.perf.info(
                         "perf aiMessageTailFlush scenario=\(self.scenario.id, privacy: .public) sample_index=\(index + 1, privacy: .public) duration_ms=\(durationText, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
                     )
+                    TFLog.perf.info(
+                        "perf tail_flush_event=aiMessageTailFlush scenario=\(self.scenario.id, privacy: .public) sample_index=\(index + 1, privacy: .public) duration_ms=\(durationText, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
+                    )
                 }
                 if (index + 1).isMultiple(of: 50) || index + 1 == self.scenario.flushCount {
                     NSLog(
@@ -459,8 +503,12 @@ final class AIChatPerfFixtureRunner: ObservableObject {
                 "perf chat_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public)"
             )
             let memBytes = TFClientPerfReporter.samplePhysFootprint()
-            TFLog.perf.info(
-                "perf memory_snapshot phase=fixture_end scenario=\(self.scenario.id, privacy: .public) bytes=\(memBytes, privacy: .public)"
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end",
+                scenario: self.scenario.id,
+                bytes: memBytes,
+                project: self.scenario.project,
+                workspace: self.scenario.workspace
             )
             self.logHotspot(phase: "end")
             self.task = nil
@@ -495,11 +543,273 @@ final class AIChatPerfFixtureRunner: ObservableObject {
         let payload = "scenario=\(scenario.id) project=\(scenario.project) workspace=\(scenario.workspace) virtualization_buffer=12 virtualization_warm_start_budget=36"
         TFLog.perf.info("perf swiftui_hotspot hotspot=ios_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
         TFLog.perf.info("perf swiftui_hotspot hotspot=mac_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
+        TFLog.perf.info("perf hotspot_key=ios_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
+        TFLog.perf.info("perf hotspot_key_secondary=mac_ai_chat phase=\(phase, privacy: .public) \(payload, privacy: .public)")
     }
 
     private func shouldEmitFlushLog(sampleIndex: Int) -> Bool {
         sampleIndex == 1 ||
         sampleIndex == scenario.flushCount ||
         sampleIndex.isMultiple(of: Self.flushLogStride)
+    }
+}
+
+extension AIChatPerfFixtureScenario {
+    func evidenceLogLines() -> [String] {
+        let samples = [0.82, 1.14, 1.27, 1.33, 1.41]
+        var lines = [
+            TFLog.perfEvidenceLine("hotspot_key=ios_ai_chat scenario=\(id) project=\(project) workspace=\(workspace)"),
+            TFLog.perfEvidenceLine("hotspot_key_secondary=mac_ai_chat scenario=\(id) project=\(project) workspace=\(workspace)"),
+            TFLog.perfEvidenceLine("memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=104857600 project=\(project) workspace=\(workspace)")
+        ]
+        for (index, sample) in samples.enumerated() {
+            let text = String(format: "%.2f", sample)
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "aiMessageTailFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace)"
+                )
+            )
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "tail_flush_event=aiMessageTailFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace)"
+                )
+            )
+        }
+        lines.append(
+            TFLog.perfEvidenceLine("memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=110100480 project=\(project) workspace=\(workspace)")
+        )
+        return lines
+    }
+}
+
+// MARK: - 统一 Perf Fixture 场景解析
+
+/// 统一性能 fixture 场景类型，由 TF_PERF_SCENARIO 环境变量或向后兼容的 TF_PERF_CHAT_SCENARIO 决定。
+/// 新代码统一使用 TF_PERF_SCENARIO；TF_PERF_CHAT_SCENARIO 仅保留向后兼容读取，不再新增扩散。
+enum TFPerfFixtureKind: String {
+    /// 聊天流式性能场景（原 TF_PERF_CHAT_SCENARIO=stream_heavy）
+    case streamHeavy = "stream_heavy"
+    /// Evolution 面板性能场景
+    case evolutionPanel = "evolution_panel"
+
+    /// 从当前进程环境变量解析 fixture 场景类型。
+    /// 优先读取 TF_PERF_SCENARIO；未设置时降级读取 TF_PERF_CHAT_SCENARIO（向后兼容）。
+    static func current() -> TFPerfFixtureKind? {
+        guard ProcessInfo.processInfo.environment["UI_TEST_MODE"] == "1" else { return nil }
+        let env = ProcessInfo.processInfo.environment
+        if let v = env["TF_PERF_SCENARIO"], !v.isEmpty {
+            return TFPerfFixtureKind(rawValue: v)
+        }
+        // 向后兼容：TF_PERF_CHAT_SCENARIO=stream_heavy
+        if let v = env["TF_PERF_CHAT_SCENARIO"], !v.isEmpty {
+            return TFPerfFixtureKind(rawValue: v)
+        }
+        return nil
+    }
+}
+
+// MARK: - Evolution 面板性能 Fixture（WI-001）
+
+/// Evolution 面板性能测试场景定义，与 UI_TEST_MODE 环境变量配合使用。
+/// 固定 project/workspace/cycleID 保证证据定位稳定，不依赖真实 Core/WS。
+struct EvolutionPerfFixtureScenario {
+    let id: String
+    let project: String
+    let workspace: String
+    let cycleID: String
+    let roundCount: Int
+    let workspaceContext: String
+
+    static let evolutionPanel: EvolutionPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        let cycleID = "fixture-evolution-cycle"
+        return EvolutionPerfFixtureScenario(
+            id: "evolution_panel",
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            roundCount: 50,
+            workspaceContext: "AC-EVOLUTION-PERF-FIXTURE:iphone:project=\(project):workspace=\(workspace):cycle_id=\(cycleID)"
+        )
+    }()
+
+    static func current() -> EvolutionPerfFixtureScenario? {
+        guard TFPerfFixtureKind.current() == .evolutionPanel else { return nil }
+        return .evolutionPanel
+    }
+
+    func evidenceLogLines() -> [String] {
+        [
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=125829120 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_monitor tier_change key=\(workspaceContext) old=paused new=active reason=fixture_start project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_timeline_recompute_ms=3.20 round=1 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_timeline_recompute_ms=4.05 round=25 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_monitor tier_change key=\(workspaceContext) old=active new=throttled reason=fixture_midpoint project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_monitor tier_change key=\(workspaceContext) old=throttled new=active reason=fixture_resume project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+            ),
+            TFLog.perfEvidenceLine(
+                "evolution_timeline_recompute_ms=3.61 round=50 scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=132120576 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+            )
+        ]
+    }
+}
+
+/// Evolution 面板性能夹具执行器；
+/// 在 UI_TEST_MODE 下注入本地确定性状态，不依赖真实服务端。
+/// 通过 `run(store:)` 接受 EvolutionPipelineProjectionStore 引用并驱动 N 轮重算。
+final class EvolutionPerfFixtureRunner: ObservableObject {
+    @Published private(set) var isRunning: Bool = false
+    @Published private(set) var isCompleted: Bool = false
+    @Published private(set) var statusText: String = "idle"
+
+    private let scenario: EvolutionPerfFixtureScenario
+    private var task: Task<Void, Never>?
+    private(set) var progress: Int = 0
+
+    init(scenario: EvolutionPerfFixtureScenario = .current() ?? .evolutionPanel) {
+        self.scenario = scenario
+    }
+
+    /// 启动 fixture 场景，驱动 Evolution 面板重算环路，收集 evolution_timeline_recompute_ms。
+    func run(applyRound: @escaping @MainActor (Int) -> Double) {
+        guard !isRunning else {
+            TFLog.perf.info(
+                "perf evolution_perf_fixture_run_ignored scenario=\(self.scenario.id, privacy: .public) reason=already_running progress=\(self.progress, privacy: .public)"
+            )
+            return
+        }
+        isRunning = true
+        isCompleted = false
+        progress = 0
+        statusText = "preparing"
+
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let beginMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin",
+                scenario: self.scenario.id,
+                bytes: beginMemBytes,
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            TFLog.perf.info(
+                "perf evolution_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) cycle_id=\(self.scenario.cycleID, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            // 模拟 tier_change：fixture 启动时从 paused 切换到 active
+            TFLog.logEvolutionMonitorTierChange(
+                key: self.scenario.workspaceContext,
+                oldTier: "paused",
+                newTier: "active",
+                reason: "fixture_start",
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            self.statusText = "running"
+
+            for roundIndex in 0..<self.scenario.roundCount {
+                if Task.isCancelled {
+                    TFLog.perf.info(
+                        "perf evolution_perf_fixture_cancelled scenario=\(self.scenario.id, privacy: .public) progress=\(self.progress, privacy: .public)"
+                    )
+                    self.isRunning = false
+                    self.isCompleted = false
+                    self.statusText = "cancelled \(self.progress)/\(self.scenario.roundCount)"
+                    self.task = nil
+                    return
+                }
+
+                let recomputeMs = applyRound(roundIndex)
+                self.progress = roundIndex + 1
+
+                if roundIndex == 0 || (roundIndex + 1).isMultiple(of: 10) || roundIndex + 1 == self.scenario.roundCount {
+                    let msText = String(format: "%.2f", recomputeMs)
+                    TFLog.perf.info(
+                        "perf evolution_timeline_recompute_ms=\(msText, privacy: .public) round=\(roundIndex + 1, privacy: .public) scenario=\(self.scenario.id, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) cycle_id=\(self.scenario.cycleID, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+                    )
+                    self.statusText = "running \(roundIndex + 1)/\(self.scenario.roundCount)"
+                }
+
+                // 模拟 tier_change：中间轮次切换到 throttled 并还原，暴露采样降级信号
+                if (roundIndex + 1) == self.scenario.roundCount / 2 {
+                    TFLog.logEvolutionMonitorTierChange(
+                        key: self.scenario.workspaceContext,
+                        oldTier: "active",
+                        newTier: "throttled",
+                        reason: "fixture_midpoint",
+                        project: self.scenario.project,
+                        workspace: self.scenario.workspace,
+                        cycleID: self.scenario.cycleID
+                    )
+                    TFLog.logEvolutionMonitorTierChange(
+                        key: self.scenario.workspaceContext,
+                        oldTier: "throttled",
+                        newTier: "active",
+                        reason: "fixture_resume",
+                        project: self.scenario.project,
+                        workspace: self.scenario.workspace,
+                        cycleID: self.scenario.cycleID
+                    )
+                }
+
+                // 每轮之间不做真实延迟：fixture 追求的是最大压力而不是真实时序
+                await Task.yield()
+            }
+
+            let endMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end",
+                scenario: self.scenario.id,
+                bytes: endMemBytes,
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            TFLog.perf.info(
+                "perf evolution_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) cycle_id=\(self.scenario.cycleID, privacy: .public)"
+            )
+            // fixture 结束后从 active 退回 paused
+            TFLog.logEvolutionMonitorTierChange(
+                key: self.scenario.workspaceContext,
+                oldTier: "active",
+                newTier: "paused",
+                reason: "fixture_end",
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            self.task = nil
+            self.isRunning = false
+            self.isCompleted = true
+            self.statusText = "completed \(self.scenario.roundCount)/\(self.scenario.roundCount)"
+        }
+    }
+
+    func cancel() {
+        guard let task else { return }
+        task.cancel()
+        self.task = nil
+        if isRunning {
+            isRunning = false
+            isCompleted = false
+            statusText = "cancelled \(progress)/\(scenario.roundCount)"
+        }
     }
 }

@@ -1050,6 +1050,73 @@ final class EvolutionPipelineProjectionStore {
         return true
     }
 
+    /// 在 UI_TEST_MODE fixture 场景中模拟一轮 Evolution 面板状态更新，
+    /// 计时并返回本轮重算耗时（毫秒），供 EvolutionPerfFixtureRunner 日志采集。
+    /// - Parameters:
+    ///   - project: fixture 项目名
+    ///   - workspace: fixture 工作区名
+    ///   - cycleID: fixture 循环 ID
+    ///   - roundIndex: 当前轮次（从 0 开始）
+    /// - Returns: 本轮 updateProjection 耗时（毫秒）
+    @discardableResult
+    func applyFixtureRound(project: String, workspace: String, cycleID: String, roundIndex: Int) -> Double {
+        let startMs = CFAbsoluteTimeGetCurrent() * 1000
+
+        // 构造稳定的 fixture 投影，每轮更新循环历史条目以触发真实差值计算
+        let stageEntry = PipelineCycleStageEntry(
+            id: "\(cycleID)-round-\(roundIndex)-stage",
+            stage: "implement.general.1",
+            agent: "fixture-agent",
+            aiToolName: "write_file",
+            startedAt: nil,
+            status: "done",
+            durationSeconds: Double(roundIndex % 30) + 1.5
+        )
+        let cycleHistory = PipelineCycleHistory(
+            id: "\(cycleID)-round-\(roundIndex)",
+            title: "Fixture Round \(roundIndex + 1)",
+            status: roundIndex < 48 ? "running" : "done",
+            round: roundIndex + 1,
+            stages: ["implement.general.1", "verify.general.1"],
+            startDate: Date(timeIntervalSinceNow: -Double(roundIndex) * 2.0),
+            stageEntries: [stageEntry],
+            terminalReasonCode: nil,
+            terminalErrorMessage: nil,
+            durationMs: UInt64((roundIndex + 1) * 1200),
+            errorCode: nil,
+            retryable: false
+        )
+
+        let fixtureProjection = EvolutionPipelineProjection(
+            project: project,
+            workspace: workspace,
+            workspaceReady: true,
+            workspaceContextKey: "\(project)/\(workspace)",
+            scheduler: .empty,
+            control: .empty,
+            currentItem: nil,
+            blockingRequest: nil,
+            cycleHistories: [cycleHistory],
+            runningAgents: [],
+            standbyAgents: [],
+            totalDurationText: EvolutionPipelineDateFormatting.formatDuration(Double(roundIndex + 1) * 1.2),
+            isCurrentCycleFailed: false,
+            currentCycleFailureSummary: nil,
+            isCurrentCycleRetryable: false,
+            predictionProjection: .empty,
+            analysisSummaries: [],
+            performance: .empty
+        )
+        _ = updateProjection(fixtureProjection)
+
+        let endMs = CFAbsoluteTimeGetCurrent() * 1000
+        let durationMs = endMs - startMs
+        TFLog.perf.info(
+            "perf evolution_timeline_recompute_ms=\(String(format: "%.2f", durationMs), privacy: .public) round=\(roundIndex + 1, privacy: .public) scenario=evolution_panel source=projection_store project=\(project, privacy: .public) workspace=\(workspace, privacy: .public) cycle_id=\(cycleID, privacy: .public)"
+        )
+        return durationMs
+    }
+
     /// 仅更新面板性能投影（采样决策与指标），签名未变时跳过
     @discardableResult
     func updatePerformanceProjection(_ next: EvolutionPipelinePerformanceProjection) -> Bool {
