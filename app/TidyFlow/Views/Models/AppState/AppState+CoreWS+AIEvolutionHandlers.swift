@@ -889,6 +889,7 @@ extension AppState {
                 durationMs: ev.durationMs ?? existing.durationMs,
                 errorCode: ev.errorCode ?? existing.errorCode,
                 retryable: ev.retryable,
+                recovery: ev.recovery ?? existing.recovery,
                 coordinationState: ev.coordinationState ?? existing.coordinationState,
                 coordinationReason: ev.coordinationReason ?? existing.coordinationReason,
                 coordinationScope: ev.coordinationScope ?? existing.coordinationScope,

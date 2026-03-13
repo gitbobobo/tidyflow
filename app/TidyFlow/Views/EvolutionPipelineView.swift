@@ -1525,7 +1525,19 @@ struct EvolutionPipelineView: View {
 
                         Spacer()
 
-                        // 一键重试（仅 Core 标记可安全重试时显示）
+                        // 恢复状态文案（v1.48+）
+                        if let recoveryText = projection.currentCycleRecoveryStatusText {
+                            Text(recoveryText)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule().fill(.orange.opacity(0.12))
+                                )
+                        }
+
+                        // 一键重试（仅 Core 标记可安全重试且无恢复冷却时显示）
                         if isFailed, projection.isCurrentCycleRetryable, let ws = workspace {
                             Button {
                                 appState.retryEvolutionCycle(project: project, workspace: ws)

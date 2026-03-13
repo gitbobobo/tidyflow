@@ -63,6 +63,8 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     let errorCode: String?
     /// 是否可安全重试（Core 判定）
     let retryable: Bool
+    /// 恢复状态（Core 权威输出，v1.48+）
+    let recovery: EvolutionRecoveryDTO?
 
     var displayTitle: String {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -88,6 +90,23 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
+    /// 恢复状态摘要文案（用于面板展示）
+    var recoveryStatusText: String? {
+        guard let recovery else { return nil }
+        switch recovery.phase {
+        case "recovering": return "恢复中"
+        case "degraded": return "降级中"
+        case "failed": return "恢复失败"
+        default: return nil
+        }
+    }
+
+    /// 是否因恢复/降级阻断手动重试
+    var isRetryBlockedByRecovery: Bool {
+        guard let recovery else { return false }
+        return recovery.isActiveCooldown
+    }
+
     init(
         id: String,
         title: String? = nil,
@@ -100,7 +119,8 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         terminalErrorMessage: String? = nil,
         durationMs: UInt64? = nil,
         errorCode: String? = nil,
-        retryable: Bool = false
+        retryable: Bool = false,
+        recovery: EvolutionRecoveryDTO? = nil
     ) {
         self.id = id
         self.title = title
@@ -114,6 +134,7 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.recovery = recovery
     }
 }
 
@@ -276,6 +297,8 @@ struct EvolutionPipelineProjection: Equatable {
     let currentCycleFailureSummary: String?
     /// 预计算：当前循环是否可重试
     let isCurrentCycleRetryable: Bool
+    /// 预计算：当前循环恢复状态文案（v1.48+）
+    let currentCycleRecoveryStatusText: String?
     /// v1.44：当前工作区的预测投影（调度建议与预测异常摘要）
     let predictionProjection: WorkspacePredictionProjection
     /// v1.45：当前工作区的分析摘要（从 Core 权威输出消费，不重新推导）
@@ -322,6 +345,7 @@ struct EvolutionPipelineProjection: Equatable {
         isCurrentCycleFailed: false,
         currentCycleFailureSummary: nil,
         isCurrentCycleRetryable: false,
+        currentCycleRecoveryStatusText: nil,
         predictionProjection: .empty,
         analysisSummaries: [],
         performance: .empty
@@ -372,6 +396,7 @@ enum EvolutionPipelineProjectionSemantics {
             isCurrentCycleFailed: hotData.isCurrentCycleFailed,
             currentCycleFailureSummary: hotData.currentCycleFailureSummary,
             isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
+            currentCycleRecoveryStatusText: hotData.currentCycleRecoveryStatusText,
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace ?? ""
             ),
@@ -430,6 +455,7 @@ enum EvolutionPipelineProjectionSemantics {
             isCurrentCycleFailed: hotData.isCurrentCycleFailed,
             currentCycleFailureSummary: hotData.currentCycleFailureSummary,
             isCurrentCycleRetryable: hotData.isCurrentCycleRetryable,
+            currentCycleRecoveryStatusText: hotData.currentCycleRecoveryStatusText,
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace
             ),
@@ -509,6 +535,8 @@ enum EvolutionPipelineProjectionSemantics {
         let isCurrentCycleFailed: Bool
         let currentCycleFailureSummary: String?
         let isCurrentCycleRetryable: Bool
+        /// 恢复状态摘要文案（v1.48+）
+        let currentCycleRecoveryStatusText: String?
     }
 
     private static func precomputeHotData(currentItem: EvolutionWorkspaceItemV2?) -> HotData {
@@ -549,6 +577,18 @@ enum EvolutionPipelineProjectionSemantics {
             return parts.isEmpty ? nil : parts.joined(separator: " ")
         }()
         let isRetryable = currentItem?.retryable ?? false
+        // 恢复/降级期间阻断手动重试
+        let recoveryBlocked = currentItem?.recovery?.isActiveCooldown ?? false
+        let effectiveRetryable = isRetryable && !recoveryBlocked
+        let recoveryStatusText: String? = {
+            guard let phase = currentItem?.recovery?.phase else { return nil }
+            switch phase {
+            case "recovering": return "恢复中"
+            case "degraded": return "降级中"
+            case "failed": return "恢复失败"
+            default: return nil
+            }
+        }()
 
         return HotData(
             runningAgents: runningAgents,
@@ -556,7 +596,8 @@ enum EvolutionPipelineProjectionSemantics {
             totalDurationText: totalDurationText,
             isCurrentCycleFailed: isFailed,
             currentCycleFailureSummary: failureSummary,
-            isCurrentCycleRetryable: isRetryable
+            isCurrentCycleRetryable: effectiveRetryable,
+            currentCycleRecoveryStatusText: recoveryStatusText
         )
     }
 
@@ -658,7 +699,8 @@ enum EvolutionPipelineProjectionSemantics {
             terminalErrorMessage: cycle.terminalErrorMessage,
             durationMs: cycle.durationMs,
             errorCode: cycle.errorCode,
-            retryable: cycle.retryable
+            retryable: cycle.retryable,
+            recovery: cycle.recovery
         )
     }
 
@@ -1143,6 +1185,7 @@ final class EvolutionPipelineProjectionStore {
             isCurrentCycleFailed: false,
             currentCycleFailureSummary: nil,
             isCurrentCycleRetryable: false,
+            currentCycleRecoveryStatusText: nil,
             predictionProjection: .empty,
             analysisSummaries: [],
             performance: .empty
@@ -1178,6 +1221,7 @@ final class EvolutionPipelineProjectionStore {
             isCurrentCycleFailed: projection.isCurrentCycleFailed,
             currentCycleFailureSummary: projection.currentCycleFailureSummary,
             isCurrentCycleRetryable: projection.isCurrentCycleRetryable,
+            currentCycleRecoveryStatusText: projection.currentCycleRecoveryStatusText,
             predictionProjection: projection.predictionProjection,
             analysisSummaries: projection.analysisSummaries,
             performance: next

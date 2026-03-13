@@ -2129,6 +2129,75 @@ public struct EvolutionSchedulerInfoV2: Equatable {
     }
 }
 
+/// Evolution 恢复状态 DTO（v1.48，向后兼容可选扩展）
+/// 由 Core 权威输出，客户端只消费不推导。
+public struct EvolutionRecoveryDTO: Equatable {
+    /// 恢复阶段：recovering / degraded / failed
+    public let phase: String
+    /// 恢复策略：wait_rate_limit / retry_stage / defer_workspace / none
+    public let strategy: String
+    /// 失败诊断码
+    public let diagnosisCode: String
+    /// 诊断摘要（人类可读）
+    public let diagnosisSummary: String?
+    /// 预计恢复时间（RFC3339）
+    public let resumeAt: String?
+    /// 当前重试次数
+    public let retryCount: Int
+    /// 重试上限
+    public let retryLimit: Int
+    /// 降级冷却截止时间（RFC3339）
+    public let degradedUntil: String?
+    /// 最后更新时间（RFC3339）
+    public let updatedAt: String
+
+    /// 是否在冷却/等待中（recovering 或 degraded 且有活跃时间窗）
+    public var isActiveCooldown: Bool {
+        phase == "recovering" || phase == "degraded"
+    }
+
+    public static func from(json: [String: Any]?) -> EvolutionRecoveryDTO? {
+        guard let json = json,
+              let phase = json["phase"] as? String,
+              let strategy = json["strategy"] as? String,
+              let diagnosisCode = json["diagnosis_code"] as? String,
+              let updatedAt = json["updated_at"] as? String else { return nil }
+        return EvolutionRecoveryDTO(
+            phase: phase,
+            strategy: strategy,
+            diagnosisCode: diagnosisCode,
+            diagnosisSummary: json["diagnosis_summary"] as? String,
+            resumeAt: json["resume_at"] as? String,
+            retryCount: Int(parseInt64(json["retry_count"])),
+            retryLimit: Int(parseInt64(json["retry_limit"])),
+            degradedUntil: json["degraded_until"] as? String,
+            updatedAt: updatedAt
+        )
+    }
+
+    public init(
+        phase: String,
+        strategy: String,
+        diagnosisCode: String,
+        diagnosisSummary: String?,
+        resumeAt: String?,
+        retryCount: Int,
+        retryLimit: Int,
+        degradedUntil: String?,
+        updatedAt: String
+    ) {
+        self.phase = phase
+        self.strategy = strategy
+        self.diagnosisCode = diagnosisCode
+        self.diagnosisSummary = diagnosisSummary
+        self.resumeAt = resumeAt
+        self.retryCount = retryCount
+        self.retryLimit = retryLimit
+        self.degradedUntil = degradedUntil
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct EvolutionWorkspaceItemV2: Equatable {
     public let project: String
     public let workspace: String
@@ -2153,6 +2222,8 @@ public struct EvolutionWorkspaceItemV2: Equatable {
     public let errorCode: String?
     /// 是否可安全重试（Core 判定）
     public let retryable: Bool
+    /// 恢复状态对象（v1.48，Core 权威输出）
+    public let recovery: EvolutionRecoveryDTO?
     /// 编排协作状态（等待方向/等待主线/等待 integration 等）
     public let coordinationState: String?
     /// 编排协作原因
@@ -2231,6 +2302,7 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             durationMs: json["duration_ms"] as? UInt64,
             errorCode: json["error_code"] as? String,
             retryable: json["retryable"] as? Bool ?? false,
+            recovery: EvolutionRecoveryDTO.from(json: json["recovery"] as? [String: Any]),
             coordinationState: json["coordination_state"] as? String,
             coordinationReason: json["coordination_reason"] as? String,
             coordinationScope: json["coordination_scope"] as? String,
@@ -2242,7 +2314,7 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, recovery: EvolutionRecoveryDTO? = nil, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2262,6 +2334,7 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.recovery = recovery
         self.coordinationState = coordinationState
         self.coordinationReason = coordinationReason
         self.coordinationScope = coordinationScope
@@ -2290,6 +2363,9 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         ssrHasher.combine(durationMs ?? 0)
         ssrHasher.combine(errorCode ?? "")
         ssrHasher.combine(retryable)
+        ssrHasher.combine(recovery?.phase ?? "")
+        ssrHasher.combine(recovery?.strategy ?? "")
+        ssrHasher.combine(recovery?.diagnosisCode ?? "")
         ssrHasher.combine(coordinationState ?? "")
         ssrHasher.combine(coordinationReason ?? "")
         ssrHasher.combine(coordinationScope ?? "")
@@ -2335,6 +2411,8 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         projHasher.combine(durationMs ?? 0)
         projHasher.combine(errorCode ?? "")
         projHasher.combine(retryable)
+        projHasher.combine(recovery?.phase ?? "")
+        projHasher.combine(recovery?.diagnosisCode ?? "")
         self.projectionSignature = projHasher.finalize()
     }
 }
@@ -2382,6 +2460,8 @@ public struct EvoCycleUpdatedV2 {
     public let errorCode: String?
     /// 是否可安全重试（v1.43+）
     public let retryable: Bool
+    /// 恢复状态对象（v1.48，Core 权威输出）
+    public let recovery: EvolutionRecoveryDTO?
     public let coordinationState: String?
     public let coordinationReason: String?
     public let coordinationScope: String?
@@ -2420,6 +2500,7 @@ public struct EvoCycleUpdatedV2 {
             durationMs: (json["duration_ms"] as? NSNumber)?.uint64Value,
             errorCode: json["error_code"] as? String,
             retryable: json["retryable"] as? Bool ?? false,
+            recovery: EvolutionRecoveryDTO.from(json: json["recovery"] as? [String: Any]),
             coordinationState: json["coordination_state"] as? String,
             coordinationReason: json["coordination_reason"] as? String,
             coordinationScope: json["coordination_scope"] as? String,
@@ -2431,7 +2512,7 @@ public struct EvoCycleUpdatedV2 {
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, recovery: EvolutionRecoveryDTO? = nil, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2451,6 +2532,7 @@ public struct EvoCycleUpdatedV2 {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.recovery = recovery
         self.coordinationState = coordinationState
         self.coordinationReason = coordinationReason
         self.coordinationScope = coordinationScope
@@ -2856,7 +2938,7 @@ public struct EvolutionCycleStageHistoryEntryV2 {
     }
 }
 
-public struct EvolutionCycleHistoryItemV2 {
+public struct EvolutionCycleHistoryItemV2: Equatable {
     public let cycleID: String
     public let title: String?
     public let status: String
@@ -2873,6 +2955,8 @@ public struct EvolutionCycleHistoryItemV2 {
     public let errorCode: String?
     /// 是否可安全重试
     public let retryable: Bool
+    /// 恢复状态对象（v1.48，Core 权威输出）
+    public let recovery: EvolutionRecoveryDTO?
 
     public static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
         guard let cycleID = parseOptionalString(json["cycle_id"]) else { return nil }
@@ -2900,11 +2984,12 @@ public struct EvolutionCycleHistoryItemV2 {
             stages: stages,
             durationMs: json["duration_ms"] as? UInt64,
             errorCode: json["error_code"] as? String,
-            retryable: json["retryable"] as? Bool ?? false
+            retryable: json["retryable"] as? Bool ?? false,
+            recovery: EvolutionRecoveryDTO.from(json: json["recovery"] as? [String: Any])
         )
     }
 
-    public init(cycleID: String, title: String?, status: String, globalLoopRound: Int, createdAt: String, updatedAt: String, terminalReasonCode: String?, terminalErrorMessage: String?, executions: [EvolutionSessionExecutionEntryV2], stages: [EvolutionCycleStageHistoryEntryV2], durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
+    public init(cycleID: String, title: String?, status: String, globalLoopRound: Int, createdAt: String, updatedAt: String, terminalReasonCode: String?, terminalErrorMessage: String?, executions: [EvolutionSessionExecutionEntryV2], stages: [EvolutionCycleStageHistoryEntryV2], durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, recovery: EvolutionRecoveryDTO? = nil) {
         self.cycleID = cycleID
         self.title = title
         self.status = status
@@ -2918,6 +3003,30 @@ public struct EvolutionCycleHistoryItemV2 {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.recovery = recovery
+    }
+
+    public static func == (lhs: EvolutionCycleHistoryItemV2, rhs: EvolutionCycleHistoryItemV2) -> Bool {
+        lhs.cycleID == rhs.cycleID &&
+            lhs.title == rhs.title &&
+            lhs.status == rhs.status &&
+            lhs.globalLoopRound == rhs.globalLoopRound &&
+            lhs.createdAt == rhs.createdAt &&
+            lhs.updatedAt == rhs.updatedAt &&
+            lhs.terminalReasonCode == rhs.terminalReasonCode &&
+            lhs.terminalErrorMessage == rhs.terminalErrorMessage &&
+            lhs.executions == rhs.executions &&
+            lhs.durationMs == rhs.durationMs &&
+            lhs.errorCode == rhs.errorCode &&
+            lhs.retryable == rhs.retryable &&
+            lhs.recovery == rhs.recovery &&
+            lhs.stages.elementsEqual(rhs.stages, by: { left, right in
+                left.stage == right.stage &&
+                    left.agent == right.agent &&
+                    left.aiTool == right.aiTool &&
+                    left.status == right.status &&
+                    left.durationMs == right.durationMs
+            })
     }
 }
 
