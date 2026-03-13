@@ -479,7 +479,11 @@ extension MobileAppState {
             startedAt: existing.startedAt,
             durationMs: existing.durationMs,
             errorCode: existing.errorCode,
-            retryable: existing.retryable
+            retryable: existing.retryable,
+            coordinationState: existing.coordinationState,
+            coordinationReason: existing.coordinationReason,
+            coordinationPeerWorkspace: existing.coordinationPeerWorkspace,
+            coordinationQueueIndex: existing.coordinationQueueIndex
         )
         if evolutionWorkspaceItems[existingIndex] != updated {
             evolutionWorkspaceItems[existingIndex] = updated
@@ -536,7 +540,11 @@ extension MobileAppState {
             startedAt: ev.startedAt ?? existing.startedAt,
             durationMs: ev.durationMs ?? existing.durationMs,
             errorCode: ev.errorCode ?? existing.errorCode,
-            retryable: ev.retryable
+            retryable: ev.retryable,
+            coordinationState: ev.coordinationState ?? existing.coordinationState,
+            coordinationReason: ev.coordinationReason ?? existing.coordinationReason,
+            coordinationPeerWorkspace: ev.coordinationPeerWorkspace ?? existing.coordinationPeerWorkspace,
+            coordinationQueueIndex: ev.coordinationQueueIndex ?? existing.coordinationQueueIndex
         )
         if evolutionWorkspaceItems[existingIndex] != updated {
             evolutionWorkspaceItems[existingIndex] = updated

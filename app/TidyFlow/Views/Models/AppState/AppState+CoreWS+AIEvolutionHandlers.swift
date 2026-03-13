@@ -821,7 +821,15 @@ extension AppState {
                 executions: existing.executions,
                 terminalReasonCode: existing.terminalReasonCode,
                 terminalErrorMessage: existing.terminalErrorMessage,
-                rateLimitErrorMessage: existing.rateLimitErrorMessage
+                rateLimitErrorMessage: existing.rateLimitErrorMessage,
+                startedAt: existing.startedAt,
+                durationMs: existing.durationMs,
+                errorCode: existing.errorCode,
+                retryable: existing.retryable,
+                coordinationState: existing.coordinationState,
+                coordinationReason: existing.coordinationReason,
+                coordinationPeerWorkspace: existing.coordinationPeerWorkspace,
+                coordinationQueueIndex: existing.coordinationQueueIndex
             )
             if self.upsertEvolutionWorkspaceItem(updated) {
                 self.scheduleWorkspaceSidebarStatusRefresh(
@@ -876,7 +884,11 @@ extension AppState {
                 startedAt: ev.startedAt ?? existing.startedAt,
                 durationMs: ev.durationMs ?? existing.durationMs,
                 errorCode: ev.errorCode ?? existing.errorCode,
-                retryable: ev.retryable
+                retryable: ev.retryable,
+                coordinationState: ev.coordinationState ?? existing.coordinationState,
+                coordinationReason: ev.coordinationReason ?? existing.coordinationReason,
+                coordinationPeerWorkspace: ev.coordinationPeerWorkspace ?? existing.coordinationPeerWorkspace,
+                coordinationQueueIndex: ev.coordinationQueueIndex ?? existing.coordinationQueueIndex
             )
             guard existing.projectionSignature != updated.projectionSignature else { return }
             let itemApplyMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)

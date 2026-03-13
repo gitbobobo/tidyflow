@@ -1830,6 +1830,27 @@ struct MobileEvolutionView: View {
                                 .font(.caption)
                         }
                     }
+                    if let coordinationReason = trimmedNonEmptyText(item.coordinationReason) {
+                        LabeledContent("协作等待") {
+                            Text(coordinationReason)
+                                .foregroundColor(.blue)
+                                .lineLimit(3)
+                                .font(.caption)
+                        }
+                    }
+                    if let peerWorkspace = trimmedNonEmptyText(item.coordinationPeerWorkspace) {
+                        LabeledContent("等待对象") {
+                            Text(peerWorkspace)
+                                .lineLimit(2)
+                                .font(.caption)
+                        }
+                    }
+                    if let queueIndex = item.coordinationQueueIndex {
+                        LabeledContent("队列位置") {
+                            Text("#\(queueIndex + 1)")
+                                .font(.caption)
+                        }
+                    }
                     // 限流错误信息
                     if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                         LabeledContent("evolution.page.pipeline.rateLimitError".localized) {

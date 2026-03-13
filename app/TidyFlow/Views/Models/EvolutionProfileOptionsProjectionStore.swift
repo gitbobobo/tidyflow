@@ -138,6 +138,7 @@ enum EvolutionProfileOptionsProjectionSemantics {
         case "verify": return "Verify"
         case "judge": return "Judge"
         case "auto_commit": return "Auto Commit"
+        case "integration": return "Integration"
         default: return stage
         }
     }

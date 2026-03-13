@@ -701,6 +701,47 @@ struct EvolutionPipelineView: View {
                     }
                 }
 
+                if let coordinationReason = trimmedNonEmptyText(item.coordinationReason) {
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "pause.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.blue.opacity(0.9))
+                        Text("协作等待: ")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text(coordinationReason)
+                            .font(.system(size: 9))
+                            .foregroundColor(.primary)
+                            .lineLimit(3)
+                    }
+                    if let peerWorkspace = trimmedNonEmptyText(item.coordinationPeerWorkspace) {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                            Text("等待对象: ")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text(peerWorkspace)
+                                .font(.system(size: 9))
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    if let queueIndex = item.coordinationQueueIndex {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "list.number")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                            Text("队列位置: ")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text("#\(queueIndex + 1)")
+                                .font(.system(size: 9))
+                                .foregroundColor(.primary)
+                        }
+                    }
+                }
+
                 // 限流错误信息
                 if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                     HStack(alignment: .top, spacing: 4) {
