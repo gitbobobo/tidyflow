@@ -433,6 +433,12 @@ extension AppState {
         toolName: String?
     ) {
         let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+
+        // WI-002：若 CoordinatorStateCache 已有该工作区的 Core 权威状态，
+        // 本地事件驱动的同步降级为兜底，不得覆盖 Coordinator 状态。
+        // 仅在首帧/重连期间（缓存尚无数据时）允许本地同步作为占位。
+        guard !coordinatorStateCache.hasState(forGlobalKey: globalKey) else { return }
+
         let tabs = workspaceTabs[globalKey] ?? []
         guard !tabs.isEmpty else { return }
 
