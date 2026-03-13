@@ -167,47 +167,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     }
 }
 
-private struct AIChatPasteCommands: Commands {
-    @FocusedValue(\.aiChatInputPasteHandler) private var aiChatInputPasteHandler
-
-    var body: some Commands {
-        CommandGroup(replacing: .pasteboard) {
-            Button("common.cut".localized) {
-                sendAction(#selector(NSText.cut(_:)))
-            }
-            .keyboardShortcut("x")
-            .disabled(!canSendAction(#selector(NSText.cut(_:))))
-
-            Button("common.copy".localized) {
-                sendAction(#selector(NSText.copy(_:)))
-            }
-            .keyboardShortcut("c")
-            .disabled(!canSendAction(#selector(NSText.copy(_:))))
-
-            Button("common.paste".localized) {
-                if aiChatInputPasteHandler?() == true {
-                    return
-                }
-                sendAction(#selector(NSText.paste(_:)))
-            }
-            .keyboardShortcut("v")
-            .disabled(!canPaste)
-        }
-    }
-
-    private var canPaste: Bool {
-        aiChatInputPasteHandler != nil || canSendAction(#selector(NSText.paste(_:)))
-    }
-
-    private func canSendAction(_ selector: Selector) -> Bool {
-        NSApp.target(forAction: selector, to: nil, from: nil) != nil
-    }
-
-    private func sendAction(_ selector: Selector) {
-        NSApp.sendAction(selector, to: nil, from: nil)
-    }
-}
-
 @main
 struct TidyFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -268,7 +227,6 @@ struct TidyFlowApp: App {
         .commands {
             InspectorCommands()
             HelpCommands()
-            AIChatPasteCommands()
         }
         
         // FAQ 窗口

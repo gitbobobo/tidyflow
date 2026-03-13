@@ -5,17 +5,6 @@ import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
-
-private struct AIChatInputPasteHandlerKey: FocusedValueKey {
-    typealias Value = () -> Bool
-}
-
-extension FocusedValues {
-    var aiChatInputPasteHandler: (() -> Bool)? {
-        get { self[AIChatInputPasteHandlerKey.self] }
-        set { self[AIChatInputPasteHandlerKey.self] = newValue }
-    }
-}
 #endif
 
 #if os(iOS)
@@ -108,9 +97,6 @@ struct ChatInputView: View {
             )
             #endif
             .accessibilityIdentifier("tf.ai.input.container")
-            #if os(macOS)
-            .focusedSceneValue(\.aiChatInputPasteHandler, inputFocused ? handleFocusedPaste : nil)
-            #endif
             .onAppear {
                 guard autoFocusOnAppear else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -1317,14 +1303,6 @@ struct ChatInputView: View {
     }
     #endif
 
-    #if os(macOS)
-    private func handleFocusedPaste() -> Bool {
-        let attachments = Self.makeImageAttachments(from: .general)
-        guard !attachments.isEmpty else { return false }
-        appendImageAttachments(attachments)
-        return true
-    }
-    #endif
 }
 
 #if os(iOS)
