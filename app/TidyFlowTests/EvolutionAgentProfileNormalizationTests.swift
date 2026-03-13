@@ -56,10 +56,12 @@ final class EvolutionAgentProfileNormalizationTests: XCTestCase {
             EvolutionStageProfileInfoV2(stage: "implement_advanced", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
             EvolutionStageProfileInfoV2(stage: "verify", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
             EvolutionStageProfileInfoV2(stage: "auto_commit", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+            EvolutionStageProfileInfoV2(stage: "sync", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
+            EvolutionStageProfileInfoV2(stage: "integration", aiTool: .copilot, mode: nil, model: nil, configOptions: [:]),
         ]
         let normalized = AppState.normalizedEvolutionProfiles(profiles)
 
-        XCTAssertEqual(normalized.count, 7)
+        XCTAssertEqual(normalized.count, 9)
         XCTAssertTrue(normalized.allSatisfy { $0.aiTool == .copilot }, "所有阶段均应使用配置的 copilot")
     }
 

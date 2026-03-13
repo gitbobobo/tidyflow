@@ -33,10 +33,11 @@ final class EvolutionStageChatAvailabilityTests: XCTestCase {
             "direction", "plan",
             "implement_general", "implement_visual", "implement_advanced",
             "verify", "auto_commit",
+            "sync", "integration",
         ]
         let defaults = AppState.defaultEvolutionProfiles()
         let actual = Set(defaults.map { $0.stage })
-        XCTAssertEqual(actual, expected, "默认配置应包含全部 7 个标准阶段")
+        XCTAssertEqual(actual, expected, "默认配置应包含全部 9 个标准阶段")
     }
 
     // MARK: - 显式全量配置归一化后 auto_commit 仍正确保留

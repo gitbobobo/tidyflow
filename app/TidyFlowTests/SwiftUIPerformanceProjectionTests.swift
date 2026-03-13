@@ -137,6 +137,7 @@ final class EvolutionPipelineProjectionStoreTests: XCTestCase {
             isCurrentCycleFailed: false,
             currentCycleFailureSummary: nil,
             isCurrentCycleRetryable: false,
+            currentCycleRecoveryStatusText: nil,
             predictionProjection: .empty,
             analysisSummaries: [],
             performance: .empty
@@ -272,7 +273,17 @@ final class EvolutionProfileOptionsProjectionStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             EvolutionProfileOptionsProjectionSemantics.stageDisplayName("implement"),
-            "Implement General"
+            EvolutionStageSemantics.displayName(
+                for: EvolutionStageSemantics.profileStageKey(for: "implement")
+            )
+        )
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.stageDisplayName("sync"),
+            EvolutionStageSemantics.displayName(for: "sync")
+        )
+        XCTAssertEqual(
+            EvolutionProfileOptionsProjectionSemantics.stageDisplayName("integration"),
+            EvolutionStageSemantics.displayName(for: "integration")
         )
     }
 }
