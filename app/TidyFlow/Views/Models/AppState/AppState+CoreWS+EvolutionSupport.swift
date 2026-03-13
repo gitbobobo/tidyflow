@@ -510,6 +510,8 @@ extension AppState {
             "implement_advanced",
             "verify",
             "auto_commit",
+            "sync",
+            "integration",
         ].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil, configOptions: [:])
         }

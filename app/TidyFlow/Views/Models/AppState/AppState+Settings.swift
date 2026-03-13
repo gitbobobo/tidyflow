@@ -482,6 +482,8 @@ extension AppState {
             "implement_advanced",
             "verify",
             "auto_commit",
+            "sync",
+            "integration",
         ]
     }
 

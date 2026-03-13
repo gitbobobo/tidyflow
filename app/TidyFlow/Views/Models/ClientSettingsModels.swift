@@ -122,8 +122,12 @@ enum EvolutionStageSemantics {
             return (2, 1, 1, "")
         case "implement_advanced":
             return (3, 1, 0, "")
+        case "sync":
+            return (6, 0, 0, "")
+        case "integration":
+            return (7, 0, 0, "")
         default:
-            return (6, 0, 0, normalized)
+            return (8, 0, 0, normalized)
         }
     }
 
@@ -167,6 +171,10 @@ enum EvolutionStageSemantics {
             return "evolution.stage.verify".localized
         case "auto_commit":
             return "evolution.stage.autoCommit".localized
+        case "sync":
+            return "evolution.stage.sync".localized
+        case "integration":
+            return "evolution.stage.integration".localized
         default:
             return trimmed
         }
@@ -195,6 +203,10 @@ enum EvolutionStageSemantics {
             return "checkmark.seal"
         case "auto_commit":
             return "sparkles"
+        case "sync":
+            return "arrow.trianglehead.2.clockwise"
+        case "integration":
+            return "arrow.triangle.merge"
         default:
             return "person.crop.square"
         }
@@ -220,6 +232,10 @@ enum EvolutionStageSemantics {
             return .green
         case "auto_commit":
             return .gray
+        case "sync":
+            return .teal
+        case "integration":
+            return .mint
         default:
             return .secondary
         }

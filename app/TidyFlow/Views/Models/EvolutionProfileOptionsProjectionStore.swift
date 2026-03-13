@@ -129,18 +129,7 @@ enum EvolutionProfileOptionsProjectionSemantics {
     }
 
     static func stageDisplayName(_ stage: String) -> String {
-        switch EvolutionStageSemantics.profileStageKey(for: stage) {
-        case "direction": return "Direction"
-        case "plan": return "Plan"
-        case "implement_general": return "Implement General"
-        case "implement_visual": return "Implement Visual"
-        case "implement_advanced": return "Implement Advanced"
-        case "verify": return "Verify"
-        case "judge": return "Judge"
-        case "auto_commit": return "Auto Commit"
-        case "integration": return "Integration"
-        default: return stage
-        }
+        EvolutionStageSemantics.displayName(for: EvolutionStageSemantics.profileStageKey(for: stage))
     }
 
     static func selectedModelDisplayName(
