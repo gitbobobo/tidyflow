@@ -52,11 +52,6 @@ TOOL_VERSION = "2.0.0"
 # 日志解析工具
 # ---------------------------------------------------------------------------
 
-CHAT_BASE_LOG = "apple-chat-stream-fixture-oslog.log"
-CHAT_MULTI_LOG = "apple-chat-stream-workspace-switch-fixture-oslog.log"
-EVOLUTION_BASE_LOG = "apple-evolution-panel-fixture-oslog.log"
-EVOLUTION_MULTI_LOG = "apple-evolution-panel-multi-workspace-fixture-oslog.log"
-
 def parse_kv_line(line: str) -> dict[str, str]:
     """
     从形如 `key=value key2=value2 ...` 的日志行中解析键值对。
@@ -112,51 +107,21 @@ def check_evidence_key_present(log_text: str, evidence_key: str) -> bool:
     return evidence_key in log_text
 
 
-def write_derived_log_if_needed(path: Path, base_text: str, extra_lines: list[str]) -> None:
-    """基于基础 fixture 日志派生缺失的多工作区证据日志。"""
-    if path.exists():
-        return
-    lines = [base_text.rstrip()]
-    if extra_lines:
-        lines.append("\n".join(extra_lines))
-    path.write_text("\n".join(filter(None, lines)) + "\n", encoding="utf-8")
+def find_evidence_lines(log_text: str, event_key: str) -> list[str]:
+    return [line for line in log_text.splitlines() if event_key in line]
 
 
-def ensure_derived_multi_workspace_logs(evidence_dir: Path) -> None:
-    """
-    基于已生成的基础场景日志派生多工作区场景证据。
-    这一步只补足 verify 契约要求的日志文件，不改变基础场景结果。
-    """
-    chat_base = evidence_dir / CHAT_BASE_LOG
-    if chat_base.exists():
-        base_text = chat_base.read_text(encoding="utf-8", errors="replace")
-        write_derived_log_if_needed(
-            evidence_dir / CHAT_MULTI_LOG,
-            base_text,
-            [
-                "perf workspace_switch_event=workspace_switch scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy",
-                "perf workspace_switch duration_ms=182.000 scenario=chat_stream_workspace_switch switch_index=1 project=PerfLab workspace=stream-heavy source=derived_fixture",
-                "perf workspace_switch duration_ms=194.000 scenario=chat_stream_workspace_switch switch_index=2 project=PerfLab workspace=stream-heavy source=derived_fixture",
-                "perf workspace_switch duration_ms=201.000 scenario=chat_stream_workspace_switch switch_index=3 project=PerfLab workspace=stream-heavy source=derived_fixture",
-            ],
-        )
+def collect_missing_event_fields(log_text: str, event_key: str, fields: list[str]) -> list[str]:
+    evidence_lines = find_evidence_lines(log_text, event_key)
+    if not evidence_lines:
+        return fields
 
-    evolution_base = evidence_dir / EVOLUTION_BASE_LOG
-    if evolution_base.exists():
-        base_text = evolution_base.read_text(encoding="utf-8", errors="replace")
-        write_derived_log_if_needed(
-            evidence_dir / EVOLUTION_MULTI_LOG,
-            base_text,
-            [
-                "perf multi_workspace_event=evolution_multi_workspace_sample scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace source=derived_fixture",
-                "perf evolution_timeline_recompute_ms=28.40 round=1 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-0 cycle_id=fixture-evolution-cycle workspace_context=derived-ws-0",
-                "perf evolution_timeline_recompute_ms=29.10 round=2 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-1 cycle_id=fixture-evolution-cycle workspace_context=derived-ws-1",
-                "perf evolution_timeline_recompute_ms=30.20 round=3 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-2 cycle_id=fixture-evolution-cycle workspace_context=derived-ws-2",
-                "perf evolution_monitor tier_change key=derived-ws-0 old=paused new=active reason=fixture_start project=perf-fixture-project workspace=ws-0 cycle_id=fixture-evolution-cycle",
-                "perf evolution_monitor tier_change key=derived-ws-1 old=paused new=active reason=fixture_start project=perf-fixture-project workspace=ws-1 cycle_id=fixture-evolution-cycle",
-                "perf evolution_monitor tier_change key=derived-ws-2 old=paused new=active reason=fixture_start project=perf-fixture-project workspace=ws-2 cycle_id=fixture-evolution-cycle",
-            ],
-        )
+    for line in evidence_lines:
+        missing_fields = [field for field in fields if f"{field}=" not in line]
+        if not missing_fields:
+            return []
+    first_line = evidence_lines[0]
+    return [field for field in fields if f"{field}=" not in first_line]
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +137,7 @@ def decide_scenario(
     scenario_id: str = scenario["scenario_id"]
     surface_id: str = scenario.get("surface_id", "unknown")
     required_keys: list[str] = scenario.get("required_evidence_keys", [])
+    required_event_fields: list[dict[str, Any]] = scenario.get("required_event_fields", [])
     metrics: list[dict] = scenario.get("metrics", [])
 
     issues: list[str] = []
@@ -179,6 +145,7 @@ def decide_scenario(
     overall = "pass"
     metric_results: list[dict] = []
     missing_keys: list[str] = []
+    missing_event_fields: list[dict[str, Any]] = []
 
     # budget limits：取第一个 metric 的阈值（向后兼容：缺失时置 inf）
     first_metric = metrics[0] if metrics else {}
@@ -196,6 +163,7 @@ def decide_scenario(
             "reason_codes": reason_codes,
             "metrics": [],
             "missing_evidence_keys": [],
+            "missing_event_fields": [],
             "issues": issues,
             "budget_warn_limit": budget_warn_limit,
             "budget_fail_limit": budget_fail_limit,
@@ -210,6 +178,26 @@ def decide_scenario(
         overall = "fail"
         reason_codes.append("missing_evidence")
         issues.append(f"缺少必需证据键: {', '.join(missing_keys)}")
+
+    for event_requirement in required_event_fields:
+        event_key = str(event_requirement.get("event_key", "")).strip()
+        fields = [str(field).strip() for field in event_requirement.get("fields", []) if str(field).strip()]
+        if not event_key or not fields:
+            continue
+        missing_fields = collect_missing_event_fields(log_text, event_key, fields)
+        if missing_fields:
+            missing_event_fields.append({
+                "event_key": event_key,
+                "fields": missing_fields,
+            })
+
+    if missing_event_fields:
+        overall = "fail"
+        reason_codes.append("missing_event_fields")
+        for item in missing_event_fields:
+            issues.append(
+                f"证据事件 {item['event_key']} 缺少归属字段: {', '.join(item['fields'])}"
+            )
 
     # 数值指标检查
     for metric in metrics:
@@ -261,6 +249,7 @@ def decide_scenario(
         "reason_codes": list(dict.fromkeys(reason_codes)),
         "metrics": metric_results,
         "missing_evidence_keys": missing_keys,
+        "missing_event_fields": missing_event_fields,
         "issues": issues,
         "budget_warn_limit": budget_warn_limit,
         "budget_fail_limit": budget_fail_limit,
@@ -286,7 +275,6 @@ def run_comparison(
 
     baseline = json.loads(baseline_file.read_text(encoding="utf-8"))
     evidence_dir_path = Path(evidence_dir)
-    ensure_derived_multi_workspace_logs(evidence_dir_path)
     scenarios = baseline.get("scenarios", [])
     scenario_results: list[dict] = []
     overall = "pass"
@@ -494,6 +482,12 @@ def run_self_test() -> int:
             "memory_snapshot_key=memory_snapshot",
             "workspace_switch_event=workspace_switch",
         ],
+        "required_event_fields": [
+            {
+                "event_key": "workspace_switch_event=workspace_switch",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context"],
+            }
+        ],
         "metrics": [
             {
                 "metric_id": "aiMessageTailFlush_p95_ms",
@@ -515,7 +509,7 @@ def run_self_test() -> int:
         "hotspot_key=ios_ai_chat",
         "tail_flush_event=aiMessageTailFlush",
         "memory_snapshot_key=memory_snapshot",
-        "workspace_switch_event=workspace_switch",
+        "workspace_switch_event=workspace_switch scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=AC-CHAT-WS-SWITCH",
     ] + [
         f"perf aiMessageTailFlush duration_ms={40.0:.3f} idx={i}"
         for i in range(100)
@@ -538,6 +532,12 @@ def run_self_test() -> int:
             "memory_snapshot_key=memory_snapshot",
             "multi_workspace_event=evolution_multi_workspace_sample",
         ],
+        "required_event_fields": [
+            {
+                "event_key": "multi_workspace_event=evolution_multi_workspace_sample",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context", "cycle_id"],
+            }
+        ],
         "metrics": [
             {
                 "metric_id": "evolution_timeline_recompute_p95_ms",
@@ -552,7 +552,7 @@ def run_self_test() -> int:
         "evolution_recompute_key=evolution_timeline_recompute_ms",
         "evolution_tier_change_key=evolution_monitor tier_change",
         "memory_snapshot_key=memory_snapshot",
-        "multi_workspace_event=evolution_multi_workspace_sample",
+        "multi_workspace_event=evolution_multi_workspace_sample scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=evolution_workspace workspace_context=AC-EVOLUTION-MULTI cycle_id=fixture-evolution-cycle",
     ] + [
         f"perf evolution_timeline_recompute_ms={30.0:.2f} round={i + 1} workspace=ws-{i % 3}"
         for i in range(90)
@@ -607,6 +607,48 @@ def run_self_test() -> int:
         print("  OK  LEGACY_COMPAT: 旧格式不崩溃")
     except Exception as exc:
         failures.append(f"LEGACY_COMPAT: 旧格式 scenario 导致崩溃: {exc}")
+
+    # --- 样例 10: chat_stream_workspace_switch FAIL (证据文件不存在 — WI-002 真实证据要求) ---
+    print("自测样例 10: chat_stream_workspace_switch FAIL (evidence_file_missing)")
+    result_ws_no_file = decide_scenario(ws_switch_scenario_def, "", evidence_file_exists=False)
+    expect("WS_SWITCH_NO_FILE: overall", result_ws_no_file["overall"], "fail")
+    expect("WS_SWITCH_NO_FILE: reason evidence_file_missing",
+           str("evidence_file_missing" in result_ws_no_file["reason_codes"]), "True")
+
+    # --- 样例 11: evolution_panel_multi_workspace FAIL (证据文件不存在 — WI-002 真实证据要求) ---
+    print("自测样例 11: evolution_panel_multi_workspace FAIL (evidence_file_missing)")
+    result_multi_no_file = decide_scenario(multi_ws_scenario_def, "", evidence_file_exists=False)
+    expect("MULTI_WS_NO_FILE: overall", result_multi_no_file["overall"], "fail")
+    expect("MULTI_WS_NO_FILE: reason evidence_file_missing",
+           str("evidence_file_missing" in result_multi_no_file["reason_codes"]), "True")
+
+    # --- 样例 12: chat_stream_workspace_switch FAIL (缺 workspace_switch 证据键但文件存在) ---
+    print("自测样例 12: chat_stream_workspace_switch FAIL (missing workspace_switch_event)")
+    ws_switch_missing_key_log = "\n".join([
+        "hotspot_key=ios_ai_chat",
+        "tail_flush_event=aiMessageTailFlush",
+        "memory_snapshot_key=memory_snapshot",
+        # workspace_switch_event=workspace_switch 缺失
+        "perf aiMessageTailFlush duration_ms=40.000 idx=0",
+    ])
+    result_ws_missing_key = decide_scenario(ws_switch_scenario_def, ws_switch_missing_key_log, evidence_file_exists=True)
+    expect("WS_SWITCH_MISSING_KEY: overall", result_ws_missing_key["overall"], "fail")
+    expect("WS_SWITCH_MISSING_KEY: has missing_evidence reason",
+           str("missing_evidence" in result_ws_missing_key["reason_codes"]), "True")
+
+    # --- 样例 13: chat_stream_workspace_switch FAIL (事件缺少归属字段) ---
+    print("自测样例 13: chat_stream_workspace_switch FAIL (missing event fields)")
+    ws_switch_missing_fields_log = "\n".join([
+        "hotspot_key=ios_ai_chat",
+        "tail_flush_event=aiMessageTailFlush",
+        "memory_snapshot_key=memory_snapshot",
+        "workspace_switch_event=workspace_switch scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy",
+        "perf aiMessageTailFlush duration_ms=40.000 idx=0",
+    ])
+    result_ws_missing_fields = decide_scenario(ws_switch_scenario_def, ws_switch_missing_fields_log, evidence_file_exists=True)
+    expect("WS_SWITCH_MISSING_FIELDS: overall", result_ws_missing_fields["overall"], "fail")
+    expect("WS_SWITCH_MISSING_FIELDS: has missing_event_fields reason",
+           str("missing_event_fields" in result_ws_missing_fields["reason_codes"]), "True")
 
     if failures:
         print("\n自测失败:")

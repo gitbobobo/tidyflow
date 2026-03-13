@@ -441,6 +441,57 @@ def run_self_test() -> int:
     expect("SUITE_MISSING: reason_codes has suite_report_missing", "suite_report_missing" in r["reason_codes"], True)
     expect("SUITE_MISSING: hotspot suite release_blocking True", r["suites"][0]["release_blocking"], True)
 
+    # --- 样例 5b: FAIL（契约版本不匹配 — WI-004 验证）---
+    print("自测样例 5b: contract_version_mismatch")
+    # merge_suite_reports 自身不直接检查版本匹配（这由发布脚本负责），
+    # 但此处验证 contract_version 字段被正确传递到统一报告中
+    mismatch_contract = {**contract, "contract_version": "99.0"}
+    r_mismatch = merge_suite_reports(mismatch_contract, {
+        "hotspot_perf_guard": {"overall": "pass", "warnings": [], "scenario_results": []},
+        "apple_client_perf": {"overall": "pass", "warnings": [], "scenarios": []},
+    })
+    expect("VERSION_MISMATCH: contract_version carried through",
+           r_mismatch["contract_version"], "99.0")
+    expect("VERSION_MISMATCH: overall still pass", r_mismatch["overall"], "pass")
+
+    # --- 样例 5c: WARN 不阻断发布 ---
+    print("自测样例 5c: WARN does not block release")
+    reports_warn_only: dict[str, Any | None] = {
+        "hotspot_perf_guard": {
+            "overall": "warn",
+            "warnings": ["test_metric: ratio=1.8x"],
+            "scenario_results": [{"status": "warn", "reason_codes": ["ratio_exceeded_warn"]}],
+        },
+        "apple_client_perf": {
+            "overall": "warn",
+            "warnings": ["aiMessageTailFlush_p95_ms P95=55ms > warn=50ms"],
+            "scenarios": [{"scenario_id": "chat_stream", "overall": "warn", "reason_codes": ["metric_exceeded_warn"]}],
+        },
+    }
+    r_warn = merge_suite_reports(contract, reports_warn_only)
+    expect("WARN_NOT_BLOCKING: overall", r_warn["overall"], "warn")
+    expect("WARN_NOT_BLOCKING: release_blocking", r_warn["release_blocking"], False)
+    expect("WARN_NOT_BLOCKING: has warnings", len(r_warn["warnings"]) > 0, True)
+
+    # --- 样例 5d: FAIL 阻断发布（scenario_missing）---
+    print("自测样例 5d: FAIL scenario_missing blocks release")
+    reports_scenario_missing: dict[str, Any | None] = {
+        "hotspot_perf_guard": {"overall": "pass", "warnings": [], "scenario_results": []},
+        "apple_client_perf": {
+            "overall": "fail",
+            "warnings": [],
+            "scenarios": [
+                {"scenario_id": "chat_stream", "overall": "pass", "reason_codes": []},
+                {"scenario_id": "evolution_panel", "overall": "fail", "reason_codes": ["scenario_missing"]},
+            ],
+        },
+    }
+    r_sc_missing = merge_suite_reports(contract, reports_scenario_missing)
+    expect("SCENARIO_MISSING: overall", r_sc_missing["overall"], "fail")
+    expect("SCENARIO_MISSING: release_blocking", r_sc_missing["release_blocking"], True)
+    expect("SCENARIO_MISSING: reason_codes has scenario_missing",
+           "scenario_missing" in r_sc_missing["reason_codes"], True)
+
     _run_repo_report_integration_test(expect, failures)
     _run_temp_fs_integration_test(expect, failures)
 

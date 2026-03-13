@@ -50,13 +50,25 @@
     },
     {
       "scenario_id": "chat_stream_workspace_switch",
-      "description": "聊天流式输出 + 工作区切换高负载（100 次 delta flush × 3 次工作区切换），允许由基础 fixture 证据派生多工作区日志",
+      "description": "聊天流式输出 + 工作区切换高负载（100 次 delta flush × 3 次工作区切换），必须由真实 fixture 产出独立证据",
       "surface_id": "chat_session",
       "required_evidence_keys": [
         "hotspot_key=ios_ai_chat",
         "tail_flush_event=aiMessageTailFlush",
         "memory_snapshot_key=memory_snapshot",
         "workspace_switch_event=workspace_switch"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "workspace_switch_event=workspace_switch",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context"
+          ]
+        }
       ],
       "metrics": [
         {
@@ -81,13 +93,26 @@
     },
     {
       "scenario_id": "evolution_panel_multi_workspace",
-      "description": "Evolution 面板并行工作区采样（3 个工作区，各 30 轮 recompute），允许由基础 fixture 证据派生多工作区日志",
+      "description": "Evolution 面板并行工作区采样（3 个工作区，各 30 轮 recompute），必须由真实 fixture 产出独立证据",
       "surface_id": "evolution_workspace",
       "required_evidence_keys": [
         "evolution_recompute_key=evolution_timeline_recompute_ms",
         "evolution_tier_change_key=evolution_monitor tier_change",
         "memory_snapshot_key=memory_snapshot",
         "multi_workspace_event=evolution_multi_workspace_sample"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "multi_workspace_event=evolution_multi_workspace_sample",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context",
+            "cycle_id"
+          ]
+        }
       ],
       "metrics": [
         {
