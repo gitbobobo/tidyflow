@@ -541,10 +541,7 @@ impl Project {
 
     /// Get the worktrees directory for this project
     pub fn worktrees_dir(&self) -> PathBuf {
-        dirs::home_dir()
-            .expect("Cannot find home directory")
-            .join(".tidyflow")
-            .join("workspaces")
+        crate::util::paths::tidyflow_home_dir().join("workspaces")
     }
 }
 

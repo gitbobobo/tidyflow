@@ -586,9 +586,7 @@ fn build_terminal_resource_snapshot(
 }
 
 fn build_log_context_summary() -> LogContextSummary {
-    let log_dir = dirs::home_dir()
-        .map(|h| h.join(".tidyflow").join("logs"))
-        .unwrap_or_default();
+    let log_dir = crate::util::paths::tidyflow_home_dir().join("logs");
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let suffix = std::env::var("TIDYFLOW_LOG_SUFFIX").ok().and_then(|s| {
         let trimmed = s.trim();

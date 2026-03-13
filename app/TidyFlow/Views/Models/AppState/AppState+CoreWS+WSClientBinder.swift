@@ -37,6 +37,7 @@ extension AppState {
                 self.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
                 self.reloadAISessionDataAfterReconnect()
                 self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
+                self.flushPendingNodeProfileUpdateIfNeeded()
                 // 重连后尝试附着已有终端会话
                 self.requestTerminalReattach()
             } else {

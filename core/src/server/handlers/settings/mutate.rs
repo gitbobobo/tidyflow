@@ -2,7 +2,8 @@ use crate::server::ws::OutboundTx as WebSocket;
 use tracing::info;
 
 use crate::application::settings::{
-    get_client_settings_message, save_client_settings, SaveClientSettingsParams,
+    get_client_settings_message, persist_app_state_immediately, save_client_settings,
+    SaveClientSettingsParams,
 };
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -44,6 +45,7 @@ pub async fn handle_mutate_message(
             )
             .await;
 
+            persist_app_state_immediately(&ctx.app_state, &ctx.state_store).await?;
             let _ = ctx.save_tx.send(()).await;
 
             send_message(

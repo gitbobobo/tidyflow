@@ -39,6 +39,9 @@ impl StateStore {
 
     pub async fn open_default() -> Result<Self, StateError> {
         let db_path = Self::db_path();
+        let target_exists = tokio::fs::try_exists(&db_path)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
         sqlite_store::ensure_parent_dir_async(&db_path)
             .await
             .map_err(StateError::WriteError)?;
@@ -50,6 +53,9 @@ impl StateStore {
 
         let store = Self { pool };
         store.init_schema().await?;
+        if !target_exists {
+            store.migrate_from_production_db_if_needed().await?;
+        }
         store.ensure_migrated_from_legacy_json().await?;
         Ok(store)
     }
@@ -64,6 +70,98 @@ impl StateStore {
         let store = Self { pool };
         store.init_schema().await?;
         Ok(store)
+    }
+
+    pub async fn save_node_profile_settings(
+        &self,
+        merge_ai_agent: Option<String>,
+        fixed_port: u16,
+        remote_access_enabled: bool,
+        evolution_default_profiles: &[EvolutionStageProfile],
+        node_name: Option<String>,
+        node_discovery_enabled: bool,
+        node_identity: Option<&NodeIdentity>,
+        last_updated: &DateTime<Utc>,
+        state_version: u32,
+    ) -> Result<(), StateError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO client_settings (
+                id,
+                merge_ai_agent,
+                fixed_port,
+                remote_access_enabled,
+                evolution_default_profiles_json,
+                node_name,
+                node_discovery_enabled
+            )
+            VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+                node_name = excluded.node_name,
+                node_discovery_enabled = excluded.node_discovery_enabled
+            "#,
+        )
+        .bind(merge_ai_agent)
+        .bind(i64::from(fixed_port))
+        .bind(if remote_access_enabled { 1_i64 } else { 0_i64 })
+        .bind(
+            serde_json::to_string(evolution_default_profiles)
+                .map_err(|e| StateError::WriteError(e.to_string()))?,
+        )
+        .bind(node_name.clone())
+        .bind(if node_discovery_enabled { 1_i64 } else { 0_i64 })
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO node_discovery_settings (id, discovery_enabled)
+            VALUES (1, ?1)
+            ON CONFLICT(id) DO UPDATE SET
+                discovery_enabled = excluded.discovery_enabled
+            "#,
+        )
+        .bind(if node_discovery_enabled { 1_i64 } else { 0_i64 })
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        if let Some(identity) = node_identity {
+            sqlx::query(
+                r#"
+                INSERT INTO node_identity (id, node_id, node_name, bootstrap_pair_key, created_at_unix)
+                VALUES (1, ?1, ?2, ?3, ?4)
+                ON CONFLICT(id) DO UPDATE SET
+                    node_name = excluded.node_name
+                "#,
+            )
+            .bind(&identity.node_id)
+            .bind(identity.node_name.clone())
+            .bind(&identity.bootstrap_pair_key)
+            .bind(i64::try_from(identity.created_at_unix).unwrap_or(0))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
+        self.upsert_meta(&mut tx, "schema_version", DB_SCHEMA_VERSION)
+            .await?;
+        self.upsert_meta(&mut tx, "state_initialized", "1").await?;
+        self.upsert_meta(&mut tx, "state_version", &state_version.to_string())
+            .await?;
+        self.upsert_meta(&mut tx, "last_updated", &last_updated.to_rfc3339())
+            .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))
     }
 
     pub async fn load(&self) -> Result<AppState, StateError> {
@@ -619,6 +717,37 @@ impl StateStore {
             paired_nodes,
             node_auth_tokens,
         })
+    }
+
+    async fn migrate_from_production_db_if_needed(&self) -> Result<(), StateError> {
+        let active_home = sqlite_store::tidyflow_home_dir();
+        let production_home = sqlite_store::production_tidyflow_home_dir();
+        if active_home == production_home {
+            return Ok(());
+        }
+
+        let source_db_path = sqlite_store::production_db_path();
+        let source_exists = tokio::fs::try_exists(&source_db_path)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        if !source_exists {
+            return Ok(());
+        }
+
+        let source_db_url = sqlite_store::sqlite_url(&source_db_path);
+        let source_pool = sqlite_store::open_single_connection_pool(&source_db_url)
+            .await
+            .map_err(StateError::WriteError)?;
+        let source_store = Self { pool: source_pool };
+        source_store.init_schema().await?;
+
+        if !source_store.has_any_state().await? {
+            return Ok(());
+        }
+
+        let snapshot = source_store.load().await?;
+        self.save(&snapshot).await?;
+        Ok(())
     }
 
     pub async fn save(&self, state: &AppState) -> Result<(), StateError> {

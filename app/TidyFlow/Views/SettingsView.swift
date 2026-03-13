@@ -103,6 +103,7 @@ struct CustomCommandsSection: View {
     @State private var remoteAccessEnabled: Bool = false
     @State private var nodeName: String = ""
     @State private var nodeDiscoveryEnabled: Bool = false
+    @State private var nodeProfileSaveTask: Task<Void, Never>?
     @State private var pairHost: String = ""
     @State private var pairPort: String = ""
     @State private var pairKey: String = ""
@@ -127,6 +128,7 @@ struct CustomCommandsSection: View {
             Section {
                 Toggle("settings.mobile.remoteAccess".localized, isOn: $remoteAccessEnabled)
                     .onChange(of: remoteAccessEnabled) { _, enabled in
+                        guard enabled != appState.clientSettings.remoteAccessEnabled else { return }
                         appState.clientSettings.remoteAccessEnabled = enabled
                         appState.saveClientSettings()
                     }
@@ -140,12 +142,16 @@ struct CustomCommandsSection: View {
 
             Section {
                 TextField("节点名称", text: $nodeName)
+                    .onChange(of: nodeName) { _, _ in
+                        scheduleNodeProfileSave()
+                    }
                     .onSubmit {
-                        appState.updateNodeProfile(nodeName: nodeName, discoveryEnabled: nodeDiscoveryEnabled)
+                        persistNodeProfileIfNeeded()
                     }
                 Toggle("开启局域网发现广播", isOn: $nodeDiscoveryEnabled)
                     .onChange(of: nodeDiscoveryEnabled) { _, enabled in
-                        appState.updateNodeProfile(nodeName: nodeName, discoveryEnabled: enabled)
+                        nodeProfileSaveTask?.cancel()
+                        persistNodeProfileIfNeeded(discoveryEnabled: enabled)
                     }
                 if let selfInfo = appState.nodeSelfInfo {
                     LabeledContent("节点 ID") {
@@ -254,11 +260,14 @@ struct CustomCommandsSection: View {
                         .onChange(of: fixedPortText) { _, newValue in
                             let filtered = newValue.filter { $0.isNumber }
                             if filtered != newValue { fixedPortText = filtered }
+                            let nextPort: Int
                             if let val = Int(filtered), val > 0, val <= 65535 {
-                                appState.clientSettings.fixedPort = val
+                                nextPort = val
                             } else {
-                                appState.clientSettings.fixedPort = 0
+                                nextPort = 0
                             }
+                            guard nextPort != appState.clientSettings.fixedPort else { return }
+                            appState.clientSettings.fixedPort = nextPort
                             appState.saveClientSettings()
                         }
                 }
@@ -317,15 +326,62 @@ struct CustomCommandsSection: View {
             .environmentObject(appState)
         }
         .onAppear {
-            let val = appState.clientSettings.fixedPort
-            fixedPortText = val > 0 ? "\(val)" : ""
-            remoteAccessEnabled = appState.clientSettings.remoteAccessEnabled
-            nodeName = appState.clientSettings.nodeName ?? ""
-            nodeDiscoveryEnabled = appState.clientSettings.nodeDiscoveryEnabled
+            syncClientSettingsSnapshot()
             appState.refreshNodeNetwork()
         }
+        .onDisappear {
+            nodeProfileSaveTask?.cancel()
+            persistNodeProfileIfNeeded()
+        }
+        .onChange(of: appState.clientSettingsLoaded) { _, loaded in
+            guard loaded else { return }
+            syncClientSettingsSnapshot()
+        }
+        .onChange(of: appState.clientSettings.fixedPort) { _, _ in
+            syncClientSettingsSnapshot()
+        }
+        .onChange(of: appState.clientSettings.remoteAccessEnabled) { _, _ in
+            syncClientSettingsSnapshot()
+        }
+        .onChange(of: appState.clientSettings.nodeName) { _, _ in
+            syncClientSettingsSnapshot()
+        }
+        .onChange(of: appState.clientSettings.nodeDiscoveryEnabled) { _, _ in
+            syncClientSettingsSnapshot()
+        }
     }
-    
+
+    private func syncClientSettingsSnapshot() {
+        let fixedPort = appState.clientSettings.fixedPort
+        fixedPortText = fixedPort > 0 ? "\(fixedPort)" : ""
+        remoteAccessEnabled = appState.clientSettings.remoteAccessEnabled
+        nodeName = appState.clientSettings.nodeName ?? ""
+        nodeDiscoveryEnabled = appState.clientSettings.nodeDiscoveryEnabled
+    }
+
+    private func scheduleNodeProfileSave() {
+        nodeProfileSaveTask?.cancel()
+        nodeProfileSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            persistNodeProfileIfNeeded()
+        }
+    }
+
+    private func persistNodeProfileIfNeeded(discoveryEnabled: Bool? = nil) {
+        let nextDiscoveryEnabled = discoveryEnabled ?? nodeDiscoveryEnabled
+        let normalizedName = nodeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextName = normalizedName.isEmpty ? nil : normalizedName
+        let currentPending = appState.pendingNodeProfileUpdate
+        let currentServer = appState.lastKnownServerNodeProfile
+        let currentName = currentPending?.nodeName ?? currentServer?.nodeName ?? appState.clientSettings.nodeName
+        let currentDiscoveryEnabled = currentPending?.discoveryEnabled ?? currentServer?.discoveryEnabled ?? appState.clientSettings.nodeDiscoveryEnabled
+        guard nextName != currentName || nextDiscoveryEnabled != currentDiscoveryEnabled else {
+            return
+        }
+        appState.updateNodeProfile(nodeName: nextName, discoveryEnabled: nextDiscoveryEnabled)
+    }
+
     // Helper views removed as they are simplified into the Form or not needed
 }
 

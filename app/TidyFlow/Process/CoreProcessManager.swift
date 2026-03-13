@@ -395,9 +395,11 @@ class CoreProcessManager: ObservableObject {
         if Self.isRunAppDebugBundle {
             env["TIDYFLOW_LOG_SUFFIX"] = "dev"
             env["TIDYFLOW_DEV"] = "1"
+            env["TIDYFLOW_HOME"] = Self.debugTidyFlowHomePath
         } else {
             env.removeValue(forKey: "TIDYFLOW_LOG_SUFFIX")
             env.removeValue(forKey: "TIDYFLOW_DEV")
+            env.removeValue(forKey: "TIDYFLOW_HOME")
         }
         proc.environment = env
 
@@ -507,6 +509,13 @@ class CoreProcessManager: ObservableObject {
     /// run-app.sh 当前启动的是 `TidyFlow-Debug.app`
     private static var isRunAppDebugBundle: Bool {
         Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
+    }
+
+    /// Debug App 使用独立的数据根目录，避免与 /Applications 中的正式版互相覆盖状态。
+    private static var debugTidyFlowHomePath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".tidyflow-dev", isDirectory: true)
+            .path
     }
 
     /// Handle unexpected process termination with auto-restart

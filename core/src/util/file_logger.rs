@@ -57,10 +57,7 @@ impl FileLogger {
     /// 获取全局单例
     pub fn global() -> &'static FileLogger {
         FILE_LOGGER.get_or_init(|| {
-            let log_dir = dirs::home_dir()
-                .expect("无法获取 home 目录")
-                .join(".tidyflow")
-                .join("logs");
+            let log_dir = crate::util::paths::tidyflow_home_dir().join("logs");
             FileLogger::new(log_dir)
         })
     }

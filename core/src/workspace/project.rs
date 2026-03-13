@@ -176,9 +176,7 @@ impl ProjectManager {
             ProjectError::StateError(StateError::ProjectNotFound(name.to_string()))
         })?;
 
-        let project_workspaces_dir = dirs::home_dir()
-            .expect("Cannot find home directory")
-            .join(".tidyflow")
+        let project_workspaces_dir = crate::util::paths::tidyflow_home_dir()
             .join("workspaces")
             .join(name);
 

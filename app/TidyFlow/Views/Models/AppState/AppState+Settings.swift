@@ -13,6 +13,9 @@ extension AppState {
 
     /// 保存客户端设置到服务端
     func saveClientSettings() {
+        guard clientSettingsLoaded else {
+            return
+        }
         wsClient.requestSaveClientSettings(settings: clientSettings)
     }
 
@@ -25,10 +28,55 @@ extension AppState {
     func updateNodeProfile(nodeName: String?, discoveryEnabled: Bool) {
         let trimmedName = nodeName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedName = trimmedName?.isEmpty == true ? nil : trimmedName
+        let desired = PendingNodeProfileUpdate(
+            nodeName: normalizedName,
+            discoveryEnabled: discoveryEnabled
+        )
         clientSettings.nodeName = normalizedName
         clientSettings.nodeDiscoveryEnabled = discoveryEnabled
-        wsClient.requestNodeUpdateProfile(nodeName: normalizedName, discoveryEnabled: discoveryEnabled)
-        saveClientSettings()
+        pendingNodeProfileUpdate = desired
+        flushPendingNodeProfileUpdateIfNeeded()
+    }
+
+    func recordServerNodeProfile(nodeName: String?, discoveryEnabled: Bool) {
+        let normalizedNodeName: String?
+        if let trimmed = nodeName?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            normalizedNodeName = trimmed
+        } else {
+            normalizedNodeName = nil
+        }
+        let snapshot = PendingNodeProfileUpdate(
+            nodeName: normalizedNodeName,
+            discoveryEnabled: discoveryEnabled
+        )
+        lastKnownServerNodeProfile = snapshot
+
+        if pendingNodeProfileUpdate == snapshot {
+            pendingNodeProfileUpdate = nil
+            return
+        }
+
+        if pendingNodeProfileUpdate != nil, wsClient.isConnected {
+            flushPendingNodeProfileUpdateIfNeeded()
+        }
+    }
+
+    func flushPendingNodeProfileUpdateIfNeeded() {
+        guard let pending = pendingNodeProfileUpdate else { return }
+
+        if lastKnownServerNodeProfile == pending {
+            pendingNodeProfileUpdate = nil
+            return
+        }
+
+        guard wsClient.isConnected else {
+            return
+        }
+
+        wsClient.requestNodeUpdateProfile(
+            nodeName: pending.nodeName,
+            discoveryEnabled: pending.discoveryEnabled
+        )
     }
 
     func pairNodePeer(host: String, port: Int, pairKey: String) {

@@ -4,6 +4,8 @@ use crate::server::protocol::{
     ServerMessage, WorkspaceTodoInfo,
 };
 use crate::workspace::state::{EvolutionStageProfile, KeybindingConfig, WorkspaceTodoItem};
+use crate::workspace::state_store::StateStore;
+use chrono::Utc;
 
 /// 保存客户端设置参数（应用层输入模型）
 pub struct SaveClientSettingsParams {
@@ -130,6 +132,68 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
             })
             .collect();
     }
+}
+
+/// 立即持久化当前应用状态。
+///
+/// 用于设置类写操作，避免应用快速退出时防抖保存尚未来得及落盘。
+pub async fn persist_app_state_immediately(
+    app_state: &SharedAppState,
+    state_store: &StateStore,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut state = app_state.write().await;
+        let now = Utc::now();
+        state.last_updated = Some(now);
+        let mut snapshot = state.clone();
+        snapshot.last_updated = Some(now);
+        snapshot
+    };
+
+    state_store
+        .save(&snapshot)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// 仅持久化节点配置相关字段，避免节点设置更新走整份 AppState 全量落盘。
+pub async fn persist_node_profile_immediately(
+    app_state: &SharedAppState,
+    state_store: &StateStore,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut state = app_state.write().await;
+        let now = Utc::now();
+        state.last_updated = Some(now);
+        (
+            state.client_settings.merge_ai_agent.clone(),
+            state.client_settings.fixed_port,
+            state.client_settings.remote_access_enabled,
+            state.client_settings.evolution_default_profiles.clone(),
+            state.client_settings.node_name.clone(),
+            state.client_settings.node_discovery_enabled,
+            state.node_identity.clone(),
+            now,
+            state.version,
+        )
+    };
+
+    state_store
+        .save_node_profile_settings(
+            snapshot.0,
+            snapshot.1,
+            snapshot.2,
+            &snapshot.3,
+            snapshot.4.clone(),
+            snapshot.5,
+            snapshot.6.as_ref(),
+            &snapshot.7,
+            snapshot.8,
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn to_protocol_profiles(input: &[EvolutionStageProfile]) -> Vec<EvolutionStageProfileInfo> {

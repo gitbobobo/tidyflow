@@ -122,6 +122,10 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     func handleClientSettingsResult(_ settings: ClientSettings) {
         guard let appState else { return }
         appState.clientSettings = settings
+        appState.recordServerNodeProfile(
+            nodeName: settings.nodeName,
+            discoveryEnabled: settings.nodeDiscoveryEnabled
+        )
         appState.applyEvolutionDefaultProfilesFromCore(settings.evolutionDefaultProfiles)
         if appState.clientSettings.keybindings.isEmpty {
             appState.clientSettings.keybindings = KeybindingConfig.defaultKeybindings()
@@ -146,6 +150,10 @@ final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
 
     func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2) {
         appState?.nodeSelfInfo = identity
+        appState?.recordServerNodeProfile(
+            nodeName: identity.nodeName,
+            discoveryEnabled: identity.discoveryEnabled
+        )
     }
 
     func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
@@ -156,6 +164,10 @@ final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
         appState?.nodeSelfInfo = snapshot.identity
         appState?.nodeNetworkPeers = snapshot.peers
         appState?.nodeActiveLocks = snapshot.activeLocks
+        appState?.recordServerNodeProfile(
+            nodeName: snapshot.identity.nodeName,
+            discoveryEnabled: snapshot.identity.discoveryEnabled
+        )
     }
 
     func handleNodePairingResult(_ result: NodePairingResultV2) {

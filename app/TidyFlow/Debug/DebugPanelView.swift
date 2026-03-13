@@ -11,8 +11,13 @@ struct DebugPanelView: View {
 
     /// 日志目录：~/.tidyflow/logs/
     private static var logDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".tidyflow/logs", isDirectory: true)
+        let root = if Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app" {
+            ".tidyflow-dev"
+        } else {
+            ".tidyflow"
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("\(root)/logs", isDirectory: true)
     }
 
     /// 当天日志文件
@@ -31,7 +36,9 @@ struct DebugPanelView: View {
 
     /// 显示用路径
     private static var logPathDisplay: String {
-        "~/.tidyflow/logs/"
+        Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
+            ? "~/.tidyflow-dev/logs/"
+            : "~/.tidyflow/logs/"
     }
 
     var body: some View {

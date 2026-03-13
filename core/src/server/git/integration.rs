@@ -22,9 +22,7 @@ fn get_integration_worktree_path(project_name: &str) -> PathBuf {
         })
         .collect();
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
-        .join(".tidyflow")
+    crate::util::paths::tidyflow_home_dir()
         .join("worktrees")
         .join(sanitized)
         .join("__integration")
@@ -899,8 +897,7 @@ pub fn reset_integration_worktree(
     let integration_path_str = integration_path.to_string_lossy().to_string();
 
     // Safety check: Validate path is under ~/.tidyflow/worktrees/
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let safe_prefix = PathBuf::from(&home).join(".tidyflow").join("worktrees");
+    let safe_prefix = crate::util::paths::tidyflow_home_dir().join("worktrees");
     if !integration_path.starts_with(&safe_prefix) {
         return Err(GitError::CommandFailed(format!(
             "Safety check failed: path {} is not under {}",

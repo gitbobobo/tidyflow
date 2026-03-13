@@ -59,6 +59,11 @@ struct EvolutionPendingActionState: Equatable {
     }
 }
 
+struct PendingNodeProfileUpdate: Equatable {
+    let nodeName: String?
+    let discoveryEnabled: Bool
+}
+
 struct AIPendingHistoryLoadRequest: Equatable {
     let projectName: String
     let workspaceName: String
@@ -375,6 +380,8 @@ class AppState: ObservableObject {
     @Published var nodeNetworkPeers: [NodePeerInfoV2] = []
     @Published var nodeActiveLocks: [NodeActiveLockInfoV2] = []
     @Published var nodeLastPairingResult: NodePairingResultV2?
+    var pendingNodeProfileUpdate: PendingNodeProfileUpdate?
+    var lastKnownServerNodeProfile: PendingNodeProfileUpdate?
     /// 按 (project, workspace) 分桶的 incident 修复状态（key: "project:workspace:incidentId"）
     @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
     /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）
