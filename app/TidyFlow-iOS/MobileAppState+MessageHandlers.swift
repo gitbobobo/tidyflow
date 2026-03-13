@@ -128,6 +128,70 @@ final class MobileAppStateTerminalMessageHandlerAdapter: TerminalMessageHandler 
     func handleTermClosed(_ termId: String) { dispatchToMain { $0.handleTermClosed(termId) } }
 }
 
+final class MobileAppStateNodeMessageHandlerAdapter: NodeMessageHandler {
+    weak var appState: MobileAppState?
+
+    init(appState: MobileAppState) {
+        self.appState = appState
+    }
+
+    private func dispatchToMain(_ action: @escaping @MainActor (MobileAppState) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let appState = self?.appState else { return }
+            MainActor.assumeIsolated { action(appState) }
+        }
+    }
+
+    func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2) {
+        dispatchToMain { state in
+            state.nodeSelfInfo = identity
+        }
+    }
+
+    func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
+        dispatchToMain { state in
+            state.nodeDiscoveryItems = items
+        }
+    }
+
+    func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2) {
+        dispatchToMain { state in
+            state.nodeSelfInfo = snapshot.identity
+            state.nodeNetworkPeers = snapshot.peers
+            state.nodeActiveLocks = snapshot.activeLocks
+        }
+    }
+
+    func handleNodePairingResult(_ result: NodePairingResultV2) {
+        dispatchToMain { state in
+            state.nodeLastPairingResult = result
+            if result.ok {
+                state.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
+                state.wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+            }
+        }
+    }
+
+    func handleNodePeerStatus(peerNodeID: String, status: String, lastSeenAtUnix: UInt64?) {
+        dispatchToMain { state in
+            state.nodeNetworkPeers = state.nodeNetworkPeers.map { peer in
+                guard peer.peerNodeID == peerNodeID else { return peer }
+                return NodePeerInfoV2(
+                    peerNodeID: peer.peerNodeID,
+                    peerName: peer.peerName,
+                    addresses: peer.addresses,
+                    port: peer.port,
+                    trustSource: peer.trustSource,
+                    introducedBy: peer.introducedBy,
+                    lastSeenAtUnix: lastSeenAtUnix ?? peer.lastSeenAtUnix,
+                    status: status,
+                    authToken: peer.authToken
+                )
+            }
+        }
+    }
+}
+
 final class MobileAppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     weak var appState: MobileAppState?
 

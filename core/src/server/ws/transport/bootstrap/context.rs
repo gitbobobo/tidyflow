@@ -88,6 +88,12 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let shared_state: SharedAppState = Arc::new(tokio::sync::RwLock::new(app_state));
 
     let save_tx = spawn_state_saver(shared_state.clone(), state_store.clone());
+    let _ = crate::server::node::init_global(
+        shared_state.clone(),
+        save_tx.clone(),
+        resolve_bind_addr(),
+    )
+    .await;
     let terminal_registry: SharedTerminalRegistry = Arc::new(Mutex::new(TerminalRegistry::new()));
     let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
     // 启动空闲终端回收后台任务（每 30 秒检查，自动回收无订阅的退出/长期空闲终端）

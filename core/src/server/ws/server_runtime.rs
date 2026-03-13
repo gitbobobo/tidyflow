@@ -30,6 +30,11 @@ pub(in crate::server::ws) async fn run_server(port: u16) -> Result<(), Box<dyn s
         }
     };
     let local_addr = listener.local_addr()?;
+    if let Some(runtime) = crate::server::node::maybe_runtime() {
+        runtime
+            .set_server_endpoint(bind_addr.clone(), local_addr.port())
+            .await;
+    }
 
     let bootstrap = serde_json::json!({
         "port": local_addr.port(),

@@ -192,6 +192,8 @@ extension WSClient {
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
+            let nodeName = json["node_name"] as? String
+            let nodeDiscoveryEnabled = json["node_discovery_enabled"] as? Bool ?? false
             let evolutionDefaultProfiles = parseEvolutionStageProfiles(json["evolution_default_profiles"])
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
             let workspaceTodos = parseWorkspaceTodosFromClientSettings(json["workspace_todos"])
@@ -212,6 +214,8 @@ extension WSClient {
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
+                nodeName: nodeName,
+                nodeDiscoveryEnabled: nodeDiscoveryEnabled,
                 evolutionDefaultProfiles: evolutionDefaultProfiles,
                 evolutionAgentProfiles: evolutionAgentProfiles,
                 workspaceTodos: workspaceTodos,
@@ -347,6 +351,59 @@ extension WSClient {
                 handler.handleEvolutionError(error)
             } else {
                 onEvoError?(error.message)
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func handleNodeDomain(_ action: String, json: [String: Any]) -> Bool {
+        switch action {
+        case "node_self_updated":
+            let payload = (json["identity"] as? [String: Any]).flatMap(NodeSelfInfoV2.from)
+                ?? NodeSelfInfoV2.from(json: json)
+            guard let payload else { return false }
+            if let handler = nodeMessageHandler {
+                handler.handleNodeSelfUpdated(payload)
+            } else {
+                onNodeSelfUpdated?(payload)
+            }
+            return true
+        case "node_discovery_updated":
+            let rawItems = (json["items"] as? [[String: Any]]) ?? []
+            let items = rawItems.compactMap(NodeDiscoveryItemV2.from)
+            if let handler = nodeMessageHandler {
+                handler.handleNodeDiscoveryUpdated(items)
+            } else {
+                onNodeDiscoveryUpdated?(items)
+            }
+            return true
+        case "node_network_updated":
+            let payload = NodeNetworkSnapshotV2.from(json: json)
+            guard let payload else { return false }
+            if let handler = nodeMessageHandler {
+                handler.handleNodeNetworkUpdated(payload)
+            } else {
+                onNodeNetworkUpdated?(payload)
+            }
+            return true
+        case "node_pairing_result":
+            let result = NodePairingResultV2.from(json: json)
+            if let handler = nodeMessageHandler {
+                handler.handleNodePairingResult(result)
+            } else {
+                onNodePairingResult?(result)
+            }
+            return true
+        case "node_peer_status":
+            guard let peerNodeID = json["peer_node_id"] as? String,
+                  let status = json["status"] as? String else { return false }
+            let lastSeenAtUnix = (json["last_seen_at_unix"] as? NSNumber)?.uint64Value
+            if let handler = nodeMessageHandler {
+                handler.handleNodePeerStatus(peerNodeID: peerNodeID, status: status, lastSeenAtUnix: lastSeenAtUnix)
+            } else {
+                onNodePeerStatus?(peerNodeID, status, lastSeenAtUnix)
             }
             return true
         default:

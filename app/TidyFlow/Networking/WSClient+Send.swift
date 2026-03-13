@@ -648,6 +648,8 @@ private struct SaveClientSettingsRequest: TypedWSRequest {
     let mergeAIAgent: String?
     let fixedPort: Int
     let remoteAccessEnabled: Bool
+    let nodeName: String?
+    let nodeDiscoveryEnabled: Bool
     let evolutionDefaultProfiles: [EvolutionStageProfilePayload]
     let workspaceTodos: [String: [WorkspaceTodoPayload]]
     let keybindings: [KeybindingPayload]
@@ -721,9 +723,47 @@ private struct SaveClientSettingsRequest: TypedWSRequest {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
+        case nodeName = "node_name"
+        case nodeDiscoveryEnabled = "node_discovery_enabled"
         case evolutionDefaultProfiles = "evolution_default_profiles"
         case workspaceTodos = "workspace_todos"
         case keybindings
+    }
+}
+
+private struct NodeUpdateProfileRequest: TypedWSRequest {
+    let nodeName: String?
+    let discoveryEnabled: Bool
+
+    var action: String { "node_update_profile" }
+
+    private enum CodingKeys: String, CodingKey {
+        case nodeName = "node_name"
+        case discoveryEnabled = "discovery_enabled"
+    }
+}
+
+private struct NodePairPeerRequest: TypedWSRequest {
+    let host: String
+    let port: Int
+    let pairKey: String
+
+    var action: String { "node_pair_peer" }
+
+    private enum CodingKeys: String, CodingKey {
+        case host
+        case port
+        case pairKey = "pair_key"
+    }
+}
+
+private struct NodeUnpairPeerRequest: TypedWSRequest {
+    let peerNodeID: String
+
+    var action: String { "node_unpair_peer" }
+
+    private enum CodingKeys: String, CodingKey {
+        case peerNodeID = "peer_node_id"
     }
 }
 
@@ -745,6 +785,7 @@ extension WSClient {
         ("project", "export_template"),
         ("project", "import_template"),
         ("project", "templates"),
+        ("node", "node_refresh_network"),
         ]
     }
 
@@ -765,6 +806,7 @@ extension WSClient {
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
         ("project", "template_"),
+        ("node", "node_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
@@ -955,6 +997,8 @@ extension WSClient {
             handled = handleProjectDomain(action, json: json)
         case "settings":
             handled = handleSettingsDomain(action, json: json)
+        case "node":
+            handled = handleNodeDomain(action, json: json)
         case "terminal":
             handled = handleTerminalDomain(action, json: json)
         case "file":
@@ -1632,6 +1676,8 @@ extension WSClient {
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
             remoteAccessEnabled: settings.remoteAccessEnabled,
+            nodeName: settings.nodeName,
+            nodeDiscoveryEnabled: settings.nodeDiscoveryEnabled,
             evolutionDefaultProfiles: settings.evolutionDefaultProfiles.map { profile in
                 SaveClientSettingsRequest.EvolutionStageProfilePayload(
                     stage: profile.stage,
@@ -1668,6 +1714,56 @@ extension WSClient {
             }
         )
         sendTyped(payload)
+    }
+
+    // MARK: - Node Network
+
+    func requestNodeSelf(cacheMode: HTTPQueryCacheMode = .default) {
+        requestReadViaHTTP(
+            domain: "node",
+            path: "/api/v1/node/self",
+            fallbackAction: "node_self_updated",
+            cacheMode: cacheMode
+        )
+    }
+
+    func requestNodeDiscovery(cacheMode: HTTPQueryCacheMode = .default) {
+        requestReadViaHTTP(
+            domain: "node",
+            path: "/api/v1/node/discovery",
+            fallbackAction: "node_discovery_updated",
+            cacheMode: cacheMode
+        )
+    }
+
+    func requestNodeNetwork(cacheMode: HTTPQueryCacheMode = .default) {
+        requestReadViaHTTP(
+            domain: "node",
+            path: "/api/v1/node/network",
+            fallbackAction: "node_network_updated",
+            cacheMode: cacheMode
+        )
+    }
+
+    func requestNodeUpdateProfile(nodeName: String?, discoveryEnabled: Bool) {
+        sendTyped(
+            NodeUpdateProfileRequest(
+                nodeName: nodeName,
+                discoveryEnabled: discoveryEnabled
+            )
+        )
+    }
+
+    func requestNodePairPeer(host: String, port: Int, pairKey: String) {
+        sendTyped(NodePairPeerRequest(host: host, port: port, pairKey: pairKey))
+    }
+
+    func requestNodeUnpairPeer(peerNodeID: String) {
+        sendTyped(NodeUnpairPeerRequest(peerNodeID: peerNodeID))
+    }
+
+    func requestNodeRefreshNetwork() {
+        sendTyped(EmptyTypedWSRequest(action: "node_refresh_network"))
     }
 
     // MARK: - v1.22: 文件监控

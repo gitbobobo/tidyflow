@@ -269,11 +269,14 @@ fn build_prompt_context(
     workspace_root: &str,
     default_workspace_root: &Path,
     default_branch: &str,
+    remote_url: &str,
+    repo_coordination_key: &str,
     is_default_workspace: bool,
     project_active_directions: Vec<serde_json::Value>,
     project_integration_queue: Vec<String>,
     active_integration_workspace: Option<String>,
     coordination_queue_index: Option<u32>,
+    online_node_peers: Vec<serde_json::Value>,
 ) -> serde_json::Value {
     let implement_kind = implementation_stage_kind_for_stage(stage)
         .map(|kind| kind.as_str().to_string())
@@ -298,6 +301,7 @@ fn build_prompt_context(
         "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
         "VERIFY_ARTIFACT_PATH": verify_artifact_path,
         "AUTO_COMMIT_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "auto_commit"),
+        "SYNC_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "sync"),
         "INTEGRATION_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "integration"),
         "LAST_REIMPLEMENT_ARTIFACT_PATH": if verify_iteration > 0 {
             stage_artifact_path(cycle_dir, &reimplement_stage_name(verify_iteration))
@@ -306,11 +310,14 @@ fn build_prompt_context(
         },
         "DEFAULT_WORKSPACE_ROOT": default_workspace_root,
         "DEFAULT_BRANCH": default_branch,
+        "REMOTE_URL": remote_url,
+        "REPO_COORDINATION_KEY": repo_coordination_key,
         "IS_DEFAULT_WORKSPACE": is_default_workspace,
         "PROJECT_ACTIVE_DIRECTIONS": project_active_directions,
         "PROJECT_INTEGRATION_QUEUE": project_integration_queue,
         "ACTIVE_INTEGRATION_WORKSPACE": active_integration_workspace.unwrap_or_default(),
         "INTEGRATION_QUEUE_INDEX": coordination_queue_index,
+        "ONLINE_NODE_PEERS": online_node_peers,
         "IMPLEMENT_STAGE_KIND": implement_kind,
         "TASKS_TO_COMPLETE": "",
         "REPAIR_ITEMS_TO_COMPLETE": "",
@@ -367,6 +374,16 @@ fn required_context_keys(
         "auto_commit" => {
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
+        }
+        "sync" => {
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
+            push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
+            push_required_key(&mut keys, "AUTO_COMMIT_ARTIFACT_PATH");
+            push_required_key(&mut keys, "SYNC_ARTIFACT_PATH");
+            push_required_key(&mut keys, "DEFAULT_BRANCH");
+            push_required_key(&mut keys, "REMOTE_URL");
+            push_required_key(&mut keys, "REPO_COORDINATION_KEY");
+            push_required_key(&mut keys, "ONLINE_NODE_PEERS");
         }
         "integration" => {
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
@@ -647,9 +664,47 @@ impl EvolutionManager {
         let project_ctx = crate::server::context::resolve_project(&ctx.app_state, project)
             .await
             .map_err(|err| err.to_string())?;
+        let (remote_url, repo_coordination_key) = {
+            let state = ctx.app_state.read().await;
+            let remote_url = state
+                .get_project(project)
+                .and_then(|entry| entry.remote_url.clone())
+                .unwrap_or_default();
+            let repo_coordination_key = state
+                .repo_coordination_key_for_workspace(project, workspace)
+                .unwrap_or_default();
+            (remote_url, repo_coordination_key)
+        };
         let project_active_directions = self.project_direction_summaries(project, key).await;
         let (project_integration_queue, active_integration_workspace, coordination_queue_index) =
             self.project_integration_context(project, key).await;
+        let online_node_peers = if stage == "sync" {
+            if let Some(runtime) = crate::server::node::maybe_runtime() {
+                runtime
+                    .list_network_snapshot(false)
+                    .await
+                    .peers
+                    .into_iter()
+                    .filter(|peer| peer.status == "paired")
+                    .map(|peer| {
+                        serde_json::json!({
+                            "peer_node_id": peer.peer_node_id,
+                            "peer_name": peer.peer_name,
+                            "addresses": peer.addresses,
+                            "port": peer.port,
+                            "trust_source": peer.trust_source,
+                            "introduced_by": peer.introduced_by,
+                            "last_seen_at_unix": peer.last_seen_at_unix,
+                            "status": peer.status,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let context = build_prompt_context(
@@ -665,11 +720,14 @@ impl EvolutionManager {
             &workspace_root,
             &project_ctx.root_path,
             &project_ctx.default_branch,
+            &remote_url,
+            &repo_coordination_key,
             workspace == "default",
             project_active_directions,
             project_integration_queue,
             active_integration_workspace,
             coordination_queue_index,
+            online_node_peers,
         );
         let mut context_map = context
             .as_object()
@@ -830,11 +888,14 @@ mod tests {
             "/tmp/workspace",
             Path::new("/tmp/project-root"),
             "main",
+            "git@example.com/demo.git",
+            "git@example.com/demo",
             true,
             Vec::new(),
             Vec::new(),
             None,
             None,
+            Vec::new(),
         );
         assert_eq!(
             context

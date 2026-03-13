@@ -1,4 +1,4 @@
-# TidyFlow Protocol v9
+# TidyFlow Protocol v10
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -11,10 +11,10 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 本地认证管理 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 9`
-- 协议 schema 权威源：`schema/protocol/v9/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 10`
+- 协议 schema 权威源：`schema/protocol/v10/`
 
-## 消息模型（v9 包络，结构沿用 v6）
+## 消息模型（v10 包络，结构沿用 v6）
 
 - 客户端请求：
 - `ClientEnvelopeV6 { request_id, domain, action, payload, client_ts }`
@@ -301,7 +301,7 @@ idle → entering → active ⇄ resuming
 
 ## HTTP/WS 一致性边界与多工作区字段约束
 
-本节为 `schema/protocol/v9/` 的人类可读说明，**两者必须保持一致**。
+本节为 `schema/protocol/v10/` 的人类可读说明，**两者必须保持一致**。
 
 ### 多工作区边界字段
 
@@ -339,7 +339,7 @@ idle → entering → active ⇄ resuming
 - 若当前 `(project, workspace)` 已在本地状态中，直接按事件字段增量更新，不发起全量 HTTP snapshot 请求。
 - 若 `(project, workspace)` 不在本地状态中（首次收到），允许对该工作区发起定向 HTTP snapshot 请求；但此请求**不得**以全量 `GET /api/v1/evolution/snapshot`（无过滤参数）覆盖其他工作区的缓存。
 
-## 客户端设置字段（v8）
+## 客户端设置字段（v10）
 
 - `SaveClientSettings` 与 `ClientSettingsResult` 不再包含 `app_language`。
 - `app_language` 改为客户端本地偏好：
@@ -351,11 +351,13 @@ idle → entering → active ⇄ resuming
   - `merge_ai_agent`
   - `fixed_port`
   - `remote_access_enabled`
+  - `node_name`
+  - `node_discovery_enabled`
 
 ## 兼容策略
 
 - 本版本不向后兼容 v6。
-- 客户端必须发送 v9 包络；服务端统一返回 v9 包络。
+- 客户端必须发送 v10 包络；服务端统一返回 v10 包络。
 - 终端输出事件统一为 `output_batch`，payload 为 `items: [{ term_id, data }]`。
 - AI 聊天流式事件已硬切旧协议：
   - 已移除：`ai_chat_message_updated`、`ai_chat_part_updated`、`ai_chat_part_delta`
@@ -844,7 +846,7 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
   - `core/src/server/protocol/mod.rs`
   - `app/TidyFlow/Networking/ProtocolModels.swift`
   - 对应 handler 与 UI 调用方
-  - `schema/protocol/v9/README.md`
+  - `schema/protocol/v10/README.md`
 
 ## 统一运行状态面板（v1.43+）
 

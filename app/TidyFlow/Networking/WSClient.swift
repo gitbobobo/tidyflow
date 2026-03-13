@@ -8,7 +8,7 @@ import TidyFlowShared
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
 /// Minimal WebSocket client for Core communication
-/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v9，包络结构沿用 v6）
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v10，包络结构沿用 v6）
 class WSClient: NSObject, ObservableObject {
     enum HTTPReadRequestContext: Equatable {
         case aiProviderList(project: String, workspace: String, aiTool: AIChatTool)
@@ -66,6 +66,7 @@ class WSClient: NSObject, ObservableObject {
     weak var projectMessageHandler: ProjectMessageHandler?
     weak var fileMessageHandler: FileMessageHandler?
     weak var settingsMessageHandler: SettingsMessageHandler?
+    weak var nodeMessageHandler: NodeMessageHandler?
     weak var terminalMessageHandler: TerminalMessageHandler?
     weak var aiMessageHandler: AIMessageHandler?
     weak var evidenceMessageHandler: EvidenceMessageHandler?
@@ -113,6 +114,11 @@ class WSClient: NSObject, ObservableObject {
     // 客户端设置
     var onClientSettingsResult: ((ClientSettings) -> Void)?
     var onClientSettingsSaved: ((Bool, String?) -> Void)?
+    var onNodeSelfUpdated: ((NodeSelfInfoV2) -> Void)?
+    var onNodeDiscoveryUpdated: (([NodeDiscoveryItemV2]) -> Void)?
+    var onNodeNetworkUpdated: ((NodeNetworkSnapshotV2) -> Void)?
+    var onNodePairingResult: ((NodePairingResultV2) -> Void)?
+    var onNodePeerStatus: ((String, String, UInt64?) -> Void)?
     // v1.22: 文件监控回调
     var onWatchSubscribed: ((WatchSubscribedResult) -> Void)?
     var onWatchUnsubscribed: (() -> Void)?

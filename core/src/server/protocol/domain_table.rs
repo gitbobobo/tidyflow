@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v9/domains.yaml`
+//! 来源：`schema/protocol/v10/domains.yaml`
 //! 生成命令：`./scripts/tools/gen_protocol_domain_table.sh`
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -15,6 +15,7 @@ pub enum DomainRoute {
     Evidence,
     Evolution,
     Health,
+    Node,
 }
 
 pub const DOMAIN_IDS: &[&str] = &[
@@ -28,6 +29,7 @@ pub const DOMAIN_IDS: &[&str] = &[
     "evidence",
     "evolution",
     "health",
+    "node",
 ];
 
 pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
@@ -42,6 +44,7 @@ pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
         "evidence" => Some(DomainRoute::Evidence),
         "evolution" => Some(DomainRoute::Evolution),
         "health" => Some(DomainRoute::Health),
+        "node" => Some(DomainRoute::Node),
         _ => None,
     }
 }
@@ -58,5 +61,6 @@ pub fn domain_route_id(route: DomainRoute) -> &'static str {
         DomainRoute::Evidence => "evidence",
         DomainRoute::Evolution => "evolution",
         DomainRoute::Health => "health",
+        DomainRoute::Node => "node",
     }
 }

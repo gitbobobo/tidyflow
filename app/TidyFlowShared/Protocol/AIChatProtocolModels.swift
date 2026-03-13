@@ -2157,6 +2157,14 @@ public struct EvolutionWorkspaceItemV2: Equatable {
     public let coordinationState: String?
     /// 编排协作原因
     public let coordinationReason: String?
+    /// 编排协作作用域：本地项目或节点网络
+    public let coordinationScope: String?
+    /// 当前等待或占用关联的对端节点 ID
+    public let coordinationPeerNodeID: String?
+    /// 当前等待或占用关联的对端节点名称
+    public let coordinationPeerNodeName: String?
+    /// 当前等待或占用关联的对端项目
+    public let coordinationPeerProject: String?
     /// 当前等待或占用关联的对端工作区
     public let coordinationPeerWorkspace: String?
     /// integration FIFO 队列位置（从 0 开始）
@@ -2225,12 +2233,16 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             retryable: json["retryable"] as? Bool ?? false,
             coordinationState: json["coordination_state"] as? String,
             coordinationReason: json["coordination_reason"] as? String,
+            coordinationScope: json["coordination_scope"] as? String,
+            coordinationPeerNodeID: json["coordination_peer_node_id"] as? String,
+            coordinationPeerNodeName: json["coordination_peer_node_name"] as? String,
+            coordinationPeerProject: json["coordination_peer_project"] as? String,
             coordinationPeerWorkspace: json["coordination_peer_workspace"] as? String,
             coordinationQueueIndex: json["coordination_queue_index"].map { Int(parseInt64($0)) }
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2252,6 +2264,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         self.retryable = retryable
         self.coordinationState = coordinationState
         self.coordinationReason = coordinationReason
+        self.coordinationScope = coordinationScope
+        self.coordinationPeerNodeID = coordinationPeerNodeID
+        self.coordinationPeerNodeName = coordinationPeerNodeName
+        self.coordinationPeerProject = coordinationPeerProject
         self.coordinationPeerWorkspace = coordinationPeerWorkspace
         self.coordinationQueueIndex = coordinationQueueIndex
 
@@ -2276,6 +2292,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         ssrHasher.combine(retryable)
         ssrHasher.combine(coordinationState ?? "")
         ssrHasher.combine(coordinationReason ?? "")
+        ssrHasher.combine(coordinationScope ?? "")
+        ssrHasher.combine(coordinationPeerNodeID ?? "")
+        ssrHasher.combine(coordinationPeerNodeName ?? "")
+        ssrHasher.combine(coordinationPeerProject ?? "")
         ssrHasher.combine(coordinationPeerWorkspace ?? "")
         ssrHasher.combine(coordinationQueueIndex ?? -1)
         self.statusStageRoundSignature = ssrHasher.finalize()
@@ -2364,6 +2384,10 @@ public struct EvoCycleUpdatedV2 {
     public let retryable: Bool
     public let coordinationState: String?
     public let coordinationReason: String?
+    public let coordinationScope: String?
+    public let coordinationPeerNodeID: String?
+    public let coordinationPeerNodeName: String?
+    public let coordinationPeerProject: String?
     public let coordinationPeerWorkspace: String?
     public let coordinationQueueIndex: Int?
 
@@ -2398,12 +2422,16 @@ public struct EvoCycleUpdatedV2 {
             retryable: json["retryable"] as? Bool ?? false,
             coordinationState: json["coordination_state"] as? String,
             coordinationReason: json["coordination_reason"] as? String,
+            coordinationScope: json["coordination_scope"] as? String,
+            coordinationPeerNodeID: json["coordination_peer_node_id"] as? String,
+            coordinationPeerNodeName: json["coordination_peer_node_name"] as? String,
+            coordinationPeerProject: json["coordination_peer_project"] as? String,
             coordinationPeerWorkspace: json["coordination_peer_workspace"] as? String,
             coordinationQueueIndex: json["coordination_queue_index"].map { Int(parseInt64($0)) }
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationScope: String? = nil, coordinationPeerNodeID: String? = nil, coordinationPeerNodeName: String? = nil, coordinationPeerProject: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2425,8 +2453,253 @@ public struct EvoCycleUpdatedV2 {
         self.retryable = retryable
         self.coordinationState = coordinationState
         self.coordinationReason = coordinationReason
+        self.coordinationScope = coordinationScope
+        self.coordinationPeerNodeID = coordinationPeerNodeID
+        self.coordinationPeerNodeName = coordinationPeerNodeName
+        self.coordinationPeerProject = coordinationPeerProject
         self.coordinationPeerWorkspace = coordinationPeerWorkspace
         self.coordinationQueueIndex = coordinationQueueIndex
+    }
+}
+
+public struct NodeSelfInfoV2: Equatable {
+    public let nodeID: String
+    public let nodeName: String?
+    public let bootstrapPairKey: String
+    public let discoveryEnabled: Bool
+    public let remoteAccessEnabled: Bool
+    public let bindAddr: String?
+    public let port: Int?
+
+    public static func from(json: [String: Any]) -> NodeSelfInfoV2? {
+        guard let nodeID = json["node_id"] as? String,
+              let bootstrapPairKey = json["bootstrap_pair_key"] as? String else {
+            return nil
+        }
+        return NodeSelfInfoV2(
+            nodeID: nodeID,
+            nodeName: parseOptionalString(json["node_name"]),
+            bootstrapPairKey: bootstrapPairKey,
+            discoveryEnabled: json["discovery_enabled"] as? Bool ?? false,
+            remoteAccessEnabled: json["remote_access_enabled"] as? Bool ?? false,
+            bindAddr: parseOptionalString(json["bind_addr"]),
+            port: json["port"].map { Int(parseInt64($0)) }
+        )
+    }
+
+    public init(
+        nodeID: String,
+        nodeName: String?,
+        bootstrapPairKey: String,
+        discoveryEnabled: Bool,
+        remoteAccessEnabled: Bool,
+        bindAddr: String?,
+        port: Int?
+    ) {
+        self.nodeID = nodeID
+        self.nodeName = nodeName
+        self.bootstrapPairKey = bootstrapPairKey
+        self.discoveryEnabled = discoveryEnabled
+        self.remoteAccessEnabled = remoteAccessEnabled
+        self.bindAddr = bindAddr
+        self.port = port
+    }
+}
+
+public struct NodeDiscoveryItemV2: Equatable, Identifiable {
+    public var id: String { nodeID }
+    public let nodeID: String
+    public let nodeName: String
+    public let host: String
+    public let port: Int
+    public let protocolVersion: Int
+    public let lastSeenAtUnix: UInt64?
+    public let paired: Bool
+
+    public static func from(json: [String: Any]) -> NodeDiscoveryItemV2? {
+        guard let nodeID = json["node_id"] as? String,
+              let nodeName = json["node_name"] as? String,
+              let host = json["host"] as? String,
+              let port = json["port"].map({ Int(parseInt64($0)) }),
+              let protocolVersion = json["protocol_version"].map({ Int(parseInt64($0)) }) else {
+            return nil
+        }
+        let lastSeenAtUnix = (json["last_seen_at_unix"] as? NSNumber)?.uint64Value
+        return NodeDiscoveryItemV2(
+            nodeID: nodeID,
+            nodeName: nodeName,
+            host: host,
+            port: port,
+            protocolVersion: protocolVersion,
+            lastSeenAtUnix: lastSeenAtUnix,
+            paired: json["paired"] as? Bool ?? false
+        )
+    }
+
+    public init(
+        nodeID: String,
+        nodeName: String,
+        host: String,
+        port: Int,
+        protocolVersion: Int,
+        lastSeenAtUnix: UInt64?,
+        paired: Bool
+    ) {
+        self.nodeID = nodeID
+        self.nodeName = nodeName
+        self.host = host
+        self.port = port
+        self.protocolVersion = protocolVersion
+        self.lastSeenAtUnix = lastSeenAtUnix
+        self.paired = paired
+    }
+}
+
+public struct NodePeerInfoV2: Equatable, Identifiable {
+    public var id: String { peerNodeID }
+    public let peerNodeID: String
+    public let peerName: String
+    public let addresses: [String]
+    public let port: Int
+    public let trustSource: String
+    public let introducedBy: String?
+    public let lastSeenAtUnix: UInt64?
+    public let status: String
+    public let authToken: String?
+
+    public static func from(json: [String: Any]) -> NodePeerInfoV2? {
+        guard let peerNodeID = json["peer_node_id"] as? String,
+              let peerName = json["peer_name"] as? String,
+              let port = json["port"].map({ Int(parseInt64($0)) }),
+              let trustSource = json["trust_source"] as? String,
+              let status = json["status"] as? String else {
+            return nil
+        }
+        return NodePeerInfoV2(
+            peerNodeID: peerNodeID,
+            peerName: peerName,
+            addresses: json["addresses"] as? [String] ?? [],
+            port: port,
+            trustSource: trustSource,
+            introducedBy: parseOptionalString(json["introduced_by"]),
+            lastSeenAtUnix: (json["last_seen_at_unix"] as? NSNumber)?.uint64Value,
+            status: status,
+            authToken: parseOptionalString(json["auth_token"])
+        )
+    }
+
+    public init(
+        peerNodeID: String,
+        peerName: String,
+        addresses: [String],
+        port: Int,
+        trustSource: String,
+        introducedBy: String?,
+        lastSeenAtUnix: UInt64?,
+        status: String,
+        authToken: String?
+    ) {
+        self.peerNodeID = peerNodeID
+        self.peerName = peerName
+        self.addresses = addresses
+        self.port = port
+        self.trustSource = trustSource
+        self.introducedBy = introducedBy
+        self.lastSeenAtUnix = lastSeenAtUnix
+        self.status = status
+        self.authToken = authToken
+    }
+}
+
+public struct NodeActiveLockInfoV2: Equatable, Identifiable {
+    public var id: String { "\(repoCoordinationKey)::\(lockKind)::\(nodeID)::\(workspace)" }
+    public let repoCoordinationKey: String
+    public let lockKind: String
+    public let nodeID: String
+    public let nodeName: String?
+    public let project: String
+    public let workspace: String
+    public let acquiredAtUnix: UInt64
+
+    public static func from(json: [String: Any]) -> NodeActiveLockInfoV2? {
+        guard let repoCoordinationKey = json["repo_coordination_key"] as? String,
+              let lockKind = json["lock_kind"] as? String,
+              let nodeID = json["node_id"] as? String,
+              let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let acquiredAtUnix = (json["acquired_at_unix"] as? NSNumber)?.uint64Value else {
+            return nil
+        }
+        return NodeActiveLockInfoV2(
+            repoCoordinationKey: repoCoordinationKey,
+            lockKind: lockKind,
+            nodeID: nodeID,
+            nodeName: parseOptionalString(json["node_name"]),
+            project: project,
+            workspace: workspace,
+            acquiredAtUnix: acquiredAtUnix
+        )
+    }
+
+    public init(
+        repoCoordinationKey: String,
+        lockKind: String,
+        nodeID: String,
+        nodeName: String?,
+        project: String,
+        workspace: String,
+        acquiredAtUnix: UInt64
+    ) {
+        self.repoCoordinationKey = repoCoordinationKey
+        self.lockKind = lockKind
+        self.nodeID = nodeID
+        self.nodeName = nodeName
+        self.project = project
+        self.workspace = workspace
+        self.acquiredAtUnix = acquiredAtUnix
+    }
+}
+
+public struct NodeNetworkSnapshotV2: Equatable {
+    public let identity: NodeSelfInfoV2
+    public let peers: [NodePeerInfoV2]
+    public let activeLocks: [NodeActiveLockInfoV2]
+
+    public static func from(json: [String: Any]) -> NodeNetworkSnapshotV2? {
+        guard let identityJSON = json["identity"] as? [String: Any],
+              let identity = NodeSelfInfoV2.from(json: identityJSON) else {
+            return nil
+        }
+        let peers = (json["peers"] as? [[String: Any]] ?? []).compactMap(NodePeerInfoV2.from)
+        let activeLocks = (json["active_locks"] as? [[String: Any]] ?? []).compactMap(NodeActiveLockInfoV2.from)
+        return NodeNetworkSnapshotV2(identity: identity, peers: peers, activeLocks: activeLocks)
+    }
+
+    public init(identity: NodeSelfInfoV2, peers: [NodePeerInfoV2], activeLocks: [NodeActiveLockInfoV2]) {
+        self.identity = identity
+        self.peers = peers
+        self.activeLocks = activeLocks
+    }
+}
+
+public struct NodePairingResultV2: Equatable {
+    public let ok: Bool
+    public let peer: NodePeerInfoV2?
+    public let message: String?
+
+    public static func from(json: [String: Any]) -> NodePairingResultV2 {
+        let peer = (json["peer"] as? [String: Any]).flatMap(NodePeerInfoV2.from)
+        return NodePairingResultV2(
+            ok: json["ok"] as? Bool ?? false,
+            peer: peer,
+            message: parseOptionalString(json["message"])
+        )
+    }
+
+    public init(ok: Bool, peer: NodePeerInfoV2?, message: String?) {
+        self.ok = ok
+        self.peer = peer
+        self.message = message
     }
 }
 
@@ -3443,7 +3716,15 @@ public struct SystemSnapshotEvolutionWorkspaceSummary: Equatable {
             startedAt: canPreserveDetail ? existing?.startedAt : nil,
             durationMs: canPreserveDetail ? existing?.durationMs : nil,
             errorCode: canPreserveDetail ? existing?.errorCode : nil,
-            retryable: canPreserveDetail ? (existing?.retryable ?? false) : false
+            retryable: canPreserveDetail ? (existing?.retryable ?? false) : false,
+            coordinationState: canPreserveDetail ? existing?.coordinationState : nil,
+            coordinationReason: canPreserveDetail ? existing?.coordinationReason : nil,
+            coordinationScope: canPreserveDetail ? existing?.coordinationScope : nil,
+            coordinationPeerNodeID: canPreserveDetail ? existing?.coordinationPeerNodeID : nil,
+            coordinationPeerNodeName: canPreserveDetail ? existing?.coordinationPeerNodeName : nil,
+            coordinationPeerProject: canPreserveDetail ? existing?.coordinationPeerProject : nil,
+            coordinationPeerWorkspace: canPreserveDetail ? existing?.coordinationPeerWorkspace : nil,
+            coordinationQueueIndex: canPreserveDetail ? existing?.coordinationQueueIndex : nil
         )
     }
 

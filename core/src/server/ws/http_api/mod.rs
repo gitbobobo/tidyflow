@@ -5,6 +5,7 @@ mod evidence;
 mod evolution;
 mod file;
 mod git;
+mod node;
 mod project;
 mod system;
 mod terminal;
@@ -27,6 +28,7 @@ pub(in crate::server::ws) use git::{
     git_conflict_detail_handler, git_diff_handler, git_integration_status_handler, git_log_handler,
     git_op_status_handler, git_status_handler,
 };
+pub(in crate::server::ws) use node::{node_discovery_handler, node_network_handler, node_self_handler};
 pub(in crate::server::ws) use project::{
     client_settings_handler, projects_handler, tasks_handler, template_export_handler,
     templates_handler, workspaces_handler,

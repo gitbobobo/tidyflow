@@ -1,7 +1,9 @@
 import Foundation
 import SwiftUI
 import UIKit
-import TidyFlowShared
+// 共享协议层仍包含少量基于 `Any` 的过渡字段；这里先以 preconcurrency 导入，
+// 避免在后台快照准备阶段对不可变协议快照产生误报，后续待共享模型完全 Sendable 化后移除。
+@preconcurrency import TidyFlowShared
 
 // MobileWorkspaceTaskType、MobileWorkspaceTaskStatus 和 MobileWorkspaceTask 已迁移至
 // WorkspaceTaskSemantics.swift（WorkspaceTaskType / WorkspaceTaskStatus / WorkspaceTaskItem）
@@ -198,6 +200,13 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
     var clientFixedPort: Int = 0
     var clientRemoteAccessEnabled: Bool = false
+    @Published var clientNodeName: String = ""
+    @Published var clientNodeDiscoveryEnabled: Bool = false
+    @Published var nodeSelfInfo: NodeSelfInfoV2?
+    @Published var nodeDiscoveryItems: [NodeDiscoveryItemV2] = []
+    @Published var nodeNetworkPeers: [NodePeerInfoV2] = []
+    @Published var nodeActiveLocks: [NodeActiveLockInfoV2] = []
+    @Published var nodeLastPairingResult: NodePairingResultV2?
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""
     @Published var aiActiveWorkspace: String = ""
@@ -423,6 +432,7 @@ final class MobileAppState: ObservableObject {
     private var _fileHandlerAdapter: MobileAppStateFileMessageHandlerAdapter?
     private var _terminalHandlerAdapter: MobileAppStateTerminalMessageHandlerAdapter?
     private var _evolutionHandlerAdapter: MobileAppStateEvolutionMessageHandlerAdapter?
+    private var _nodeHandlerAdapter: MobileAppStateNodeMessageHandlerAdapter?
     private var _evidenceHandlerAdapter: MobileAppStateEvidenceMessageHandlerAdapter?
     private var _errorHandlerAdapter: MobileAppStateErrorMessageHandlerAdapter?
     /// 工作区缓存可观测性指标（Core 权威输出，按 "project:workspace" 隔离）
@@ -825,6 +835,9 @@ final class MobileAppState: ObservableObject {
         wsClient.requestListProjects()
         wsClient.requestTermList()
         wsClient.requestGetClientSettings()
+        wsClient.requestNodeSelf()
+        wsClient.requestNodeDiscovery()
+        wsClient.requestNodeNetwork()
         wsClient.requestListTasks()
     }
 
@@ -835,12 +848,20 @@ final class MobileAppState: ObservableObject {
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
+            nodeName: clientNodeName.isEmpty ? nil : clientNodeName,
+            nodeDiscoveryEnabled: clientNodeDiscoveryEnabled,
             evolutionDefaultProfiles: evolutionDefaultProfiles,
             evolutionAgentProfiles: [:],
             workspaceTodos: workspaceTodosByKey,
             keybindings: keybindings
         )
         wsClient.requestSaveClientSettings(settings: payload)
+    }
+
+    func refreshNodeNetwork() {
+        wsClient.requestNodeSelf(cacheMode: .forceRefresh)
+        wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+        wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
     }
 
     func selectProject(_ projectName: String) {
@@ -4487,6 +4508,8 @@ final class MobileAppState: ObservableObject {
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
+            self.clientNodeName = settings.nodeName ?? ""
+            self.clientNodeDiscoveryEnabled = settings.nodeDiscoveryEnabled
             self.applyEvolutionDefaultProfilesFromCore(settings.evolutionDefaultProfiles)
             self.workspaceTodosByKey = settings.workspaceTodos
             self.keybindings = settings.keybindings.isEmpty ? KeybindingConfig.defaultKeybindings() : settings.keybindings
@@ -4501,6 +4524,7 @@ final class MobileAppState: ObservableObject {
         let terminalHandler = MobileAppStateTerminalMessageHandlerAdapter(appState: self)
         let aiHandler = MobileAppStateAIMessageHandlerAdapter(appState: self)
         let evolutionHandler = MobileAppStateEvolutionMessageHandlerAdapter(appState: self)
+        let nodeHandler = MobileAppStateNodeMessageHandlerAdapter(appState: self)
         let evidenceHandler = MobileAppStateEvidenceMessageHandlerAdapter(appState: self)
         let errorHandler = MobileAppStateErrorMessageHandlerAdapter(appState: self)
 
@@ -4510,6 +4534,7 @@ final class MobileAppState: ObservableObject {
         _terminalHandlerAdapter = terminalHandler
         _aiHandlerAdapter = aiHandler
         _evolutionHandlerAdapter = evolutionHandler
+        _nodeHandlerAdapter = nodeHandler
         _evidenceHandlerAdapter = evidenceHandler
         _errorHandlerAdapter = errorHandler
 
@@ -4519,6 +4544,7 @@ final class MobileAppState: ObservableObject {
         wsClient.terminalMessageHandler = terminalHandler
         wsClient.aiMessageHandler = aiHandler
         wsClient.evolutionMessageHandler = evolutionHandler
+        wsClient.nodeMessageHandler = nodeHandler
         wsClient.evidenceMessageHandler = evidenceHandler
         wsClient.errorMessageHandler = errorHandler
 

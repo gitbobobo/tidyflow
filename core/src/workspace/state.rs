@@ -167,6 +167,12 @@ pub struct ClientSettings {
     /// 是否开启远程访问（开启后 Core 绑定 0.0.0.0）
     #[serde(default)]
     pub remote_access_enabled: bool,
+    /// 节点名称；为空时不允许开启局域网发现广播
+    #[serde(default)]
+    pub node_name: Option<String>,
+    /// 是否开启节点发现广播
+    #[serde(default)]
+    pub node_discovery_enabled: bool,
     /// Evolution 全局默认配置
     #[serde(default)]
     pub evolution_default_profiles: Vec<EvolutionStageProfile>,
@@ -204,6 +210,53 @@ pub struct RemoteAPIKeyEntry {
     pub last_used_at_unix: Option<u64>,
 }
 
+/// 节点身份（首次启动生成，长期稳定）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NodeIdentity {
+    pub node_id: String,
+    #[serde(default)]
+    pub node_name: Option<String>,
+    pub bootstrap_pair_key: String,
+    pub created_at_unix: u64,
+}
+
+/// 节点发现设置（与 ClientSettings 分离，便于作为独立持久化实体迁移）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NodeDiscoverySettings {
+    #[serde(default)]
+    pub discovery_enabled: bool,
+}
+
+/// 已配对节点持久化条目
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PairedNodeEntry {
+    pub peer_node_id: String,
+    pub peer_name: String,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    pub port: u16,
+    pub auth_token: String,
+    pub trust_source: String,
+    #[serde(default)]
+    pub introduced_by: Option<String>,
+    #[serde(default)]
+    pub last_seen_at_unix: Option<u64>,
+    #[serde(default)]
+    pub status: String,
+}
+
+/// 为其他节点签发的稳定访问令牌（内部持久化）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NodeAuthTokenEntry {
+    pub token_id: String,
+    pub token: String,
+    #[serde(default)]
+    pub peer_node_id: Option<String>,
+    pub created_at_unix: u64,
+    #[serde(default)]
+    pub last_used_at_unix: Option<u64>,
+}
+
 /// Application state - 持久化由 StateStore（SQLite）负责
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
@@ -215,6 +268,14 @@ pub struct AppState {
     pub client_settings: ClientSettings,
     #[serde(default)]
     pub remote_api_keys: Vec<RemoteAPIKeyEntry>,
+    #[serde(default)]
+    pub node_identity: Option<NodeIdentity>,
+    #[serde(default)]
+    pub node_discovery: NodeDiscoverySettings,
+    #[serde(default)]
+    pub paired_nodes: Vec<PairedNodeEntry>,
+    #[serde(default)]
+    pub node_auth_tokens: Vec<NodeAuthTokenEntry>,
 }
 
 impl Default for AppState {
@@ -225,6 +286,10 @@ impl Default for AppState {
             last_updated: Some(Utc::now()),
             client_settings: ClientSettings::default(),
             remote_api_keys: Vec::new(),
+            node_identity: None,
+            node_discovery: NodeDiscoverySettings::default(),
+            paired_nodes: Vec::new(),
+            node_auth_tokens: Vec::new(),
         }
     }
 }
@@ -422,6 +487,30 @@ impl AppState {
         entries.sort_by_key(|(_, _, w)| w.last_accessed);
         entries
     }
+
+    /// 通过标准化 remote_url 生成跨节点协作键；不存在远端仓库时返回 None。
+    pub fn repo_coordination_key_for_workspace(
+        &self,
+        project: &str,
+        workspace: &str,
+    ) -> Option<String> {
+        let project_entry = self.get_project(project)?;
+        if workspace != DEFAULT_WORKSPACE_NAME && project_entry.get_workspace(workspace).is_none() {
+            return None;
+        }
+        project_entry
+            .remote_url
+            .as_deref()
+            .and_then(normalize_repo_coordination_key)
+    }
+}
+
+pub fn normalize_repo_coordination_key(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/').trim_end_matches(".git");
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_ascii_lowercase())
 }
 
 impl Project {

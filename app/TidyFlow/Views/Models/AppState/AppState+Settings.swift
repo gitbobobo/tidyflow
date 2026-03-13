@@ -6,11 +6,37 @@ extension AppState {
     /// 从服务端加载客户端设置
     func loadClientSettings() {
         wsClient.requestGetClientSettings()
+        wsClient.requestNodeSelf()
+        wsClient.requestNodeDiscovery()
+        wsClient.requestNodeNetwork()
     }
 
     /// 保存客户端设置到服务端
     func saveClientSettings() {
         wsClient.requestSaveClientSettings(settings: clientSettings)
+    }
+
+    func refreshNodeNetwork() {
+        wsClient.requestNodeSelf(cacheMode: .forceRefresh)
+        wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+        wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
+    }
+
+    func updateNodeProfile(nodeName: String?, discoveryEnabled: Bool) {
+        let trimmedName = nodeName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedName = trimmedName?.isEmpty == true ? nil : trimmedName
+        clientSettings.nodeName = normalizedName
+        clientSettings.nodeDiscoveryEnabled = discoveryEnabled
+        wsClient.requestNodeUpdateProfile(nodeName: normalizedName, discoveryEnabled: discoveryEnabled)
+        saveClientSettings()
+    }
+
+    func pairNodePeer(host: String, port: Int, pairKey: String) {
+        wsClient.requestNodePairPeer(host: host, port: port, pairKey: pairKey)
+    }
+
+    func unpairNodePeer(peerNodeID: String) {
+        wsClient.requestNodeUnpairPeer(peerNodeID: peerNodeID)
     }
 
     /// 添加自定义命令

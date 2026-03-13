@@ -15,9 +15,10 @@ use sqlx::{Pool, Row, Sqlite};
 use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
-    KeybindingConfig, Project, ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError,
-    TemplateCommand, WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus,
-    WorkspaceTodoItem, WorkspaceTerminalRecoveryEntry,
+    KeybindingConfig, NodeAuthTokenEntry, NodeDiscoverySettings, NodeIdentity, PairedNodeEntry,
+    Project, ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError, TemplateCommand,
+    WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus, WorkspaceTodoItem,
+    WorkspaceTerminalRecoveryEntry,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -92,6 +93,7 @@ impl StateStore {
         if let Some(row) = sqlx::query(
             r#"
             SELECT merge_ai_agent, fixed_port, remote_access_enabled, evolution_default_profiles_json
+                 , node_name, node_discovery_enabled
             FROM client_settings
             WHERE id = 1
             "#,
@@ -108,6 +110,12 @@ impl StateStore {
                 .unwrap_or(0);
             client_settings.remote_access_enabled = row
                 .try_get::<i64, _>("remote_access_enabled")
+                .ok()
+                .unwrap_or(0)
+                != 0;
+            client_settings.node_name = row.try_get("node_name").ok();
+            client_settings.node_discovery_enabled = row
+                .try_get::<i64, _>("node_discovery_enabled")
                 .ok()
                 .unwrap_or(0)
                 != 0;
@@ -323,6 +331,110 @@ impl StateStore {
         })
         .collect();
 
+        let node_identity = sqlx::query(
+            r#"
+            SELECT node_id, node_name, bootstrap_pair_key, created_at_unix
+            FROM node_identity
+            WHERE id = 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?
+        .map(|row| NodeIdentity {
+            node_id: row.try_get("node_id").unwrap_or_default(),
+            node_name: row.try_get("node_name").ok(),
+            bootstrap_pair_key: row.try_get("bootstrap_pair_key").unwrap_or_default(),
+            created_at_unix: row
+                .try_get::<i64, _>("created_at_unix")
+                .ok()
+                .and_then(|v| u64::try_from(v).ok())
+                .unwrap_or(0),
+        });
+
+        let node_discovery = sqlx::query(
+            r#"
+            SELECT discovery_enabled
+            FROM node_discovery_settings
+            WHERE id = 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?
+        .map(|row| NodeDiscoverySettings {
+            discovery_enabled: row.try_get::<i64, _>("discovery_enabled").ok().unwrap_or(0) != 0,
+        })
+        .unwrap_or_default();
+
+        let paired_nodes = sqlx::query(
+            r#"
+            SELECT peer_node_id, peer_name, addresses_json, port, auth_token, trust_source,
+                   introduced_by, last_seen_at_unix, status
+            FROM paired_nodes
+            ORDER BY peer_node_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?
+        .into_iter()
+        .map(|row| {
+            let addresses_json: String = row
+                .try_get("addresses_json")
+                .unwrap_or_else(|_| "[]".to_string());
+            PairedNodeEntry {
+                peer_node_id: row.try_get("peer_node_id").unwrap_or_default(),
+                peer_name: row.try_get("peer_name").unwrap_or_default(),
+                addresses: serde_json::from_str(&addresses_json).unwrap_or_default(),
+                port: row
+                    .try_get::<i64, _>("port")
+                    .ok()
+                    .and_then(|v| u16::try_from(v).ok())
+                    .unwrap_or(0),
+                auth_token: row.try_get("auth_token").unwrap_or_default(),
+                trust_source: row.try_get("trust_source").unwrap_or_default(),
+                introduced_by: row.try_get("introduced_by").ok(),
+                last_seen_at_unix: row
+                    .try_get::<Option<i64>, _>("last_seen_at_unix")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| u64::try_from(v).ok()),
+                status: row
+                    .try_get("status")
+                    .unwrap_or_else(|_| "unreachable".to_string()),
+            }
+        })
+        .collect();
+
+        let node_auth_tokens = sqlx::query(
+            r#"
+            SELECT token_id, token, peer_node_id, created_at_unix, last_used_at_unix
+            FROM node_auth_tokens
+            ORDER BY token_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?
+        .into_iter()
+        .map(|row| NodeAuthTokenEntry {
+            token_id: row.try_get("token_id").unwrap_or_default(),
+            token: row.try_get("token").unwrap_or_default(),
+            peer_node_id: row.try_get("peer_node_id").ok(),
+            created_at_unix: row
+                .try_get::<i64, _>("created_at_unix")
+                .ok()
+                .and_then(|v| u64::try_from(v).ok())
+                .unwrap_or(0),
+            last_used_at_unix: row
+                .try_get::<Option<i64>, _>("last_used_at_unix")
+                .ok()
+                .flatten()
+                .and_then(|v| u64::try_from(v).ok()),
+        })
+        .collect();
+
         let project_rows = sqlx::query(
             r#"
             SELECT name, root_path, remote_url, default_branch, created_at
@@ -502,6 +614,10 @@ impl StateStore {
             last_updated,
             client_settings,
             remote_api_keys,
+            node_identity,
+            node_discovery,
+            paired_nodes,
+            node_auth_tokens,
         })
     }
 
@@ -524,6 +640,10 @@ impl StateStore {
             "evolution_stage_profiles",
             "remote_api_keys",
             "keybindings",
+            "paired_nodes",
+            "node_auth_tokens",
+            "node_identity",
+            "node_discovery_settings",
         ] {
             let sql = format!("DELETE FROM {}", table);
             sqlx::query(&sql)
@@ -544,9 +664,11 @@ impl StateStore {
                 merge_ai_agent,
                 fixed_port,
                 remote_access_enabled,
-                evolution_default_profiles_json
+                evolution_default_profiles_json,
+                node_name,
+                node_discovery_enabled
             )
-            VALUES (1, ?1, ?2, ?3, ?4)
+            VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
             "#,
         )
         .bind(state.client_settings.merge_ai_agent.clone())
@@ -560,9 +682,46 @@ impl StateStore {
             serde_json::to_string(&state.client_settings.evolution_default_profiles)
                 .map_err(|e| StateError::WriteError(e.to_string()))?,
         )
+        .bind(state.client_settings.node_name.clone())
+        .bind(if state.client_settings.node_discovery_enabled {
+            1_i64
+        } else {
+            0_i64
+        })
         .execute(&mut *tx)
         .await
         .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO node_discovery_settings (id, discovery_enabled)
+            VALUES (1, ?1)
+            "#,
+        )
+        .bind(if state.node_discovery.discovery_enabled {
+            1_i64
+        } else {
+            0_i64
+        })
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
+
+        if let Some(identity) = state.node_identity.as_ref() {
+            sqlx::query(
+                r#"
+                INSERT INTO node_identity (id, node_id, node_name, bootstrap_pair_key, created_at_unix)
+                VALUES (1, ?1, ?2, ?3, ?4)
+                "#,
+            )
+            .bind(&identity.node_id)
+            .bind(identity.node_name.clone())
+            .bind(&identity.bootstrap_pair_key)
+            .bind(i64::try_from(identity.created_at_unix).unwrap_or(0))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
 
         for command in &state.client_settings.custom_commands {
             sqlx::query(
@@ -700,6 +859,52 @@ impl StateStore {
             .bind(&key.api_key)
             .bind(i64::try_from(key.created_at_unix).unwrap_or(0))
             .bind(key.last_used_at_unix.and_then(|value| i64::try_from(value).ok()))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
+        for peer in &state.paired_nodes {
+            sqlx::query(
+                r#"
+                INSERT INTO paired_nodes (
+                    peer_node_id, peer_name, addresses_json, port, auth_token, trust_source,
+                    introduced_by, last_seen_at_unix, status
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "#,
+            )
+            .bind(&peer.peer_node_id)
+            .bind(&peer.peer_name)
+            .bind(
+                serde_json::to_string(&peer.addresses)
+                    .map_err(|e| StateError::WriteError(e.to_string()))?,
+            )
+            .bind(i64::from(peer.port))
+            .bind(&peer.auth_token)
+            .bind(&peer.trust_source)
+            .bind(peer.introduced_by.clone())
+            .bind(peer.last_seen_at_unix.and_then(|value| i64::try_from(value).ok()))
+            .bind(&peer.status)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
+        for token in &state.node_auth_tokens {
+            sqlx::query(
+                r#"
+                INSERT INTO node_auth_tokens (
+                    token_id, token, peer_node_id, created_at_unix, last_used_at_unix
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+            )
+            .bind(&token.token_id)
+            .bind(&token.token)
+            .bind(token.peer_node_id.clone())
+            .bind(i64::try_from(token.created_at_unix).unwrap_or(0))
+            .bind(token.last_used_at_unix.and_then(|value| i64::try_from(value).ok()))
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -951,7 +1156,9 @@ impl StateStore {
                 merge_ai_agent TEXT,
                 fixed_port INTEGER NOT NULL DEFAULT 0,
                 remote_access_enabled INTEGER NOT NULL DEFAULT 0,
-                evolution_default_profiles_json TEXT NOT NULL DEFAULT '[]'
+                evolution_default_profiles_json TEXT NOT NULL DEFAULT '[]',
+                node_name TEXT,
+                node_discovery_enabled INTEGER NOT NULL DEFAULT 0
             )
             "#,
             r#"
@@ -1012,6 +1219,43 @@ impl StateStore {
             )
             "#,
             r#"
+            CREATE TABLE IF NOT EXISTS node_identity (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                node_id TEXT NOT NULL,
+                node_name TEXT,
+                bootstrap_pair_key TEXT NOT NULL,
+                created_at_unix INTEGER NOT NULL
+            )
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS node_discovery_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                discovery_enabled INTEGER NOT NULL DEFAULT 0
+            )
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS paired_nodes (
+                peer_node_id TEXT PRIMARY KEY,
+                peer_name TEXT NOT NULL,
+                addresses_json TEXT NOT NULL DEFAULT '[]',
+                port INTEGER NOT NULL DEFAULT 0,
+                auth_token TEXT NOT NULL,
+                trust_source TEXT NOT NULL,
+                introduced_by TEXT,
+                last_seen_at_unix INTEGER,
+                status TEXT NOT NULL DEFAULT 'unreachable'
+            )
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS node_auth_tokens (
+                token_id TEXT PRIMARY KEY,
+                token TEXT NOT NULL,
+                peer_node_id TEXT,
+                created_at_unix INTEGER NOT NULL,
+                last_used_at_unix INTEGER
+            )
+            "#,
+            r#"
             CREATE TABLE IF NOT EXISTS workflow_templates (
                 id TEXT NOT NULL,
                 name TEXT NOT NULL,
@@ -1049,9 +1293,6 @@ impl StateStore {
         }
         self.ensure_client_settings_columns().await?;
         self.ensure_workspace_recovery_columns().await?;
-        let _ = sqlx::query("DELETE FROM paired_tokens")
-            .execute(&self.pool)
-            .await;
         Ok(())
     }
 
@@ -1078,23 +1319,23 @@ impl StateStore {
     }
 
     async fn ensure_client_settings_columns(&self) -> Result<(), StateError> {
-        let result = sqlx::query(
+        let migrations: &[&str] = &[
             "ALTER TABLE client_settings ADD COLUMN evolution_default_profiles_json TEXT NOT NULL DEFAULT '[]'",
-        )
-        .execute(&self.pool)
-        .await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let message = err.to_string();
-                if message.contains("duplicate column name") {
-                    Ok(())
-                } else {
-                    Err(StateError::WriteError(message))
+            "ALTER TABLE client_settings ADD COLUMN node_name TEXT",
+            "ALTER TABLE client_settings ADD COLUMN node_discovery_enabled INTEGER NOT NULL DEFAULT 0",
+        ];
+        for sql in migrations {
+            match sqlx::query(sql).execute(&self.pool).await {
+                Ok(_) => {}
+                Err(err) => {
+                    let message = err.to_string();
+                    if !message.contains("duplicate column name") {
+                        return Err(StateError::WriteError(message));
+                    }
                 }
             }
         }
+        Ok(())
     }
 
     // ──────────────────────────────────────────────────────────────────────────

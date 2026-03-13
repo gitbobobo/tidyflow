@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::server::handlers::evolution_prompts::{
     STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT,
-    STAGE_INTEGRATION_PROMPT, STAGE_PLAN_PROMPT, STAGE_REIMPLEMENT_PROMPT, STAGE_VERIFY_PROMPT,
+    STAGE_INTEGRATION_PROMPT, STAGE_PLAN_PROMPT, STAGE_REIMPLEMENT_PROMPT, STAGE_SYNC_PROMPT,
+    STAGE_VERIFY_PROMPT,
 };
 use crate::server::protocol::EvolutionAgentInfo;
 
@@ -89,6 +90,7 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
         "auto_commit" => "AutoCommitAgent",
+        "sync" => "SyncAgent",
         "integration" => "IntegrationAgent",
         _ => "UnknownAgent",
     }
@@ -98,7 +100,8 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
-        "auto_commit" => Some("integration"),
+        "auto_commit" => Some("sync"),
+        "sync" => Some("direction"),
         "integration" => Some("direction"),
         _ => None,
     }
@@ -118,6 +121,7 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
         "auto_commit" => Some(STAGE_AUTO_COMMIT_PROMPT),
+        "sync" => Some(STAGE_SYNC_PROMPT),
         "integration" => Some(STAGE_INTEGRATION_PROMPT),
         _ => None,
     }
@@ -138,6 +142,7 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
         "auto_commit" => Some("builtin://evolution/stage.auto_commit.prompt"),
+        "sync" => Some("builtin://evolution/stage.sync.prompt"),
         "integration" => Some("builtin://evolution/stage.integration.prompt"),
         _ => None,
     }

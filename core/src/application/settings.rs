@@ -12,6 +12,8 @@ pub struct SaveClientSettingsParams {
     pub merge_ai_agent: Option<String>,
     pub fixed_port: Option<u16>,
     pub remote_access_enabled: Option<bool>,
+    pub node_name: Option<Option<String>>,
+    pub node_discovery_enabled: Option<bool>,
     /// None: 保持现值；Some: 覆盖全局 Evolution 默认配置。
     pub evolution_default_profiles: Option<Vec<EvolutionStageProfileInfo>>,
     /// None: 保持现值；Some: 覆盖整个 workspace_todos。
@@ -63,6 +65,8 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
         fixed_port: state.client_settings.fixed_port,
         remote_access_enabled: state.client_settings.remote_access_enabled,
+        node_name: state.client_settings.node_name.clone(),
+        node_discovery_enabled: state.client_settings.node_discovery_enabled,
         evolution_default_profiles: to_protocol_profiles(
             &state.client_settings.evolution_default_profiles,
         ),
@@ -93,6 +97,19 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
     }
     if let Some(enabled) = params.remote_access_enabled {
         state.client_settings.remote_access_enabled = enabled;
+    }
+    if let Some(node_name) = params.node_name {
+        let normalized_node_name = node_name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        state.client_settings.node_name = normalized_node_name.clone();
+        if let Some(identity) = state.node_identity.as_mut() {
+            identity.node_name = normalized_node_name;
+        }
+    }
+    if let Some(enabled) = params.node_discovery_enabled {
+        state.client_settings.node_discovery_enabled = enabled;
+        state.node_discovery.discovery_enabled = enabled;
     }
     if let Some(profiles) = params.evolution_default_profiles {
         state.client_settings.evolution_default_profiles = from_protocol_profiles(profiles);
@@ -195,6 +212,8 @@ mod tests {
             merge_ai_agent: None,
             fixed_port: None,
             remote_access_enabled: None,
+            node_name: None,
+            node_discovery_enabled: None,
             evolution_default_profiles: None,
             workspace_todos: None,
             keybindings: None,
@@ -207,6 +226,8 @@ mod tests {
         let mut params = empty_params();
         params.fixed_port = Some(48111);
         params.remote_access_enabled = Some(true);
+        params.node_name = Some(Some("demo-node".to_string()));
+        params.node_discovery_enabled = Some(true);
         params
             .workspace_shortcuts
             .insert("1".to_string(), "demo/default".to_string());
@@ -216,6 +237,8 @@ mod tests {
         let state = app_state.read().await;
         assert_eq!(state.client_settings.fixed_port, 48111);
         assert!(state.client_settings.remote_access_enabled);
+        assert_eq!(state.client_settings.node_name.as_deref(), Some("demo-node"));
+        assert!(state.client_settings.node_discovery_enabled);
         assert_eq!(
             state
                 .client_settings

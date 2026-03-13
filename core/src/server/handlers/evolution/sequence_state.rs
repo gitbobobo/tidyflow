@@ -260,7 +260,11 @@ mod tests {
             stage_started_ats: HashMap::new(),
             stage_duration_ms: HashMap::new(),
             coordination_state: None,
+            coordination_scope: None,
             coordination_reason: None,
+            coordination_peer_node_id: None,
+            coordination_peer_node_name: None,
+            coordination_peer_project: None,
             coordination_peer_workspace: None,
             coordination_queue_index: None,
         }

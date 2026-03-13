@@ -481,6 +481,10 @@ struct ClientSettings: Codable {
     var fixedPort: Int
     /// 是否开启远程访问（开启后 Core 会监听 0.0.0.0）
     var remoteAccessEnabled: Bool
+    /// 节点名称；为空时不启用局域网发现广播
+    var nodeName: String?
+    /// 是否开启节点发现广播
+    var nodeDiscoveryEnabled: Bool
     /// Evolution 全局默认配置
     var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2]
     /// Evolution 代理配置（key: "project/workspace"）
@@ -496,6 +500,8 @@ struct ClientSettings: Codable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
+        case nodeName = "node_name"
+        case nodeDiscoveryEnabled = "node_discovery_enabled"
         case evolutionDefaultProfiles = "evolution_default_profiles"
         case evolutionAgentProfiles = "evolution_agent_profiles"
         case workspaceTodos = "workspace_todos"
@@ -508,6 +514,8 @@ struct ClientSettings: Codable {
         mergeAIAgent: String? = nil,
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
+        nodeName: String? = nil,
+        nodeDiscoveryEnabled: Bool = false,
         evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = [],
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:],
         workspaceTodos: [String: [WorkspaceTodoItem]] = [:],
@@ -518,6 +526,8 @@ struct ClientSettings: Codable {
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
         self.remoteAccessEnabled = remoteAccessEnabled
+        self.nodeName = nodeName
+        self.nodeDiscoveryEnabled = nodeDiscoveryEnabled
         self.evolutionDefaultProfiles = evolutionDefaultProfiles
         self.evolutionAgentProfiles = evolutionAgentProfiles
         self.workspaceTodos = workspaceTodos
@@ -531,6 +541,8 @@ struct ClientSettings: Codable {
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
+        nodeName = try container.decodeIfPresent(String.self, forKey: .nodeName)
+        nodeDiscoveryEnabled = try container.decodeIfPresent(Bool.self, forKey: .nodeDiscoveryEnabled) ?? false
         evolutionDefaultProfiles = []
         evolutionAgentProfiles = [:]
         workspaceTodos = try container.decodeIfPresent([String: [WorkspaceTodoItem]].self, forKey: .workspaceTodos) ?? [:]
@@ -544,6 +556,8 @@ struct ClientSettings: Codable {
         try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
         try container.encode(fixedPort, forKey: .fixedPort)
         try container.encode(remoteAccessEnabled, forKey: .remoteAccessEnabled)
+        try container.encodeIfPresent(nodeName, forKey: .nodeName)
+        try container.encode(nodeDiscoveryEnabled, forKey: .nodeDiscoveryEnabled)
         try container.encode(workspaceTodos, forKey: .workspaceTodos)
         try container.encode(keybindings, forKey: .keybindings)
     }

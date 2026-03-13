@@ -828,6 +828,10 @@ extension AppState {
                 retryable: existing.retryable,
                 coordinationState: existing.coordinationState,
                 coordinationReason: existing.coordinationReason,
+                coordinationScope: existing.coordinationScope,
+                coordinationPeerNodeID: existing.coordinationPeerNodeID,
+                coordinationPeerNodeName: existing.coordinationPeerNodeName,
+                coordinationPeerProject: existing.coordinationPeerProject,
                 coordinationPeerWorkspace: existing.coordinationPeerWorkspace,
                 coordinationQueueIndex: existing.coordinationQueueIndex
             )
@@ -887,6 +891,10 @@ extension AppState {
                 retryable: ev.retryable,
                 coordinationState: ev.coordinationState ?? existing.coordinationState,
                 coordinationReason: ev.coordinationReason ?? existing.coordinationReason,
+                coordinationScope: ev.coordinationScope ?? existing.coordinationScope,
+                coordinationPeerNodeID: ev.coordinationPeerNodeID ?? existing.coordinationPeerNodeID,
+                coordinationPeerNodeName: ev.coordinationPeerNodeName ?? existing.coordinationPeerNodeName,
+                coordinationPeerProject: ev.coordinationPeerProject ?? existing.coordinationPeerProject,
                 coordinationPeerWorkspace: ev.coordinationPeerWorkspace ?? existing.coordinationPeerWorkspace,
                 coordinationQueueIndex: ev.coordinationQueueIndex ?? existing.coordinationQueueIndex
             )

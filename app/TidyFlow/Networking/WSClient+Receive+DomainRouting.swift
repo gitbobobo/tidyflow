@@ -18,6 +18,7 @@ extension WSClient {
         ("project", "export_template"),
         ("project", "import_template"),
         ("project", "templates"),
+        ("node", "node_refresh_network"),
         ]
     }
 
@@ -38,6 +39,7 @@ extension WSClient {
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
         ("project", "template_"),
+        ("node", "node_"),
         ("ai", "ai_"),
         ("evidence", "evidence_"),
         ("evolution", "evo_"),
@@ -62,6 +64,11 @@ extension WSClient {
         "project:projects",
         "project:workspaces",
         "project:tasks_snapshot",
+        "node:node_self_updated",
+        "node:node_discovery_updated",
+        "node:node_network_updated",
+        "node:node_pairing_result",
+        "node:node_peer_status",
         "health:health_snapshot",
         "health:health_repair_result",
         // v1.46: Coordinator 域（工作区级 AI 聚合状态增量快照）
@@ -90,6 +97,8 @@ extension WSClient {
             return handleFileDomain(action, json: json)
         case "settings":
             return handleSettingsDomain(action, json: json)
+        case "node":
+            return handleNodeDomain(action, json: json)
         case "ai":
             return handleAiDomain(action, json: json)
         case "evidence":

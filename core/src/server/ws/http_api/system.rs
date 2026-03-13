@@ -655,7 +655,11 @@ mod tests {
             error_code: None,
             retryable: false,
             coordination_state: None,
+            coordination_scope: None,
             coordination_reason: None,
+            coordination_peer_node_id: None,
+            coordination_peer_node_name: None,
+            coordination_peer_project: None,
             coordination_peer_workspace: None,
             coordination_queue_index: None,
         }

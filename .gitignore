@@ -15,6 +15,7 @@ build-macos/
 build-tests/
 build-ios/
 build-verify*/
+build-warnings-*/
 DerivedData/
 *.moved-aside
 *.pbxuser

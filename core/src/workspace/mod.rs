@@ -19,7 +19,10 @@ pub mod workspace;
 pub use config::ProjectConfig;
 pub use project::ProjectManager;
 pub use setup::{SetupExecutor, SetupResult, StepResult};
-pub use state::{AppState, Project, RemoteAPIKeyEntry, Workspace, WorkspaceStatus};
+pub use state::{
+    normalize_repo_coordination_key, AppState, NodeAuthTokenEntry, NodeDiscoverySettings,
+    NodeIdentity, PairedNodeEntry, Project, RemoteAPIKeyEntry, Workspace, WorkspaceStatus,
+};
 pub use state_saver::spawn_state_saver;
 pub use state_store::StateStore;
 pub use workspace::WorkspaceManager;

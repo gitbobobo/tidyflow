@@ -546,7 +546,7 @@ impl EvolutionManager {
                 self.broadcast_scheduler(&ctx).await;
             }
 
-            match self.apply_project_coordination_gate(&key).await {
+            match self.apply_project_coordination_gate(&key, &ctx).await {
                 CoordinationGateResult::Ready => {}
                 CoordinationGateResult::Wait => {
                     self.persist_cycle_file(&key).await.ok();

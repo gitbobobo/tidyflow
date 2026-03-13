@@ -18,6 +18,10 @@ pub enum SettingsRequest {
         #[serde(default)]
         remote_access_enabled: Option<bool>,
         #[serde(default)]
+        node_name: Option<Option<String>>,
+        #[serde(default)]
+        node_discovery_enabled: Option<bool>,
+        #[serde(default)]
         evolution_default_profiles: Option<Vec<super::EvolutionStageProfileInfo>>,
         #[serde(default)]
         workspace_todos: Option<std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>>,
@@ -37,6 +41,10 @@ pub enum SettingsResponse {
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         remote_access_enabled: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        node_name: Option<String>,
+        #[serde(default)]
+        node_discovery_enabled: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         evolution_default_profiles: Vec<super::EvolutionStageProfileInfo>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]

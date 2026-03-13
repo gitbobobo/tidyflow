@@ -23,6 +23,18 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/auth/keys/:key_id",
             delete(crate::server::ws::auth_keys::delete_api_key_handler),
         )
+        .route(
+            "/api/v1/node/self",
+            get(crate::server::ws::http_api::node_self_handler),
+        )
+        .route(
+            "/api/v1/node/discovery",
+            get(crate::server::ws::http_api::node_discovery_handler),
+        )
+        .route(
+            "/api/v1/node/network",
+            get(crate::server::ws::http_api::node_network_handler),
+        )
         .route("/api/v1/projects", get(crate::server::ws::http_api::projects_handler))
         .route(
             "/api/v1/projects/:project/workspaces",

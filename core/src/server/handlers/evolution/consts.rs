@@ -34,9 +34,9 @@ impl ImplementationStageKind {
     }
 }
 
-pub(super) const STAGES: [&str; 4] = ["direction", "plan", "auto_commit", "integration"];
+pub(super) const STAGES: [&str; 5] = ["direction", "plan", "auto_commit", "sync", "integration"];
 
-pub(super) const PROFILE_STAGES: [&str; 8] = [
+pub(super) const PROFILE_STAGES: [&str; 9] = [
     "direction",
     "plan",
     "implement_general",
@@ -44,6 +44,7 @@ pub(super) const PROFILE_STAGES: [&str; 8] = [
     "implement_advanced",
     "verify",
     "auto_commit",
+    "sync",
     "integration",
 ];
 
@@ -70,7 +71,7 @@ pub(super) fn base_stages_for_workspace(workspace: &str) -> Vec<&'static str> {
     if workspace.trim() == "default" {
         vec!["direction", "plan", "auto_commit"]
     } else {
-        STAGES.to_vec()
+        vec!["direction", "plan", "auto_commit", "integration"]
     }
 }
 
@@ -140,7 +141,8 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
             "direction" => (0, 0, 0, String::new()),
             "plan" => (1, 0, 0, String::new()),
             "auto_commit" => (5, 0, 0, String::new()),
-            "integration" => (6, 0, 0, String::new()),
+            "sync" => (6, 0, 0, String::new()),
+            "integration" => (7, 0, 0, String::new()),
             other => {
                 if let Some((kind, index)) = parse_implement_stage_instance(other) {
                     return (2, index, kind_sort_rank(kind), String::new());
@@ -151,7 +153,7 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
                 if let Some(index) = parse_verify_stage_instance(other) {
                     return (4, index, 0, String::new());
                 }
-                (7, 0, 0, other.to_string())
+                (8, 0, 0, other.to_string())
             }
         }
     }
@@ -185,6 +187,7 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
         "direction" => Some("direction.jsonc".to_string()),
         "plan" => Some("plan.jsonc".to_string()),
         "auto_commit" => Some("auto_commit.jsonc".to_string()),
+        "sync" => Some("sync.jsonc".to_string()),
         "integration" => Some("integration.jsonc".to_string()),
         "implement_general" => Some("implement_general.jsonc".to_string()),
         "implement_visual" => Some("implement_visual.jsonc".to_string()),

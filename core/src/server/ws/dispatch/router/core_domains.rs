@@ -89,3 +89,11 @@ pub(super) async fn handle_health_domain(
 ) -> Result<bool, String> {
     crate::server::handlers::health::handle_health_message(client_msg, socket, ctx).await
 }
+
+pub(super) async fn handle_node_domain(
+    client_msg: &ClientMessage,
+    socket: &WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    crate::server::handlers::node::handle_node_message(client_msg, socket, ctx).await
+}

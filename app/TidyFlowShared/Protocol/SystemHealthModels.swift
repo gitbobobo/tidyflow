@@ -12,7 +12,7 @@ import Foundation
 // MARK: - 公共归属上下文
 
 /// 健康事件归属上下文（兼容多项目 / 多工作区 / 多会话并行场景）
-public struct HealthContext: Codable, Equatable, Hashable {
+public struct HealthContext: Codable, Equatable, Hashable, Sendable {
     public var project: String?
     public var workspace: String?
     public var sessionId: String?
@@ -1351,7 +1351,7 @@ public struct EvolutionAnalysisSummary: Codable, Equatable {
 // MARK: - 全链路性能可观测共享类型（WI-001）
 
 /// 延迟指标滚动窗口
-public struct LatencyMetricWindow: Codable, Equatable {
+public struct LatencyMetricWindow: Codable, Equatable, Sendable {
     public var lastMs: UInt64
     public var avgMs: UInt64
     public var p95Ms: UInt64
@@ -1382,7 +1382,7 @@ public struct LatencyMetricWindow: Codable, Equatable {
 }
 
 /// 内存使用快照
-public struct MemoryUsageSnapshot: Codable, Equatable {
+public struct MemoryUsageSnapshot: Codable, Equatable, Sendable {
     public var currentBytes: UInt64
     public var peakBytes: UInt64
     public var deltaFromBaselineBytes: Int64
@@ -1410,7 +1410,7 @@ public struct MemoryUsageSnapshot: Codable, Equatable {
 }
 
 /// 客户端实例性能上报
-public struct ClientPerformanceReport: Codable, Equatable {
+public struct ClientPerformanceReport: Codable, Equatable, Sendable {
     public var clientInstanceId: String
     public var platform: String
     public var project: String
@@ -1461,7 +1461,7 @@ public struct ClientPerformanceReport: Codable, Equatable {
 }
 
 /// 工作区关键路径性能快照
-public struct WorkspacePerformanceSnapshot: Codable, Equatable, Identifiable {
+public struct WorkspacePerformanceSnapshot: Codable, Equatable, Identifiable, Sendable {
     public var project: String
     public var workspace: String
     public var systemSnapshotBuild: LatencyMetricWindow
@@ -1498,14 +1498,14 @@ public struct WorkspacePerformanceSnapshot: Codable, Equatable, Identifiable {
 }
 
 /// 性能诊断范围
-public enum PerformanceDiagnosisScope: String, Codable, CaseIterable {
+public enum PerformanceDiagnosisScope: String, Codable, CaseIterable, Sendable {
     case system
     case workspace
     case clientInstance = "client_instance"
 }
 
 /// 性能诊断严重度
-public enum PerformanceDiagnosisSeverity: String, Codable, Comparable, CaseIterable {
+public enum PerformanceDiagnosisSeverity: String, Codable, Comparable, CaseIterable, Sendable {
     case info
     case warning
     case critical
@@ -1519,7 +1519,7 @@ public enum PerformanceDiagnosisSeverity: String, Codable, Comparable, CaseItera
 }
 
 /// 性能诊断原因码
-public enum PerformanceDiagnosisReason: String, Codable, CaseIterable {
+public enum PerformanceDiagnosisReason: String, Codable, CaseIterable, Sendable {
     case wsPipelineLatencyHigh = "ws_pipeline_latency_high"
     case workspaceSwitchLatencyHigh = "workspace_switch_latency_high"
     case fileTreeLatencyHigh = "file_tree_latency_high"
@@ -1533,7 +1533,7 @@ public enum PerformanceDiagnosisReason: String, Codable, CaseIterable {
 }
 
 /// 单条性能诊断结果
-public struct PerformanceDiagnosis: Codable, Identifiable, Equatable {
+public struct PerformanceDiagnosis: Codable, Identifiable, Equatable, Sendable {
     public var diagnosisId: String
     public var scope: PerformanceDiagnosisScope
     public var severity: PerformanceDiagnosisSeverity

@@ -1840,8 +1840,18 @@ struct MobileEvolutionView: View {
                     }
                     if let peerWorkspace = trimmedNonEmptyText(item.coordinationPeerWorkspace) {
                         LabeledContent("等待对象") {
-                            Text(peerWorkspace)
+                            Text([
+                                trimmedNonEmptyText(item.coordinationPeerNodeName),
+                                trimmedNonEmptyText(item.coordinationPeerProject),
+                                peerWorkspace
+                            ].compactMap { $0 }.joined(separator: " / "))
                                 .lineLimit(2)
+                                .font(.caption)
+                        }
+                    }
+                    if let coordinationScope = trimmedNonEmptyText(item.coordinationScope) {
+                        LabeledContent("协作作用域") {
+                            Text(coordinationScope)
                                 .font(.caption)
                         }
                     }
@@ -1905,6 +1915,17 @@ struct MobileEvolutionView: View {
                 Text("evolution.page.workspace.verifyLoopFixed".localized)
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                if let selfInfo = appState.nodeSelfInfo {
+                    Divider()
+                    LabeledContent("当前节点") {
+                        Text(selfInfo.nodeName ?? selfInfo.nodeID)
+                    }
+                    LabeledContent("在线/已知节点") {
+                        let pairedCount = appState.nodeNetworkPeers.filter { $0.status == "paired" }.count
+                        Text("\(pairedCount) / \(appState.nodeNetworkPeers.count)")
+                    }
+                }
 
                 HStack(spacing: 8) {
                     Button {

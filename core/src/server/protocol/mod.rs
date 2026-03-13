@@ -7,6 +7,7 @@ pub mod domain_table;
 pub mod file;
 pub mod git;
 pub mod health;
+pub mod node;
 pub mod project;
 pub mod settings;
 pub mod terminal;
@@ -16,8 +17,8 @@ mod action_table_test;
 #[cfg(test)]
 mod ai_session_update_test;
 
-/// Protocol version: 9 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 9;
+/// Protocol version: 10 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 10;
 
 // ============================================================================
 // 多工作区边界字段约束（v7 协议层权威声明）
@@ -387,6 +388,12 @@ pub enum ClientMessage {
         /// 是否开启远程访问（开启后允许局域网连接）
         #[serde(default)]
         remote_access_enabled: Option<bool>,
+        /// 节点名称；Some(None) 表示显式清空
+        #[serde(default)]
+        node_name: Option<Option<String>>,
+        /// 是否开启节点发现广播
+        #[serde(default)]
+        node_discovery_enabled: Option<bool>,
         /// Evolution 全局默认配置；为 None 时保持服务端现值不变。
         #[serde(default)]
         evolution_default_profiles: Option<Vec<EvolutionStageProfileInfo>>,
@@ -397,6 +404,21 @@ pub enum ClientMessage {
         #[serde(default)]
         keybindings: Option<Vec<KeybindingConfigInfo>>,
     },
+
+    NodeUpdateProfile {
+        #[serde(default)]
+        node_name: Option<String>,
+        discovery_enabled: bool,
+    },
+    NodePairPeer {
+        host: String,
+        port: u16,
+        pair_key: String,
+    },
+    NodeUnpairPeer {
+        peer_node_id: String,
+    },
+    NodeRefreshNetwork,
 
     // v1.22: File watcher
     WatchSubscribe {
@@ -1225,6 +1247,10 @@ pub enum ServerMessage {
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         remote_access_enabled: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        node_name: Option<String>,
+        #[serde(default)]
+        node_discovery_enabled: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         evolution_default_profiles: Vec<EvolutionStageProfileInfo>,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
@@ -1238,6 +1264,36 @@ pub enum ServerMessage {
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+    },
+    #[serde(rename = "node_self_updated")]
+    NodeSelfUpdated {
+        identity: NodeSelfInfo,
+    },
+    #[serde(rename = "node_discovery_updated")]
+    NodeDiscoveryUpdated {
+        items: Vec<NodeDiscoveryItemInfo>,
+    },
+    #[serde(rename = "node_network_updated")]
+    NodeNetworkUpdated {
+        identity: NodeSelfInfo,
+        peers: Vec<NodePeerInfo>,
+        #[serde(default)]
+        active_locks: Vec<NodeActiveLockInfo>,
+    },
+    #[serde(rename = "node_pairing_result")]
+    NodePairingResult {
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        peer: Option<NodePeerInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    #[serde(rename = "node_peer_status")]
+    NodePeerStatus {
+        peer_node_id: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_seen_at_unix: Option<u64>,
     },
 
     // v1.22: File watcher notifications
@@ -1777,6 +1833,14 @@ pub enum ServerMessage {
         coordination_peer_workspace: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         coordination_queue_index: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_scope: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_peer_node_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_peer_node_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_peer_project: Option<String>,
     },
     #[serde(rename = "evo_snapshot")]
     EvoSnapshot {
@@ -2455,6 +2519,70 @@ pub struct EvolutionWorkspaceItem {
     pub coordination_peer_workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordination_queue_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_peer_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_peer_node_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_peer_project: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeSelfInfo {
+    pub node_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    pub bootstrap_pair_key: String,
+    pub discovery_enabled: bool,
+    pub remote_access_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeDiscoveryItemInfo {
+    pub node_id: String,
+    pub node_name: String,
+    pub host: String,
+    pub port: u16,
+    pub protocol_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at_unix: Option<u64>,
+    #[serde(default)]
+    pub paired: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodePeerInfo {
+    pub peer_node_id: String,
+    pub peer_name: String,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    pub port: u16,
+    pub trust_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub introduced_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at_unix: Option<u64>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeActiveLockInfo {
+    pub repo_coordination_key: String,
+    pub lock_kind: String,
+    pub node_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    pub project: String,
+    pub workspace: String,
+    pub acquired_at_unix: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2895,8 +3023,8 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_v9() {
-        assert_eq!(PROTOCOL_VERSION, 9);
+    fn protocol_version_is_v10() {
+        assert_eq!(PROTOCOL_VERSION, 10);
     }
 
     #[test]

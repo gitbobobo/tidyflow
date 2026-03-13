@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v9/action_rules.csv`
+//! 来源：`schema/protocol/v10/action_rules.csv`
 //! 生成命令：`./scripts/tools/gen_protocol_action_table.sh`
 
 pub const EXACT_RULES: &[(&str, &str)] = &[
@@ -39,6 +39,7 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("evolution", "evo_"),
     ("git", "git_conflict_"),
     ("health", "health_"),
+    ("node", "node_"),
 ];
 
 pub const CONTAINS_RULES: &[(&str, &str)] = &[

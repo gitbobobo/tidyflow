@@ -358,6 +358,7 @@ class AppState: ObservableObject {
     var wsProjectMessageHandler: ProjectMessageHandler?
     var wsFileMessageHandler: FileMessageHandler?
     var wsSettingsMessageHandler: SettingsMessageHandler?
+    var wsNodeMessageHandler: NodeMessageHandler?
     var wsTerminalMessageHandler: TerminalMessageHandler?
     var wsAIMessageHandler: AIMessageHandler?
     var wsEvidenceMessageHandler: EvidenceMessageHandler?
@@ -369,6 +370,11 @@ class AppState: ObservableObject {
 
     // v1.41: 系统健康快照（Core 权威真源）
     @Published var systemHealthSnapshot: SystemHealthSnapshot?
+    @Published var nodeSelfInfo: NodeSelfInfoV2?
+    @Published var nodeDiscoveryItems: [NodeDiscoveryItemV2] = []
+    @Published var nodeNetworkPeers: [NodePeerInfoV2] = []
+    @Published var nodeActiveLocks: [NodeActiveLockInfoV2] = []
+    @Published var nodeLastPairingResult: NodePairingResultV2?
     /// 按 (project, workspace) 分桶的 incident 修复状态（key: "project:workspace:incidentId"）
     @Published var incidentRepairStates: [String: IncidentRepairState] = [:]
     /// 工作区恢复状态摘要（key: "project:workspace"，从 system_snapshot workspace_items 提取）

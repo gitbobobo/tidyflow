@@ -139,17 +139,31 @@ pub(super) fn profile_for_stage(
     stage: &str,
 ) -> EvolutionStageProfileInfo {
     let normalized = stage_profile_stage(stage).unwrap_or_else(|| stage.trim().to_string());
-    profiles
+    if let Some(profile) = profiles
         .iter()
         .find(|p| p.stage == normalized)
         .cloned()
-        .unwrap_or(EvolutionStageProfileInfo {
-            stage: normalized,
-            ai_tool: default_evolution_ai_tool(),
-            mode: None,
-            model: None,
-            config_options: HashMap::new(),
-        })
+    {
+        return profile;
+    }
+    if normalized == "sync" {
+        if let Some(inherited) = profiles.iter().find(|p| p.stage == "auto_commit").cloned() {
+            return EvolutionStageProfileInfo {
+                stage: "sync".to_string(),
+                ai_tool: inherited.ai_tool,
+                mode: inherited.mode,
+                model: inherited.model,
+                config_options: inherited.config_options,
+            };
+        }
+    }
+    EvolutionStageProfileInfo {
+        stage: normalized,
+        ai_tool: default_evolution_ai_tool(),
+        mode: None,
+        model: None,
+        config_options: HashMap::new(),
+    }
 }
 
 pub(super) fn to_persisted_profiles(

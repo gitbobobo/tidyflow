@@ -51,8 +51,16 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_duration_ms: HashMap<String, u64>,
     /// 当前协作等待/占用状态，仅用于编排可视化与等待逻辑
     pub(super) coordination_state: Option<String>,
+    /// 协作状态所属作用域：本地项目或节点网络
+    pub(super) coordination_scope: Option<String>,
     /// 当前协作等待原因
     pub(super) coordination_reason: Option<String>,
+    /// 造成当前等待或占用的对端节点 ID
+    pub(super) coordination_peer_node_id: Option<String>,
+    /// 造成当前等待或占用的对端节点名称
+    pub(super) coordination_peer_node_name: Option<String>,
+    /// 造成当前等待或占用的对端项目
+    pub(super) coordination_peer_project: Option<String>,
     /// 造成当前等待或占用的对端工作区
     pub(super) coordination_peer_workspace: Option<String>,
     /// 当前工作区在项目级 integration FIFO 队列中的位置（从 0 开始）

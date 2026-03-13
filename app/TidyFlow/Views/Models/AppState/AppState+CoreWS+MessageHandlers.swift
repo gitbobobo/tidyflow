@@ -137,6 +137,54 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     }
 }
 
+final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2) {
+        appState?.nodeSelfInfo = identity
+    }
+
+    func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
+        appState?.nodeDiscoveryItems = items
+    }
+
+    func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2) {
+        appState?.nodeSelfInfo = snapshot.identity
+        appState?.nodeNetworkPeers = snapshot.peers
+        appState?.nodeActiveLocks = snapshot.activeLocks
+    }
+
+    func handleNodePairingResult(_ result: NodePairingResultV2) {
+        appState?.nodeLastPairingResult = result
+        if result.ok {
+            appState?.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
+            appState?.wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+        }
+    }
+
+    func handleNodePeerStatus(peerNodeID: String, status: String, lastSeenAtUnix: UInt64?) {
+        guard let appState else { return }
+        appState.nodeNetworkPeers = appState.nodeNetworkPeers.map { peer in
+            guard peer.peerNodeID == peerNodeID else { return peer }
+            return NodePeerInfoV2(
+                peerNodeID: peer.peerNodeID,
+                peerName: peer.peerName,
+                addresses: peer.addresses,
+                port: peer.port,
+                trustSource: peer.trustSource,
+                introducedBy: peer.introducedBy,
+                lastSeenAtUnix: lastSeenAtUnix ?? peer.lastSeenAtUnix,
+                status: status,
+                authToken: peer.authToken
+            )
+        }
+    }
+}
+
 final class AppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {
     weak var appState: AppState?
 

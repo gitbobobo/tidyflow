@@ -471,7 +471,7 @@ struct AIChatTranscriptContainer: View {
             .scrollDismissesKeyboard(.interactively)
             #endif
             .onAppear {
-                applyPlannerRender(forceFullRefresh: true)
+                _ = applyPlannerRender(forceFullRefresh: true)
                 initializeScrollPolicyStateIfNeeded()
                 scheduleScrollCommand(.scrollToBottom(.none), proxy: proxy)
             }
@@ -485,7 +485,7 @@ struct AIChatTranscriptContainer: View {
                 handleTailChanged(proxy: proxy)
             }
             .onChange(of: aiChatStore.pendingQuestionVersion) { _, _ in
-                applyPlannerRender(forceFullRefresh: true)
+                _ = applyPlannerRender(forceFullRefresh: true)
             }
             .onChange(of: jumpToBottomRequestID) {
                 scheduleScrollCommand(.scrollToBottom(.jumpToBottom), proxy: proxy)
@@ -578,7 +578,7 @@ struct AIChatTranscriptContainer: View {
         suppressNextTailChange = false
         let decision = scrollPolicy.reduce(event: .sessionSwitched)
         resetTranscriptRenderState()
-        applyPlannerRender(forceFullRefresh: true)
+        _ = applyPlannerRender(forceFullRefresh: true)
         isNearBottom = scrollPolicy.nearBottom
         isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         lastDisplayMessageCount = displayMessages.count

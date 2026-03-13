@@ -32,6 +32,9 @@ extension AppState {
                 self.initializedWSConnectionIdentity = connectionIdentity
                 self.wsClient.requestListProjects(cacheMode: .forceRefresh)
                 self.wsClient.requestGetClientSettings(cacheMode: .forceRefresh)
+                self.wsClient.requestNodeSelf(cacheMode: .forceRefresh)
+                self.wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+                self.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
                 self.reloadAISessionDataAfterReconnect()
                 self.wsClient.requestSystemSnapshot(cacheMode: .forceRefresh)
                 // 重连后尝试附着已有终端会话
@@ -64,6 +67,7 @@ extension AppState {
         let projectHandler = AppStateProjectMessageHandlerAdapter(appState: self)
         let fileHandler = AppStateFileMessageHandlerAdapter(appState: self)
         let settingsHandler = AppStateSettingsMessageHandlerAdapter(appState: self)
+        let nodeHandler = AppStateNodeMessageHandlerAdapter(appState: self)
         let terminalHandler = AppStateTerminalMessageHandlerAdapter(appState: self)
         let aiHandler = AppStateAIMessageHandlerAdapter(appState: self)
         let evidenceHandler = AppStateEvidenceMessageHandlerAdapter(appState: self)
@@ -73,6 +77,7 @@ extension AppState {
         wsProjectMessageHandler = projectHandler
         wsFileMessageHandler = fileHandler
         wsSettingsMessageHandler = settingsHandler
+        wsNodeMessageHandler = nodeHandler
         wsTerminalMessageHandler = terminalHandler
         wsAIMessageHandler = aiHandler
         wsEvidenceMessageHandler = evidenceHandler
@@ -82,6 +87,7 @@ extension AppState {
         wsClient.projectMessageHandler = projectHandler
         wsClient.fileMessageHandler = fileHandler
         wsClient.settingsMessageHandler = settingsHandler
+        wsClient.nodeMessageHandler = nodeHandler
         wsClient.terminalMessageHandler = terminalHandler
         wsClient.aiMessageHandler = aiHandler
         wsClient.evidenceMessageHandler = evidenceHandler

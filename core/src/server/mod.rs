@@ -4,6 +4,7 @@ pub mod file_index;
 pub mod git;
 pub mod handlers;
 pub mod health;
+pub mod node;
 pub mod perf;
 pub mod protocol;
 pub mod remote_connection_registry;

@@ -101,6 +101,11 @@ struct CustomCommandsSection: View {
     @State private var showingAddSheet = false
     @State private var fixedPortText: String = ""
     @State private var remoteAccessEnabled: Bool = false
+    @State private var nodeName: String = ""
+    @State private var nodeDiscoveryEnabled: Bool = false
+    @State private var pairHost: String = ""
+    @State private var pairPort: String = ""
+    @State private var pairKey: String = ""
 
     var body: some View {
         Form {
@@ -131,6 +136,112 @@ struct CustomCommandsSection: View {
                 Text("settings.mobile.section".localized)
             } footer: {
                 Text("settings.mobile.footer".localized)
+            }
+
+            Section {
+                TextField("节点名称", text: $nodeName)
+                    .onSubmit {
+                        appState.updateNodeProfile(nodeName: nodeName, discoveryEnabled: nodeDiscoveryEnabled)
+                    }
+                Toggle("开启局域网发现广播", isOn: $nodeDiscoveryEnabled)
+                    .onChange(of: nodeDiscoveryEnabled) { _, enabled in
+                        appState.updateNodeProfile(nodeName: nodeName, discoveryEnabled: enabled)
+                    }
+                if let selfInfo = appState.nodeSelfInfo {
+                    LabeledContent("节点 ID") {
+                        Text(selfInfo.nodeID)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("首次启动配对 Key") {
+                        Text(selfInfo.bootstrapPairKey)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            } header: {
+                Text("节点网络")
+            } footer: {
+                Text("填写节点名称后才能开启广播发现；配对时需要输入对端首次启动生成的 Key。")
+            }
+
+            Section {
+                TextField("节点地址", text: $pairHost)
+                TextField("端口", text: $pairPort)
+                SecureField("对端配对 Key", text: $pairKey)
+                Button("发起配对") {
+                    let port = Int(pairPort) ?? 0
+                    guard !pairHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          port > 0,
+                          !pairKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        return
+                    }
+                    appState.pairNodePeer(host: pairHost, port: port, pairKey: pairKey)
+                }
+                if let result = appState.nodeLastPairingResult {
+                    Text(result.ok ? "配对成功" : (result.message ?? "配对失败"))
+                        .font(.caption)
+                        .foregroundColor(result.ok ? .green : .red)
+                }
+            } header: {
+                Text("手动配对")
+            }
+
+            Section {
+                if appState.nodeDiscoveryItems.isEmpty {
+                    Text("当前未发现局域网节点")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(appState.nodeDiscoveryItems) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.nodeName)
+                                Text("\(item.host):\(item.port)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if item.paired {
+                                Text("已配对")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                        }
+                    }
+                }
+                Button("刷新发现结果") {
+                    appState.refreshNodeNetwork()
+                }
+            } header: {
+                Text("局域网发现")
+            }
+
+            Section {
+                if appState.nodeNetworkPeers.isEmpty {
+                    Text("当前没有已配对节点")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(appState.nodeNetworkPeers) { peer in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(peer.peerName)
+                                Text("\(peer.addresses.first ?? "-"):\(peer.port)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(peer.status)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button("取消配对") {
+                                appState.unpairNodePeer(peerNodeID: peer.peerNodeID)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } header: {
+                Text("已配对节点")
             }
 
             Section {
@@ -209,6 +320,9 @@ struct CustomCommandsSection: View {
             let val = appState.clientSettings.fixedPort
             fixedPortText = val > 0 ? "\(val)" : ""
             remoteAccessEnabled = appState.clientSettings.remoteAccessEnabled
+            nodeName = appState.clientSettings.nodeName ?? ""
+            nodeDiscoveryEnabled = appState.clientSettings.nodeDiscoveryEnabled
+            appState.refreshNodeNetwork()
         }
     }
     

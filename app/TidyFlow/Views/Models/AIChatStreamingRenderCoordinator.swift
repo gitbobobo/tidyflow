@@ -36,8 +36,8 @@ final class AIChatStreamingRenderCoordinator {
     // MARK: - 私有状态
 
     private var registeredPartIds: Set<String> = []
-    // nonisolated(unsafe) 允许在 deinit（非 MainActor 上下文）中取消任务
-    nonisolated(unsafe) private var tickTask: Task<Void, Never>?
+    /// 主线程协调器持有的共享 tick 任务。
+    private var tickTask: Task<Void, Never>?
 
     // MARK: - 注册 / 注销
 
@@ -100,8 +100,4 @@ final class AIChatStreamingRenderCoordinator {
         tickTask = nil
     }
 
-    deinit {
-        tickTask?.cancel()
-        tickTask = nil
-    }
 }
