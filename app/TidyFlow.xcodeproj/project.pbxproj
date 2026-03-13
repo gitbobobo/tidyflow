@@ -242,6 +242,10 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SPL00044 /* AIAgentAboutViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00034 /* AIAgentAboutViews.swift */; };
 		EVO00001 /* EvolutionDefaultConfigSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVO00011 /* EvolutionDefaultConfigSection.swift */; };
 		EVO00002 /* EvolutionPipelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVO00012 /* EvolutionPipelineView.swift */; };
+		EVPH0001 /* EvolutionPipelineHeaderSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPH0011 /* EvolutionPipelineHeaderSectionView.swift */; };
+		EVPA0001 /* EvolutionAnalysisDecisionSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPA0011 /* EvolutionAnalysisDecisionSectionView.swift */; };
+		EVLR0001 /* EvolutionCycleListRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVLR0011 /* EvolutionCycleListRowView.swift */; };
+		EVPS0001 /* EvolutionPipelineSheetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPS0011 /* EvolutionPipelineSheetViews.swift */; };
 		TMS00001 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMS00002 /* TerminalStore.swift */; };
 		TPR00001 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
 		TST00001 /* ToastManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00011 /* ToastManager.swift */; };
@@ -257,6 +261,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */; };
 			CSTH0002 /* CoreShutdownTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CSTH0001 /* CoreShutdownTestSupport.swift */; };
 			EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */; };
+			ERRT0001 /* EvolutionRefreshRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ERRT0011 /* EvolutionRefreshRegressionTests.swift */; };
 			ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */; };
 			EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */; };
 		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
@@ -582,6 +587,10 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SPL00033 /* CommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditSheet.swift; sourceTree = "<group>"; };
 		EVO00011 /* EvolutionDefaultConfigSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionDefaultConfigSection.swift; sourceTree = "<group>"; };
 		EVO00012 /* EvolutionPipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineView.swift; sourceTree = "<group>"; };
+		EVPH0011 /* EvolutionPipelineHeaderSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineHeaderSectionView.swift; sourceTree = "<group>"; };
+		EVPA0011 /* EvolutionAnalysisDecisionSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionAnalysisDecisionSectionView.swift; sourceTree = "<group>"; };
+		EVLR0011 /* EvolutionCycleListRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionCycleListRowView.swift; sourceTree = "<group>"; };
+		EVPS0011 /* EvolutionPipelineSheetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineSheetViews.swift; sourceTree = "<group>"; };
 		SPL00034 /* AIAgentAboutViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAgentAboutViews.swift; sourceTree = "<group>"; };
 		TMS00002 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		TPR00002 /* TypedProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedProtocol.swift; sourceTree = "<group>"; };
@@ -598,6 +607,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISelectorHTTPFailureHandlingTests.swift; sourceTree = "<group>"; };
 			CSTH0001 /* CoreShutdownTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreShutdownTestSupport.swift; sourceTree = "<group>"; };
 			EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceRegressionTests.swift; sourceTree = "<group>"; };
+			ERRT0011 /* EvolutionRefreshRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRefreshRegressionTests.swift; sourceTree = "<group>"; };
 			ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRealtimeSamplingSemanticsTests.swift; sourceTree = "<group>"; };
 			EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStoreTests.swift; sourceTree = "<group>"; };
 		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
@@ -701,6 +711,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SPL00033 /* CommandEditSheet.swift */,
 				EVO00011 /* EvolutionDefaultConfigSection.swift */,
 				EVO00012 /* EvolutionPipelineView.swift */,
+				EVPD0001 /* EvolutionPipeline */,
 				B3A00011 /* CommandPaletteView.swift */,
 				SPL00024 /* ExplorerView.swift */,
 				FAQ00011 /* FAQView.swift */,
@@ -897,6 +908,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 					AISHT0011 /* AISelectorHTTPFailureHandlingTests.swift */,
 					CSTH0001 /* CoreShutdownTestSupport.swift */,
 					EPRGT0011 /* EvolutionPerformanceRegressionTests.swift */,
+					ERRT0011 /* EvolutionRefreshRegressionTests.swift */,
 					ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */,
 					EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */,
 					POBS0011 /* PerformanceObservabilitySemanticsTests.swift */,
@@ -1068,6 +1080,17 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000109 /* AppState.swift */,
 			);
 			path = AppState;
+			sourceTree = "<group>";
+		};
+		EVPD0001 /* EvolutionPipeline */ = {
+			isa = PBXGroup;
+			children = (
+				EVPH0011 /* EvolutionPipelineHeaderSectionView.swift */,
+				EVPA0011 /* EvolutionAnalysisDecisionSectionView.swift */,
+				EVLR0011 /* EvolutionCycleListRowView.swift */,
+				EVPS0011 /* EvolutionPipelineSheetViews.swift */,
+			);
+			path = EvolutionPipeline;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1391,6 +1414,10 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				SPL00044 /* AIAgentAboutViews.swift in Sources */,
 				EVO00001 /* EvolutionDefaultConfigSection.swift in Sources */,
 				EVO00002 /* EvolutionPipelineView.swift in Sources */,
+				EVPH0001 /* EvolutionPipelineHeaderSectionView.swift in Sources */,
+				EVPA0001 /* EvolutionAnalysisDecisionSectionView.swift in Sources */,
+				EVLR0001 /* EvolutionCycleListRowView.swift in Sources */,
+				EVPS0001 /* EvolutionPipelineSheetViews.swift in Sources */,
 				QAV00001 /* QuickActionsView.swift in Sources */,
 				SHP00001 /* SystemHealthPopoverView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
@@ -1471,6 +1498,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					AISHT0001 /* AISelectorHTTPFailureHandlingTests.swift in Sources */,
 					CSTH0002 /* CoreShutdownTestSupport.swift in Sources */,
 					EPRGT0001 /* EvolutionPerformanceRegressionTests.swift in Sources */,
+					ERRT0001 /* EvolutionRefreshRegressionTests.swift in Sources */,
 					ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */,
 					EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */,
 					POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */,
