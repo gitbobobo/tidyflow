@@ -37,6 +37,18 @@ struct SystemHealthPopoverView: View {
                 // 区块四：诊断结果
                 SHPSectionHeader(title: "Diagnoses", systemImage: "stethoscope")
                 diagnosisBlock
+
+                Divider()
+
+                // 共享仪表盘投影摘要
+                SHPSectionHeader(title: "Dashboard", systemImage: "chart.bar")
+                ForEach(Array(appState.performanceDashboardStore.projections.values), id: \.surface) { proj in
+                    HStack(spacing: 4) {
+                        Circle().fill(Color(proj.budgetStatus.colorSemanticName)).frame(width: 6, height: 6)
+                        Text("\(proj.surface.displayName): \(proj.budgetStatus.label)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding(16)
         }

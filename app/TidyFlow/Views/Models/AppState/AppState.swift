@@ -378,6 +378,8 @@ class AppState: ObservableObject {
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
     /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
     @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
+    /// 共享性能仪表盘 Store，macOS/iOS 共用同一类型，按 project/workspace/surface 隔离
+    @MainActor lazy var performanceDashboardStore = PerformanceDashboardStore()
 
     /// v1.45: 智能演化分析摘要缓存，Key 为 "project:workspace:cycle_id"
     /// 每次 system_snapshot 到达时全量替换，避免陈旧循环残留。

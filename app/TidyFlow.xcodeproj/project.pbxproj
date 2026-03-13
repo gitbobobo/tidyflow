@@ -259,6 +259,9 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */; };
 			EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */; };
 		HQTC0001 /* HTTPQueryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HQTC0011 /* HTTPQueryClientTests.swift */; };
+		PDMS0002 /* PerformanceDashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDMS0001 /* PerformanceDashboardModels.swift */; };
+		PDST0002 /* PerformanceDashboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDST0001 /* PerformanceDashboardStoreTests.swift */; };
+		PDPT0002 /* PerformanceDashboardProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDPT0001 /* PerformanceDashboardProjectionTests.swift */; };
 		POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = POBS0011 /* PerformanceObservabilitySemanticsTests.swift */; };
 		SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SYHS0011 /* SystemHealthSemanticsTests.swift */; };
 /* End PBXBuildFile section */
@@ -593,6 +596,9 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRealtimeSamplingSemanticsTests.swift; sourceTree = "<group>"; };
 			EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStoreTests.swift; sourceTree = "<group>"; };
 		HQTC0011 /* HTTPQueryClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPQueryClientTests.swift; sourceTree = "<group>"; };
+		PDMS0001 /* PerformanceDashboardModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PerformanceDashboardModels.swift; sourceTree = "<group>"; };
+		PDST0001 /* PerformanceDashboardStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDashboardStoreTests.swift; sourceTree = "<group>"; };
+		PDPT0001 /* PerformanceDashboardProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceDashboardProjectionTests.swift; sourceTree = "<group>"; };
 		POBS0011 /* PerformanceObservabilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceObservabilitySemanticsTests.swift; sourceTree = "<group>"; };
 		SYHS0011 /* SystemHealthSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemHealthSemanticsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -646,6 +652,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR0100F /* SidebarProjectionModels.swift */,
 				SHR01010 /* WorkspaceOverviewProjection.swift */,
 				SHR01013 /* CoordinatorStateCache.swift */,
+				PDMS0001 /* PerformanceDashboardModels.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -887,6 +894,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 					ERSS0011 /* EvolutionRealtimeSamplingSemanticsTests.swift */,
 					EPPS0011 /* EvolutionPipelineProjectionStoreTests.swift */,
 					POBS0011 /* PerformanceObservabilitySemanticsTests.swift */,
+					PDST0001 /* PerformanceDashboardStoreTests.swift */,
+					PDPT0001 /* PerformanceDashboardProjectionTests.swift */,
 					SYHS0011 /* SystemHealthSemanticsTests.swift */,
 				HQTC0011 /* HTTPQueryClientTests.swift */,
 				ESBT00011 /* ErrorSemanticsBridgeTests.swift */,
@@ -1456,6 +1465,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					ERSS0001 /* EvolutionRealtimeSamplingSemanticsTests.swift in Sources */,
 					EPPS0001 /* EvolutionPipelineProjectionStoreTests.swift in Sources */,
 					POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */,
+					PDST0002 /* PerformanceDashboardStoreTests.swift in Sources */,
+					PDPT0002 /* PerformanceDashboardProjectionTests.swift in Sources */,
 					SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */,
 				HQTC0001 /* HTTPQueryClientTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
@@ -1506,6 +1517,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR0200F /* HTTPQueryCache.swift in Sources */,
 				SHR02010 /* CoordinatorProtocolModels.swift in Sources */,
 				SHR02014 /* EvolutionPerformanceProjection.swift in Sources */,
+				PDMS0002 /* PerformanceDashboardModels.swift in Sources */,
 				SHR02011 /* CoordinatorStateCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

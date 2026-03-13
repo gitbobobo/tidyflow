@@ -99,6 +99,13 @@ struct DebugPanelView: View {
 
                         Divider()
 
+                        // 共享仪表盘投影（开发者视角）
+                        PerformanceDashboardDebugSection(
+                            store: appState.performanceDashboardStore
+                        )
+
+                        Divider()
+
                         // Log Context Section (v1.42 日志关联)
                         logContextSection
 
@@ -631,6 +638,30 @@ private struct LatencyWindowLabel: View {
         if window.p95Ms > 500 { return .red }
         if window.p95Ms > 200 { return .orange }
         return .primary
+    }
+}
+
+private struct PerformanceDashboardDebugSection: View {
+    @ObservedObject var store: PerformanceDashboardStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("性能仪表盘投影")
+                .font(.headline)
+            ForEach(Array(store.projections.values), id: \.surface) { proj in
+                HStack {
+                    Text("\(proj.surface.displayName) [\(proj.project)/\(proj.workspace)]")
+                        .font(.caption)
+                    Spacer()
+                    Text(proj.budgetStatus.label)
+                        .font(.caption)
+                        .foregroundStyle(Color(proj.budgetStatus.colorSemanticName))
+                }
+            }
+            if store.projections.isEmpty {
+                Text("暂无仪表盘数据").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 #endif

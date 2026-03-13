@@ -249,3 +249,44 @@ private struct AIChatTranscriptHost: View {
         }
     }
 }
+
+/// 聊天界面紧凑性能卡（仅在有数据时显示）
+struct ChatPerformanceBadge: View {
+    let projection: PerformanceDashboardProjection
+
+    var body: some View {
+        if projection.budgetStatus != .unknown {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(badgeColor)
+                    .frame(width: 7, height: 7)
+                Text(projection.budgetStatus.label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let p95 = projection.latestP95Ms {
+                    Text("P95 \(String(format: "%.0f", p95))ms")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if projection.isTrendDegrading {
+                    Image(systemName: "arrow.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
+        }
+    }
+
+    private var badgeColor: Color {
+        switch projection.budgetStatus {
+        case .pass:    return .green
+        case .warn:    return .yellow
+        case .fail:    return .red
+        case .unknown: return .gray
+        }
+    }
+}
+

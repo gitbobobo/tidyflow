@@ -66,6 +66,36 @@
 - 绕过仅通过 `--skip-quality-gate --bypass-reason "说明原因"` 路径，不新增静默开关
 - 绕过会写入审计日志 `.tidyflow/release/gate-bypass.audit.log`，记录 cycle/project/workspace/原因
 
+## 3.7. 多工作区性能回归与仪表盘验证（v2.0 新增）
+
+> 本节基于 WI-001 新增的多工作区 fixture 场景与 PerformanceDashboardStore 共享投影层。
+
+- [ ] 确认 `scripts/tools/performance_gate_contract.json` 的 `contract_version` 为 `"2.0"`
+- [ ] 确认 `scripts/tools/apple_client_perf_baselines.json` 包含以下场景：
+  - `chat_stream`（聊天流式，surface_id=chat_session）
+  - `evolution_panel`（Evolution 面板，surface_id=evolution_workspace）
+  - `chat_stream_workspace_switch`（聊天+工作区切换，surface_id=chat_session）
+  - `evolution_panel_multi_workspace`（Evolution 并行工作区，surface_id=evolution_workspace）
+- [ ] 执行 `./scripts/tidyflow perf-regression`，确认生成：
+  - `build/perf/apple-client-regression-report.json`（schema_version=2，含 context_fields 和 scenarios[].surface_id）
+  - `build/perf/performance-dashboard-snapshot.json`（overall、scenarios_summary、generated_at）
+  - `build/perf/performance-gate-report.json`（overall、release_blocking、reason_codes）
+- [ ] 执行比较器自测：`python3 scripts/tools/check_apple_client_perf_regression.py --self-test`，确认输出 `所有自测样例通过`（包含样例 6-9）
+- [ ] 若发现新场景 `warn` 或 `fail`：
+  - 排查实时趋势：查看 `build/perf/apple-client-regression-report.json` 中对应 scenario 的 `issues` 字段
+  - 参考 `PerformanceDashboardProjection.isTrendDegrading` 语义判断是否是趋势性退化
+  - **不允许** 为通过门禁而上调 warn_limit/fail_limit，需先分析退化原因
+- [ ] 验证聊天界面性能卡与 Evolution 性能卡正确展示：
+  - macOS：`AIChatStageView` 包含 `ChatPerformanceBadge`，`EvolutionPipelineView` 包含 `EvolutionPerformanceBadge`
+  - iOS：`MobileAIChatView` 包含 `ChatPerformanceBadge`，`WorkspaceDetailView` 包含 `EvolutionPerformanceBadge`
+  - 两端的状态名、颜色语义、阈值含义均来自 `PerformanceBudgetStatus.colorSemanticName` 和 `label`，不在视图层重新定义
+- [ ] 验证多工作区隔离：切换工作区后，旧工作区的性能数据不出现在新工作区的仪表盘中
+  - 对应代码：`PerformanceDashboardStore.clearRealtimeBuffers(project:workspace:)`
+- [ ] 核对 iOS Simulator 定向测试通过：
+  - `TidyFlowTests/PerformanceDashboardStoreTests`
+  - `TidyFlowTests/PerformanceDashboardProjectionTests`
+  - `TidyFlowTests/EvolutionPerfFixtureTests`
+
 ## 4. 发布预演（无副作用）
 
 - [ ] 执行：`./scripts/tidyflow release --dry-run`

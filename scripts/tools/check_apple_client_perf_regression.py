@@ -37,14 +37,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "1"
-TOOL_VERSION = "1.0.0"
+SCHEMA_VERSION = "2"
+TOOL_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +118,7 @@ def decide_scenario(
 ) -> dict[str, Any]:
     """返回单个场景的裁决结果。"""
     scenario_id: str = scenario["scenario_id"]
+    surface_id: str = scenario.get("surface_id", "unknown")
     required_keys: list[str] = scenario.get("required_evidence_keys", [])
     metrics: list[dict] = scenario.get("metrics", [])
 
@@ -126,17 +128,25 @@ def decide_scenario(
     metric_results: list[dict] = []
     missing_keys: list[str] = []
 
+    # budget limits：取第一个 metric 的阈值（向后兼容：缺失时置 inf）
+    first_metric = metrics[0] if metrics else {}
+    budget_warn_limit = float(first_metric.get("warn_limit", float("inf")))
+    budget_fail_limit = float(first_metric.get("fail_limit", float("inf")))
+
     if not evidence_file_exists:
         overall = "fail"
         reason_codes.append("evidence_file_missing")
         issues.append(f"场景 {scenario_id} 证据日志文件不存在")
         return {
             "scenario_id": scenario_id,
+            "surface_id": surface_id,
             "overall": overall,
             "reason_codes": reason_codes,
             "metrics": [],
             "missing_evidence_keys": [],
             "issues": issues,
+            "budget_warn_limit": budget_warn_limit,
+            "budget_fail_limit": budget_fail_limit,
         }
 
     # 必需证据键检查
@@ -159,7 +169,6 @@ def decide_scenario(
 
         samples = extract_metric_samples(log_text, log_pattern, value_key)
         if not samples:
-            # 无样本 → 记 warn（日志可能因场景简化未采集到样本）
             metric_status = "warn"
             metric_reason = "no_samples"
             p95 = None
@@ -184,6 +193,7 @@ def decide_scenario(
 
         metric_results.append({
             "metric_id": metric_id,
+            "surface_id": surface_id,
             "status": metric_status,
             "reason": metric_reason,
             "p95_ms": round(p95, 3) if p95 is not None else None,
@@ -194,11 +204,14 @@ def decide_scenario(
 
     return {
         "scenario_id": scenario_id,
+        "surface_id": surface_id,
         "overall": overall,
         "reason_codes": list(dict.fromkeys(reason_codes)),
         "metrics": metric_results,
         "missing_evidence_keys": missing_keys,
         "issues": issues,
+        "budget_warn_limit": budget_warn_limit,
+        "budget_fail_limit": budget_fail_limit,
     }
 
 
@@ -267,6 +280,7 @@ def run_comparison(
 
     report = {
         "$schema_version": SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "tool_version": TOOL_VERSION,
         "suite_id": baseline.get("suite_id", "apple_client_perf"),
         "overall": overall,
@@ -275,11 +289,36 @@ def run_comparison(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "baseline_path": str(baseline_file.resolve()),
         "evidence_dir": str(evidence_dir_path.resolve()),
+        "context_fields": {
+            "project": os.environ.get("TF_PROJECT", ""),
+            "workspace": os.environ.get("TF_WORKSPACE", ""),
+            "cycle_id": os.environ.get("TF_CYCLE_ID", ""),
+            "run_id": os.environ.get("TF_RUN_ID", ""),
+        },
+        "dashboard_snapshot_path": "build/perf/performance-dashboard-snapshot.json",
     }
 
     report_path_obj = Path(report_path)
     report_path_obj.parent.mkdir(parents=True, exist_ok=True)
     report_path_obj.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    # 写出精简仪表盘快照（供共享投影层直接读取）
+    dashboard_snapshot = {
+        "overall": overall,
+        "scenarios_summary": [
+            {
+                "scenario_id": sr["scenario_id"],
+                "surface_id": sr.get("surface_id", "unknown"),
+                "overall": sr["overall"],
+            }
+            for sr in scenario_results
+        ],
+        "generated_at": report["generated_at"],
+    }
+    dashboard_snapshot_path = report_path_obj.parent / "performance-dashboard-snapshot.json"
+    dashboard_snapshot_path.write_text(
+        json.dumps(dashboard_snapshot, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
     if json_output:
         print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -390,6 +429,131 @@ def run_self_test() -> int:
     result_no_file = decide_scenario(scenario_def, "", evidence_file_exists=False)
     expect("NO_FILE: overall", result_no_file["overall"], "fail")
     expect("NO_FILE: reason evidence_file_missing", str("evidence_file_missing" in result_no_file["reason_codes"]), "True")
+
+    # --- 样例 6: chat_stream_workspace_switch PASS ---
+    print("自测样例 6: chat_stream_workspace_switch PASS")
+    ws_switch_scenario_def = {
+        "scenario_id": "chat_stream_workspace_switch",
+        "surface_id": "chat_session",
+        "required_evidence_keys": [
+            "hotspot_key=ios_ai_chat",
+            "tail_flush_event=aiMessageTailFlush",
+            "memory_snapshot_key=memory_snapshot",
+            "workspace_switch_event=workspace_switch",
+        ],
+        "metrics": [
+            {
+                "metric_id": "aiMessageTailFlush_p95_ms",
+                "log_pattern": "perf aiMessageTailFlush",
+                "value_key": "duration_ms",
+                "warn_limit": 60.0,
+                "fail_limit": 250.0,
+            },
+            {
+                "metric_id": "workspace_switch_p95_ms",
+                "log_pattern": "perf workspace_switch",
+                "value_key": "duration_ms",
+                "warn_limit": 300.0,
+                "fail_limit": 1000.0,
+            },
+        ],
+    }
+    ws_switch_pass_log = "\n".join([
+        "hotspot_key=ios_ai_chat",
+        "tail_flush_event=aiMessageTailFlush",
+        "memory_snapshot_key=memory_snapshot",
+        "workspace_switch_event=workspace_switch",
+    ] + [
+        f"perf aiMessageTailFlush duration_ms={40.0:.3f} idx={i}"
+        for i in range(100)
+    ] + [
+        f"perf workspace_switch duration_ms={200.0:.3f} idx={i}"
+        for i in range(3)
+    ])
+    result_ws_pass = decide_scenario(ws_switch_scenario_def, ws_switch_pass_log, evidence_file_exists=True)
+    expect("WS_SWITCH_PASS: overall", result_ws_pass["overall"], "pass")
+    expect("WS_SWITCH_PASS: surface_id", result_ws_pass["surface_id"], "chat_session")
+
+    # --- 样例 7: evolution_panel_multi_workspace PASS ---
+    print("自测样例 7: evolution_panel_multi_workspace PASS")
+    multi_ws_scenario_def = {
+        "scenario_id": "evolution_panel_multi_workspace",
+        "surface_id": "evolution_workspace",
+        "required_evidence_keys": [
+            "evolution_recompute_key=evolution_timeline_recompute_ms",
+            "evolution_tier_change_key=evolution_monitor tier_change",
+            "memory_snapshot_key=memory_snapshot",
+            "multi_workspace_event=evolution_multi_workspace_sample",
+        ],
+        "metrics": [
+            {
+                "metric_id": "evolution_timeline_recompute_p95_ms",
+                "log_pattern": "perf evolution_timeline_recompute_ms=",
+                "value_key": "evolution_timeline_recompute_ms",
+                "warn_limit": 60.0,
+                "fail_limit": 250.0,
+            }
+        ],
+    }
+    multi_ws_pass_log = "\n".join([
+        "evolution_recompute_key=evolution_timeline_recompute_ms",
+        "evolution_tier_change_key=evolution_monitor tier_change",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=evolution_multi_workspace_sample",
+    ] + [
+        f"perf evolution_timeline_recompute_ms={30.0:.2f} round={i + 1} workspace=ws-{i % 3}"
+        for i in range(90)
+    ])
+    result_multi_pass = decide_scenario(multi_ws_scenario_def, multi_ws_pass_log, evidence_file_exists=True)
+    expect("MULTI_WS_PASS: overall", result_multi_pass["overall"], "pass")
+    expect("MULTI_WS_PASS: surface_id", result_multi_pass["surface_id"], "evolution_workspace")
+
+    # --- 样例 8: evolution_panel_multi_workspace FAIL (缺 multi_workspace_event 证据键) ---
+    print("自测样例 8: evolution_panel_multi_workspace FAIL (missing multi_workspace_event)")
+    multi_ws_fail_log = "\n".join([
+        "evolution_recompute_key=evolution_timeline_recompute_ms",
+        "evolution_tier_change_key=evolution_monitor tier_change",
+        "memory_snapshot_key=memory_snapshot",
+        # multi_workspace_event=evolution_multi_workspace_sample 缺失
+        "perf evolution_timeline_recompute_ms=30.0 round=1 workspace=ws-0",
+    ])
+    result_multi_fail = decide_scenario(multi_ws_scenario_def, multi_ws_fail_log, evidence_file_exists=True)
+    expect("MULTI_WS_FAIL: overall", result_multi_fail["overall"], "fail")
+    expect("MULTI_WS_FAIL: has missing_evidence reason", str("missing_evidence" in result_multi_fail["reason_codes"]), "True")
+
+    # --- 样例 9: 旧格式 baselines 不含 surface_id 时，decide_scenario 不崩溃（向后兼容）---
+    print("自测样例 9: 旧格式 baselines 不含 surface_id（向后兼容）")
+    legacy_scenario_def = {
+        "scenario_id": "evolution_panel",
+        # 故意不含 surface_id 字段
+        "required_evidence_keys": [
+            "evolution_recompute_key=evolution_timeline_recompute_ms",
+            "evolution_tier_change_key=evolution_monitor tier_change",
+            "memory_snapshot_key=memory_snapshot",
+        ],
+        "metrics": [
+            {
+                "metric_id": "evolution_timeline_recompute_p95_ms",
+                "log_pattern": "perf evolution_timeline_recompute_ms=",
+                "value_key": "evolution_timeline_recompute_ms",
+                "warn_limit": 50.0,
+                "fail_limit": 200.0,
+            }
+        ],
+    }
+    legacy_log = "\n".join([
+        "evolution_recompute_key=evolution_timeline_recompute_ms",
+        "evolution_tier_change_key=evolution_monitor tier_change",
+        "memory_snapshot_key=memory_snapshot",
+        "perf evolution_timeline_recompute_ms=20.0 round=1",
+    ])
+    try:
+        result_legacy = decide_scenario(legacy_scenario_def, legacy_log, evidence_file_exists=True)
+        expect("LEGACY_COMPAT: overall", result_legacy["overall"], "pass")
+        expect("LEGACY_COMPAT: surface_id defaults to unknown", result_legacy["surface_id"], "unknown")
+        print("  OK  LEGACY_COMPAT: 旧格式不崩溃")
+    except Exception as exc:
+        failures.append(f"LEGACY_COMPAT: 旧格式 scenario 导致崩溃: {exc}")
 
     if failures:
         print("\n自测失败:")

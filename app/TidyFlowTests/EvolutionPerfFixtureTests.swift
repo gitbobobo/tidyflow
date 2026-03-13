@@ -172,4 +172,36 @@ final class EvolutionPerfFixtureTests: XCTestCase {
     func testAIChatPerfFixtureScenario_flushCount_greaterThanZero() {
         XCTAssertGreaterThan(AIChatPerfFixtureScenario.streamHeavy.flushCount, 0)
     }
+
+    // MARK: - 多工作区场景标识契约（WI-001 新增场景）
+
+    func testNewScenarioIds_chatStreamWorkspaceSwitch() {
+        XCTAssertEqual(
+            PerformanceTrackedSurface.chatSession.rawValue, "chat_session",
+            "chat_stream_workspace_switch 的 surface_id 必须为 chat_session"
+        )
+        XCTAssertTrue(
+            PerformanceTrackedSurface.chatSession.scenarioIds.contains("chat_stream_workspace_switch"),
+            "chatSession.scenarioIds 必须包含 chat_stream_workspace_switch"
+        )
+    }
+
+    func testNewScenarioIds_evolutionPanelMultiWorkspace() {
+        XCTAssertEqual(
+            PerformanceTrackedSurface.evolutionWorkspace.rawValue, "evolution_workspace",
+            "evolution_panel_multi_workspace 的 surface_id 必须为 evolution_workspace"
+        )
+        XCTAssertTrue(
+            PerformanceTrackedSurface.evolutionWorkspace.scenarioIds.contains("evolution_panel_multi_workspace"),
+            "evolutionWorkspace.scenarioIds 必须包含 evolution_panel_multi_workspace"
+        )
+    }
+
+    func testSurfaceId_matchesBaselinesSurfaceId() {
+        let knownSurfaces = PerformanceTrackedSurface.allCases
+        for surface in knownSurfaces {
+            XCTAssertFalse(surface.rawValue.isEmpty, "\(surface) rawValue 不能为空")
+            XCTAssertFalse(surface.scenarioIds.isEmpty, "\(surface) 必须至少关联一个 scenario id")
+        }
+    }
 }

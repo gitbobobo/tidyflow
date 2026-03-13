@@ -46,10 +46,11 @@ enum TFLog {
         reason: String,
         project: String,
         workspace: String,
-        cycleID: String
+        cycleID: String,
+        surface: String = "evolution_workspace"
     ) {
         perf.info(
-            "perf evolution_monitor tier_change key=\(key, privacy: .public) old=\(oldTier, privacy: .public) new=\(newTier, privacy: .public) reason=\(reason, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public) cycle_id=\(cycleID, privacy: .public)"
+            "perf evolution_monitor tier_change key=\(key, privacy: .public) old=\(oldTier, privacy: .public) new=\(newTier, privacy: .public) reason=\(reason, privacy: .public) project=\(project, privacy: .public) workspace=\(workspace, privacy: .public) cycle_id=\(cycleID, privacy: .public) surface=\(surface, privacy: .public)"
         )
     }
 
@@ -59,7 +60,9 @@ enum TFLog {
         bytes: UInt64,
         project: String? = nil,
         workspace: String? = nil,
-        cycleID: String? = nil
+        cycleID: String? = nil,
+        surface: String? = nil,
+        scenario surfaceScenario: String? = nil
     ) {
         var line = "perf memory_snapshot_key=memory_snapshot phase=\(phase) scenario=\(scenario) bytes=\(bytes)"
         if let project, !project.isEmpty {
@@ -71,11 +74,33 @@ enum TFLog {
         if let cycleID, !cycleID.isEmpty {
             line += " cycle_id=\(cycleID)"
         }
+        if let surface, !surface.isEmpty {
+            line += " surface=\(surface)"
+        }
+        if let surfaceScenario, !surfaceScenario.isEmpty {
+            line += " scenario_id=\(surfaceScenario)"
+        }
         perf.info("\(line, privacy: .public)")
     }
 
     static func perfEvidenceLine(_ line: String) -> String {
         "perf \(line)"
+    }
+
+    static func logPerfSample(
+        event: String,
+        durationMs: Double,
+        project: String,
+        workspace: String,
+        surface: String,
+        scenario: String,
+        extra: [String: String] = [:]
+    ) {
+        var line = "perf \(event) duration_ms=\(String(format: "%.3f", durationMs)) project=\(project) workspace=\(workspace) surface=\(surface) scenario=\(scenario)"
+        for (k, v) in extra.sorted(by: { $0.key < $1.key }) {
+            line += " \(k)=\(v)"
+        }
+        perf.info("\(line, privacy: .public)")
     }
 }
 
@@ -102,13 +127,19 @@ struct TFPerformanceContext: Equatable {
     let event: TFPerformanceEvent
     let project: String
     let workspace: String
+    /// surface id（如 chat_session、evolution_workspace），与比较器 surface_id 保持一致
+    let surface: String
+    /// 场景 id（如 chat_stream、evolution_panel），与 baselines.json scenario_id 保持一致
+    let scenario: String
     /// 额外定位字段（如 path、filter、cursor 等）
     let metadata: [String: String]
 
-    init(event: TFPerformanceEvent, project: String, workspace: String, metadata: [String: String] = [:]) {
+    init(event: TFPerformanceEvent, project: String, workspace: String, surface: String = "", scenario: String = "", metadata: [String: String] = [:]) {
         self.event = event
         self.project = project
         self.workspace = workspace
+        self.surface = surface
+        self.scenario = scenario
         self.metadata = metadata
     }
 }

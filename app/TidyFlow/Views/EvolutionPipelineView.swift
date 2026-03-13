@@ -118,6 +118,11 @@ struct EvolutionPipelineView: View {
     private var controlCapability: EvolutionControlProjection { projection.control }
     private var currentItem: EvolutionWorkspaceItemV2? { projection.currentItem }
     private var blockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
+
+    private var evolutionPerfProjection: PerformanceDashboardProjection {
+        let key = PerformanceScopeKey(project: project, workspace: workspace ?? "", surface: .evolutionWorkspace)
+        return appState.performanceDashboardStore.projection(for: key)
+    }
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
     private var runningAgents: [EvolutionAgentInfoV2] { projection.runningAgents }
     private var openableRunningStages: Set<String> {
@@ -291,6 +296,10 @@ struct EvolutionPipelineView: View {
         ])
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetLocalTimeline()
+            // 工作区切换时通知共享 store 清空对应 buffer
+            if let ws = workspace {
+                appState.performanceDashboardStore.clearRealtimeBuffers(project: project, workspace: ws)
+            }
             clearRealtimeTrendBuffer()
             syncStartOptions()
             refreshData()
@@ -298,6 +307,10 @@ struct EvolutionPipelineView: View {
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             resetLocalTimeline()
+            // 工作区切换时通知共享 store 清空对应 buffer
+            if let ws = workspace {
+                appState.performanceDashboardStore.clearRealtimeBuffers(project: project, workspace: ws)
+            }
             clearRealtimeTrendBuffer()
             syncStartOptions()
             refreshData()
@@ -384,6 +397,7 @@ struct EvolutionPipelineView: View {
                 .foregroundColor(.secondary)
             analysisStatusIndicator
             Spacer()
+            EvolutionPerformanceBadge(projection: evolutionPerfProjection)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -2814,6 +2828,48 @@ private struct SharedElapsedTimeText: View {
         return EvolutionPipelineDateFormatting.formatDuration(
             max(0, now.timeIntervalSince(startedAtDate))
         )
+    }
+}
+
+private struct EvolutionPerformanceBadge: View {
+    let projection: PerformanceDashboardProjection
+
+    var body: some View {
+        if projection.budgetStatus != .unknown {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(badgeColor)
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("性能: \(projection.budgetStatus.label)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if !projection.regressionSummary.degradationReasons.isEmpty {
+                        Text(projection.regressionSummary.degradationReasons.first ?? "")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                if projection.isTrendDegrading {
+                    Image(systemName: "chart.line.downtrend.xyaxis")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private var badgeColor: Color {
+        switch projection.budgetStatus {
+        case .pass:    return .green
+        case .warn:    return .yellow
+        case .fail:    return .red
+        case .unknown: return .gray
+        }
     }
 }
 

@@ -311,6 +311,8 @@ final class MobileAppState: ObservableObject {
     @Published var observabilitySnapshot: ObservabilitySnapshot = .empty
     /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
     @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
+    /// 共享性能仪表盘 Store
+    let performanceDashboardStore = PerformanceDashboardStore()
 
     /// v1.45: 智能演化分析摘要缓存，Key 为 "project:workspace:cycle_id"，与 macOS 语义一致
     /// 每次 system_snapshot 到达时全量替换，避免陈旧循环残留。
@@ -4543,6 +4545,11 @@ final class MobileAppState: ObservableObject {
         wsClient.onPerformanceObservability = { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.performanceObservability = snapshot
+                self?.performanceDashboardStore.ingestSnapshot(
+                    snapshot,
+                    project: self?.selectedProjectName ?? "",
+                    workspace: self?.selectedWorkspaceName ?? ""
+                )
             }
         }
 

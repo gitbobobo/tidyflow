@@ -738,6 +738,7 @@ enum EvolutionPipelineDateFormatting {
 @MainActor
 @Observable
 final class EvolutionPipelineProjectionStore {
+    // realtimeTrendBuffer 已迁移至共享 PerformanceDashboardStore，见 EvolutionPipelineView
     private(set) var projection: EvolutionPipelineProjection = .empty
 
     @ObservationIgnored

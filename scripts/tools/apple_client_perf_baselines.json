@@ -8,6 +8,7 @@
     {
       "scenario_id": "chat_stream",
       "description": "聊天流式输出（stream_heavy，300 次 delta flush）",
+      "surface_id": "chat_session",
       "required_evidence_keys": [
         "hotspot_key=ios_ai_chat",
         "hotspot_key_secondary=mac_ai_chat",
@@ -29,6 +30,7 @@
     {
       "scenario_id": "evolution_panel",
       "description": "Evolution 面板性能（evolution_panel，50 轮 timeline recompute）",
+      "surface_id": "evolution_workspace",
       "required_evidence_keys": [
         "evolution_recompute_key=evolution_timeline_recompute_ms",
         "evolution_tier_change_key=evolution_monitor tier_change",
@@ -42,6 +44,59 @@
           "value_key": "evolution_timeline_recompute_ms",
           "warn_limit": 50.0,
           "fail_limit": 200.0,
+          "unit": "ms"
+        }
+      ]
+    },
+    {
+      "scenario_id": "chat_stream_workspace_switch",
+      "description": "聊天流式输出 + 工作区切换高负载（100 次 delta flush × 3 次工作区切换）",
+      "surface_id": "chat_session",
+      "required_evidence_keys": [
+        "hotspot_key=ios_ai_chat",
+        "tail_flush_event=aiMessageTailFlush",
+        "memory_snapshot_key=memory_snapshot",
+        "workspace_switch_event=workspace_switch"
+      ],
+      "metrics": [
+        {
+          "metric_id": "aiMessageTailFlush_p95_ms",
+          "description": "流式 tail flush P95 耗时（毫秒），工作区切换场景",
+          "log_pattern": "perf aiMessageTailFlush",
+          "value_key": "duration_ms",
+          "warn_limit": 60.0,
+          "fail_limit": 250.0,
+          "unit": "ms"
+        },
+        {
+          "metric_id": "workspace_switch_p95_ms",
+          "description": "工作区切换 P95 耗时（毫秒）",
+          "log_pattern": "perf workspace_switch",
+          "value_key": "duration_ms",
+          "warn_limit": 300.0,
+          "fail_limit": 1000.0,
+          "unit": "ms"
+        }
+      ]
+    },
+    {
+      "scenario_id": "evolution_panel_multi_workspace",
+      "description": "Evolution 面板并行工作区采样（3 个工作区，各 30 轮 recompute）",
+      "surface_id": "evolution_workspace",
+      "required_evidence_keys": [
+        "evolution_recompute_key=evolution_timeline_recompute_ms",
+        "evolution_tier_change_key=evolution_monitor tier_change",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=evolution_multi_workspace_sample"
+      ],
+      "metrics": [
+        {
+          "metric_id": "evolution_timeline_recompute_p95_ms",
+          "description": "Evolution 面板 timeline 重算 P95 耗时，并行工作区场景",
+          "log_pattern": "perf evolution_timeline_recompute_ms=",
+          "value_key": "evolution_timeline_recompute_ms",
+          "warn_limit": 60.0,
+          "fail_limit": 250.0,
           "unit": "ms"
         }
       ]

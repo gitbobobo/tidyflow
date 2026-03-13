@@ -108,6 +108,12 @@ extension AppState {
         // WI-001: 全链路性能可观测快照
         wsClient.onPerformanceObservability = { [weak self] snapshot in
             self?.performanceObservability = snapshot
+            // 把实时快照喂入共享仪表盘 Store
+            let project = self?.selectedProjectName ?? ""
+            let workspace = self?.selectedWorkspaceKey ?? ""
+            Task { @MainActor [weak self] in
+                self?.performanceDashboardStore.ingestSnapshot(snapshot, project: project, workspace: workspace)
+            }
         }
 
         // v1.41: 系统健康快照（Core 权威真源）- 更新共享健康状态，双端统一消费

@@ -305,6 +305,11 @@ struct WorkspaceDetailView: View {
 
             // 性能诊断（WI-005：消费 Core 权威诊断结果，视图不自行推导阈值）
             perfObservabilitySection
+
+            // WI-003: 共享仪表盘投影 Evolution 性能卡
+            let evoKey = PerformanceScopeKey(project: project, workspace: workspace, surface: .evolutionWorkspace)
+            let evoProjection = appState.performanceDashboardStore.projection(for: evoKey)
+            EvolutionPerformanceBadge(projection: evoProjection)
         }
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)
@@ -3358,6 +3363,48 @@ struct MobileEvolutionView: View {
         let totalWeight = max(weights.reduce(0, +), 0.0001)
         return zip(entries, weights).map { entry, weight in
             MobileCycleBarSegment(entry: entry, ratio: CGFloat(weight / totalWeight))
+        }
+    }
+}
+
+private struct EvolutionPerformanceBadge: View {
+    let projection: PerformanceDashboardProjection
+
+    var body: some View {
+        if projection.budgetStatus != .unknown {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(badgeColor)
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("性能: \(projection.budgetStatus.label)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if !projection.regressionSummary.degradationReasons.isEmpty {
+                        Text(projection.regressionSummary.degradationReasons.first ?? "")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                if projection.isTrendDegrading {
+                    Image(systemName: "chart.line.downtrend.xyaxis")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private var badgeColor: Color {
+        switch projection.budgetStatus {
+        case .pass:    return .green
+        case .warn:    return .yellow
+        case .fail:    return .red
+        case .unknown: return .gray
         }
     }
 }

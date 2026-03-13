@@ -606,6 +606,32 @@ extension PerformanceObservabilitySemanticsTests {
     }
 }
 
+// MARK: - PerformanceDashboardStore 与 PerformanceObservabilitySnapshot 集成语义
+
+extension PerformanceObservabilitySemanticsTests {
+
+    func testIngestSnapshot_emptyProjectWorkspace_isIgnored() async {
+        let store = await PerformanceDashboardStore()
+        await store.ingestSnapshot(PerformanceObservabilitySnapshot.empty, project: "", workspace: "ws")
+        await store.ingestSnapshot(PerformanceObservabilitySnapshot.empty, project: "p", workspace: "")
+        let keys = await store.projections.keys
+        XCTAssertTrue(keys.isEmpty, "project 或 workspace 为空时不应写入投影")
+    }
+
+    func testIngestSnapshot_differentWorkspaces_separateProjections() async {
+        let store = await PerformanceDashboardStore()
+        await store.ingestSnapshot(PerformanceObservabilitySnapshot.empty, project: "p", workspace: "ws-1")
+        await store.ingestSnapshot(PerformanceObservabilitySnapshot.empty, project: "p", workspace: "ws-2")
+
+        let key1 = PerformanceScopeKey(project: "p", workspace: "ws-1", surface: .chatSession)
+        let key2 = PerformanceScopeKey(project: "p", workspace: "ws-2", surface: .chatSession)
+        let proj1 = await store.projection(for: key1)
+        let proj2 = await store.projection(for: key2)
+        XCTAssertEqual(proj1.workspace, "ws-1")
+        XCTAssertEqual(proj2.workspace, "ws-2")
+    }
+}
+
 // MARK: - 私有扩展
 
 private extension String {
