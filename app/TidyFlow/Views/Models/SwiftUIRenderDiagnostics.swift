@@ -15,6 +15,14 @@ extension SwiftUIPerformanceDebug {
     static let tabContentHostPrintChangesEnabled = extraFlag("TF_DEBUG_PRINT_CHANGES_TAB_CONTENT_HOST")
     static let workspaceDetailPrintChangesEnabled = extraFlag("TF_DEBUG_PRINT_CHANGES_WORKSPACE_DETAIL")
 
+    /// 渲染探针名称常量，用于 tfRenderProbe / SwiftUIRenderDiagnostics 一致性
+    enum ProbeNames {
+        static let aiTabView = "AITabView"
+        static let mobileAIChatView = "MobileAIChatView"
+        static let aiMessageList = "AIMessageList"
+        static let aiChatTranscriptHost = "AIChatTranscriptHost"
+    }
+
     static func runPrintChangesIfEnabled(_ enabled: Bool, action: () -> Void) {
 #if DEBUG
         guard enabled else { return }

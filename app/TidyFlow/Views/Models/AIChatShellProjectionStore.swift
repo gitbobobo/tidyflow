@@ -3,10 +3,10 @@ import Observation
 
 /// 壳投影失效签名：包含所有影响 shell projection 结果的轻量字段，
 /// 视图只在签名发生变化时才调用 projectionStore.refresh。
+/// 注意：tailRevision 不在此签名中；纯文本 token 增量不应触发根壳层刷新。
 struct AIChatShellProjectionInvalidationSignature: Equatable {
     let tool: AIChatTool
     let currentSessionId: String?
-    let tailRevision: UInt64
     let historyHasMore: Bool
     let historyIsLoading: Bool
     let recentHistoryIsLoading: Bool
@@ -45,7 +45,6 @@ struct AIChatShellProjectionInput {
         AIChatShellProjectionInvalidationSignature(
             tool: tool,
             currentSessionId: currentSessionId,
-            tailRevision: tailRevision,
             historyHasMore: historyHasMore,
             historyIsLoading: historyIsLoading,
             recentHistoryIsLoading: recentHistoryIsLoading,

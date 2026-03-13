@@ -207,6 +207,11 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		TSAC0001 /* AIChatStreamCoalescerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSAC0011 /* AIChatStreamCoalescerTests.swift */; };
 		TSMS0001 /* StreamingMarkdownRenderSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSMS0011 /* StreamingMarkdownRenderSchedulerTests.swift */; };
 		AICS0001 /* AIChatShellProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICS0011 /* AIChatShellProjectionStore.swift */; };
+		ASBS0001 /* AIChatStreamingBatchScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASBS0011 /* AIChatStreamingBatchScheduler.swift */; };
+		ASRC0001 /* AIChatStreamingRenderCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRC0011 /* AIChatStreamingRenderCoordinator.swift */; };
+		TSBS0001 /* AIChatStreamBatchSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSBS0011 /* AIChatStreamBatchSchedulerTests.swift */; };
+		TSPI0001 /* AIChatShellProjectionInvalidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSPI0011 /* AIChatShellProjectionInvalidationTests.swift */; };
+		TSMR0001 /* StreamingMarkdownRenderCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSMR0011 /* StreamingMarkdownRenderCoordinatorTests.swift */; };
 		BTP0001 /* BottomPanelProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BTP0011 /* BottomPanelProjectionStore.swift */; };
 		GWPS0001 /* GitWorkspaceProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = GWPS0011 /* GitWorkspaceProjectionStore.swift */; };
 		WOP0001 /* WorkspaceOverviewProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WOP0011 /* WorkspaceOverviewProjectionStore.swift */; };
@@ -535,6 +540,11 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		TSAC0011 /* AIChatStreamCoalescerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStreamCoalescerTests.swift; sourceTree = "<group>"; };
 		TSMS0011 /* StreamingMarkdownRenderSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownRenderSchedulerTests.swift; sourceTree = "<group>"; };
 		AICS0011 /* AIChatShellProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatShellProjectionStore.swift; sourceTree = "<group>"; };
+		ASBS0011 /* AIChatStreamingBatchScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStreamingBatchScheduler.swift; sourceTree = "<group>"; };
+		ASRC0011 /* AIChatStreamingRenderCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStreamingRenderCoordinator.swift; sourceTree = "<group>"; };
+		TSBS0011 /* AIChatStreamBatchSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStreamBatchSchedulerTests.swift; sourceTree = "<group>"; };
+		TSPI0011 /* AIChatShellProjectionInvalidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatShellProjectionInvalidationTests.swift; sourceTree = "<group>"; };
+		TSMR0011 /* StreamingMarkdownRenderCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownRenderCoordinatorTests.swift; sourceTree = "<group>"; };
 		BTP0011 /* BottomPanelProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomPanelProjectionStore.swift; sourceTree = "<group>"; };
 		GWPS0011 /* GitWorkspaceProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorkspaceProjectionStore.swift; sourceTree = "<group>"; };
 		WOP0011 /* WorkspaceOverviewProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceOverviewProjectionStore.swift; sourceTree = "<group>"; };
@@ -887,6 +897,9 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				WPBT0011 /* WorkspaceProjectionBridgeTests.swift */,
 				TSAC0011 /* AIChatStreamCoalescerTests.swift */,
 				TSMS0011 /* StreamingMarkdownRenderSchedulerTests.swift */,
+				TSBS0011 /* AIChatStreamBatchSchedulerTests.swift */,
+				TSPI0011 /* AIChatShellProjectionInvalidationTests.swift */,
+				TSMR0011 /* StreamingMarkdownRenderCoordinatorTests.swift */,
 				);
 			path = TidyFlowTests;
 			sourceTree = "<group>";
@@ -998,6 +1011,8 @@ TSST011 /* TerminalSessionStore.swift */,
 				EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */,
 				EVPR0011 /* EvidenceProjectionStore.swift */,
 				AICS0011 /* AIChatShellProjectionStore.swift */,
+				ASBS0011 /* AIChatStreamingBatchScheduler.swift */,
+				ASRC0011 /* AIChatStreamingRenderCoordinator.swift */,
 				BTP0011 /* BottomPanelProjectionStore.swift */,
 				GWPS0011 /* GitWorkspaceProjectionStore.swift */,
 				SPDG0011 /* SwiftUIPerformanceDebug.swift */,
@@ -1297,6 +1312,8 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				EVPO0001 /* EvolutionProfileOptionsProjectionStore.swift in Sources */,
 				EVPR0001 /* EvidenceProjectionStore.swift in Sources */,
 				AICS0001 /* AIChatShellProjectionStore.swift in Sources */,
+				ASBS0001 /* AIChatStreamingBatchScheduler.swift in Sources */,
+				ASRC0001 /* AIChatStreamingRenderCoordinator.swift in Sources */,
 				BTP0001 /* BottomPanelProjectionStore.swift in Sources */,
 				GWPS0001 /* GitWorkspaceProjectionStore.swift in Sources */,
 				HOTS0001 /* SwiftUIHotspotBaseline.swift in Sources */,
@@ -1453,6 +1470,9 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */,
 				TSAC0001 /* AIChatStreamCoalescerTests.swift in Sources */,
 				TSMS0001 /* StreamingMarkdownRenderSchedulerTests.swift in Sources */,
+				TSBS0001 /* AIChatStreamBatchSchedulerTests.swift in Sources */,
+				TSPI0001 /* AIChatShellProjectionInvalidationTests.swift in Sources */,
+				TSMR0001 /* StreamingMarkdownRenderCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1776,6 +1796,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"MobileAIChatView.swift",
 					"MobileSessionListSheet.swift",
 					"WorkspaceGitView.swift",
+					"WorkspaceDiffView.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;
@@ -1910,6 +1931,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"MobileAIChatView.swift",
 					"MobileSessionListSheet.swift",
 					"WorkspaceGitView.swift",
+					"WorkspaceDiffView.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;

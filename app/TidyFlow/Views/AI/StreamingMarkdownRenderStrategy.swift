@@ -5,7 +5,7 @@ import CoreFoundation
 //
 // 将 MarkdownTextView 内嵌的流式节流规则提取为可单测的纯策略类型，
 // 保留 MarkdownTextView 调用面兼容（throttledRender 语义不变）。
-// MarkdownFinalStateCache 保留在 MarkdownTextView.swift 以维持缓存 key 逻辑一致性。
+// MarkdownFinalStateCache 定义在 MarkdownTextView.swift，缓存 key 逻辑与视图层一体维护。
 
 // MARK: - StreamingMarkdownRenderBudget
 

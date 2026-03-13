@@ -338,6 +338,8 @@ struct AIChatTranscriptContainer: View {
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
     /// 上次完整重算时的消息数量，用于检测结构性变化。
     @State private var cachedDisplayMessageSourceCount: Int = -1
+    /// 会话级 Markdown 流式渲染协调器，生命周期与 AIChatTranscriptContainer 实例一致。
+    @State private var renderCoordinator = AIChatStreamingRenderCoordinator()
 
     static let bottomAnchorId = "ai_message_bottom_anchor"
     /// 虚拟化窗口决策模型；buffer=12 与 ChatScrollConfiguration.renderBufferCount 保持一致。
@@ -451,6 +453,7 @@ struct AIChatTranscriptContainer: View {
                         viewportState.visibleMessageIDs.remove(messageId)
                     }
                 )
+                .environment(renderCoordinator)
             }
             .onScrollGeometryChange(
                 for: MessageListScrollMetrics.self,
@@ -1269,7 +1272,9 @@ private struct AIChatMessageBody: View {
                     text: markdownText,
                     role: isUser ? .user : .assistant,
                     baseFontSize: 13,
-                    isStreaming: message.isStreaming
+                    isStreaming: message.isStreaming,
+                    partId: part.id,
+                    renderRevision: UInt64(message.renderRevision)
                 )
             }
         case .file:

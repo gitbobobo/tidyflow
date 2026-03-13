@@ -156,7 +156,18 @@ private struct AIChatStageContainer<ComposerContent: View, AccessoryOverlay: Vie
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            transcriptLayer
+            // 转录区域宿主：单独提取为子视图，使其对 store.messages 的观察面
+            // 隔离于 shell chrome，纯文本 token 增量不会导致 shell 层重算。
+            AIChatTranscriptHost(
+                store: store,
+                presentation: presentation,
+                selectedTool: $selectedTool,
+                actions: actions,
+                reservedMessageBottomInset: reservedMessageBottomInset,
+                transcriptBackgroundColor: platformChrome.transcriptBackgroundColor,
+                enablesTranscriptTapDismiss: enablesTranscriptTapDismiss,
+                onTranscriptTap: onTranscriptTap
+            )
 
             accessoryOverlay(floatingComposerHeight)
                 .padding(.leading, platformChrome.accessoryLeadingPadding)
@@ -167,8 +178,40 @@ private struct AIChatStageContainer<ComposerContent: View, AccessoryOverlay: Vie
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
 
-    @ViewBuilder
-    private var transcriptLayer: some View {
+    private var dockLayer: some View {
+        composerContent()
+            .background(
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: AIChatStageDockHeightPreferenceKey.self,
+                        value: geometry.size.height
+                    )
+                }
+            )
+            .padding(.horizontal, platformChrome.composerHorizontalPadding)
+            .padding(.bottom, platformChrome.composerBottomPadding)
+            .frame(maxWidth: .infinity, alignment: .bottom)
+    }
+}
+
+// MARK: - AIChatTranscriptHost
+
+/// 转录区域宿主：单独隔离 store.messages 观察面。
+///
+/// 此视图负责订阅 store.messages 的变化，stage shell chrome 与 composer 不应因
+/// 纯文本 token 增量重算整个 AIChatStageContainer。
+private struct AIChatTranscriptHost: View {
+    let store: AIChatStore
+    let presentation: AIChatPresentationProjection
+    @Binding var selectedTool: AIChatTool
+    let actions: AIChatStageActions
+    let reservedMessageBottomInset: CGFloat
+    let transcriptBackgroundColor: Color
+    let enablesTranscriptTapDismiss: Bool
+    let onTranscriptTap: (() -> Void)?
+
+    var body: some View {
+        let _ = SwiftUIRenderDiagnostics.recordRender(name: "AIChatTranscriptHost")
         ZStack {
             if presentation.showsEmptyState {
                 AIChatEmptyStateView(
@@ -196,7 +239,7 @@ private struct AIChatStageContainer<ComposerContent: View, AccessoryOverlay: Vie
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(platformChrome.transcriptBackgroundColor)
+        .background(transcriptBackgroundColor)
         .overlay {
             if enablesTranscriptTapDismiss, let onTranscriptTap {
                 Color.clear
@@ -204,20 +247,5 @@ private struct AIChatStageContainer<ComposerContent: View, AccessoryOverlay: Vie
                     .onTapGesture(perform: onTranscriptTap)
             }
         }
-    }
-
-    private var dockLayer: some View {
-        composerContent()
-            .background(
-                GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: AIChatStageDockHeightPreferenceKey.self,
-                        value: geometry.size.height
-                    )
-                }
-            )
-            .padding(.horizontal, platformChrome.composerHorizontalPadding)
-            .padding(.bottom, platformChrome.composerBottomPadding)
-            .frame(maxWidth: .infinity, alignment: .bottom)
     }
 }

@@ -897,7 +897,9 @@ final class AIChatStore {
         qos: .userInitiated
     )
     private var lastPublishedTailSnapshot: [AIChatMessage] = []
-    private static let streamCommitInterval: TimeInterval = 0.05
+    // 以下三个属性仅在 streamIngressQueue 上访问，用于批处理决策
+    private var pendingHasStructuralEvent: Bool = false
+    private var pendingUTF16DeltaCount: Int = 0
     weak var performanceTracer: TFPerformanceTracer?
     var performanceContextProvider: (() -> (project: String, workspace: String)?)?
 
@@ -1174,6 +1176,15 @@ final class AIChatStore {
         streamIngressQueue.async { [weak self] in
             guard let self else { return }
             self.pendingStreamEvents.append(contentsOf: events)
+            // 分类事件：统计结构性事件与纯文本增量，供批处理决策使用
+            for event in events {
+                switch event {
+                case .messageUpdated, .partUpdated:
+                    self.pendingHasStructuralEvent = true
+                case .partDelta(_, _, _, _, let delta):
+                    self.pendingUTF16DeltaCount += delta.utf16.count
+                }
+            }
             self.scheduleStreamFlushIfNeeded()
         }
     }
@@ -1184,13 +1195,19 @@ final class AIChatStore {
             streamFlushWorkItem = nil
             let events = Self.coalesceStreamEvents(pendingStreamEvents)
             pendingStreamEvents.removeAll(keepingCapacity: true)
+            pendingHasStructuralEvent = false
+            pendingUTF16DeltaCount = 0
             return events
         }
     }
 
     private func flushPreparedStreamEventsFromIngressQueue() {
         let rawEvents = pendingStreamEvents
+        let rawUTF16Delta = pendingUTF16DeltaCount
+        let hadStructuralEvent = pendingHasStructuralEvent
         pendingStreamEvents.removeAll(keepingCapacity: true)
+        pendingHasStructuralEvent = false
+        pendingUTF16DeltaCount = 0
         streamFlushWorkItem = nil
         let events = Self.coalesceStreamEvents(rawEvents)
         guard !events.isEmpty else { return }
@@ -1208,6 +1225,8 @@ final class AIChatStore {
                     metadata: [
                         "events": String(events.count),
                         "raw_events": String(rawEventCount),
+                        "utf16_delta": String(rawUTF16Delta),
+                        "structural": hadStructuralEvent ? "1" : "0",
                     ]
                 ))
             }()
@@ -1216,7 +1235,7 @@ final class AIChatStore {
                 tracer.end(perfTraceId)
             }
             TFLog.perf.debug(
-                "ai_stream_commit events=\(events.count, privacy: .public) raw_events=\(rawEventCount, privacy: .public)"
+                "ai_stream_commit events=\(events.count, privacy: .public) raw_events=\(rawEventCount, privacy: .public) utf16_delta=\(rawUTF16Delta, privacy: .public) structural=\(hadStructuralEvent ? 1 : 0, privacy: .public)"
             )
         }
     }
@@ -1676,12 +1695,29 @@ final class AIChatStore {
     // MARK: - Internal Helpers
 
     private func scheduleStreamFlushIfNeeded() {
+        let input = AIChatStreamBatchInput(
+            pendingEventCount: pendingStreamEvents.count,
+            pendingUTF16Delta: pendingUTF16DeltaCount,
+            containsStructuralEvent: pendingHasStructuralEvent,
+            isStreamEnding: false
+        )
+        let decision = AIChatStreamingBatchScheduler.decide(input)
+
+        if decision.shouldFlushImmediately {
+            // 结构性事件：取消已排队的延迟 flush，立即执行
+            streamFlushWorkItem?.cancel()
+            streamFlushWorkItem = nil
+            flushPreparedStreamEventsFromIngressQueue()
+            return
+        }
+
+        // 纯 delta 批次：若已有调度则保留，不重复排队
         guard streamFlushWorkItem == nil else { return }
         let workItem = DispatchWorkItem { [weak self] in
             self?.flushPreparedStreamEventsFromIngressQueue()
         }
         streamFlushWorkItem = workItem
-        streamIngressQueue.asyncAfter(deadline: .now() + Self.streamCommitInterval, execute: workItem)
+        streamIngressQueue.asyncAfter(deadline: .now() + decision.nextFlushDelay, execute: workItem)
     }
 
     private func rebuildIndexes() {
