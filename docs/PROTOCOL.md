@@ -170,7 +170,7 @@
 
 1. `protocol_check` — 协议一致性 / schema 同步 / 版本一致性
 2. `core_regression` — Core 单元测试与回归
-3. **`performance_regression`** — 热点路径性能回归检查（新增，顺序在 `core_regression` 之后、`system_health` 之前）
+3. **`performance_regression`** — 热点路径性能回归检查（顺序在 `core_regression` 之后、`system_health` 之前）
 4. `system_health` — 系统健康快照判定（需 Core 运行时）
 5. `evidence_integrity` — 证据索引完整性校验
 6. `apple_regression` — Apple 多工作区定向回归
@@ -181,6 +181,40 @@
 - 各场景 `measured_ns / baseline_ns > fail_ratio_limit` 或 `measured_ns > absolute_budget_ns` → `overall=fail`，映射到 `GateFailureReason::PerformanceRegressionFailed`，**阻断门禁**
 - 各场景 `measured_ns / baseline_ns > warn_ratio_limit`（但未超过 fail 限制）→ `overall=warn`，写入 `warnings` 字段与文本摘要，**不阻断门禁**
 - 阶段输出仅使用 `pass | fail | skipped`（不引入第四种状态）；`warn` 通过 `warnings` 字段单独表达
+
+### 性能基线权威源与统一门禁报告
+
+#### 权威文件
+
+| 文件 | 说明 |
+|------|------|
+| `scripts/tools/performance_gate_contract.json` | 性能门禁单一权威契约，定义所有 suite、阻断原因码和发布阻断语义 |
+| `scripts/tools/apple_client_perf_baselines.json` | Apple 客户端场景数值预算（warn_limit / fail_limit） |
+| `core/benches/baselines/hotspot_regression.json` | Core 热点路径数值预算 |
+
+#### Apple 客户端四个场景
+
+| 场景 ID | surface_id | 说明 | 证据要求 |
+|---------|-----------|------|---------|
+| `chat_stream` | `chat_session` | 聊天流式输出（300 次 delta flush） | 真实 fixture 证据 |
+| `evolution_panel` | `evolution_workspace` | Evolution 面板（50 轮 timeline recompute） | 真实 fixture 证据 |
+| `chat_stream_workspace_switch` | `chat_session` | 聊天 + 工作区切换（100 × 3 切换） | 独立真实 fixture 证据，不允许从基础场景派生 |
+| `evolution_panel_multi_workspace` | `evolution_workspace` | Evolution 并行工作区采样（3 工作区 × 30 轮） | 独立真实 fixture 证据，不允许从基础场景派生 |
+
+#### 统一报告路径
+
+- 统一性能门禁报告：`build/perf/performance-gate-report.json`
+- 仪表盘快照：`build/perf/performance-dashboard-snapshot.json`
+- Apple 客户端报告：`build/perf/apple-client-regression-report.json`
+- Core 热点报告：`build/perf/hotspot-regression-report.json`
+
+#### 发布阻断语义
+
+- `release_blocking=true` 时发布失败
+- `release_blocking=false` 且 `overall=warn` 时仅记录告警不阻断
+- 统一报告缺失时发布失败
+- 契约版本不匹配时发布失败
+- 发布脚本和质量门禁脚本只读取结构化统一报告做决策，不回退到自由文本或子报告拼接判断
 
 ## 项目与工作区生命周期
 
