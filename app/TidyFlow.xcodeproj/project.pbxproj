@@ -1212,6 +1212,7 @@ TSST011 /* TerminalSessionStore.swift */,
 /* Begin PBXShellScriptBuildPhase section */
 		D3900030 /* Build Core (Run Script) */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
