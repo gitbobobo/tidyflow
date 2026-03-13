@@ -157,7 +157,11 @@ extension AppState {
                 let id = payload.workspaceId
                 let existing = self.coordinatorStateCache.state(for: id)
                 let updated = payload.toWorkspaceCoordinatorState(existing: existing)
-                self.coordinatorStateCache.apply(.updateWorkspace(updated))
+                let result = self.coordinatorStateCache.apply(.updateWorkspace(updated))
+                // 协调层 AI 状态变更时通知 AppState 观察者实时刷新终端实例标签指示器
+                if result.changed {
+                    self.objectWillChange.send()
+                }
             }
         }
 

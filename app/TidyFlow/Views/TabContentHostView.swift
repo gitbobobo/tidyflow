@@ -272,6 +272,15 @@ private struct BottomPanelInstanceItemView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // AI 六态指示器：idle 不显示，其余五态实时展示工作区 AI 状态
+            if tab.kind == .terminal && aiStatus.isVisible {
+                Image(systemName: aiStatus.iconName)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(aiStatus.color)
+                    .help(aiStatus.hint)
+                    .accessibilityLabel(aiStatus.hint)
+            }
+
             if isActive || isHovered {
                 Button {
                     appState.closeTab(workspaceKey: workspaceKey, tabId: tab.id)
