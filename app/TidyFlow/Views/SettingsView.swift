@@ -95,6 +95,10 @@ extension View {
 // MARK: - 自定义命令配置部分
 
 struct CustomCommandsSection: View {
+    private enum PairingFocusField: Hashable {
+        case pairKey
+    }
+
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var localizationManager: LocalizationManager
     @State private var editingCommand: CustomCommand?
@@ -107,6 +111,8 @@ struct CustomCommandsSection: View {
     @State private var pairHost: String = ""
     @State private var pairPort: String = ""
     @State private var pairKey: String = ""
+    @State private var selectedDiscoveryNodeID: String?
+    @FocusState private var focusedPairingField: PairingFocusField?
 
     var body: some View {
         Form {
@@ -162,6 +168,8 @@ struct CustomCommandsSection: View {
                     LabeledContent("首次启动配对 Key") {
                         Text(selfInfo.bootstrapPairKey)
                             .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                             .textSelection(.enabled)
                     }
                 }
@@ -174,17 +182,26 @@ struct CustomCommandsSection: View {
             Section {
                 TextField("节点地址", text: $pairHost)
                 TextField("端口", text: $pairPort)
-                SecureField("对端配对 Key", text: $pairKey)
-                Button("发起配对") {
-                    let port = Int(pairPort) ?? 0
-                    guard !pairHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                          port > 0,
-                          !pairKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return
-                    }
-                    appState.pairNodePeer(host: pairHost, port: port, pairKey: pairKey)
+                TextField("对端配对 Key", text: $pairKey)
+                    .focused($focusedPairingField, equals: .pairKey)
+                if let selectedItem = selectedDiscoveryItem {
+                    Text("已选择节点：\(selectedItem.nodeName)（\(selectedItem.host):\(selectedItem.port)）")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                if let result = appState.nodeLastPairingResult {
+                Button(pairingButtonTitle) {
+                    startPairingIfPossible()
+                }
+                .disabled(!canStartPairing || appState.nodePairingInFlight || pairingTargetIsAlreadyPaired)
+                if appState.nodePairingInFlight {
+                    Text("正在与 \(pairingTargetSummary) 建立配对…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if pairingTargetIsAlreadyPaired {
+                    Text("该节点已经配对，可在“已配对节点”里查看状态。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if let result = appState.nodeLastPairingResult {
                     Text(result.ok ? "配对成功" : (result.message ?? "配对失败"))
                         .font(.caption)
                         .foregroundColor(result.ok ? .green : .red)
@@ -199,20 +216,33 @@ struct CustomCommandsSection: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(appState.nodeDiscoveryItems) { item in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.nodeName)
-                                Text("\(item.host):\(item.port)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if item.paired {
-                                Text("已配对")
-                                    .font(.caption)
-                                    .foregroundColor(.green)
+                        Button {
+                            selectDiscoveredNode(item)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.nodeName)
+                                    Text("\(item.host):\(item.port)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if item.paired {
+                                    Text("已配对")
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                } else if selectedDiscoveryNodeID == item.nodeID {
+                                    Text("已选择")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                } else {
+                                    Text("选择")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 Button("刷新发现结果") {
@@ -349,6 +379,11 @@ struct CustomCommandsSection: View {
         .onChange(of: appState.clientSettings.nodeDiscoveryEnabled) { _, _ in
             syncClientSettingsSnapshot()
         }
+        .onChange(of: appState.nodeDiscoveryItems.map(\.nodeID)) { _, ids in
+            if let selectedDiscoveryNodeID, !ids.contains(selectedDiscoveryNodeID) {
+                self.selectedDiscoveryNodeID = nil
+            }
+        }
     }
 
     private func syncClientSettingsSnapshot() {
@@ -380,6 +415,69 @@ struct CustomCommandsSection: View {
             return
         }
         appState.updateNodeProfile(nodeName: nextName, discoveryEnabled: nextDiscoveryEnabled)
+    }
+
+    private var selectedDiscoveryItem: NodeDiscoveryItemV2? {
+        guard let selectedDiscoveryNodeID else { return nil }
+        return appState.nodeDiscoveryItems.first { $0.nodeID == selectedDiscoveryNodeID }
+    }
+
+    private var canStartPairing: Bool {
+        let host = pairHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = pairKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !host.isEmpty && (Int(pairPort) ?? 0) > 0 && !key.isEmpty
+    }
+
+    private func selectDiscoveredNode(_ item: NodeDiscoveryItemV2) {
+        selectedDiscoveryNodeID = item.nodeID
+        pairHost = item.host
+        pairPort = String(item.port)
+        appState.nodeLastPairingResult = nil
+        focusedPairingField = .pairKey
+    }
+
+    private func startPairingIfPossible() {
+        let host = pairHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = pairKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(pairPort) ?? 0
+        guard !host.isEmpty, port > 0, !key.isEmpty else {
+            return
+        }
+        appState.pairNodePeer(host: host, port: port, pairKey: key)
+    }
+
+    private var pairingTargetIsAlreadyPaired: Bool {
+        let host = pairHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(pairPort) ?? 0
+        guard !host.isEmpty, port > 0 else { return false }
+
+        if let selectedItem = selectedDiscoveryItem,
+           selectedItem.host == host,
+           selectedItem.port == port,
+           selectedItem.paired {
+            return true
+        }
+
+        return appState.nodeNetworkPeers.contains { peer in
+            peer.port == port && peer.addresses.contains(where: { $0 == host })
+        }
+    }
+
+    private var pairingTargetSummary: String {
+        let host = pairHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(pairPort) ?? 0
+        guard !host.isEmpty, port > 0 else { return "目标节点" }
+        return "\(host):\(port)"
+    }
+
+    private var pairingButtonTitle: String {
+        if appState.nodePairingInFlight {
+            return "配对中..."
+        }
+        if pairingTargetIsAlreadyPaired {
+            return "已配对"
+        }
+        return "发起配对"
     }
 
     // Helper views removed as they are simplified into the Form or not needed

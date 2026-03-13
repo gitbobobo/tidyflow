@@ -80,6 +80,30 @@ extension AppState {
     }
 
     func pairNodePeer(host: String, port: Int, pairKey: String) {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = pairKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty, port > 0, !trimmedKey.isEmpty else {
+            nodeLastPairingResult = NodePairingResultV2(
+                ok: false,
+                peer: nil,
+                message: "配对参数不完整"
+            )
+            nodePairingInFlight = false
+            return
+        }
+
+        guard wsClient.isConnected else {
+            nodeLastPairingResult = NodePairingResultV2(
+                ok: false,
+                peer: nil,
+                message: "当前未连接到 Core，无法发起配对"
+            )
+            nodePairingInFlight = false
+            return
+        }
+
+        nodeLastPairingResult = nil
+        nodePairingInFlight = true
         wsClient.requestNodePairPeer(host: host, port: port, pairKey: pairKey)
     }
 

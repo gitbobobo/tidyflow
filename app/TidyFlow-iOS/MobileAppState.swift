@@ -206,6 +206,7 @@ final class MobileAppState: ObservableObject {
     @Published var nodeDiscoveryItems: [NodeDiscoveryItemV2] = []
     @Published var nodeNetworkPeers: [NodePeerInfoV2] = []
     @Published var nodeActiveLocks: [NodeActiveLockInfoV2] = []
+    @Published var nodePairingInFlight: Bool = false
     @Published var nodeLastPairingResult: NodePairingResultV2?
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""

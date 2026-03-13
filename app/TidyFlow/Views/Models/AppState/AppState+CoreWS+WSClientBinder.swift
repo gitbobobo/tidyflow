@@ -41,6 +41,7 @@ extension AppState {
                 // 重连后尝试附着已有终端会话
                 self.requestTerminalReattach()
             } else {
+                self.nodePairingInFlight = false
                 // 断连时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影残留
                 self.forceResetAIChatStage()
                 // 断连时重置所有文件相位，避免残留的 watching/indexing 状态

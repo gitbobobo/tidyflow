@@ -22,6 +22,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_tidyflow-node._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>TidyFlow 需要访问本地网络以发现附近节点。</string>
 	<key>NSMainStoryboardFile</key>
 	<string></string>
 	<key>NSPrincipalClass</key>

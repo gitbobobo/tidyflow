@@ -145,6 +145,7 @@
 		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
 		L10N0001 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
 		L10N0002 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0020 /* Localizable.strings */; };
+		L10N0003 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0025 /* InfoPlist.strings */; };
 		MDL000301 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000101 /* Notifications.swift */; };
 		MDL000302 /* EditorTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000102 /* EditorTools.swift */; };
 		MDL000303 /* TabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000103 /* TabModels.swift */; };
@@ -486,6 +487,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		L10N0011 /* LocalizationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationManager.swift; sourceTree = "<group>"; };
 		L10N0021 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		L10N0022 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		L10N0023 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		L10N0024 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		MDL000101 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
 		MDL000102 /* EditorTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTools.swift; sourceTree = "<group>"; };
 		MDL000103 /* TabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabModels.swift; sourceTree = "<group>"; };
@@ -929,6 +932,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				A1000013 /* Fonts */,
 				A1000014 /* Info.plist */,
 				A1000015 /* TidyFlow.entitlements */,
+				L10N0025 /* InfoPlist.strings */,
 				L10N0020 /* Localizable.strings */,
 			);
 			path = TidyFlow;
@@ -1203,6 +1207,7 @@ TSST011 /* TerminalSessionStore.swift */,
 			files = (
 				A1000003 /* Fonts in Resources */,
 				A1000004 /* Assets.xcassets in Resources */,
+				L10N0003 /* InfoPlist.strings in Resources */,
 				L10N0002 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1575,6 +1580,15 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				L10N0022 /* zh-Hans */,
 			);
 			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		L10N0025 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				L10N0023 /* en */,
+				L10N0024 /* zh-Hans */,
+			);
+			name = InfoPlist.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */

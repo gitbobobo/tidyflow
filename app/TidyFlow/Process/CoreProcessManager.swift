@@ -392,6 +392,11 @@ class CoreProcessManager: ObservableObject {
         if let token = currentWSToken, !token.isEmpty {
             env["TIDYFLOW_WS_TOKEN"] = token
         }
+        // 避免宿主进程继承来的绑定地址污染 Core 启动决策。
+        // App 当前没有显式配置 bind addr 的入口，remote_access 应由持久化设置驱动。
+        env.removeValue(forKey: "TIDYFLOW_BIND_ADDR")
+        // 统一 Core 默认日志级别，避免宿主环境把 info 级启动/发现日志压掉。
+        env["RUST_LOG"] = "info"
         if Self.isRunAppDebugBundle {
             env["TIDYFLOW_LOG_SUFFIX"] = "dev"
             env["TIDYFLOW_DEV"] = "1"
@@ -401,6 +406,11 @@ class CoreProcessManager: ObservableObject {
             env.removeValue(forKey: "TIDYFLOW_DEV")
             env.removeValue(forKey: "TIDYFLOW_HOME")
         }
+        let tidyFlowHome = env["TIDYFLOW_HOME"] ?? "<default>"
+        let rustLog = env["RUST_LOG"] ?? "<default>"
+        TFLog.core.info(
+            "Launching Core with env: dev=\(Self.isRunAppDebugBundle, privacy: .public), tidyflow_home=\(tidyFlowHome, privacy: .public), rust_log=\(rustLog, privacy: .public), inherited_bind_cleared=true"
+        )
         proc.environment = env
 
         // Setup pipes for stdout/stderr

@@ -360,7 +360,7 @@ extension WSClient {
 
     func handleNodeDomain(_ action: String, json: [String: Any]) -> Bool {
         switch action {
-        case "node_self_updated":
+        case "node_self", "node_self_updated":
             let payload = (json["identity"] as? [String: Any]).flatMap(NodeSelfInfoV2.from)
                 ?? NodeSelfInfoV2.from(json: json)
             guard let payload else { return false }
@@ -370,7 +370,7 @@ extension WSClient {
                 onNodeSelfUpdated?(payload)
             }
             return true
-        case "node_discovery_updated":
+        case "node_discovery", "node_discovery_updated":
             let rawItems = (json["items"] as? [[String: Any]]) ?? []
             let items = rawItems.compactMap(NodeDiscoveryItemV2.from)
             if let handler = nodeMessageHandler {
@@ -379,7 +379,7 @@ extension WSClient {
                 onNodeDiscoveryUpdated?(items)
             }
             return true
-        case "node_network_updated":
+        case "node_network", "node_network_updated":
             let payload = NodeNetworkSnapshotV2.from(json: json)
             guard let payload else { return false }
             if let handler = nodeMessageHandler {

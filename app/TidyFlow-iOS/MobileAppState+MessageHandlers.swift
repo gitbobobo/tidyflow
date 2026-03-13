@@ -164,6 +164,7 @@ final class MobileAppStateNodeMessageHandlerAdapter: NodeMessageHandler {
 
     func handleNodePairingResult(_ result: NodePairingResultV2) {
         dispatchToMain { state in
+            state.nodePairingInFlight = false
             state.nodeLastPairingResult = result
             if result.ok {
                 state.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
