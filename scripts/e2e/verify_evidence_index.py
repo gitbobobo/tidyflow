@@ -62,6 +62,12 @@ def main() -> None:
         "--json", action="store_true", dest="json_output",
         help="输出可机读 JSON 摘要",
     )
+    parser.add_argument(
+        "--skip-evidence-type-check",
+        action="store_true",
+        dest="skip_type_check",
+        help="跳过证据类型完整性检查（log+screenshot）。性能场景按需校验时使用，不影响默认行为。",
+    )
     args = parser.parse_args()
 
     evidence_root: str = os.path.realpath(args.evidence_root)
@@ -101,10 +107,19 @@ def main() -> None:
     items: list[dict] = index.get("items", [])
 
     # 3. 按 run_id 过滤证据条目
-    run_items: list[dict] = [
-        i for i in items
-        if run_id in (i.get("id") or "") or run_id in (i.get("path") or "")
-    ]
+    run_items: list[dict] = []
+    for item in items:
+        item_run_id = item.get("run_id") or ""
+        item_id = item.get("id") or ""
+        item_path = item.get("path") or ""
+        item_workspace_context = item.get("workspace_context") or ""
+        if (
+            item_run_id == run_id
+            or run_id in item_id
+            or run_id in item_path
+            or f"run_id={run_id}" in item_workspace_context
+        ):
+            run_items.append(item)
 
     # 4. 检查设备覆盖
     found_devices: set[str] = {i.get("device_type") for i in run_items if i.get("device_type")}
@@ -151,12 +166,13 @@ def main() -> None:
             add_error("artifact_missing", f"证据产物不存在: {path}")
 
     # 8. 证据类型完整性（每设备需有 log + screenshot）
-    for device in require_devices:
-        device_items = [i for i in run_items if i.get("device_type") == device]
-        device_types = {str(i.get("type", "")) for i in device_items}
-        for required_type in ("log", "screenshot"):
-            if required_type not in device_types:
-                add_error("type_missing", f"设备 {device!r} 缺少证据类型: {required_type}")
+    if not getattr(args, "skip_type_check", False):
+        for device in require_devices:
+            device_items = [i for i in run_items if i.get("device_type") == device]
+            device_types = {str(i.get("type", "")) for i in device_items}
+            for required_type in ("log", "screenshot"):
+                if required_type not in device_types:
+                    add_error("type_missing", f"设备 {device!r} 缺少证据类型: {required_type}")
 
     # 检查设备证据目录存在
     for device in require_devices:

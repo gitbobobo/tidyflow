@@ -270,25 +270,59 @@ if should_run_phase performance_regression; then
     mkdir -p "$PROJECT_ROOT/build/perf"
     perf_exit=0
     perf_report="$PROJECT_ROOT/build/perf/hotspot-regression-report.json"
+    apple_report="$PROJECT_ROOT/build/perf/apple-client-regression-report.json"
 
     if "$PROJECT_ROOT/scripts/tidyflow" perf-regression; then
-        # 检查 overall 字段（warn 需要提升到 warnings）
+        # 检查 Core 热点 overall 字段
+        core_overall="pass"
         if [[ -f "$perf_report" ]]; then
-            perf_overall="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
-            if [[ "$perf_overall" == "warn" ]]; then
-                perf_warnings="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
-                record_phase_result "performance_regression" "pass"
-                record_phase_warning "performance_regression" "${perf_warnings}"
-                echo "[quality-gate]   性能回归：warn（不阻断，详见 build/perf/hotspot-regression-report.json）"
-            else
-                record_phase_result "performance_regression" "pass"
+            core_overall="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
+        fi
+
+        # 检查 Apple 客户端 overall 字段
+        apple_overall="pass"
+        apple_failure_reason=""
+        if [[ -f "$apple_report" ]]; then
+            apple_overall="$(python3 -c "import json,sys; d=json.load(open('$apple_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
+            if [[ "$apple_overall" == "warn" ]]; then
+                apple_warnings="$(python3 -c "import json,sys; d=json.load(open('$apple_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
+                record_phase_warning "performance_regression" "Apple 客户端性能: ${apple_warnings}"
+                echo "[quality-gate]   Apple 客户端性能：warn（不阻断，详见 build/perf/apple-client-regression-report.json）"
+            elif [[ "$apple_overall" == "fail" ]]; then
+                apple_failure_reason="$(python3 -c "
+import json,sys
+d = json.load(open('$apple_report'))
+reasons = []
+for sc in d.get('scenarios', []):
+    if sc.get('overall') == 'fail':
+        reasons.append(sc['scenario_id'] + ': ' + ', '.join(sc.get('reason_codes', [])))
+print('; '.join(reasons) or 'Apple 客户端性能场景失败')
+" 2>/dev/null || echo "Apple 客户端性能场景失败")"
             fi
         else
+            # Apple 报告不存在：视为场景缺失，单独给出原因
+            apple_overall="fail"
+            apple_failure_reason="Apple 客户端性能报告缺失（build/perf/apple-client-regression-report.json 不存在）"
+        fi
+
+        # 综合裁决：Core 和 Apple 均不为 fail 则通过
+        if [[ "$core_overall" == "fail" || "$apple_overall" == "fail" ]]; then
+            fail_reason=""
+            [[ "$core_overall" == "fail" ]] && fail_reason+="Core 热点性能回归失败; "
+            [[ "$apple_overall" == "fail" ]] && fail_reason+="Apple 客户端性能回归失败: ${apple_failure_reason}"
+            record_phase_result "performance_regression" "fail" "${fail_reason}"
+            echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json 和 build/perf/apple-client-regression-report.json" >&2
+        else
             record_phase_result "performance_regression" "pass"
+            if [[ "$core_overall" == "warn" ]]; then
+                perf_warnings="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
+                record_phase_warning "performance_regression" "Core 热点: ${perf_warnings}"
+                echo "[quality-gate]   Core 热点性能回归：warn（不阻断，详见 build/perf/hotspot-regression-report.json）"
+            fi
         fi
     else
         record_phase_result "performance_regression" "fail" "性能回归检测：overall=fail（performance_regression_failed）"
-        echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json"
+        echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json 和 build/perf/apple-client-regression-report.json" >&2
     fi
 fi
 

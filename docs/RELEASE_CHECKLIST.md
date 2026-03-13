@@ -52,6 +52,20 @@
   # 编辑 core/benches/baselines/hotspot_regression.json 并提交 code review
   ```
 
+## 3.6.1. Apple 客户端性能基线（iPhone Simulator，本轮新增）
+
+> 本节仅要求 iPhone 16 Simulator（iOS 18.6），不要求 macOS UI 自动化。
+
+- [ ] 确认 Apple 客户端性能报告存在：`build/perf/apple-client-regression-report.json`
+  - 由 `./scripts/tidyflow perf-regression` 自动生成（已包含聊天流式与 Evolution 面板两个场景）
+- [ ] 确认报告 `overall` 字段 **不为 `fail`**
+- [ ] 确认以下两个场景均有证据日志：
+  - 聊天流式：`build/perf/apple-chat-stream-fixture-oslog.log`（含 `hotspot_key=ios_ai_chat`、`aiMessageTailFlush`、`memory_snapshot`）
+  - Evolution 面板：`build/perf/apple-evolution-panel-fixture-oslog.log`（含 `evolution_timeline_recompute_ms=`、`evolution_monitor tier_change`、`memory_snapshot`）
+- [ ] 若 `overall=warn`，检查各场景 `metrics[].p95_ms` 是否超过 warn_limit，评估是否需要优化
+- [ ] 若 `overall=fail`，报告会区分 Core 热点失败与 Apple 客户端失败的原因，根据对应原因处理
+- [ ] **不允许** 在 verify 路径中自动更新 `scripts/tools/apple_client_perf_baselines.json`；基线更新只允许显式本地修改后提交
+
 ## 4. 发布预演（无副作用）
 
 - [ ] 执行：`./scripts/tidyflow release --dry-run`
