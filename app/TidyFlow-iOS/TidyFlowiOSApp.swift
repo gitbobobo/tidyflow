@@ -121,17 +121,16 @@ struct TidyFlowiOSApp: App {
     @ViewBuilder
     private var rootView: some View {
         if let evolutionScenario = evolutionPerfFixtureScenario {
-            // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页
+            // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页。
+            // 支持基础场景 evolution_panel 与多工作区场景 evolution_panel_multi_workspace。
             MobileEvolutionView(
                 appState: appState,
                 project: evolutionScenario.project,
                 workspace: evolutionScenario.workspace
             )
-            // WI-001: 多工作区场景 chat_stream_workspace_switch / evolution_panel_multi_workspace
-            // 由环境变量 TF_PERF_SCENARIO=chat_stream_workspace_switch 或 evolution_panel_multi_workspace 触发
-            // 证据日志会携带 surface=chat_session / surface=evolution_workspace 维度
         } else if let chatScenario = perfFixtureScenario {
-            // 聊天流式性能 fixture：直接进入 MobileAIChatView，绕过连接页
+            // 聊天流式性能 fixture：直接进入 MobileAIChatView，绕过连接页。
+            // 支持基础场景 stream_heavy 与多工作区场景 chat_stream_workspace_switch。
             MobileAIChatView(
                 appState: appState,
                 aiChatStore: appState.aiChatStore,

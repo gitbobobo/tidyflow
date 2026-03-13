@@ -404,11 +404,15 @@ run_apple_client_perf_regression() {
     fi
 
     echo "[tidyflow] 运行 Apple 客户端性能比较器..."
-    python3 "$PROJECT_ROOT/scripts/tools/check_apple_client_perf_regression.py" \
+    local comparator_exit=0
+    if python3 "$PROJECT_ROOT/scripts/tools/check_apple_client_perf_regression.py" \
         --baseline "$PROJECT_ROOT/scripts/tools/apple_client_perf_baselines.json" \
         --evidence-dir "$perf_dir" \
-        --report "$report"
-    local comparator_exit=$?
+        --report "$report"; then
+        comparator_exit=0
+    else
+        comparator_exit=$?
+    fi
 
     echo "[tidyflow] Apple 客户端性能报告: $report"
 

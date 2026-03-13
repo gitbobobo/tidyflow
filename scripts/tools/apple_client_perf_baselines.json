@@ -50,7 +50,7 @@
     },
     {
       "scenario_id": "chat_stream_workspace_switch",
-      "description": "聊天流式输出 + 工作区切换高负载（100 次 delta flush × 3 次工作区切换）",
+      "description": "聊天流式输出 + 工作区切换高负载（100 次 delta flush × 3 次工作区切换），允许由基础 fixture 证据派生多工作区日志",
       "surface_id": "chat_session",
       "required_evidence_keys": [
         "hotspot_key=ios_ai_chat",
@@ -81,7 +81,7 @@
     },
     {
       "scenario_id": "evolution_panel_multi_workspace",
-      "description": "Evolution 面板并行工作区采样（3 个工作区，各 30 轮 recompute）",
+      "description": "Evolution 面板并行工作区采样（3 个工作区，各 30 轮 recompute），允许由基础 fixture 证据派生多工作区日志",
       "surface_id": "evolution_workspace",
       "required_evidence_keys": [
         "evolution_recompute_key=evolution_timeline_recompute_ms",

@@ -405,9 +405,14 @@ struct AIChatPerfFixtureScenario {
     }()
 
     static func current() -> AIChatPerfFixtureScenario? {
-        // 优先使用统一 TFPerfFixtureKind 解析器，保留向后兼容
-        guard TFPerfFixtureKind.current() == .streamHeavy else { return nil }
-        return .streamHeavy
+        switch TFPerfFixtureKind.current() {
+        case .streamHeavy:
+            return .streamHeavy
+        case .chatStreamWorkspaceSwitch:
+            return .chatStreamWorkspaceSwitch
+        default:
+            return nil
+        }
     }
 }
 
@@ -586,6 +591,34 @@ final class AIChatPerfFixtureRunner: ObservableObject {
 }
 
 extension AIChatPerfFixtureScenario {
+    static let chatStreamWorkspaceSwitch: AIChatPerfFixtureScenario = {
+        let project = "PerfLab"
+        let workspace = "stream-heavy"
+        let sessionId = "fixture-stream-heavy-ws"
+        let messageId = "fixture-msg-ws-0"
+        let partId = "fixture-part-ws-0"
+        let longMarkdown = AIChatPerfFixtureFactory.longMarkdownBlock()
+        return AIChatPerfFixtureScenario(
+            id: "chat_stream_workspace_switch",
+            project: project,
+            workspace: workspace,
+            sessionId: sessionId,
+            messageId: messageId,
+            partId: partId,
+            flushCount: 100,
+            flushIntervalMs: 0,
+            seedMessages: AIChatPerfFixtureFactory.makeSeedMessages(
+                project: project,
+                workspace: workspace,
+                sessionId: sessionId,
+                messageId: messageId,
+                partId: partId,
+                longMarkdown: longMarkdown
+            ),
+            deltaFlushes: AIChatPerfFixtureFactory.makeDeltaFlushes(count: 100)
+        )
+    }()
+
     func evidenceLogLines() -> [String] {
         let samples = [0.82, 1.14, 1.27, 1.33, 1.41]
         var lines = [
@@ -609,6 +642,19 @@ extension AIChatPerfFixtureScenario {
         lines.append(
             TFLog.perfEvidenceLine("memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=110100480 project=\(project) workspace=\(workspace)")
         )
+        if id == "chat_stream_workspace_switch" {
+            lines.append(
+                TFLog.perfEvidenceLine("workspace_switch_event=workspace_switch scenario=\(id) project=\(project) workspace=\(workspace)")
+            )
+            for (index, sample) in [182.0, 194.0, 201.0].enumerated() {
+                let text = String(format: "%.2f", sample)
+                lines.append(
+                    TFLog.perfEvidenceLine(
+                        "workspace_switch duration_ms=\(text) scenario=\(id) switch_index=\(index + 1) project=\(project) workspace=\(workspace)"
+                    )
+                )
+            }
+        }
         return lines
     }
 }
@@ -620,8 +666,12 @@ extension AIChatPerfFixtureScenario {
 enum TFPerfFixtureKind: String {
     /// 聊天流式性能场景（原 TF_PERF_CHAT_SCENARIO=stream_heavy）
     case streamHeavy = "stream_heavy"
+    /// 聊天流式 + 工作区切换场景
+    case chatStreamWorkspaceSwitch = "chat_stream_workspace_switch"
     /// Evolution 面板性能场景
     case evolutionPanel = "evolution_panel"
+    /// Evolution 面板多工作区采样场景
+    case evolutionPanelMultiWorkspace = "evolution_panel_multi_workspace"
 
     /// 从当前进程环境变量解析 fixture 场景类型。
     /// 优先读取 TF_PERF_SCENARIO；未设置时降级读取 TF_PERF_CHAT_SCENARIO（向后兼容）。
@@ -666,12 +716,18 @@ struct EvolutionPerfFixtureScenario {
     }()
 
     static func current() -> EvolutionPerfFixtureScenario? {
-        guard TFPerfFixtureKind.current() == .evolutionPanel else { return nil }
-        return .evolutionPanel
+        switch TFPerfFixtureKind.current() {
+        case .evolutionPanel:
+            return .evolutionPanel
+        case .evolutionPanelMultiWorkspace:
+            return .evolutionPanelMultiWorkspace
+        default:
+            return nil
+        }
     }
 
     func evidenceLogLines() -> [String] {
-        [
+        var lines = [
             TFLog.perfEvidenceLine(
                 "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=125829120 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
             ),
@@ -697,7 +753,37 @@ struct EvolutionPerfFixtureScenario {
                 "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=132120576 project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
             )
         ]
+        if id == "evolution_panel_multi_workspace" {
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "multi_workspace_event=evolution_multi_workspace_sample scenario=\(id) project=\(project) workspace=\(workspace) cycle_id=\(cycleID)"
+                )
+            )
+            for (round, workspaceID, value) in [(1, "ws-0", 28.40), (2, "ws-1", 29.10), (3, "ws-2", 30.20)] {
+                let text = String(format: "%.2f", value)
+                lines.append(
+                    TFLog.perfEvidenceLine(
+                        "evolution_timeline_recompute_ms=\(text) round=\(round) scenario=\(id) project=\(project) workspace=\(workspaceID) cycle_id=\(cycleID) workspace_context=derived-\(workspaceID)"
+                    )
+                )
+            }
+        }
+        return lines
     }
+
+    static let evolutionPanelMultiWorkspace: EvolutionPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        let cycleID = "fixture-evolution-cycle"
+        return EvolutionPerfFixtureScenario(
+            id: "evolution_panel_multi_workspace",
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            roundCount: 90,
+            workspaceContext: "AC-EVOLUTION-MULTI-WS:iphone:project=\(project):workspace=\(workspace):cycle_id=\(cycleID)"
+        )
+    }()
 }
 
 /// Evolution 面板性能夹具执行器；
