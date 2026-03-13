@@ -194,6 +194,9 @@ class WSClient: NSObject, ObservableObject {
     var onObservabilitySnapshot: ((ObservabilitySnapshot) -> Void)?
     /// WI-001: 全链路性能可观测快照
     var onPerformanceObservability: ((PerformanceObservabilitySnapshot) -> Void)?
+    /// v1.45: 智能演化分析摘要（按 (project, workspace, cycle_id) 隔离，Core 权威真源）
+    /// 与 ObservabilitySnapshot 职责分离：原始观测由 onObservabilitySnapshot 承载，决策结论由此回调承载
+    var onEvolutionAnalysisSummaries: (([EvolutionAnalysisSummary]) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     /// 结构化 Core 错误回调（含错误码与上下文）

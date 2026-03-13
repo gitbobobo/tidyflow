@@ -312,6 +312,10 @@ final class MobileAppState: ObservableObject {
     /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
     @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
 
+    /// v1.45: 智能演化分析摘要缓存，Key 为 "project:workspace:cycle_id"，与 macOS 语义一致
+    /// 每次 system_snapshot 到达时全量替换，避免陈旧循环残留。
+    @Published var analysisSummaries: [String: EvolutionAnalysisSummary] = [:]
+
     /// iOS scene 活跃状态（由 App 入口在 scenePhase 变更时同步写入）
     /// 与 macOS AppState.isSceneActive 语义对齐，供性能监控采样决策使用
     @Published var isSceneActive: Bool = true
@@ -4539,6 +4543,16 @@ final class MobileAppState: ObservableObject {
         wsClient.onPerformanceObservability = { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.performanceObservability = snapshot
+            }
+        }
+
+        // v1.45: 智能演化分析摘要 — 全量替换，与 macOS 保持相同解析/缓存语义
+        wsClient.onEvolutionAnalysisSummaries = { [weak self] summaries in
+            let updated = Dictionary(uniqueKeysWithValues: summaries.map { summary in
+                ("\(summary.project):\(summary.workspace):\(summary.cycleId)", summary)
+            })
+            DispatchQueue.main.async {
+                self?.analysisSummaries = updated
             }
         }
 

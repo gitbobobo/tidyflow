@@ -148,24 +148,24 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
     )
     .await;
 
+    // 提取缓存命中率用于观测聚合和分析摘要装配（复用同一份数据，避免重复计算）
+    let cache_hit_ratios: std::collections::HashMap<(String, String), f64> = cache_metrics
+        .iter()
+        .map(|m| {
+            let total = m.file_cache.hit_count + m.file_cache.miss_count;
+            let ratio = if total > 0 {
+                m.file_cache.hit_count as f64 / total as f64
+            } else {
+                1.0
+            };
+            ((m.project.clone(), m.workspace.clone()), ratio)
+        })
+        .collect();
+
     // 聚合健康快照（含调度优化建议和预测异常）
     let health_snapshot = {
         let registry = crate::server::health::global();
         let mut reg = registry.write().await;
-
-        // 提取缓存命中率用于观测聚合
-        let cache_hit_ratios: std::collections::HashMap<(String, String), f64> = cache_metrics
-            .iter()
-            .map(|m| {
-                let total = m.file_cache.hit_count + m.file_cache.miss_count;
-                let ratio = if total > 0 {
-                    m.file_cache.hit_count as f64 / total as f64
-                } else {
-                    1.0
-                };
-                ((m.project.clone(), m.workspace.clone()), ratio)
-            })
-            .collect();
 
         reg.snapshot_with_predictions(
             &cache_hit_ratios,
@@ -183,6 +183,26 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
     // 结构化日志关联上下文
     let log_context = build_log_context_summary();
 
+    // 装配智能分析摘要：过滤 evolution_cycle_id 非空的工作区，为每条生成摘要
+    // retry_count 暂时设为 0：快照路径无法直接取得运行中工作区的当前重试次数，
+    // 门禁裁决仍会使用健康注册表中的实际状态，只有 retry_count 相关逻辑退化为默认值
+    let analysis_summaries = {
+        let snapshot_items: Vec<(&str, &str, &str, u32)> = workspace_items
+            .iter()
+            .filter_map(|item| {
+                item.evolution_cycle_id
+                    .as_deref()
+                    .map(|cid| (item.project.as_str(), item.workspace.as_str(), cid, 0u32))
+            })
+            .collect();
+        crate::server::perf::build_analysis_summaries_for_snapshot(
+            &snapshot_items,
+            &cache_hit_ratios,
+            evo_scheduler_info.0,
+            evo_scheduler_info.1,
+        )
+    };
+
     Ok(Json(SystemSnapshotResponse {
         msg_type: "system_snapshot",
         core_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -196,7 +216,7 @@ pub(in crate::server::ws) async fn system_snapshot_handler(
         log_context,
         scheduling_recommendations: health_snapshot.scheduling_recommendations,
         predictive_anomalies: health_snapshot.predictive_anomalies,
-        analysis_summaries: Vec::new(), // WI-002 将实现实际生成逻辑
+        analysis_summaries,
         performance_observability,
     }))
 }

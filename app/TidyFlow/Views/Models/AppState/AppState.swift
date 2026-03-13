@@ -379,6 +379,11 @@ class AppState: ObservableObject {
     /// 全链路性能可观测快照（WI-001/WI-002，Core 权威真源）
     @Published var performanceObservability: PerformanceObservabilitySnapshot = .empty
 
+    /// v1.45: 智能演化分析摘要缓存，Key 为 "project:workspace:cycle_id"
+    /// 每次 system_snapshot 到达时全量替换，避免陈旧循环残留。
+    /// 职责分离：原始观测存于 observabilitySnapshot，决策结论存于此处。
+    @Published var analysisSummaries: [String: EvolutionAnalysisSummary] = [:]
+
     // MARK: - 调度优化与预测故障消费（v1.44）
 
     /// 获取指定工作区的预测投影。

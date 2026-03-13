@@ -148,6 +148,11 @@ extension AppState {
             }
         }
 
+        // v1.45: 智能演化分析摘要 — 独立回调路径，全量替换当前快照可见循环的决策结论
+        wsClient.onEvolutionAnalysisSummaries = { [weak self] summaries in
+            self?.handleSystemEvolutionAnalysisSummaries(summaries)
+        }
+
         // v1.46: coordinator_snapshot 增量更新 + system_snapshot 种子恢复
         // 两路均复用同一 callback，WSClient 在 system_snapshot 解析时也会为每个 workspace_item 触发此回调
         wsClient.onCoordinatorSnapshot = { [weak self] payload in

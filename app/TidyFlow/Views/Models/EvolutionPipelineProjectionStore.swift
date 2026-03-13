@@ -278,8 +278,16 @@ struct EvolutionPipelineProjection: Equatable {
     let isCurrentCycleRetryable: Bool
     /// v1.44：当前工作区的预测投影（调度建议与预测异常摘要）
     let predictionProjection: WorkspacePredictionProjection
-    /// v1.45：当前活跃工作区的分析摘要（从 Core 权威输出消费，不重新推导）
+    /// v1.45：当前工作区的分析摘要（从 Core 权威输出消费，不重新推导）
     let analysisSummaries: [EvolutionAnalysisSummary]
+    /// v1.45 预计算：当前循环 (project, workspace, cycle_id) 匹配的单条摘要，View 直接消费
+    var currentDecisionSummary: EvolutionAnalysisSummary? {
+        guard let item = currentItem,
+              !item.cycleID.isEmpty else { return nil }
+        return analysisSummaries.first {
+            $0.project == project && $0.workspace == (workspace ?? "") && $0.cycleId == item.cycleID
+        }
+    }
     /// v1.46：面板性能投影（采样决策 + 当前工作区过滤后的实时指标），View 只消费此投影
     let performance: EvolutionPipelinePerformanceProjection
 
@@ -367,7 +375,12 @@ enum EvolutionPipelineProjectionSemantics {
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace ?? ""
             ),
-            analysisSummaries: [],
+            analysisSummaries: buildAnalysisSummariesForWorkspace(
+                allSummaries: appState.analysisSummaries,
+                project: project,
+                workspace: workspace ?? "",
+                currentCycleID: currentItem?.cycleID
+            ),
             performance: .empty
         )
     }
@@ -420,7 +433,12 @@ enum EvolutionPipelineProjectionSemantics {
             predictionProjection: appState.predictionProjection(
                 project: project, workspace: workspace
             ),
-            analysisSummaries: [],
+            analysisSummaries: buildAnalysisSummariesForWorkspace(
+                allSummaries: appState.analysisSummaries,
+                project: project,
+                workspace: workspace,
+                currentCycleID: currentItem?.cycleID
+            ),
             performance: performance
         )
     }
@@ -459,6 +477,27 @@ enum EvolutionPipelineProjectionSemantics {
         guard blocking.project == project else { return nil }
         guard normalizeWorkspace(blocking.workspace) == normalizeWorkspace(workspace) else { return nil }
         return EvolutionBlockingRequestProjection(blocking)
+    }
+
+    // MARK: - 分析摘要过滤（v1.45）
+
+    /// 过滤出当前 (project, workspace, cycle_id) 匹配的分析摘要列表
+    ///
+    /// - 若 `currentCycleID` 非空，只返回精确匹配当前循环的摘要（最多一条）
+    /// - 若 `currentCycleID` 为空，返回空列表：无活跃循环时不展示摘要
+    /// - 不允许客户端本地补算；若 Core 尚未下发摘要则明确返回空态
+    static func buildAnalysisSummariesForWorkspace(
+        allSummaries: [String: EvolutionAnalysisSummary],
+        project: String,
+        workspace: String,
+        currentCycleID: String?
+    ) -> [EvolutionAnalysisSummary] {
+        guard let cycleID = currentCycleID, !cycleID.isEmpty else { return [] }
+        let key = "\(project):\(workspace):\(cycleID)"
+        if let summary = allSummaries[key] {
+            return [summary]
+        }
+        return []
     }
 
     // MARK: - 预计算热点数据

@@ -125,7 +125,10 @@
 
 ### 智能演化分析摘要（v1.45）
 
-- 系统快照响应新增可选字段 `analysis_summaries`：按 `(project, workspace, cycle_id)` 隔离的分析摘要列表
+- 系统快照响应字段 `analysis_summaries`：按 `(project, workspace, cycle_id)` 升序排列，是 Core 权威真源
+- **生成范围**：只为当前系统快照中 `evolution_cycle_id` 非空的工作区生成摘要，每个工作区最多一条活跃摘要
+- 客户端无需判定"当前摘要是哪条"，直接按 `(project, workspace, cycle_id)` 匹配当前激活循环即可
+- 若某工作区暂无聚合或异常数据，仍输出包含健康默认值（`health_score=1.0`，`pressure_level=low`）的摘要，不省略整条记录
 - 每个 `EvolutionAnalysisSummary` 包含：
   - `project`, `workspace`, `cycle_id`：隔离维度
   - `gate_decision`：质量门禁裁决（可选）

@@ -1433,4 +1433,20 @@ extension AppState {
             self.aiSessionContextSnapshots[key] = snapshot
         }
     }
+
+    // MARK: - v1.45: 智能演化分析摘要处理
+
+    /// 处理 system_snapshot 中的 `analysis_summaries`，使用全量替换策略
+    ///
+    /// 每次 system_snapshot 到达时，用本次快照的摘要集合完整替换缓存，
+    /// 避免历史循环的陈旧摘要残留到下一次快照中。
+    func handleSystemEvolutionAnalysisSummaries(_ summaries: [EvolutionAnalysisSummary]) {
+        let updated = Dictionary(uniqueKeysWithValues: summaries.map { summary in
+            let key = "\(summary.project):\(summary.workspace):\(summary.cycleId)"
+            return (key, summary)
+        })
+        DispatchQueue.main.async {
+            self.analysisSummaries = updated
+        }
+    }
 }

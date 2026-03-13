@@ -69,6 +69,20 @@ extension WSClient {
                     onCoordinatorSnapshot?(payload)
                 }
             }
+            // v1.45: 解析智能演化分析摘要（独立路径，不塞进 ObservabilitySnapshot）
+            // 逐条解码，坏条目只丢弃本条，不中断整个 system_snapshot 消费
+            if let summariesJson = json["analysis_summaries"] as? [[String: Any]],
+               !summariesJson.isEmpty {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let summaries: [EvolutionAnalysisSummary] = summariesJson.compactMap { item in
+                    guard let data = try? JSONSerialization.data(withJSONObject: item) else { return nil }
+                    return try? decoder.decode(EvolutionAnalysisSummary.self, from: data)
+                }
+                if !summaries.isEmpty {
+                    onEvolutionAnalysisSummaries?(summaries)
+                }
+            }
             return true
         default:
             return false

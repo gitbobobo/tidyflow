@@ -364,6 +364,81 @@ fn parse_stage_session_executions(
         .collect()
 }
 
+/// 根据系统级调度建议计算自适应并发上限
+///
+/// 规则（固定，不可覆盖）：
+/// 1. 若存在未过期的系统级 ReduceConcurrency，取最保守（最小 suggested_value）
+/// 2. 若只有 IncreaseConcurrency 且未过期，取 IncreaseConcurrency 建议值
+/// 3. 若无有效系统级建议，返回 None（调用方应回退到 max_parallel_workspaces）
+///
+/// "系统级"定义：`context.project` 为 None 的建议；工作区级建议不参与此逻辑。
+fn apply_system_scheduling_recommendations(
+    recommendations: &[crate::server::protocol::health::SchedulingRecommendation],
+    now_ms: u64,
+) -> Option<u32> {
+    use crate::server::protocol::health::SchedulingRecommendationKind;
+
+    let mut reduce: Option<u32> = None;
+    let mut increase: Option<u32> = None;
+
+    for rec in recommendations {
+        // 只处理系统级建议（context.project 为 None）
+        if rec.context.project.is_some() {
+            continue;
+        }
+        // 跳过已过期的建议
+        if rec.expires_at <= now_ms {
+            continue;
+        }
+        match rec.kind {
+            SchedulingRecommendationKind::ReduceConcurrency => {
+                if let Some(v) = rec.suggested_value {
+                    if v > 0 {
+                        let v = v as u32;
+                        reduce = Some(match reduce {
+                            Some(existing) => existing.min(v), // 取更保守的值
+                            None => v,
+                        });
+                    }
+                }
+            }
+            SchedulingRecommendationKind::IncreaseConcurrency => {
+                if let Some(v) = rec.suggested_value {
+                    if v > 0 {
+                        let v = v as u32;
+                        increase = Some(match increase {
+                            Some(existing) => existing.max(v),
+                            None => v,
+                        });
+                    }
+                }
+            }
+            // 工作区级建议只展示，本轮不自动执行
+            _ => {}
+        }
+    }
+
+    // ReduceConcurrency 优先级高于 IncreaseConcurrency
+    reduce.or(increase)
+}
+
+/// 从调度建议计算全局压力字符串
+fn compute_global_pressure(
+    recommendations: &[crate::server::protocol::health::SchedulingRecommendation],
+) -> Option<String> {
+    use crate::server::protocol::health::SchedulingRecommendationKind;
+    if recommendations
+        .iter()
+        .any(|r| r.kind == SchedulingRecommendationKind::ReduceConcurrency)
+    {
+        Some("high".to_string())
+    } else if recommendations.is_empty() {
+        Some("low".to_string())
+    } else {
+        Some("moderate".to_string())
+    }
+}
+
 impl EvolutionManager {
     pub(super) async fn start_workspace(
         &self,
@@ -757,16 +832,48 @@ impl EvolutionManager {
             state.max_parallel_workspaces,
             running_count,
         );
-        let global_pressure = if recommendations
-            .iter()
-            .any(|r| r.kind == crate::server::protocol::health::SchedulingRecommendationKind::ReduceConcurrency)
-        {
-            Some("high".to_string())
-        } else if recommendations.is_empty() {
-            Some("low".to_string())
-        } else {
-            Some("moderate".to_string())
-        };
+
+        // 应用系统级调度建议，更新自适应并发上限（单一写入点）
+        // 规则：
+        //   1. 优先采用最新未过期的系统级 ReduceConcurrency 建议（更保守）
+        //   2. 若无 ReduceConcurrency 但有 IncreaseConcurrency，采用之
+        //   3. 若无有效系统级建议，清空 effective_max_parallel，回退到 max_parallel_workspaces
+        // 注意：工作区级 EnableDegradation/DeferQueuing 本轮只保留在 analysis_summaries.suggestions
+        //   中展示，不在此处自动执行；自动调节范围仅限于系统级并发档位。
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let new_effective = apply_system_scheduling_recommendations(&recommendations, now_ms);
+        // 仅在值发生变化时写入，避免不必要的状态变更
+        if state.adaptive.effective_max_parallel != new_effective {
+            drop(state); // 显式释放只读 guard，获取可写 guard
+            let mut state = self.state.lock().await;
+            state.adaptive.effective_max_parallel = new_effective;
+            let aggregates2 = crate::server::perf::build_observation_aggregates(
+                &std::collections::HashMap::new(),
+            );
+            let recommendations2 = crate::server::perf::build_scheduling_recommendations(
+                &aggregates2,
+                state.max_parallel_workspaces,
+                running_count,
+            );
+            let global_pressure = compute_global_pressure(&recommendations2);
+            let effective_max_parallel = state
+                .adaptive
+                .effective_max_parallel
+                .unwrap_or(state.max_parallel_workspaces);
+            return SnapshotResult {
+                scheduler: crate::server::protocol::EvolutionSchedulerInfo {
+                    activation_state: state.activation_state.clone(),
+                    max_parallel_workspaces: effective_max_parallel,
+                    running_count,
+                    queued_count,
+                    pressure_level: global_pressure,
+                    recommendation_count: recommendations2.len() as u32,
+                },
+                workspace_items,
+            };
+        }
+
+        let global_pressure = compute_global_pressure(&recommendations);
 
         // 使用自适应调度的有效并发上限
         let effective_max_parallel = state
@@ -1182,5 +1289,175 @@ mod tests {
         );
         assert_eq!(item.executions.len(), 1);
         assert_eq!(item.stages.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::{apply_system_scheduling_recommendations, compute_global_pressure};
+    use crate::server::protocol::health::{
+        HealthContext, SchedulingRecommendation, SchedulingRecommendationKind,
+        ResourcePressureLevel,
+    };
+
+    fn make_system_rec(
+        kind: SchedulingRecommendationKind,
+        suggested_value: i64,
+        now_ms: u64,
+        expires_offset_ms: u64,
+    ) -> SchedulingRecommendation {
+        SchedulingRecommendation {
+            recommendation_id: format!("test:{:?}:{}", kind, now_ms),
+            kind,
+            pressure_level: ResourcePressureLevel::High,
+            reason: "test".to_string(),
+            summary: None,
+            suggested_value: Some(suggested_value),
+            context: HealthContext::system(),
+            generated_at: now_ms,
+            expires_at: now_ms + expires_offset_ms,
+        }
+    }
+
+    fn make_workspace_rec(
+        kind: SchedulingRecommendationKind,
+        suggested_value: i64,
+        now_ms: u64,
+    ) -> SchedulingRecommendation {
+        SchedulingRecommendation {
+            recommendation_id: format!("ws:{:?}:{}", kind, now_ms),
+            kind,
+            pressure_level: ResourcePressureLevel::High,
+            reason: "test".to_string(),
+            summary: None,
+            suggested_value: Some(suggested_value),
+            context: HealthContext {
+                project: Some("proj".to_string()),
+                workspace: Some("ws".to_string()),
+                session_id: None,
+                cycle_id: None,
+            },
+            generated_at: now_ms,
+            expires_at: now_ms + 3_600_000,
+        }
+    }
+
+    #[test]
+    fn high_pressure_reduces_concurrency() {
+        let now_ms = 1_000_000u64;
+        let recs = vec![make_system_rec(
+            SchedulingRecommendationKind::ReduceConcurrency,
+            2,
+            now_ms,
+            3_600_000,
+        )];
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(result, Some(2), "高压时应降并发至建议值 2");
+    }
+
+    #[test]
+    fn low_pressure_increases_concurrency() {
+        let now_ms = 1_000_000u64;
+        let recs = vec![make_system_rec(
+            SchedulingRecommendationKind::IncreaseConcurrency,
+            5,
+            now_ms,
+            3_600_000,
+        )];
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(result, Some(5), "低压时应升并发至建议值 5");
+    }
+
+    #[test]
+    fn expired_recommendation_falls_back_to_none() {
+        let now_ms = 2_000_000u64;
+        // 建议在 1s 内过期
+        let recs = vec![make_system_rec(
+            SchedulingRecommendationKind::ReduceConcurrency,
+            2,
+            now_ms - 2_000,
+            1_000, // expires_at = now_ms - 1000（已过期）
+        )];
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(result, None, "过期建议应回退到 None（使用 max_parallel）");
+    }
+
+    #[test]
+    fn no_recommendations_falls_back_to_none() {
+        let now_ms = 1_000_000u64;
+        let result = apply_system_scheduling_recommendations(&[], now_ms);
+        assert_eq!(result, None, "无建议时应回退到 None");
+    }
+
+    #[test]
+    fn reduce_wins_over_increase_when_both_present() {
+        let now_ms = 1_000_000u64;
+        let recs = vec![
+            make_system_rec(SchedulingRecommendationKind::ReduceConcurrency, 2, now_ms, 3_600_000),
+            make_system_rec(SchedulingRecommendationKind::IncreaseConcurrency, 8, now_ms, 3_600_000),
+        ];
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(result, Some(2), "同时存在时应取更保守的 ReduceConcurrency");
+    }
+
+    #[test]
+    fn workspace_level_recommendations_do_not_affect_system_concurrency() {
+        let now_ms = 1_000_000u64;
+        // 工作区级降并发不应影响系统级 effective_max_parallel
+        let recs = vec![make_workspace_rec(
+            SchedulingRecommendationKind::ReduceConcurrency,
+            1,
+            now_ms,
+        )];
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(
+            result, None,
+            "工作区级建议不应影响系统级并发，应返回 None"
+        );
+    }
+
+    #[test]
+    fn multiple_workspace_anomalies_do_not_pollute_system_concurrency() {
+        let now_ms = 1_000_000u64;
+        // 多个工作区均发出 ReduceConcurrency，但均为工作区级，不应改变系统级
+        let recs: Vec<SchedulingRecommendation> = (0..5)
+            .map(|i| SchedulingRecommendation {
+                recommendation_id: format!("ws-{}", i),
+                kind: SchedulingRecommendationKind::ReduceConcurrency,
+                pressure_level: ResourcePressureLevel::Critical,
+                reason: "test".to_string(),
+                summary: None,
+                suggested_value: Some(1),
+                context: HealthContext {
+                    project: Some(format!("proj{}", i)),
+                    workspace: Some(format!("ws{}", i)),
+                    session_id: None,
+                    cycle_id: None,
+                },
+                generated_at: now_ms,
+                expires_at: now_ms + 3_600_000,
+            })
+            .collect();
+        let result = apply_system_scheduling_recommendations(&recs, now_ms);
+        assert_eq!(result, None, "多个不同工作区异常不应污染系统级并发");
+    }
+
+    #[test]
+    fn compute_global_pressure_returns_high_when_reduce_present() {
+        let now_ms = 1_000_000u64;
+        let recs = vec![make_system_rec(
+            SchedulingRecommendationKind::ReduceConcurrency,
+            2,
+            now_ms,
+            3_600_000,
+        )];
+        let p = compute_global_pressure(&recs);
+        assert_eq!(p.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn compute_global_pressure_returns_low_when_empty() {
+        let p = compute_global_pressure(&[]);
+        assert_eq!(p.as_deref(), Some("low"));
     }
 }

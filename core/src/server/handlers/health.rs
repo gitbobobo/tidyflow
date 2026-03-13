@@ -70,18 +70,25 @@ pub fn query_gate_decision(
 ///
 /// 聚合门禁裁决、观测聚合、预测异常和调度建议，
 /// 输出按 `(project, workspace, cycle_id)` 隔离的统一分析结果。
+///
+/// `cache_hit_ratios` 使用调用方已知的真实缓存命中率；
+/// `max_parallel` 和 `running_count` 使用调度器当前参数。
+/// 没有聚合数据时仍输出包含健康默认值的摘要，不省略整条记录。
 pub fn query_analysis_summary(
     project: &str,
     workspace: &str,
     cycle_id: &str,
     retry_count: u32,
+    cache_hit_ratios: &std::collections::HashMap<(String, String), f64>,
+    max_parallel: u32,
+    running_count: u32,
 ) -> crate::server::protocol::health::EvolutionAnalysisSummary {
     let gate =
         crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, retry_count);
-    let aggregates =
-        crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
+    let aggregates = crate::server::perf::build_observation_aggregates(cache_hit_ratios);
     let anomalies = crate::server::perf::build_predictive_anomalies(&aggregates);
-    let recommendations = crate::server::perf::build_scheduling_recommendations(&aggregates, 4, 0);
+    let recommendations =
+        crate::server::perf::build_scheduling_recommendations(&aggregates, max_parallel, running_count);
     crate::server::perf::build_analysis_summary(
         project,
         workspace,

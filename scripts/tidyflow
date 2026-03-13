@@ -75,9 +75,12 @@ print_usage() {
       回归目标：验证工作区切换、终端隔离、AI 会话缓存、演化回放与性能可观测语义不会退化。
 
   perf-test
-      运行 Core 性能可观测定向测试（CHK-003 / CHK-004）：
+      运行 Core 性能可观测 + 智能分析摘要 + 自适应调度回归测试（CHK-002）：
         - cargo test system_snapshot_should_include_perf（system_snapshot 协议字段验证）
         - cargo test perf（Core 性能注册表、诊断阈值、工作区/客户端隔离）
+        - cargo test hotspot_perf（热点三类路径护栏）
+        - cargo test analysis（分析摘要装配与工作区隔离回归）
+        - cargo test scheduling（自适应并发建议应用与回退回归）
 
   apple-perf-test
       运行 Apple 性能可观测共享语义定向测试（CHK-005）：
@@ -438,11 +441,8 @@ case "$cmd" in
             cargo test --manifest-path core/Cargo.toml --jobs "$ncpu" "$@"
         ;;
     perf-test)
-        # Core 性能可观测定向测试（CHK-003 / CHK-004）
-        # 等价于 CHK-003: cargo test system_snapshot_should_include_perf -- --nocapture
-        # 等价于 CHK-004: cargo test perf -- --nocapture
-        # 热点三类路径护栏: cargo test hotspot_perf -- --nocapture
-        echo "[tidyflow] 运行 Core 性能可观测定向测试..."
+        # Core 性能可观测 + 智能分析摘要 + 自适应调度回归测试（CHK-002）
+        echo "[tidyflow] 运行 Core 性能可观测与分析摘要定向测试..."
         run_core_cargo \
             test \
             cargo test --manifest-path core/Cargo.toml system_snapshot_should_include_perf -- --nocapture
@@ -452,6 +452,13 @@ case "$cmd" in
         run_core_cargo \
             test \
             cargo test --manifest-path core/Cargo.toml hotspot_perf -- --nocapture
+        # WI-001/WI-002 新增：分析摘要装配与调度建议回归测试
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml analysis -- --nocapture
+        run_core_cargo \
+            test \
+            cargo test --manifest-path core/Cargo.toml scheduling -- --nocapture
         ;;
     apple-perf-test)
         # Apple 性能可观测共享语义定向测试（CHK-005）
