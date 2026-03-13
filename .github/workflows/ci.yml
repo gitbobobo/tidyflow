@@ -136,18 +136,29 @@ jobs:
           bash -n scripts/e2e/iphone.sh
           bash -n scripts/e2e/ipad.sh
           bash -n scripts/e2e/mac.sh
-
   # ============================================================================
-  # Layer 5: Evolution 质量门禁干运行
+  # Layer 5: Evolution 质量门禁干运行 + 性能门禁契约自测
   # ============================================================================
   evolution-quality-gate:
-    name: Evolution Quality Gate (Dry Run)
+    name: Evolution Quality Gate (Dry Run) + Perf Gate Self-Tests
     runs-on: ubuntu-latest
     needs: [core-unit, protocol-consistency]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: 性能门禁契约自测（check_perf_gate_contract --self-test）
+        run: |
+          python3 scripts/tools/check_perf_gate_contract.py --self-test
+
+      - name: Core 热点比较器自测（check_hotspot_perf_regression --self-test）
+        run: |
+          python3 scripts/tools/check_hotspot_perf_regression.py --self-test
+
+      - name: Apple 客户端比较器自测（check_apple_client_perf_regression --self-test）
+        run: |
+          python3 scripts/tools/check_apple_client_perf_regression.py --self-test
 
       - name: Evolution quality-gate contract dry-run
         run: |
@@ -161,6 +172,30 @@ jobs:
             --workspace default \
             --skip-apple \
             --json
+
+      - name: 校验 quality-gate --dry-run --json 含结构化 performance_regression 节点
+        run: |
+          CYCLE_ID="ci-dry-run-${GITHUB_RUN_ID}"
+          ./scripts/tidyflow quality-gate \
+            --cycle "${CYCLE_ID}" \
+            --step all \
+            --dry-run \
+            --project tidyflow \
+            --workspace default \
+            --skip-apple \
+            --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+qg = d.get('quality_gate', {})
+pr = qg.get('performance_regression')
+assert pr is not None, 'quality_gate.performance_regression 节点缺失'
+assert 'overall' in pr, 'performance_regression.overall 缺失'
+assert 'release_blocking' in pr, 'performance_regression.release_blocking 缺失'
+assert 'contract_version' in pr, 'performance_regression.contract_version 缺失'
+assert 'reason_codes' in pr, 'performance_regression.reason_codes 缺失'
+assert 'suite_results' in pr, 'performance_regression.suite_results 缺失'
+print('OK: quality_gate.performance_regression 结构化节点校验通过')
+"
 
   # ============================================================================
   # Layer 6: Apple 多工作区定向回归门禁（macOS 构建验证）

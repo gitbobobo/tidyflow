@@ -27,7 +27,11 @@ warn 不阻断门禁（exit 0），fail 阻断（exit 1）。
         --baseline core/benches/baselines/hotspot_regression.json \\
         --measurements build/perf/hotspot-measurements.json \\
         --report build/perf/hotspot-regression-report.json \\
-        [--json]
+        [--json] [--self-test]
+
+## 自测模式（WI-004）
+    python3 scripts/tools/check_hotspot_perf_regression.py --self-test
+    验证内置的 pass/warn/fail/missing/budget 样例是否按预期裁决，exit 0 表示全部通过。
 """
 
 from __future__ import annotations
@@ -228,6 +232,90 @@ def _print_text_summary(report: dict) -> None:
     print(f"[check_hotspot_perf_regression] =====================")
 
 
+def run_self_test() -> int:
+    """
+    验证 decide_scenario 对内置的 pass/warn/fail/missing/budget 样例能正确裁决。
+    exit 0 → 全部通过；exit 1 → 有失败。
+    """
+    failures: list[str] = []
+
+    def expect(label: str, actual: str, expected: str) -> None:
+        if actual != expected:
+            failures.append(f"{label}: 期望 {expected}，实际 {actual}")
+        else:
+            print(f"  OK  {label}: {actual}")
+
+    baseline_ns = 1_000_000
+    warn_ratio = 2.0
+    fail_ratio = 10.0
+    absolute_budget_ns = 5_000_000
+
+    # --- 样例 1: PASS ---
+    print("自测样例 1: PASS")
+    status, codes = decide_scenario("test_pass", 800_000, baseline_ns, warn_ratio, fail_ratio, absolute_budget_ns)
+    expect("PASS: status", status, "pass")
+    expect("PASS: no reason_codes", str(codes), "[]")
+
+    # --- 样例 2: WARN (ratio 超过 warn_ratio 但未超 fail_ratio) ---
+    print("自测样例 2: WARN (ratio_exceeded_warn)")
+    status, codes = decide_scenario("test_warn", 2_500_000, baseline_ns, warn_ratio, fail_ratio, absolute_budget_ns)
+    expect("WARN: status", status, "warn")
+    expect("WARN: reason ratio_exceeded_warn", str("ratio_exceeded_warn" in codes), "True")
+
+    # --- 样例 3: FAIL (ratio 超过 fail_ratio) ---
+    print("自测样例 3: FAIL (ratio_exceeded_fail)")
+    status, codes = decide_scenario("test_fail_ratio", 12_000_000, baseline_ns, warn_ratio, fail_ratio, absolute_budget_ns)
+    expect("FAIL_RATIO: status", status, "fail")
+    expect("FAIL_RATIO: reason ratio_exceeded_fail", str("ratio_exceeded_fail" in codes), "True")
+
+    # --- 样例 4: FAIL (超过 absolute_budget_ns) ---
+    print("自测样例 4: FAIL (absolute_budget_exceeded)")
+    status, codes = decide_scenario("test_fail_budget", 6_000_000, baseline_ns, warn_ratio, fail_ratio, absolute_budget_ns)
+    expect("FAIL_BUDGET: status", status, "fail")
+    expect("FAIL_BUDGET: reason absolute_budget_exceeded", str("absolute_budget_exceeded" in codes), "True")
+
+    # --- 样例 5: FAIL (scenario_missing) 通过 run() 层覆盖 ---
+    print("自测样例 5: FAIL (scenario_missing) — 验证 run() 缺失场景路径")
+    import tempfile, os
+    # 基线含一个场景，实测不包含它
+    baseline = {
+        "schema_version": SCHEMA_VERSION,
+        "suite_id": "hotspot_perf_guard",
+        "scenarios": [{
+            "scenario_id": "missing_scenario",
+            "baseline_ns": 1_000_000,
+            "warn_ratio_limit": 2.0,
+            "fail_ratio_limit": 10.0,
+            "absolute_budget_ns": 5_000_000,
+        }],
+    }
+    measurements = {"scenarios": []}
+    with tempfile.TemporaryDirectory() as tmp:
+        bl_path = os.path.join(tmp, "baseline.json")
+        meas_path = os.path.join(tmp, "measurements.json")
+        rep_path = os.path.join(tmp, "report.json")
+        with open(bl_path, "w") as f:
+            import json as _json
+            _json.dump(baseline, f)
+        with open(meas_path, "w") as f:
+            _json.dump(measurements, f)
+        ec = run(bl_path, meas_path, rep_path, json_output=False)
+        expect("MISSING: exit_code non-zero", str(ec != 0), "True")
+        with open(rep_path) as f:
+            report = _json.load(f)
+        expect("MISSING: overall fail", report["overall"], "fail")
+        sr = report["scenario_results"][0]
+        expect("MISSING: reason scenario_missing", str("scenario_missing" in sr["reason_codes"]), "True")
+
+    if failures:
+        print("\n自测失败:")
+        for f in failures:
+            print(f"  FAIL: {f}")
+        return 1
+    print("\n所有自测样例通过")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="热点性能回归比较器",
@@ -254,7 +342,15 @@ def main() -> None:
         dest="json_output",
         help="以 JSON 格式打印报告到 stdout",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="执行内置 pass/warn/fail/missing/budget 样例驱动验证并退出",
+    )
     args = parser.parse_args()
+
+    if args.self_test:
+        sys.exit(run_self_test())
 
     exit_code = run(
         baseline_path=args.baseline,

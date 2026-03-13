@@ -1,0 +1,56 @@
+{
+  "$schema_version": "1",
+  "contract_version": "1.0",
+  "description": "性能门禁单一权威契约。数值预算由各 suite 对应基线文件维护；发布阻断语义只由本契约决定。所有脚本必须消费本契约的阻断规则，不得各自内联判断逻辑。",
+  "suites": [
+    {
+      "suite_id": "hotspot_perf_guard",
+      "kind": "core_hotspot",
+      "baseline_path": "core/benches/baselines/hotspot_regression.json",
+      "report_path": "build/perf/hotspot-regression-report.json",
+      "comparator": "scripts/tools/check_hotspot_perf_regression.py",
+      "required": true
+    },
+    {
+      "suite_id": "apple_client_perf",
+      "kind": "apple_client",
+      "baseline_path": "scripts/tools/apple_client_perf_baselines.json",
+      "report_path": "build/perf/apple-client-regression-report.json",
+      "comparator": "scripts/tools/check_apple_client_perf_regression.py",
+      "required": true,
+      "environments": ["macos", "ci-macos"],
+      "device": "iPhone 16 / iOS 18.6",
+      "scenarios": ["chat_stream", "evolution_panel"]
+    }
+  ],
+  "unified_report_path": "build/perf/performance-gate-report.json",
+  "release_blocking_reason_codes": [
+    "ratio_exceeded_fail",
+    "absolute_budget_exceeded",
+    "scenario_missing",
+    "missing_evidence",
+    "evidence_file_missing",
+    "metric_exceeded_fail",
+    "suite_report_missing",
+    "contract_version_mismatch"
+  ],
+  "warn_only_reason_codes": [
+    "ratio_exceeded_warn",
+    "metric_exceeded_warn",
+    "no_samples"
+  ],
+  "required_reports": [
+    "build/perf/hotspot-regression-report.json",
+    "build/perf/apple-client-regression-report.json"
+  ],
+  "required_context_fields": ["project", "workspace", "cycle_id", "run_id"],
+  "allowed_bypass_modes": ["skip-quality-gate"],
+  "bypass_audit_log": ".tidyflow/release/gate-bypass.audit.log",
+  "notes": [
+    "warn 仅记录告警，不阻断发布。",
+    "fail、缺失证据、缺失报告、契约版本不匹配均视为发布阻断。",
+    "Apple 客户端性能仅限 iPhone 16 / iOS 18.6，不要求 macOS UI 自动化。",
+    "发布阻断只由本契约决定，各基线文件只负责数值预算。",
+    "新增性能场景必须先更新本契约，才能修改发布阻断策略。"
+  ]
+}

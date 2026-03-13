@@ -142,6 +142,32 @@ should_run_phase() {
 # ============================================================================
 
 emit_gate_summary() {
+    local perf_gate_report="$PROJECT_ROOT/build/perf/performance-gate-report.json"
+    local perf_structured_json
+    # 构建结构化 performance_regression 节点
+    if [[ $dry_run -eq 1 ]]; then
+        perf_structured_json='{"overall":"pass","release_blocking":false,"contract_version":"1.0","reason_codes":[],"warnings":[],"report_path":"build/perf/performance-gate-report.json","suite_results":{"hotspot_perf_guard":"pass","apple_client_perf":"pass"}}'
+    elif [[ -f "$perf_gate_report" ]]; then
+        perf_structured_json="$(python3 - "$perf_gate_report" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+out = {
+    "overall": d.get("overall", "unknown"),
+    "release_blocking": d.get("release_blocking", True),
+    "contract_version": d.get("contract_version", "unknown"),
+    "reason_codes": d.get("reason_codes", []),
+    "warnings": d.get("warnings", []),
+    "report_path": "build/perf/performance-gate-report.json",
+    "suite_results": {s["suite_id"]: s.get("overall", "unknown") for s in d.get("suites", [])},
+}
+print(json.dumps(out))
+PYEOF
+        2>/dev/null || echo '{"overall":"unknown","release_blocking":true,"contract_version":"unknown","reason_codes":["report_parse_error"],"warnings":[],"report_path":"build/perf/performance-gate-report.json","suite_results":{}}')"
+    else
+        perf_structured_json='{"overall":"missing","release_blocking":true,"contract_version":"unknown","reason_codes":["report_not_found"],"warnings":[],"report_path":"build/perf/performance-gate-report.json","suite_results":{}}'
+    fi
+
     if [[ $json_output -eq 1 ]]; then
         cat <<ENDJSON
 {
@@ -160,6 +186,7 @@ emit_gate_summary() {
       "apple_regression": "${gate_result_apple_regression}",
       "apple_build": "${gate_result_apple_build}"
     },
+    "performance_regression": ${perf_structured_json},
     "failure_reasons": "${gate_failure_reasons}",
     "warnings": "${gate_warnings}",
     "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -191,7 +218,7 @@ ENDJSON
     fi
 }
 
-echo "[quality-gate] cycle=${cycle_id} run_id=${run_id} project=${project} workspace=${workspace} evidence_root=${TF_EVIDENCE_ROOT}"
+echo "[quality-gate] cycle=${cycle_id} run_id=${run_id} project=${project} workspace=${workspace} evidence_root=${TF_EVIDENCE_ROOT}" >&2
 
 # ============================================================================
 # --verify-only 快速路径：仅校验证据
@@ -212,17 +239,17 @@ fi
 # ============================================================================
 
 if [[ $dry_run -eq 1 ]]; then
-    echo "[quality-gate] DRY RUN: 以下为将执行的门禁阶段"
-    should_run_phase protocol_check && echo "  [1] protocol_check: ./scripts/tidyflow check"
-    should_run_phase core_regression && echo "  [2] core_regression: ./scripts/tidyflow test"
-    should_run_phase performance_regression && echo "  [2.5] performance_regression: ./scripts/tidyflow perf-regression"
-    should_run_phase system_health && echo "  [3] system_health: (需要 Core 运行时，dry-run 跳过)"
-    should_run_phase evidence_integrity && echo "  [4] evidence_integrity: python3 scripts/e2e/verify_evidence_index.py --run-id ${run_id}"
+    echo "[quality-gate] DRY RUN: 以下为将执行的门禁阶段" >&2
+    should_run_phase protocol_check && echo "  [1] protocol_check: ./scripts/tidyflow check" >&2
+    should_run_phase core_regression && echo "  [2] core_regression: ./scripts/tidyflow test" >&2
+    should_run_phase performance_regression && echo "  [2.5] performance_regression: ./scripts/tidyflow perf-regression" >&2
+    should_run_phase system_health && echo "  [3] system_health: (需要 Core 运行时，dry-run 跳过)" >&2
+    should_run_phase evidence_integrity && echo "  [4] evidence_integrity: python3 scripts/e2e/verify_evidence_index.py --run-id ${run_id}" >&2
     if [[ $skip_apple -eq 0 ]]; then
-        should_run_phase apple_regression && echo "  [5] apple_regression: ./scripts/tidyflow apple-regression --macos-only"
-        should_run_phase apple_build && echo "  [6] apple_build: ./scripts/tidyflow apple-build"
+        should_run_phase apple_regression && echo "  [5] apple_regression: ./scripts/tidyflow apple-regression --macos-only" >&2
+        should_run_phase apple_build && echo "  [6] apple_build: ./scripts/tidyflow apple-build" >&2
     else
-        echo "  [5-6] apple 检查已跳过 (--skip-apple)"
+        echo "  [5-6] apple 检查已跳过 (--skip-apple)" >&2
     fi
     record_phase_result "protocol_check" "pass"
     record_phase_result "core_regression" "pass"
@@ -261,68 +288,48 @@ fi
 
 # 阶段 2.5：性能回归检查（顺序：core_regression 之后、system_health 之前）
 #
-# 裁决规则：
-# - overall=pass  → 记录 pass
-# - overall=warn  → 记录 pass，但写入 gate_warnings（warn 不阻断门禁）
-# - overall=fail  → 记录 fail（阻断门禁，映射到 performance_regression_failed）
+# 裁决规则（来自统一性能门禁契约 performance_gate_contract.json）：
+# - release_blocking=false → 记录 pass（warn 仅写入 gate_warnings，不阻断）
+# - release_blocking=true  → 记录 fail（阻断门禁）
+# - 统一报告缺失或解析失败 → 记录 fail
+# 阶段结果从统一报告 build/perf/performance-gate-report.json 读取，
+# 不再分别解析 hotspot/apple 报告自行拼接裁决。
 if should_run_phase performance_regression; then
     echo "[quality-gate] [2.5/7] 性能回归检查..."
     mkdir -p "$PROJECT_ROOT/build/perf"
-    perf_exit=0
-    perf_report="$PROJECT_ROOT/build/perf/hotspot-regression-report.json"
-    apple_report="$PROJECT_ROOT/build/perf/apple-client-regression-report.json"
+    _perf_gate_report="$PROJECT_ROOT/build/perf/performance-gate-report.json"
 
-    if "$PROJECT_ROOT/scripts/tidyflow" perf-regression; then
-        # 检查 Core 热点 overall 字段
-        core_overall="pass"
-        if [[ -f "$perf_report" ]]; then
-            core_overall="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
-        fi
+    # 传入 cycle_id / project / workspace 以确保统一报告携带正确归属
+    if CYCLE_ID="$cycle_id" TF_PROJECT="$project" TF_WORKSPACE="$workspace" \
+        "$PROJECT_ROOT/scripts/tidyflow" perf-regression; then
+        _perf_run_ok=1
+    else
+        _perf_run_ok=0
+    fi
 
-        # 检查 Apple 客户端 overall 字段
-        apple_overall="pass"
-        apple_failure_reason=""
-        if [[ -f "$apple_report" ]]; then
-            apple_overall="$(python3 -c "import json,sys; d=json.load(open('$apple_report')); print(d.get('overall','pass'))" 2>/dev/null || echo "pass")"
-            if [[ "$apple_overall" == "warn" ]]; then
-                apple_warnings="$(python3 -c "import json,sys; d=json.load(open('$apple_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
-                record_phase_warning "performance_regression" "Apple 客户端性能: ${apple_warnings}"
-                echo "[quality-gate]   Apple 客户端性能：warn（不阻断，详见 build/perf/apple-client-regression-report.json）"
-            elif [[ "$apple_overall" == "fail" ]]; then
-                apple_failure_reason="$(python3 -c "
-import json,sys
-d = json.load(open('$apple_report'))
-reasons = []
-for sc in d.get('scenarios', []):
-    if sc.get('overall') == 'fail':
-        reasons.append(sc['scenario_id'] + ': ' + ', '.join(sc.get('reason_codes', [])))
-print('; '.join(reasons) or 'Apple 客户端性能场景失败')
-" 2>/dev/null || echo "Apple 客户端性能场景失败")"
-            fi
-        else
-            # Apple 报告不存在：视为场景缺失，单独给出原因
-            apple_overall="fail"
-            apple_failure_reason="Apple 客户端性能报告缺失（build/perf/apple-client-regression-report.json 不存在）"
-        fi
+    # 从统一报告读取结构化裁决（不再分别解析各子报告）
+    if [[ -f "$_perf_gate_report" ]]; then
+        _perf_overall="$(python3 -c "import json,sys; d=json.load(open('$_perf_gate_report')); print(d.get('overall','unknown'))" 2>/dev/null || echo "unknown")"
+        _perf_release_blocking="$(python3 -c "import json,sys; d=json.load(open('$_perf_gate_report')); print(str(d.get('release_blocking',True)).lower())" 2>/dev/null || echo "true")"
+        _perf_reason_codes="$(python3 -c "import json,sys; d=json.load(open('$_perf_gate_report')); print('; '.join(d.get('reason_codes',[])))" 2>/dev/null || echo "")"
+        _perf_warnings_str="$(python3 -c "import json,sys; d=json.load(open('$_perf_gate_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
 
-        # 综合裁决：Core 和 Apple 均不为 fail 则通过
-        if [[ "$core_overall" == "fail" || "$apple_overall" == "fail" ]]; then
-            fail_reason=""
-            [[ "$core_overall" == "fail" ]] && fail_reason+="Core 热点性能回归失败; "
-            [[ "$apple_overall" == "fail" ]] && fail_reason+="Apple 客户端性能回归失败: ${apple_failure_reason}"
-            record_phase_result "performance_regression" "fail" "${fail_reason}"
-            echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json 和 build/perf/apple-client-regression-report.json" >&2
+        if [[ "$_perf_release_blocking" == "true" ]]; then
+            _fail_reason="性能门禁 release_blocking=true reason_codes=[${_perf_release_blocking}] 详见 ${_perf_gate_report}"
+            [[ -n "$_perf_reason_codes" ]] && _fail_reason="性能门禁 release_blocking=true reason_codes=[${_perf_reason_codes}] 详见 ${_perf_gate_report}"
+            record_phase_result "performance_regression" "fail" "$_fail_reason"
+            echo "[quality-gate]   性能回归失败，详见 $_perf_gate_report" >&2
         else
             record_phase_result "performance_regression" "pass"
-            if [[ "$core_overall" == "warn" ]]; then
-                perf_warnings="$(python3 -c "import json,sys; d=json.load(open('$perf_report')); print('; '.join(d.get('warnings',[])))" 2>/dev/null || echo "")"
-                record_phase_warning "performance_regression" "Core 热点: ${perf_warnings}"
-                echo "[quality-gate]   Core 热点性能回归：warn（不阻断，详见 build/perf/hotspot-regression-report.json）"
+            if [[ "$_perf_overall" == "warn" && -n "$_perf_warnings_str" ]]; then
+                record_phase_warning "performance_regression" "$_perf_warnings_str"
+                echo "[quality-gate]   性能回归：warn（不阻断，详见 $_perf_gate_report）"
             fi
         fi
     else
-        record_phase_result "performance_regression" "fail" "性能回归检测：overall=fail（performance_regression_failed）"
-        echo "[quality-gate]   性能回归失败，详见 build/perf/hotspot-regression-report.json 和 build/perf/apple-client-regression-report.json" >&2
+        # 统一报告缺失（perf-regression 未生成）
+        record_phase_result "performance_regression" "fail" "统一性能门禁报告缺失：$_perf_gate_report 不存在"
+        echo "[quality-gate]   统一性能门禁报告缺失，性能回归视为失败" >&2
     fi
 fi
 

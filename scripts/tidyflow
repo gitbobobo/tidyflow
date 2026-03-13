@@ -510,12 +510,38 @@ case "$cmd" in
             --measurements "$PROJECT_ROOT/build/perf/hotspot-measurements.json"
             --report "$PROJECT_ROOT/build/perf/hotspot-regression-report.json"
         )
-        if [[ $json_flag -eq 1 ]]; then
-            comparator_args+=(--json)
-        fi
+        # 注意：--json 仅传给契约工具（统一报告输出），不传给单独的比较器
+        # Core 热点比较器：捕获 exit code 以确保 apple + 契约工具始终执行
+        set +e
         python3 "$PROJECT_ROOT/scripts/tools/check_hotspot_perf_regression.py" "${comparator_args[@]}"
+        _hotspot_exit=$?
+        set -e
         # Apple 客户端性能基线回归（聊天流式 + Evolution 面板，统一输出 apple-client-regression-report.json）
+        set +e
         run_apple_client_perf_regression
+        _apple_exit=$?
+        set -e
+        # 生成统一性能门禁报告（WI-002）
+        echo "[tidyflow] 生成统一性能门禁报告..."
+        _gate_contract_args=(
+            --contract "$PROJECT_ROOT/scripts/tools/performance_gate_contract.json"
+            --project "${TF_PROJECT:-tidyflow}"
+            --workspace "${TF_WORKSPACE:-default}"
+            --cycle-id "${CYCLE_ID:-}"
+            --run-id "$(resolve_perf_fixture_run_id)"
+            --output "$PROJECT_ROOT/build/perf/performance-gate-report.json"
+        )
+        if [[ $json_flag -eq 1 ]]; then
+            _gate_contract_args+=(--json)
+        fi
+        set +e
+        python3 "$PROJECT_ROOT/scripts/tools/check_perf_gate_contract.py" "${_gate_contract_args[@]}"
+        _gate_exit=$?
+        set -e
+        # 综合返回：任意一步失败则整体失败
+        if [[ $_hotspot_exit -ne 0 || $_apple_exit -ne 0 || $_gate_exit -ne 0 ]]; then
+            exit 1
+        fi
         ;;
     quality-gate)
         exec ./scripts/e2e/quality-gate.sh "$@"
