@@ -464,4 +464,66 @@ final class EvolutionReplaySessionIsolationTests: XCTestCase {
             toolView: nil
         )
     }
+
+    // MARK: - 会话作用域 generation 隔离回归
+
+    /// replay/sub-agent store 在 generation 切换后不接受旧流式事件。
+    func testReplayStoreRejectsOldGenerationEvents() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("replay-session-1")
+
+        // 入队流式事件
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m-r1", role: "assistant"),
+             .partDelta(messageId: "m-r1", partId: "p-r1", partType: "text", field: "text", delta: "old data")],
+            isStreaming: true
+        )
+
+        // 模拟 replay 切换到新会话
+        store.clearAll()
+        store.setCurrentSessionId("replay-session-2")
+
+        // flush 不应产生任何消息
+        store.flushPendingStreamEvents()
+        XCTAssertTrue(store.messages.isEmpty,
+                       "replay store 切换会话后旧 generation 事件应被丢弃")
+    }
+
+    /// 验证 commitTerminalState 先冲刷再收敛（replay store 复用同一语义）。
+    func testReplayStoreCommitTerminalStateFlushesFirst() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("replay-term")
+
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m-rt", role: "assistant"),
+             .partUpdated(messageId: "m-rt", part: makeTextPart(id: "p-rt", text: nil)),
+             .partDelta(messageId: "m-rt", partId: "p-rt", partType: "text", field: "text", delta: "replay tail")],
+            isStreaming: true
+        )
+
+        store.commitTerminalState(sessionId: "replay-term")
+
+        XCTAssertEqual(store.messages.count, 1)
+        XCTAssertEqual(store.messages.first?.parts.first?.text, "replay tail",
+                       "commitTerminalState 应先冲刷 pending delta")
+        XCTAssertFalse(store.isStreaming)
+    }
+
+    /// 验证 scope generation 不会在同一 sessionId 下跨实例泄漏。
+    func testScopeGenerationIsolationAcrossStoreInstances() {
+        let storeA = AIChatStore()
+        let storeB = AIChatStore()
+
+        storeA.setCurrentSessionId("shared-session")
+        storeB.setCurrentSessionId("shared-session")
+
+        let genA = storeA.testStreamScopeGeneration
+        let genB = storeB.testStreamScopeGeneration
+
+        // 两个独立 store 的 generation 应独立管理
+        storeA.clearAll()
+        XCTAssertGreaterThan(storeA.testStreamScopeGeneration, genA)
+        XCTAssertEqual(storeB.testStreamScopeGeneration, genB,
+                       "不同 store 实例的 generation 应独立")
+    }
 }

@@ -250,6 +250,8 @@ extension AppState {
         if store.isAbortPending(for: ev.sessionId) { return }
 
         if let messages = ev.messages {
+            // 捕获当前会话 ID，后台返回时校验作用域
+            let capturedSessionId = store.currentSessionId
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 // 共享消息流归一化入口：与 ai_session_messages 走同一链路，避免分叉。
                 let normalized = AISessionSemantics.normalizeMessageStream(
@@ -267,6 +269,13 @@ extension AppState {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    // 作用域校验：若 store 的当前会话已切换，丢弃旧 snapshot
+                    guard store.currentSessionId == capturedSessionId else {
+                        TFLog.app.debug(
+                            "AI session_messages_update(snapshot) rejected by scope change: session_id=\(ev.sessionId, privacy: .public), captured=\(capturedSessionId ?? "nil", privacy: .public), current=\(store.currentSessionId ?? "nil", privacy: .public)"
+                        )
+                        return
+                    }
                     guard store.shouldApplySessionCacheRevision(
                         fromRevision: preparedSnapshot.fromRevision,
                         toRevision: preparedSnapshot.toRevision,
@@ -344,7 +353,8 @@ extension AppState {
                 )
                 return
             }
-            store.applySessionCacheOps([], isStreaming: false)
+            // 终态提交：先冲刷待处理事件，再统一收敛状态
+            store.commitTerminalState(sessionId: ev.sessionId)
         }
         if let hint = ev.selectionHint {
             applyAISessionSelectionHint(

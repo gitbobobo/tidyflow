@@ -21,7 +21,6 @@ final class AISessionListStore: ObservableObject {
         performanceTracer: TFPerformanceTracer,
         sendRequest: () -> Void
     ) -> Bool {
-        _ = force
         let perfEvent: TFPerformanceEvent = append ? .aiSessionListPage : .aiSessionListRequest
         let perfTraceId = performanceTracer.begin(TFPerformanceContext(
             event: perfEvent,
@@ -37,12 +36,24 @@ final class AISessionListStore: ObservableObject {
             guard !pageState.isLoadingNextPage else { return false }
             pageState.isLoadingNextPage = true
         } else {
-            guard !pageState.isLoadingInitial else { return false }
-            if cursor == nil {
-                pageState = .empty()
+            // force=true 时允许在已加载/加载中状态下重新拉取首屏
+            if !force {
+                guard !pageState.isLoadingInitial else { return false }
             }
-            pageState.isLoadingInitial = true
-            pageState.isLoadingNextPage = false
+            if cursor == nil {
+                // force 模式下保留已有 sessions 直到新响应回来，避免列表闪空
+                if force {
+                    pageState.isLoadingInitial = true
+                    pageState.isLoadingNextPage = false
+                } else {
+                    pageState = .empty()
+                    pageState.isLoadingInitial = true
+                    pageState.isLoadingNextPage = false
+                }
+            } else {
+                pageState.isLoadingInitial = true
+                pageState.isLoadingNextPage = false
+            }
         }
         pageStates[pageKey] = pageState
         sendRequest()

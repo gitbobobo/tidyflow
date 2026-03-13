@@ -791,6 +791,23 @@ enum AIChatStreamEvent {
     case partDelta(messageId: String, partId: String, partType: String, field: String, delta: String)
 }
 
+// MARK: - 流式 ingress 会话作用域
+
+/// 流式事件作用域：用于隔离不同会话或同一会话不同代际的 pending 事件。
+/// sessionId 标识远端会话，generation 为本地单调递增计数器，
+/// 在 setCurrentSessionId/clearAll/clearMessages/replaceMessages 等入口处递增。
+struct AIChatStreamScope: Equatable {
+    let sessionId: String?
+    let generation: UInt64
+}
+
+/// 携带作用域的流式事件包装：在 enqueue 时捕获当前作用域，
+/// flush 时只应用与当前作用域匹配的事件，不匹配的直接丢弃。
+struct ScopedAIChatStreamEvent {
+    let scope: AIChatStreamScope
+    let event: AIChatStreamEvent
+}
+
 // MARK: - Prepared Snapshot
 
 /// snapshot 分支的后台预处理结果；在后台线程构建，在主线程一次性提交。
@@ -890,18 +907,50 @@ final class AIChatStore {
     private var pendingUserEchoAssistantMessageId: String?
     /// 进入 awaiting 前的消息数量快照；用于过滤“旧 user 消息更新”误触发收敛。
     private var awaitingUserEchoBaselineIndex: Int?
-    private var pendingStreamEvents: [AIChatStreamEvent] = []
+    private var pendingStreamEvents: [ScopedAIChatStreamEvent] = []
     private var streamFlushWorkItem: DispatchWorkItem?
     private let streamIngressQueue = DispatchQueue(
         label: "cn.tidyflow.ai.stream.reducer",
         qos: .userInitiated
     )
     private var lastPublishedTailSnapshot: [AIChatMessage] = []
-    // 以下三个属性仅在 streamIngressQueue 上访问，用于批处理决策
+    // 以下属性仅在 streamIngressQueue 上访问，用于批处理决策
     private var pendingHasStructuralEvent: Bool = false
     private var pendingUTF16DeltaCount: Int = 0
+    /// 当前流式 ingress 作用域（主线程读写 generation，streamIngressQueue 读取 snapshot）
+    private var streamScopeGeneration: UInt64 = 0
+    /// streamIngressQueue 上缓存的作用域快照，由 invalidateStreamScope() 同步更新
+    private var ingressScopeSnapshot: AIChatStreamScope = AIChatStreamScope(sessionId: nil, generation: 0)
     weak var performanceTracer: TFPerformanceTracer?
     var performanceContextProvider: (() -> (project: String, workspace: String)?)?
+
+    /// 当前主线程作用域
+    private var currentStreamScope: AIChatStreamScope {
+        AIChatStreamScope(sessionId: currentSessionId, generation: streamScopeGeneration)
+    }
+
+    /// 失效旧作用域：递增 generation 并同步取消延迟 flush、清空 pending 事件。
+    /// 必须在主线程调用（所有会改变消息归属的入口处）。
+    private func invalidateStreamScope() {
+        streamScopeGeneration &+= 1
+        let newScope = currentStreamScope
+        streamIngressQueue.sync {
+            streamFlushWorkItem?.cancel()
+            streamFlushWorkItem = nil
+            if !pendingStreamEvents.isEmpty {
+                TFLog.perf.debug(
+                    "ai_stream_scope_invalidated dropped=\(self.pendingStreamEvents.count, privacy: .public) old_gen=\(newScope.generation &- 1, privacy: .public) new_gen=\(newScope.generation, privacy: .public)"
+                )
+            }
+            pendingStreamEvents.removeAll(keepingCapacity: true)
+            pendingHasStructuralEvent = false
+            pendingUTF16DeltaCount = 0
+            ingressScopeSnapshot = newScope
+        }
+    }
+
+    /// 当前流式 ingress 作用域的 generation（测试用）
+    var testStreamScopeGeneration: UInt64 { streamScopeGeneration }
 
     // MARK: - Snapshot
 
@@ -915,7 +964,7 @@ final class AIChatStore {
     }
 
     func applySnapshot(_ snapshot: AIChatSnapshot) {
-        flushPendingStreamEvents()
+        invalidateStreamScope()
         currentSessionId = snapshot.currentSessionId
         subscribedSessionIds = snapshot.subscribedSessionIds
         if let currentSessionId {
@@ -962,7 +1011,7 @@ final class AIChatStore {
     func removeSubscription(_ sessionId: String) { subscribedSessionIds.remove(sessionId) }
 
     func clearAll() {
-        flushPendingStreamEvents()
+        invalidateStreamScope()
         currentSessionId = nil
         // 清除所有会话订阅，防止旧会话流式事件在 clearAll 后仍被接受
         subscribedSessionIds = []
@@ -991,7 +1040,7 @@ final class AIChatStore {
     }
 
     func clearMessages() {
-        flushPendingStreamEvents()
+        invalidateStreamScope()
         messages = []
         historyHasMore = false
         historyNextBeforeMessageId = nil
@@ -1023,7 +1072,7 @@ final class AIChatStore {
         _ newMessages: [AIChatMessage],
         shouldPublishTailSignals: Bool
     ) {
-        flushPendingStreamEvents()
+        invalidateStreamScope()
         messages = newMessages
         abortPendingSessionId = nil
         recentHistoryIsLoading = false
@@ -1098,7 +1147,8 @@ final class AIChatStore {
     /// 主线程提交后台预处理的 snapshot 结果。
     /// revision gate 由调用方在主线程执行，不在此方法内校验。
     func applyPreparedSnapshot(_ snapshot: AIChatPreparedSnapshot) {
-        replaceMessages(snapshot.messages)
+        // 使用不发布的 replaceMessages，最终只发布一次 tail 信号
+        replaceMessages(snapshot.messages, shouldPublishTailSignals: false)
         if snapshot.isStreaming,
            let assistantIndex = messages.indices.reversed().first(where: { messages[$0].role == .assistant }) {
             markOnlyStreamingAssistant(at: assistantIndex)
@@ -1173,9 +1223,13 @@ final class AIChatStore {
 
     private func enqueuePreparedStreamEvents(_ events: [AIChatStreamEvent]) {
         guard !events.isEmpty else { return }
+        // 在主线程捕获当前作用域快照
+        let capturedScope = currentStreamScope
         streamIngressQueue.async { [weak self] in
             guard let self else { return }
-            self.pendingStreamEvents.append(contentsOf: events)
+            // 用捕获的作用域包装每个事件
+            let scoped = events.map { ScopedAIChatStreamEvent(scope: capturedScope, event: $0) }
+            self.pendingStreamEvents.append(contentsOf: scoped)
             // 分类事件：统计结构性事件与纯文本增量，供批处理决策使用
             for event in events {
                 switch event {
@@ -1190,31 +1244,64 @@ final class AIChatStore {
     }
 
     private func drainPreparedStreamEvents() -> [AIChatStreamEvent] {
-        streamIngressQueue.sync {
+        let scope = currentStreamScope
+        return streamIngressQueue.sync {
             streamFlushWorkItem?.cancel()
             streamFlushWorkItem = nil
-            let events = Self.coalesceStreamEvents(pendingStreamEvents)
+            let validEvents = pendingStreamEvents.compactMap { scoped -> AIChatStreamEvent? in
+                guard scoped.scope == scope else { return nil }
+                return scoped.event
+            }
+            let droppedCount = pendingStreamEvents.count - validEvents.count
+            if droppedCount > 0 {
+                TFLog.perf.debug(
+                    "ai_stream_drain_dropped=\(droppedCount, privacy: .public) scope_gen=\(scope.generation, privacy: .public)"
+                )
+            }
             pendingStreamEvents.removeAll(keepingCapacity: true)
             pendingHasStructuralEvent = false
             pendingUTF16DeltaCount = 0
-            return events
+            return Self.coalesceStreamEvents(validEvents)
         }
     }
 
     private func flushPreparedStreamEventsFromIngressQueue() {
-        let rawEvents = pendingStreamEvents
+        let currentScope = ingressScopeSnapshot
+        // 过滤：只保留与当前作用域匹配的事件
+        var validRawEvents: [AIChatStreamEvent] = []
+        var droppedCount = 0
+        for scoped in pendingStreamEvents {
+            if scoped.scope == currentScope {
+                validRawEvents.append(scoped.event)
+            } else {
+                droppedCount += 1
+            }
+        }
         let rawUTF16Delta = pendingUTF16DeltaCount
         let hadStructuralEvent = pendingHasStructuralEvent
         pendingStreamEvents.removeAll(keepingCapacity: true)
         pendingHasStructuralEvent = false
         pendingUTF16DeltaCount = 0
         streamFlushWorkItem = nil
-        let events = Self.coalesceStreamEvents(rawEvents)
+        if droppedCount > 0 {
+            TFLog.perf.debug(
+                "ai_stream_flush_dropped=\(droppedCount, privacy: .public) scope_gen=\(currentScope.generation, privacy: .public)"
+            )
+        }
+        let events = Self.coalesceStreamEvents(validRawEvents)
         guard !events.isEmpty else { return }
 
-        let rawEventCount = rawEvents.count
+        let rawEventCount = validRawEvents.count
+        let capturedScope = currentScope
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // 主线程二次校验：若到达时作用域已变化，直接丢弃
+            guard self.currentStreamScope == capturedScope else {
+                TFLog.perf.debug(
+                    "ai_stream_flush_rejected_on_main events=\(events.count, privacy: .public) captured_gen=\(capturedScope.generation, privacy: .public) current_gen=\(self.currentStreamScope.generation, privacy: .public)"
+                )
+                return
+            }
             let perfTraceId: String? = {
                 guard let context = self.performanceContextProvider?(),
                       let tracer = self.performanceTracer else { return nil }
@@ -1276,6 +1363,8 @@ final class AIChatStore {
 
     func setCurrentSessionId(_ sessionId: String?) {
         if currentSessionId != sessionId {
+            // 会话变化时失效旧作用域，丢弃旧会话的延迟 flush
+            invalidateStreamScope()
             // 首次发送（尚无会话）时，session_started 可能先于 user echo / assistant 首包到达。
             // 该阶段必须保留等待态，避免输入区和流式状态提前收敛。
             let isFirstSendSessionBinding = currentSessionId == nil &&
@@ -1641,7 +1730,9 @@ final class AIChatStore {
     }
 
     func handleChatDone(sessionId: String) {
+        // 终态：先冲刷当前作用域的待处理事件，再失效作用域
         flushPendingStreamEvents()
+        invalidateStreamScope()
         clearAbortPendingIfMatches(sessionId)
         suppressActiveToolStreaming(for: sessionId)
         // 严格模式兜底：若 user echo 未回传，也要收敛输入状态，避免输入框长期不清空/禁用。
@@ -1665,7 +1756,9 @@ final class AIChatStore {
     }
 
     func handleChatError(sessionId: String, error: String) {
+        // 终态：先冲刷当前作用域的待处理事件，再失效作用域
         flushPendingStreamEvents()
+        invalidateStreamScope()
         clearAbortPendingIfMatches(sessionId)
         suppressActiveToolStreaming(for: sessionId)
         awaitingUserEcho = false
@@ -1690,6 +1783,62 @@ final class AIChatStore {
         rebuildIndexes()
         recomputeIsStreaming()
         publishTailSignals()
+    }
+
+    /// 终态提交入口：统一处理 terminal update、done、error 三类收敛。
+    ///
+    /// 固定执行顺序：
+    /// 1. 校验作用域与 revision
+    /// 2. 同步冲刷当前作用域待处理事件（isStreamEnding=true，立即 flush）
+    /// 3. 清除 streaming/abort/pending-first-content/question 等瞬态
+    /// 4. 单次发布 tail 信号
+    ///
+    /// AppState 的终态分支（terminal update、done、error）统一调用此入口，
+    /// 不再通过 `applySessionCacheOps([], isStreaming: false)` 间接收敛。
+    func commitTerminalState(sessionId: String) {
+        // 1. 终态立即冲刷当前作用域的待处理事件
+        flushPendingStreamEventsForTerminal()
+        // 2. 失效作用域，阻止后续延迟 flush
+        invalidateStreamScope()
+        // 3. 清除瞬态
+        clearAbortPendingIfMatches(sessionId)
+        suppressActiveToolStreaming(for: sessionId)
+        if awaitingUserEcho {
+            awaitingUserEcho = false
+            awaitingUserEchoBaselineIndex = nil
+            lastUserEchoMessageId = "terminal-\(sessionId)-\(UUID().uuidString)"
+        }
+        hasPendingFirstContent = false
+        recentHistoryIsLoading = false
+        isStreaming = false
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
+        clearAssistantStreaming()
+        messages.removeAll { msg in
+            msg.role == .assistant && msg.messageId == nil && msg.parts.isEmpty
+        }
+        rebuildIndexes()
+        recomputeIsStreaming()
+        // 4. 单次发布 tail 信号
+        publishTailSignals()
+    }
+
+    /// 终态场景的同步冲刷：使用 isStreamEnding=true 触发立即 flush 语义。
+    private func flushPendingStreamEventsForTerminal() {
+        let scope = currentStreamScope
+        let events: [AIChatStreamEvent] = streamIngressQueue.sync {
+            streamFlushWorkItem?.cancel()
+            streamFlushWorkItem = nil
+            let validEvents = pendingStreamEvents.compactMap { scoped -> AIChatStreamEvent? in
+                guard scoped.scope == scope else { return nil }
+                return scoped.event
+            }
+            pendingStreamEvents.removeAll(keepingCapacity: true)
+            pendingHasStructuralEvent = false
+            pendingUTF16DeltaCount = 0
+            return Self.coalesceStreamEvents(validEvents)
+        }
+        applyStreamEvents(events)
     }
 
     // MARK: - Internal Helpers

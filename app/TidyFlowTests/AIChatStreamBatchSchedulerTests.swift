@@ -159,4 +159,59 @@ final class AIChatStreamBatchSchedulerTests: XCTestCase {
         XCTAssertFalse(store.messages.isEmpty || store.messages.first?.role == .assistant || true,
                         "messageUpdated enqueue 不应崩溃")
     }
+
+    // MARK: - 终态调度集成验证
+
+    /// 验证 isStreamEnding=true 时调度决策为立即 flush。
+    func testStreamEndingWithPendingDeltaTriggersImmediateFlush() {
+        let input = AIChatStreamBatchInput(
+            pendingEventCount: 15,
+            pendingUTF16Delta: 2_000,
+            containsStructuralEvent: false,
+            isStreamEnding: true
+        )
+        let decision = AIChatStreamingBatchScheduler.decide(input)
+        XCTAssertTrue(decision.shouldFlushImmediately,
+                       "终态事件即使有大量 pending delta 也必须立即 flush")
+        XCTAssertEqual(decision.reason, "stream_end")
+    }
+
+    /// 验证 isStreamEnding 优先级高于结构性事件。
+    func testStreamEndingAndStructuralEventBothTriggerImmediate() {
+        let input = AIChatStreamBatchInput(
+            pendingEventCount: 5,
+            pendingUTF16Delta: 500,
+            containsStructuralEvent: true,
+            isStreamEnding: true
+        )
+        let decision = AIChatStreamingBatchScheduler.decide(input)
+        XCTAssertTrue(decision.shouldFlushImmediately)
+    }
+
+    /// 验证 commitTerminalState 确保待处理事件被冲刷。
+    func testCommitTerminalStateFlushesBeforeConvergence() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("batch-session")
+
+        // 入队多个 delta（模拟流式传输中的积压）
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m-batch", role: "assistant"),
+             .partUpdated(messageId: "m-batch", part: AIProtocolPartInfo(
+                id: "p-batch", partType: "text", text: nil, mime: nil, filename: nil,
+                url: nil, synthetic: nil, ignored: nil, source: nil,
+                toolName: nil, toolCallId: nil, toolKind: nil, toolView: nil
+             )),
+             .partDelta(messageId: "m-batch", partId: "p-batch", partType: "text", field: "text", delta: "chunk1"),
+             .partDelta(messageId: "m-batch", partId: "p-batch", partType: "text", field: "text", delta: "chunk2")],
+            isStreaming: true
+        )
+
+        // 终态提交
+        store.commitTerminalState(sessionId: "batch-session")
+
+        XCTAssertEqual(store.messages.count, 1)
+        XCTAssertEqual(store.messages.first?.parts.first?.text, "chunk1chunk2",
+                       "终态应先冲刷所有 pending delta 再收敛")
+        XCTAssertFalse(store.isStreaming)
+    }
 }

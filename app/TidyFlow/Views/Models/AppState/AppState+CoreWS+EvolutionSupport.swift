@@ -778,6 +778,8 @@ extension AppState {
             let sessionId = ev.sessionId
             let fromRevision = ev.fromRevision
             let toRevision = ev.toRevision
+            // 捕获当前作用域快照，后台返回时校验
+            let capturedSessionId = evolutionReplayStore.currentSessionId
             // 后台构建 prepared snapshot，主线程提交
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
@@ -794,6 +796,13 @@ extension AppState {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    // 作用域校验：若 replay store 的当前会话已切换，丢弃旧 snapshot
+                    guard self.evolutionReplayStore.currentSessionId == capturedSessionId else {
+                        TFLog.perf.debug(
+                            "evolution_replay_snapshot_rejected: captured=\(capturedSessionId ?? "nil", privacy: .public) current=\(self.evolutionReplayStore.currentSessionId ?? "nil", privacy: .public)"
+                        )
+                        return
+                    }
                     self.evolutionReplayStore.applyPreparedSnapshot(preparedSnapshot)
                     self.evolutionReplayLoading = false
                     self.evolutionReplayError = nil
@@ -804,7 +813,7 @@ extension AppState {
             evolutionReplayLoading = false
             evolutionReplayError = nil
         } else if !ev.isStreaming {
-            evolutionReplayStore.applySessionCacheOps([], isStreaming: false)
+            evolutionReplayStore.commitTerminalState(sessionId: ev.sessionId)
             evolutionReplayLoading = false
             evolutionReplayError = nil
         }
@@ -821,7 +830,7 @@ extension AppState {
         if evolutionReplayStore.currentSessionId != ev.sessionId {
             evolutionReplayStore.setCurrentSessionId(ev.sessionId)
         }
-        evolutionReplayStore.handleChatDone(sessionId: ev.sessionId)
+        evolutionReplayStore.commitTerminalState(sessionId: ev.sessionId)
         evolutionReplayLoading = false
     }
 
@@ -889,6 +898,8 @@ extension AppState {
             let sessionId = ev.sessionId
             let fromRevision = ev.fromRevision
             let toRevision = ev.toRevision
+            // 捕获当前作用域快照，后台返回时校验
+            let capturedSessionId = subAgentViewerStore.currentSessionId
             // 后台构建 prepared snapshot，主线程提交
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let restoredQuestions = AISessionSemantics.rebuildPendingQuestionRequests(
@@ -905,6 +916,13 @@ extension AppState {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    // 作用域校验：若 sub-agent store 的当前会话已切换，丢弃旧 snapshot
+                    guard self.subAgentViewerStore.currentSessionId == capturedSessionId else {
+                        TFLog.perf.debug(
+                            "sub_agent_snapshot_rejected: captured=\(capturedSessionId ?? "nil", privacy: .public) current=\(self.subAgentViewerStore.currentSessionId ?? "nil", privacy: .public)"
+                        )
+                        return
+                    }
                     self.subAgentViewerStore.applyPreparedSnapshot(preparedSnapshot)
                     self.subAgentViewerLoading = false
                     self.subAgentViewerError = nil
@@ -915,7 +933,7 @@ extension AppState {
             subAgentViewerLoading = false
             subAgentViewerError = nil
         } else if !ev.isStreaming {
-            subAgentViewerStore.applySessionCacheOps([], isStreaming: false)
+            subAgentViewerStore.commitTerminalState(sessionId: ev.sessionId)
             subAgentViewerLoading = false
             subAgentViewerError = nil
         }
@@ -932,7 +950,7 @@ extension AppState {
         if subAgentViewerStore.currentSessionId != ev.sessionId {
             subAgentViewerStore.setCurrentSessionId(ev.sessionId)
         }
-        subAgentViewerStore.handleChatDone(sessionId: ev.sessionId)
+        subAgentViewerStore.commitTerminalState(sessionId: ev.sessionId)
         subAgentViewerLoading = false
     }
 

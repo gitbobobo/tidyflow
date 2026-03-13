@@ -263,7 +263,106 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertFalse(store.isStreaming)
     }
 
-    private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
+    // MARK: - 会话作用域隔离与终态收敛回归
+
+    /// 旧会话 delayed delta 在切换后被丢弃：切换 sessionId 后旧事件不写入新消息列表。
+    func testOldSessionDelayedDeltaDroppedAfterSwitch() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("session-old")
+
+        // 入队流式事件（尚未 flush）
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m-old", role: "assistant"),
+             .partUpdated(messageId: "m-old", part: makeTextPart(id: "p-old", text: nil)),
+             .partDelta(messageId: "m-old", partId: "p-old", partType: "text", field: "text", delta: "hello")],
+            isStreaming: true
+        )
+
+        // 切换到新会话（invalidateStreamScope 应丢弃旧事件）
+        store.clearMessages()
+        store.setCurrentSessionId("session-new")
+
+        // flush 不应产生任何消息（旧事件已被丢弃）
+        store.flushPendingStreamEvents()
+        XCTAssertTrue(store.messages.isEmpty, "切换会话后旧流式事件应被丢弃")
+    }
+
+    /// terminal update 在无 ops 时立即冲刷最后 delta。
+    func testTerminalUpdateFlushesLastDelta() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("session-t")
+
+        // 入队流式事件
+        store.applySessionCacheOps(
+            [.messageUpdated(messageId: "m-t", role: "assistant"),
+             .partUpdated(messageId: "m-t", part: makeTextPart(id: "p-t", text: nil)),
+             .partDelta(messageId: "m-t", partId: "p-t", partType: "text", field: "text", delta: "tail content")],
+            isStreaming: true
+        )
+
+        // 终态提交应先冲刷再收敛
+        store.commitTerminalState(sessionId: "session-t")
+
+        // 验证尾部文本已正确落盘
+        XCTAssertEqual(store.messages.count, 1)
+        XCTAssertEqual(store.messages.first?.parts.first?.text, "tail content",
+                       "终态提交应先冲刷待处理 delta")
+        XCTAssertFalse(store.isStreaming, "终态后 isStreaming 应为 false")
+    }
+
+    /// 后台 snapshot 在 scope（generation）变化后被拒绝：applyPreparedSnapshot 的单次 tail 收敛。
+    func testApplyPreparedSnapshotSingleTailPublish() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("session-snap")
+        let initialRevision = store.tailRevision
+
+        let snapshot = AIChatPreparedSnapshot(
+            messages: [AIChatMessage(messageId: "m-snap", role: .assistant,
+                                      parts: [AIChatPart(id: "p-snap", kind: .text, text: "snapshot content", toolName: nil)],
+                                      isStreaming: false)],
+            pendingQuestionRequests: [],
+            effectiveSelectionHint: nil,
+            isStreaming: false,
+            fromRevision: 0,
+            toRevision: 1
+        )
+        store.applyPreparedSnapshot(snapshot)
+        let afterFirstSnapshot = store.tailRevision
+
+        XCTAssertGreaterThan(afterFirstSnapshot, initialRevision, "snapshot 应推进 tailRevision")
+
+        // 再次应用相同 snapshot：tailRevision 不应再次推进（内容未变化）
+        store.applyPreparedSnapshot(snapshot)
+        XCTAssertEqual(store.tailRevision, afterFirstSnapshot,
+                       "相同内容的 snapshot 不应重复推进 tailRevision")
+    }
+
+    /// 验证 generation 递增：setCurrentSessionId 触发 scope 失效。
+    func testScopeGenerationIncrementsOnSessionSwitch() {
+        let store = AIChatStore()
+        let gen0 = store.testStreamScopeGeneration
+
+        store.setCurrentSessionId("session-a")
+        let gen1 = store.testStreamScopeGeneration
+        XCTAssertGreaterThan(gen1, gen0, "setCurrentSessionId 应递增 generation")
+
+        store.setCurrentSessionId("session-b")
+        let gen2 = store.testStreamScopeGeneration
+        XCTAssertGreaterThan(gen2, gen1, "再次切换应继续递增 generation")
+    }
+
+    /// 验证 clearAll 递增 generation。
+    func testScopeGenerationIncrementsOnClearAll() {
+        let store = AIChatStore()
+        store.setCurrentSessionId("session-x")
+        let genBefore = store.testStreamScopeGeneration
+
+        store.clearAll()
+        XCTAssertGreaterThan(store.testStreamScopeGeneration, genBefore,
+                             "clearAll 应递增 generation")
+    }
+
+
         AIProtocolPartInfo(
             id: id,
             partType: "text",
