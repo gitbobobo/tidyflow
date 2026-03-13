@@ -964,6 +964,42 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
    - 演化（Evolution）：仅 `terminal_reason_code=failed_exhausted` 才标为可重试。
 4. **向后兼容**：所有新增字段为可选/默认值，旧客户端忽略即可。
 
+### Evolution 自愈恢复模型（v1.48+）
+
+v1.48 新增 `recovery` 可选字段，透传到 `EvolutionWorkspaceItem`、`EvolutionCycleHistoryItem` 和 `evo_cycle_updated` 消息中。该对象由 Core 权威输出，客户端只消费。
+
+#### EvolutionRecoveryDTO 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `phase` | `string` | 恢复阶段：`recovering`（自动恢复中）、`degraded`（降级冷却中）、`failed`（恢复失败） |
+| `strategy` | `string` | 恢复策略：`wait_rate_limit`、`retry_stage`、`defer_workspace`、`none` |
+| `diagnosis_code` | `string` | 失败诊断码（见下方枚举） |
+| `diagnosis_summary` | `string?` | 人类可读诊断摘要 |
+| `resume_at` | `string?` | 预计恢复时间（RFC3339），用于 `wait_rate_limit` / `retry_stage` |
+| `retry_count` | `u32` | 当前重试次数 |
+| `retry_limit` | `u32` | 重试上限 |
+| `degraded_until` | `string?` | 降级冷却截止时间（RFC3339），用于 `defer_workspace` |
+| `updated_at` | `string` | 最后更新时间（RFC3339） |
+
+#### 失败诊断码枚举
+
+| 诊断码 | 说明 | 默认恢复策略 |
+|--------|------|-------------|
+| `rate_limit` | API 速率限制（429 等） | `wait_rate_limit`，解析 resume_at 或兜底 60s |
+| `transient_session` | 瞬态会话错误（网络超时等） | `retry_stage`，指数退避 |
+| `artifact_contract_violation` | 产物契约违规 | `none`，直接 `failed` |
+| `stage_timeout` | 阶段执行超时 | `none`，直接 `failed` |
+| `gate_blocked` | 门禁阻断（verify 耗尽等） | `defer_workspace`，降级 15 分钟 |
+| `human_blocker` | 需要人工干预 | 维持 blocker 流程 |
+| `unknown_system` | 未知系统错误 | `none`，直接 `failed` |
+
+#### 客户端消费规则
+
+- `recovery.phase == recovering || degraded` → 禁用手动重试入口
+- `recovery.phase == failed` 且 `retryable == true` 且无有效冷却 → 允许手动重试
+- 客户端不得在本地推导恢复逻辑，只消费 Core 给出的 `recovery` 对象
+
 ### 重试描述符
 
 重试描述符必须保留完整的归属边界：

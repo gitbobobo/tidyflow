@@ -1825,6 +1825,9 @@ pub enum ServerMessage {
         terminal_error_message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
+        /// 恢复状态对象（v1.48，向后兼容可选扩展）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recovery: Option<EvolutionRecoveryDTO>,
         #[serde(skip_serializing_if = "Option::is_none")]
         coordination_state: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -2473,6 +2476,36 @@ pub struct EvolutionSchedulerInfo {
     pub recommendation_count: u32,
 }
 
+/// Evolution 恢复状态 DTO（v1.48，向后兼容可选扩展）
+///
+/// 由 Core 权威输出，客户端只消费，不本地推导恢复逻辑。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionRecoveryDTO {
+    /// 恢复阶段：recovering / degraded / failed
+    pub phase: String,
+    /// 恢复策略：wait_rate_limit / retry_stage / defer_workspace / none
+    pub strategy: String,
+    /// 失败诊断码
+    pub diagnosis_code: String,
+    /// 诊断摘要（人类可读）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnosis_summary: Option<String>,
+    /// 预计恢复时间（RFC3339）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_at: Option<String>,
+    /// 当前重试次数
+    #[serde(default)]
+    pub retry_count: u32,
+    /// 重试上限
+    #[serde(default)]
+    pub retry_limit: u32,
+    /// 降级冷却截止时间（RFC3339）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_until: Option<String>,
+    /// 最后更新时间（RFC3339）
+    pub updated_at: String,
+}
+
 /// Evolution 工作空间快照项
 ///
 /// 统一运行状态面板所需字段：`started_at` / `duration_ms` / `error_code` / `retryable`
@@ -2511,6 +2544,9 @@ pub struct EvolutionWorkspaceItem {
     /// 是否可安全重试（Core 根据终态类型判定：failed_exhausted 可重试，failed_system 不可重试）
     #[serde(default)]
     pub retryable: bool,
+    /// 恢复状态对象（v1.48，向后兼容可选扩展）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<EvolutionRecoveryDTO>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordination_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2643,6 +2679,9 @@ pub struct EvolutionCycleHistoryItem {
     /// 是否可安全重试（failed_exhausted 可重试，failed_system 不可重试）
     #[serde(default)]
     pub retryable: bool,
+    /// 最近一次恢复决策（v1.48，用于历史复盘）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<EvolutionRecoveryDTO>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -134,6 +134,22 @@ domains:
     #   duration_ms: 循环运行耗时（毫秒），Core 在终态时计算
     #   error_code:  失败诊断码（仅终态失败时填充）
     #   retryable:   是否可安全重试（bool，Core 根据终态类型判定）
+    # v1.48 Evolution 自愈恢复模型（向后兼容，旧客户端忽略新字段）：
+    # EvolutionWorkspaceItem / EvolutionCycleHistoryItem / evo_cycle_updated 新增可选字段：
+    #   recovery: EvolutionRecoveryDTO（Core 权威输出，客户端只消费不推导）
+    #     - phase:             recovering | degraded | failed
+    #     - strategy:          wait_rate_limit | retry_stage | defer_workspace | none
+    #     - diagnosis_code:    rate_limit | transient_session | artifact_contract_violation
+    #                          | stage_timeout | gate_blocked | human_blocker | unknown_system
+    #     - diagnosis_summary: 人类可读诊断摘要（可选）
+    #     - resume_at:         预计恢复时间 RFC3339（可选，wait_rate_limit / retry_stage 用）
+    #     - retry_count:       当前重试次数（默认 0）
+    #     - retry_limit:       重试上限（默认 0）
+    #     - degraded_until:    降级冷却截止时间 RFC3339（可选，defer_workspace 用）
+    #     - updated_at:        最后更新时间 RFC3339
+    # 客户端规则：
+    #   - recovery.phase=recovering|degraded → 禁用手动重试入口
+    #   - recovery.phase=failed 且 retryable=true 且无有效冷却 → 允许手动重试
   # v1.41: 系统健康诊断与自修复域
   # health_report     - 客户端上报自身运行健康状态
   # health_snapshot   - Core 推送系统健康快照（incidents、摘要）

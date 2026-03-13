@@ -104,6 +104,47 @@ impl HealthRegistry {
         summary: impl Into<String>,
         context: HealthContext,
     ) {
+        self.record_incident(
+            root_cause,
+            summary,
+            IncidentSeverity::Warning,
+            IncidentRecoverability::Recoverable,
+            IncidentSource::CoreLog,
+            context,
+        );
+    }
+
+    /// 记录 Evolution 自愈相关 incident（支持自定义严重级别）
+    pub fn record_evolution_incident(
+        &mut self,
+        root_cause: impl Into<String>,
+        summary: impl Into<String>,
+        severity: IncidentSeverity,
+        context: HealthContext,
+    ) {
+        let recoverability = match severity {
+            IncidentSeverity::Critical => IncidentRecoverability::Manual,
+            _ => IncidentRecoverability::Recoverable,
+        };
+        self.record_incident(
+            root_cause,
+            summary,
+            severity,
+            recoverability,
+            IncidentSource::CoreEvolution,
+            context,
+        );
+    }
+
+    fn record_incident(
+        &mut self,
+        root_cause: impl Into<String>,
+        summary: impl Into<String>,
+        severity: IncidentSeverity,
+        recoverability: IncidentRecoverability,
+        source: IncidentSource,
+        context: HealthContext,
+    ) {
         let root_cause = root_cause.into();
         let now = unix_ms();
         let incident_id = format!(
@@ -117,9 +158,9 @@ impl HealthRegistry {
             .entry(incident_id.clone())
             .or_insert_with(|| HealthIncident {
                 incident_id: incident_id.clone(),
-                severity: IncidentSeverity::Warning,
-                recoverability: IncidentRecoverability::Recoverable,
-                source: IncidentSource::CoreLog,
+                severity,
+                recoverability,
+                source,
                 root_cause: root_cause.clone(),
                 summary: Some(summary.into()),
                 first_seen_at: now,
@@ -1143,6 +1184,70 @@ mod tests {
         // 第二次 resolve 不应 panic 或改变状态
         reg.resolve_incident("idem_test");
         assert!(!reg.active_incidents.contains_key("idem_test"));
+    }
+
+    #[test]
+    fn record_evolution_incident_warning() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
+        let mut reg = HealthRegistry::new();
+        reg.record_evolution_incident(
+            "evo_warning_test",
+            "测试 Warning 级别 evolution incident",
+            IncidentSeverity::Warning,
+            HealthContext {
+                project: Some("proj-evo".to_string()),
+                workspace: Some("ws-evo".to_string()),
+                session_id: None,
+                cycle_id: None,
+            },
+        );
+        let snap = reg.snapshot();
+        assert!(
+            snap.incidents
+                .iter()
+                .any(|i| i.root_cause == "evo_warning_test"),
+            "应记录 Warning 级别的 evolution incident"
+        );
+        let inc = snap
+            .incidents
+            .iter()
+            .find(|i| i.root_cause == "evo_warning_test")
+            .unwrap();
+        assert_eq!(inc.severity, IncidentSeverity::Warning);
+        assert_eq!(inc.source, IncidentSource::CoreEvolution);
+        assert_eq!(inc.recoverability, IncidentRecoverability::Recoverable);
+    }
+
+    #[test]
+    fn record_evolution_incident_critical() {
+        let _serial = GATE_TEST_LOCK.lock().unwrap();
+        let mut reg = HealthRegistry::new();
+        reg.record_evolution_incident(
+            "evo_critical_test",
+            "测试 Critical 级别 evolution incident",
+            IncidentSeverity::Critical,
+            HealthContext {
+                project: Some("proj-evo-crit".to_string()),
+                workspace: Some("ws-evo-crit".to_string()),
+                session_id: None,
+                cycle_id: None,
+            },
+        );
+        let snap = reg.snapshot();
+        assert!(
+            snap.incidents
+                .iter()
+                .any(|i| i.root_cause == "evo_critical_test"),
+            "应记录 Critical 级别的 evolution incident"
+        );
+        let inc = snap
+            .incidents
+            .iter()
+            .find(|i| i.root_cause == "evo_critical_test")
+            .unwrap();
+        assert_eq!(inc.severity, IncidentSeverity::Critical);
+        assert_eq!(inc.source, IncidentSource::CoreEvolution);
+        assert_eq!(inc.recoverability, IncidentRecoverability::Manual);
     }
 
     #[test]
