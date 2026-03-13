@@ -39,32 +39,32 @@
 - [ ] 若开启了 `TIDYFLOW_PERF_LOG`，确认 perf 日志路径可访问且不为空
 - [ ] 日志、指标与构建证据能共同支撑问题排查，而不是只保留单一日志文件
 
-## 3.6. 热点性能回归检查（v1.46 新增）
+## 3.6. 热点性能回归检查与统一性能门禁（v1.47 更新）
 
-- [ ] 执行：`./scripts/tidyflow perf-regression`
-  - **或**通过 `./scripts/tidyflow quality-gate --cycle <cycle_id> --step all` 间接执行（推荐）
-- [ ] 确认报告文件存在：`build/perf/hotspot-regression-report.json`
-- [ ] 确认报告 `overall` 字段 **不为 `fail`**（`pass` 或 `warn` 均可继续发布）
-- [ ] 若 `overall=warn`，检查 `warnings` 字段列出的场景，评估是否需要更新基线或优化热路径
-- [ ] **不允许** 在 verify 路径中自动更新基线文件；基线更新只允许显式本地命令触发：
-  ```bash
-  # 仅在明确接受新的性能测量值时手动更新基线
-  # 编辑 core/benches/baselines/hotspot_regression.json 并提交 code review
-  ```
+> 本节由统一性能门禁契约 `scripts/tools/performance_gate_contract.json` 管理。发布阻断语义只由该契约决定，不再由 shell / checklist 各自维护判断规则。
 
-## 3.6.1. Apple 客户端性能基线（iPhone Simulator，本轮新增）
+- [ ] 执行：`./scripts/tidyflow quality-gate --cycle <cycle_id> --step all`
+  - 性能回归包含在 `step all` 中，无需单独运行 `perf-regression`
+  - 若需单独验证：`./scripts/tidyflow perf-regression`
+- [ ] 确认统一性能门禁报告存在：`build/perf/performance-gate-report.json`
+  - 报告须包含 `contract_version`、`overall`、`release_blocking=false`、`reason_codes`、`suites[]`、`project`、`workspace`
+- [ ] 确认报告 `overall` 不为 `fail`，且 `release_blocking=false`
+  - `pass` 或 `warn` 均可继续发布（`warn` 表示接近预算但未越过发布红线）
+  - `fail` 或 `release_blocking=true` 将被 `release_local.sh` 自动阻断，需修复后重跑
+- [ ] 确认以下两个子报告均存在且结构完整：
+  - Core 热点：`build/perf/hotspot-regression-report.json`
+  - Apple 客户端：`build/perf/apple-client-regression-report.json`
+- [ ] 若任一子报告的 `overall=warn`，检查对应场景的 `reason_codes`，评估是否需要更新基线或优化热路径
+- [ ] 若 `overall=fail`，报告会列出 `reason_codes`（如 `ratio_exceeded_fail`、`evidence_file_missing`、`suite_report_missing` 等），按原因处理
+- [ ] **不允许** 在 verify 路径中自动更新基线文件；基线更新只允许显式本地修改后提交：
+  - Core 热点：`core/benches/baselines/hotspot_regression.json`
+  - Apple 客户端：`scripts/tools/apple_client_perf_baselines.json`
+- [ ] Apple 客户端性能场景仅限 iPhone 16 / iOS 18.6 下的 `chat_stream` 与 `evolution_panel`，不要求 macOS UI 自动化
 
-> 本节仅要求 iPhone 16 Simulator（iOS 18.6），不要求 macOS UI 自动化。
+### 3.6.1. 性能门禁绕过（仅当必要）
 
-- [ ] 确认 Apple 客户端性能报告存在：`build/perf/apple-client-regression-report.json`
-  - 由 `./scripts/tidyflow perf-regression` 自动生成（已包含聊天流式与 Evolution 面板两个场景）
-- [ ] 确认报告 `overall` 字段 **不为 `fail`**
-- [ ] 确认以下两个场景均有证据日志：
-  - 聊天流式：`build/perf/apple-chat-stream-fixture-oslog.log`（含 `hotspot_key=ios_ai_chat`、`aiMessageTailFlush`、`memory_snapshot`）
-  - Evolution 面板：`build/perf/apple-evolution-panel-fixture-oslog.log`（含 `evolution_timeline_recompute_ms=`、`evolution_monitor tier_change`、`memory_snapshot`）
-- [ ] 若 `overall=warn`，检查各场景 `metrics[].p95_ms` 是否超过 warn_limit，评估是否需要优化
-- [ ] 若 `overall=fail`，报告会区分 Core 热点失败与 Apple 客户端失败的原因，根据对应原因处理
-- [ ] **不允许** 在 verify 路径中自动更新 `scripts/tools/apple_client_perf_baselines.json`；基线更新只允许显式本地修改后提交
+- 绕过仅通过 `--skip-quality-gate --bypass-reason "说明原因"` 路径，不新增静默开关
+- 绕过会写入审计日志 `.tidyflow/release/gate-bypass.audit.log`，记录 cycle/project/workspace/原因
 
 ## 4. 发布预演（无副作用）
 
