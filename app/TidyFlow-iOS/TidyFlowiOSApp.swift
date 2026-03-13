@@ -20,6 +20,7 @@ enum MobileRoute: Hashable {
     case aiChat(project: String, workspace: String)
     case evolution(project: String, workspace: String)
     case evidence(project: String, workspace: String)
+    case workspaceDiff(project: String, workspace: String, path: String, mode: String)
 }
 
 @main
@@ -85,6 +86,14 @@ struct TidyFlowiOSApp: App {
                                     project: project,
                                     workspace: workspace
                                 )
+                            case .workspaceDiff(let project, let workspace, let path, let mode):
+                                WorkspaceDiffView(
+                                    project: project,
+                                    workspace: workspace,
+                                    path: path,
+                                    initialMode: mode
+                                )
+                                .environmentObject(appState)
                             }
                         }
                 }

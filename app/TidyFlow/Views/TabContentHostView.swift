@@ -835,11 +835,11 @@ struct NativeDiffContentView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(cache.parsedLines) { line in
-                            DiffLineRowView(line: line) {
+                            DiffLineRowView(line: line, onNavigate: {
                                 if let target = line.targetLine {
                                     openEditorAtLine(target)
                                 }
-                            }
+                            })
                         }
                     }
                 }
@@ -871,67 +871,6 @@ struct NativeDiffContentView: View {
             mode: currentMode
         )
         appState.addEditorTab(workspaceKey: global, path: path, line: line)
-    }
-}
-
-struct DiffLineRowView: View {
-    let line: DiffLine
-    let onOpen: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(line.oldLineNumber.map { String($0) } ?? "")
-                .frame(width: 50, alignment: .trailing)
-                .foregroundColor(.secondary)
-                .font(.system(size: 11, design: .monospaced))
-            Text(line.newLineNumber.map { String($0) } ?? "")
-                .frame(width: 50, alignment: .trailing)
-                .foregroundColor(.secondary)
-                .font(.system(size: 11, design: .monospaced))
-            Text(prefix(for: line.kind))
-                .foregroundColor(color(for: line.kind))
-                .font(.system(size: 11, design: .monospaced))
-            Text(line.text)
-                .font(.system(size: 11, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
-        .background(background(for: line.kind))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if line.isNavigable {
-                onOpen()
-            }
-        }
-    }
-
-    private func prefix(for kind: DiffLineKind) -> String {
-        switch kind {
-        case .add: return "+"
-        case .del: return "-"
-        case .context: return " "
-        case .hunk: return "@@"
-        case .header: return " "
-        }
-    }
-
-    private func color(for kind: DiffLineKind) -> Color {
-        switch kind {
-        case .add: return .green
-        case .del: return .red
-        case .hunk: return .blue
-        default: return .secondary
-        }
-    }
-
-    private func background(for kind: DiffLineKind) -> Color {
-        switch kind {
-        case .add: return Color.green.opacity(0.10)
-        case .del: return Color.red.opacity(0.10)
-        case .hunk: return Color.blue.opacity(0.08)
-        default: return Color.clear
-        }
     }
 }
 

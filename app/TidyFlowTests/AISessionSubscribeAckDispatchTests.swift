@@ -152,4 +152,40 @@ final class AISessionSubscribeAckDispatchTests: XCTestCase {
                        "旧工具的事件应被拒绝")
         XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .claude_code))
     }
+
+    /// 验证工作区切换后（forceReset + 新 enter），迟到的旧 resumeCompleted 被忽略。
+    func testLateResumeCompletedAfterWorkspaceSwitchIsIgnored() {
+        let lifecycle = AIChatStageLifecycle()
+
+        // 原工作区：进入 resuming
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-old", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.resume(sessionId: "sess-old"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        // 工作区切换
+        lifecycle.apply(.forceReset)
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-new", aiTool: .codex))
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        // 迟到的 resumeCompleted 来自旧工作区，应被忽略
+        let result = lifecycle.apply(.resumeCompleted)
+        XCTAssertEqual(result, .ignored, "工作区切换后迟到的 resumeCompleted 应被忽略")
+        XCTAssertEqual(lifecycle.state.phase, .active, "phase 不应被迟到事件改变")
+    }
+
+    /// 验证断线重连流程：disconnected → reconnect → resuming → resumeCompleted → active
+    func testDisconnectReconnectResumeFlowReachesActive() {
+        let lifecycle = AIChatStageLifecycle()
+
+        lifecycle.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        lifecycle.apply(.resume(sessionId: "sess-1"))
+        XCTAssertEqual(lifecycle.state.phase, .resuming)
+
+        let result = lifecycle.apply(.resumeCompleted)
+        XCTAssertNotEqual(result, .ignored)
+        XCTAssertEqual(lifecycle.state.phase, .active, "断线重连完成后应回到 active")
+    }
 }

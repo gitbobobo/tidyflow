@@ -806,3 +806,115 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 工具 diff section 更新非回归测试
+
+/// 验证流式工具 diff section 更新后，消息 diff 内容正确替换而不是追加。
+final class AIChatToolDiffSectionUpdateTests: XCTestCase {
+    /// 工具 part 通过 partUpdated op 更新时 sections 内容应完整替换（非追加）。
+    func testPartUpdatedOpReplacesDiffSections() {
+        let store = AIChatStore()
+
+        // 初始：流式 partDelta 建立 diff 占位，先 flush 以建立中间状态
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m-edit", role: "assistant"),
+                .partDelta(
+                    messageId: "m-edit",
+                    partId: "tp-diff",
+                    partType: "tool",
+                    field: "output",
+                    delta: "streaming..."
+                ),
+            ],
+            isStreaming: true
+        )
+        // 先 flush 流式事件，建立 streaming placeholder，再应用 partUpdated
+        store.flushPendingStreamEvents()
+
+        // 最终 partUpdated 应替换 sections，不追加
+        store.applySessionCacheOps(
+            [
+                .partUpdated(
+                    messageId: "m-edit",
+                    part: makeToolPartWithSections(
+                        id: "tp-diff",
+                        sections: [
+                            AIToolViewSection(
+                                id: "edit-diff",
+                                title: "diff",
+                                content: "- old\n+ new",
+                                style: .diff,
+                                language: "diff",
+                                copyable: false,
+                                collapsedByDefault: false
+                            )
+                        ]
+                    )
+                )
+            ],
+            isStreaming: false
+        )
+
+        store.handleChatDone(sessionId: "s1")
+
+        let sections = store.messages.first?.parts.first?.toolView?.sections ?? []
+        XCTAssertEqual(sections.count, 1, "partUpdated 应替换 sections 而非追加")
+        XCTAssertEqual(sections.first?.style, .diff, "section 应为 diff 类型")
+        XCTAssertEqual(sections.first?.content, "- old\n+ new")
+    }
+
+    /// toolKind=diff 工具在完成时 diff section 内容正确，不重复。
+    func testDiffToolKindCompletionHasCorrectSections() {
+        let store = AIChatStore()
+
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "m-tool", role: "assistant"),
+                .partUpdated(
+                    messageId: "m-tool",
+                    part: AIProtocolPartInfo(
+                        id: "tp-1", partType: "tool", text: nil, mime: nil, filename: nil,
+                        url: nil, synthetic: nil, ignored: nil, source: nil,
+                        toolName: "edit", toolCallId: "call-1",
+                        toolKind: "diff",
+                        toolView: AIToolView(
+                            status: .completed, displayTitle: "edit", statusText: "completed",
+                            summary: nil, headerCommandSummary: nil, durationMs: nil,
+                            sections: [
+                                AIToolViewSection(
+                                    id: "edit-diff", title: "diff",
+                                    content: "final diff",
+                                    style: .diff, language: "diff",
+                                    copyable: false, collapsedByDefault: false
+                                )
+                            ],
+                            locations: [], question: nil, linkedSession: nil
+                        )
+                    )
+                )
+            ],
+            isStreaming: false
+        )
+
+        store.flushPendingStreamEvents()
+        store.handleChatDone(sessionId: "s1")
+
+        XCTAssertEqual(store.messages.first?.parts.first?.toolView?.sections.count, 1)
+        XCTAssertEqual(store.messages.first?.parts.first?.toolKind, "diff")
+        XCTAssertEqual(store.messages.first?.parts.first?.toolView?.status, .completed)
+    }
+
+    private func makeToolPartWithSections(id: String, sections: [AIToolViewSection]) -> AIProtocolPartInfo {
+        AIProtocolPartInfo(
+            id: id, partType: "tool", text: nil, mime: nil, filename: nil,
+            url: nil, synthetic: nil, ignored: nil, source: nil,
+            toolName: "shell", toolCallId: "call-\(id)", toolKind: "diff",
+            toolView: AIToolView(
+                status: .running, displayTitle: "shell", statusText: "running",
+                summary: nil, headerCommandSummary: nil, durationMs: nil,
+                sections: sections, locations: [], question: nil, linkedSession: nil
+            )
+        )
+    }
+}

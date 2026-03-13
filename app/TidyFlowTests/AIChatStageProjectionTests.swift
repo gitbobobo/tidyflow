@@ -377,3 +377,69 @@ final class AIChatStageProjectionTests: XCTestCase {
         XCTAssertEqual(chatMachine.state.phase, .idle)
     }
 }
+
+// MARK: - 流式停止与跨工作区边界回归测试
+
+/// 验证 forceReset 后迟到的流式事件被拒绝，以及切换会话后 transcript identity 变化。
+final class AIChatStageStreamBoundaryTests: XCTestCase {
+    /// forceReset 后 active 阶段的迟到事件应被拒绝（acceptsStreamEvent 返回 false）。
+    func testForceResetRejectsLateStreamEvents() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex))
+
+        lifecycle.apply(.forceReset)
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws", aiTool: .codex),
+                       "forceReset 后不应再接受旧工作区的流事件")
+    }
+
+    /// 工作区切换后，旧工作区的事件应被拒绝。
+    func testWorkspaceSwitchRejectsOldWorkspaceEvents() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-old", aiTool: .codex))
+        lifecycle.apply(.ready)
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-old", aiTool: .codex))
+
+        // 模拟工作区切换：forceReset + 重新 enter
+        lifecycle.apply(.forceReset)
+        lifecycle.apply(.enter(project: "proj", workspace: "ws-new", aiTool: .codex))
+        lifecycle.apply(.ready)
+
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-old", aiTool: .codex),
+                       "切换工作区后旧工作区事件应被拒绝")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "proj", workspace: "ws-new", aiTool: .codex),
+                      "切换工作区后新工作区事件应被接受")
+    }
+
+    /// 停止流式输出（stopStreaming → entering → ready）后状态应为 active。
+    func testStopStreamingThenReenterReachesActive() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+
+        // 模拟停止后重新连接（forceReset → enter → ready）
+        lifecycle.apply(.forceReset)
+        XCTAssertEqual(lifecycle.state.phase, .idle)
+        lifecycle.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        XCTAssertEqual(lifecycle.state.phase, .entering)
+        lifecycle.apply(.ready)
+        XCTAssertEqual(lifecycle.state.phase, .active)
+    }
+
+    /// 工具切换后旧工具流式事件应被拒绝。
+    func testToolSwitchRejectsOldToolEvents() {
+        let lifecycle = AIChatStageLifecycle()
+        lifecycle.apply(.enter(project: "p", workspace: "ws", aiTool: .codex))
+        lifecycle.apply(.ready)
+
+        lifecycle.apply(.switchTool(newTool: .claude_code))
+        lifecycle.apply(.ready)
+
+        XCTAssertFalse(lifecycle.acceptsStreamEvent(project: "p", workspace: "ws", aiTool: .codex),
+                       "切换工具后旧工具事件应被拒绝")
+        XCTAssertTrue(lifecycle.acceptsStreamEvent(project: "p", workspace: "ws", aiTool: .claude_code),
+                      "切换工具后新工具事件应被接受")
+    }
+}

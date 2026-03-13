@@ -171,6 +171,11 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
+    /// iOS Diff 缓存：按 DiffDescriptor.cacheKey（"project:workspace:path:mode"）隔离，
+    /// 直接复用 TidyFlowShared 的 DiffCache 与 DiffDescriptor，确保与 macOS 语义一致。
+    @Published var workspaceDiffCache: [String: DiffCache] = [:]
+    /// 会话列表筛选条件：按 "project:workspace" 作用域存储，避免跨工作区串扰。
+    @Published private var sessionListFiltersByKey: [String: AISessionListFilter] = [:]
     /// 工作区任务共享存储（取代原 workspaceTasksByKey，与 macOS 共享语义层对齐）
     let taskStore = WorkspaceTaskStore()
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
@@ -219,10 +224,14 @@ final class MobileAppState: ObservableObject {
             aiSessionsByTool[aiChatTool] = aiSessions
         }
     }
-    /// AI 会话状态缓存（按工具分桶；key: "project::workspace::sessionId"）
+    /// 会话状态缓存（按工具分桶；key: "project::workspace::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
-    /// 会话列表当前筛选条件，默认展示全部工具。
-    @Published var sessionListFilter: AISessionListFilter = .all
+    /// 向后兼容包装：读写当前活跃工作区的会话筛选条件。
+    /// 新代码应优先使用 `sessionListFilter(for:workspace:)` / `setSessionListFilter(_:for:workspace:)` 以确保多工作区隔离。
+    var sessionListFilter: AISessionListFilter {
+        get { sessionListFilter(for: aiActiveProject, workspace: aiActiveWorkspace) }
+        set { setSessionListFilter(newValue, for: aiActiveProject, workspace: aiActiveWorkspace) }
+    }
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection? {
         didSet {
@@ -4678,6 +4687,80 @@ final class MobileAppState: ObservableObject {
         fileWorkspacePhases[globalKey] = phase
     }
 
+    // MARK: - iOS Diff 缓存与请求 API
+
+    /// 按四元组描述符查询缓存（project/workspace/path/mode）。
+    func gitDiffCache(for descriptor: DiffDescriptor) -> DiffCache? {
+        workspaceDiffCache[descriptor.cacheKey]
+    }
+
+    /// 发起 git diff 请求；`force: true` 时忽略缓存直接刷新。
+    func requestGitDiff(descriptor: DiffDescriptor, force: Bool = false) {
+        guard isConnected else {
+            var cache = workspaceDiffCache[descriptor.cacheKey] ?? DiffCache.empty()
+            cache.error = "未连接"
+            cache.isLoading = false
+            workspaceDiffCache[descriptor.cacheKey] = cache
+            return
+        }
+        // 若未过期且不强制，直接使用缓存
+        if !force, let existing = workspaceDiffCache[descriptor.cacheKey], !existing.isExpired, !existing.isLoading {
+            return
+        }
+        var cache = workspaceDiffCache[descriptor.cacheKey] ?? DiffCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        workspaceDiffCache[descriptor.cacheKey] = cache
+        wsClient.requestGitDiff(
+            project: descriptor.project,
+            workspace: descriptor.workspace,
+            path: descriptor.path,
+            mode: descriptor.mode,
+            cacheMode: force ? .forceRefresh : .default
+        )
+    }
+
+    /// 接收 git_diff_result 并更新 iOS Diff 缓存。
+    /// 后台线程解析大文件，回主线程写缓存，与 macOS GitCacheState 策略保持一致。
+    func handleGitDiffResult(_ result: GitDiffResult) {
+        let key = DiffDescriptor(
+            project: result.project,
+            workspace: result.workspace,
+            path: result.path,
+            mode: result.mode
+        ).cacheKey
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let parsedLines = DiffParser.parse(result.text)
+            let cache = DiffCache(
+                text: result.text,
+                parsedLines: parsedLines,
+                isLoading: false,
+                error: nil,
+                isBinary: result.isBinary,
+                truncated: result.truncated,
+                code: result.code,
+                updatedAt: Date()
+            )
+            DispatchQueue.main.async {
+                self?.workspaceDiffCache[key] = cache
+            }
+        }
+    }
+
+    // MARK: - 会话筛选作用域 API
+
+    /// 按 project/workspace 作用域读取筛选条件，无记录时默认返回 `.all`。
+    func sessionListFilter(for project: String, workspace: String) -> AISessionListFilter {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return sessionListFiltersByKey[key] ?? .all
+    }
+
+    /// 按 project/workspace 作用域写入筛选条件。
+    func setSessionListFilter(_ filter: AISessionListFilter, for project: String, workspace: String) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        sessionListFiltersByKey[key] = filter
+    }
+
     // MARK: - 资源管理：按工作区边界淘汰缓存
 
     /// 清除指定工作区的全部缓存数据（文件列表、Git 状态、文件索引等）。
@@ -4699,6 +4782,14 @@ final class MobileAppState: ObservableObject {
 
         // AI 文件索引缓存（用 aiContextKey 格式，与 globalKey 相同）
         aiFileIndexCache.removeValue(forKey: key)
+
+        // Diff 缓存（按 project:workspace 前缀清除）
+        workspaceDiffCache.keys
+            .filter { $0.hasPrefix("\(key):") }
+            .forEach { workspaceDiffCache.removeValue(forKey: $0) }
+
+        // 会话筛选缓存
+        sessionListFiltersByKey.removeValue(forKey: key)
     }
 
     /// 释放某个已下线项目的所有工作区缓存，防止残留数据污染内存。

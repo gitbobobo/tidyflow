@@ -1,5 +1,6 @@
 import XCTest
 @testable import TidyFlow
+import TidyFlowShared
 
 final class AISessionVisibilityTests: XCTestCase {
     func testSessionStartedDefaultsOriginToUserWhenMissing() {
@@ -609,5 +610,84 @@ final class AISessionContextSnapshotSemanticsTests: XCTestCase {
         ]
         let snap = AISessionContextSnapshot.from(json: json)
         XCTAssertNil(snap, "缺少必要字段时应返回 nil")
+    }
+}
+
+// MARK: - iOS Diff 键控隔离回归测试
+
+/// 验证 DiffDescriptor 四元组键控隔离语义，确保 iOS 复用共享 Diff 缓存时
+/// project/workspace/path/mode 都是独立隔离维度。
+final class IOSDiffKeyIsolationTests: XCTestCase {
+    func testDiffDescriptorCacheKeyIncludesAllFourDimensions() {
+        let desc = DiffDescriptor(project: "p1", workspace: "w1", path: "src/foo.swift", mode: "working")
+        XCTAssertEqual(desc.cacheKey, "p1:w1:src/foo.swift:working")
+    }
+
+    func testDiffDescriptorDifferentProjectsProduceDifferentKeys() {
+        let a = DiffDescriptor(project: "alpha", workspace: "default", path: "a.swift", mode: "working")
+        let b = DiffDescriptor(project: "beta",  workspace: "default", path: "a.swift", mode: "working")
+        XCTAssertNotEqual(a.cacheKey, b.cacheKey, "不同 project 应产生不同 cacheKey")
+    }
+
+    func testDiffDescriptorDifferentWorkspacesProduceDifferentKeys() {
+        let a = DiffDescriptor(project: "p", workspace: "ws-a", path: "a.swift", mode: "working")
+        let b = DiffDescriptor(project: "p", workspace: "ws-b", path: "a.swift", mode: "working")
+        XCTAssertNotEqual(a.cacheKey, b.cacheKey, "不同 workspace 应产生不同 cacheKey")
+    }
+
+    func testDiffDescriptorDifferentModesProduceDifferentKeys() {
+        let a = DiffDescriptor.working(project: "p", workspace: "ws", path: "a.swift")
+        let b = DiffDescriptor.staged(project: "p",  workspace: "ws", path: "a.swift")
+        XCTAssertNotEqual(a.cacheKey, b.cacheKey, "working 与 staged 模式应产生不同 cacheKey")
+        XCTAssertEqual(a.mode, "working")
+        XCTAssertEqual(b.mode, "staged")
+    }
+
+    func testDiffDescriptorSameInputProducesSameKey() {
+        let a = DiffDescriptor(project: "p", workspace: "ws", path: "src/bar.swift", mode: "staged")
+        let b = DiffDescriptor(project: "p", workspace: "ws", path: "src/bar.swift", mode: "staged")
+        XCTAssertEqual(a.cacheKey, b.cacheKey, "相同四元组应生成相同 cacheKey")
+        XCTAssertEqual(a, b)
+    }
+
+    func testDiffDescriptorIsHashable() {
+        var set = Set<DiffDescriptor>()
+        let d1 = DiffDescriptor.working(project: "p", workspace: "ws", path: "f.swift")
+        let d2 = DiffDescriptor.staged(project: "p",  workspace: "ws", path: "f.swift")
+        set.insert(d1)
+        set.insert(d2)
+        set.insert(d1) // 重复插入
+        XCTAssertEqual(set.count, 2, "working 和 staged 应为两个不同的集合元素")
+    }
+}
+
+// MARK: - iOS 会话列表筛选作用域隔离测试
+
+/// 验证 AISessionListSemantics.pageKey 格式包含 project/workspace/filter 三个维度，
+/// 确保一个工作区的筛选条件不泄漏到另一个工作区。
+final class IOSSessionFilterScopeTests: XCTestCase {
+    func testPageKeyIncludesProjectWorkspaceAndFilter() {
+        let key = AISessionListSemantics.pageKey(project: "proj", workspace: "ws", filter: .all)
+        XCTAssertTrue(key.contains("proj"), "pageKey 应包含 project")
+        XCTAssertTrue(key.contains("ws"),   "pageKey 应包含 workspace")
+        XCTAssertTrue(key.contains("all"),  "pageKey 应包含 filter id")
+    }
+
+    func testPageKeyDiffersAcrossProjects() {
+        let k1 = AISessionListSemantics.pageKey(project: "proj-a", workspace: "ws", filter: .all)
+        let k2 = AISessionListSemantics.pageKey(project: "proj-b", workspace: "ws", filter: .all)
+        XCTAssertNotEqual(k1, k2, "不同 project 应生成不同 pageKey")
+    }
+
+    func testPageKeyDiffersAcrossWorkspaces() {
+        let k1 = AISessionListSemantics.pageKey(project: "p", workspace: "ws-a", filter: .all)
+        let k2 = AISessionListSemantics.pageKey(project: "p", workspace: "ws-b", filter: .all)
+        XCTAssertNotEqual(k1, k2, "不同 workspace 应生成不同 pageKey")
+    }
+
+    func testPageKeyDiffersAcrossFilters() {
+        let k1 = AISessionListSemantics.pageKey(project: "p", workspace: "ws", filter: .all)
+        let k2 = AISessionListSemantics.pageKey(project: "p", workspace: "ws", filter: .tool(.codex))
+        XCTAssertNotEqual(k1, k2, "不同 filter 应生成不同 pageKey")
     }
 }

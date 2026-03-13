@@ -1940,3 +1940,34 @@ public struct GitConflictDetailResultCache: Equatable {
         self.isBinary = result.isBinary
     }
 }
+
+// MARK: - 跨端 Diff 描述符（四元组唯一键）
+
+/// 按 project/workspace/path/mode 四元组唯一标识一个 Diff 请求与缓存条目。
+/// macOS 和 iOS 均使用此结构体作为 Diff 缓存的唯一键，避免各自定义独立的字符串拼接规则。
+public struct DiffDescriptor: Hashable, Equatable {
+    public let project: String
+    public let workspace: String
+    public let path: String
+    public let mode: String  // "working" | "staged"
+
+    public init(project: String, workspace: String, path: String, mode: String) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.mode = mode
+    }
+
+    /// 生成用于字典键的规范化字符串（与 GitCacheState.diffCacheKey 保持一致）
+    public var cacheKey: String {
+        "\(project):\(workspace):\(path):\(mode)"
+    }
+
+    public static func working(project: String, workspace: String, path: String) -> DiffDescriptor {
+        DiffDescriptor(project: project, workspace: workspace, path: path, mode: "working")
+    }
+
+    public static func staged(project: String, workspace: String, path: String) -> DiffDescriptor {
+        DiffDescriptor(project: project, workspace: workspace, path: path, mode: "staged")
+    }
+}

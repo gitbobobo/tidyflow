@@ -29,6 +29,8 @@ final class MobileAppStateGitMessageHandlerAdapter: GitMessageHandler {
     // v1.40: 冲突向导
     func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { dispatchToMain { $0.handleGitConflictDetailResult(result) } }
     func handleGitConflictActionResult(_ result: GitConflictActionResult) { dispatchToMain { $0.handleGitConflictActionResult(result) } }
+    /// iOS Diff 数据闭环：显式转发 handleGitDiffResult，由 MobileAppState 解析并回填 iOS Diff 缓存。
+    func handleGitDiffResult(_ result: GitDiffResult) { dispatchToMain { $0.handleGitDiffResult(result) } }
 }
 
 final class MobileAppStateProjectMessageHandlerAdapter: ProjectMessageHandler {

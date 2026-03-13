@@ -220,15 +220,20 @@ struct WorkspaceGitView: View {
     private var stagedSection: some View {
         Section {
             ForEach(projection.stagedItems) { item in
-                GitFileRow(item: item, isStaged: true)
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button {
-                            appState.gitUnstage(project: project, workspace: workspace, path: item.path, scope: "file")
-                        } label: {
-                            Label("取消暂存", systemImage: "minus.circle")
-                        }
-                        .tint(.orange)
+                NavigationLink(value: MobileRoute.workspaceDiff(
+                    project: project, workspace: workspace,
+                    path: item.path, mode: "staged"
+                )) {
+                    GitFileRow(item: item, isStaged: true)
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button {
+                        appState.gitUnstage(project: project, workspace: workspace, path: item.path, scope: "file")
+                    } label: {
+                        Label("取消暂存", systemImage: "minus.circle")
                     }
+                    .tint(.orange)
+                }
             }
         } header: {
             HStack {
@@ -251,23 +256,28 @@ struct WorkspaceGitView: View {
     private var trackedUnstagedSection: some View {
         Section {
             ForEach(projection.trackedUnstagedItems) { item in
-                GitFileRow(item: item, isStaged: false)
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button {
-                            appState.gitStage(project: project, workspace: workspace, path: item.path, scope: "file")
-                        } label: {
-                            Label("暂存", systemImage: "plus.circle")
-                        }
-                        .tint(.green)
+                NavigationLink(value: MobileRoute.workspaceDiff(
+                    project: project, workspace: workspace,
+                    path: item.path, mode: "working"
+                )) {
+                    GitFileRow(item: item, isStaged: false)
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button {
+                        appState.gitStage(project: project, workspace: workspace, path: item.path, scope: "file")
+                    } label: {
+                        Label("暂存", systemImage: "plus.circle")
                     }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            discardTargetPath = item.path
-                            showDiscardConfirm = true
-                        } label: {
-                            Label("丢弃更改", systemImage: "arrow.uturn.backward")
-                        }
+                    .tint(.green)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        discardTargetPath = item.path
+                        showDiscardConfirm = true
+                    } label: {
+                        Label("丢弃更改", systemImage: "arrow.uturn.backward")
                     }
+                }
             }
         } header: {
             HStack {

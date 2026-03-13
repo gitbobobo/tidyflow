@@ -224,6 +224,9 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		SPL00007 /* GitPanelSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00022 /* GitPanelSections.swift */; };
 SPL00046 /* GitConflictWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00045 /* GitConflictWizardView.swift */; };
 MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00062 /* GitConflictWizardSheet.swift */; };
+		MOB00064 /* WorkspaceDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00065 /* WorkspaceDiffView.swift */; };
+		GDL00002 /* GitDiffLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = GDL00001 /* GitDiffLineView.swift */; };
+		
 		SPL00008 /* GitGraphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00023 /* GitGraphViews.swift */; };
 		SPL00009 /* ExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00024 /* ExplorerView.swift */; };
 		SPL0000A /* FileDialogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00025 /* FileDialogViews.swift */; };
@@ -551,6 +554,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SPL00022 /* GitPanelSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSections.swift; sourceTree = "<group>"; };
 		SPL00045 /* GitConflictWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardView.swift; sourceTree = "<group>"; };
 		MOB00062 /* GitConflictWizardSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSheet.swift; sourceTree = "<group>"; };
+		MOB00065 /* WorkspaceDiffView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceDiffView.swift; sourceTree = "<group>"; };
+		GDL00001 /* GitDiffLineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitDiffLineView.swift; sourceTree = "<group>"; };
 		SPL00023 /* GitGraphViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitGraphViews.swift; sourceTree = "<group>"; };
 		SPL00024 /* ExplorerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerView.swift; sourceTree = "<group>"; };
 		SPL00025 /* FileDialogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDialogViews.swift; sourceTree = "<group>"; };
@@ -701,6 +706,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
 				SET00011 /* SettingsView.swift */,
 				B3A00014 /* TabContentHostView.swift */,
+				GDL00001 /* GitDiffLineView.swift */,
 				3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */,
 				AIC00001 /* MessageListView.swift */,
 				AIC00022 /* AIPlanCardView.swift */,
@@ -763,6 +769,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				MOB00056 /* MobileAIChatView.swift */,
 				MOB00058 /* MobileSessionListSheet.swift */,
 				MOB00061 /* WorkspaceGitView.swift */,
+				MOB00065 /* WorkspaceDiffView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -1227,6 +1234,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				MOB00057 /* MobileAIChatView.swift in Sources */,
 				MOB00059 /* MobileSessionListSheet.swift in Sources */,
 				MOB00060 /* WorkspaceGitView.swift in Sources */,
+				MOB00064 /* WorkspaceDiffView.swift in Sources */,
 				UX100001 /* ProjectsSidebarView.swift in Sources */,
 				UX100002 /* AddProjectSheet.swift in Sources */,
 				A1000001 /* TidyFlowApp.swift in Sources */,
@@ -1308,6 +1316,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				B3A00003 /* TabStripView.swift in Sources */,
 				9E0EB284897F99A8F3DAEABA /* VerticalSplitDivider.swift in Sources */,
 				B3A00004 /* TabContentHostView.swift in Sources */,
+				GDL00002 /* GitDiffLineView.swift in Sources */,
 				AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */,
 				AIC00002 /* MessageListView.swift in Sources */,
 				AIC00018 /* MarkdownTextView.swift in Sources */,

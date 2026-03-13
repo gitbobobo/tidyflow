@@ -135,6 +135,8 @@ struct MobileAIChatView: View {
         .sheet(isPresented: $showSessionList) {
             MobileSessionListSheet(
                 showSessionList: $showSessionList,
+                project: project,
+                workspace: workspace,
                 onLoadSession: { session in
                     loadSession(session)
                 },
