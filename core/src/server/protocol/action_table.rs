@@ -16,6 +16,7 @@ pub const EXACT_RULES: &[(&str, &str)] = &[
     ("project", "export_template"),
     ("project", "import_template"),
     ("project", "templates"),
+    ("node", "node_refresh_network"),
 ];
 
 pub const PREFIX_RULES: &[(&str, &str)] = &[
@@ -34,12 +35,12 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("project", "run_project_command"),
     ("project", "cancel_project_command"),
     ("project", "template_"),
+    ("node", "node_"),
     ("ai", "ai_"),
     ("evidence", "evidence_"),
     ("evolution", "evo_"),
     ("git", "git_conflict_"),
     ("health", "health_"),
-    ("node", "node_"),
 ];
 
 pub const CONTAINS_RULES: &[(&str, &str)] = &[

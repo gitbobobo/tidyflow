@@ -11,11 +11,11 @@ pub enum DomainRoute {
     Git,
     Project,
     Settings,
+    Node,
     Ai,
     Evidence,
     Evolution,
     Health,
-    Node,
 }
 
 pub const DOMAIN_IDS: &[&str] = &[
@@ -25,11 +25,11 @@ pub const DOMAIN_IDS: &[&str] = &[
     "git",
     "project",
     "settings",
+    "node",
     "ai",
     "evidence",
     "evolution",
     "health",
-    "node",
 ];
 
 pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
@@ -40,11 +40,11 @@ pub fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
         "git" => Some(DomainRoute::Git),
         "project" => Some(DomainRoute::Project),
         "settings" => Some(DomainRoute::Settings),
+        "node" => Some(DomainRoute::Node),
         "ai" => Some(DomainRoute::Ai),
         "evidence" => Some(DomainRoute::Evidence),
         "evolution" => Some(DomainRoute::Evolution),
         "health" => Some(DomainRoute::Health),
-        "node" => Some(DomainRoute::Node),
         _ => None,
     }
 }
@@ -57,10 +57,10 @@ pub fn domain_route_id(route: DomainRoute) -> &'static str {
         DomainRoute::Git => "git",
         DomainRoute::Project => "project",
         DomainRoute::Settings => "settings",
+        DomainRoute::Node => "node",
         DomainRoute::Ai => "ai",
         DomainRoute::Evidence => "evidence",
         DomainRoute::Evolution => "evolution",
         DomainRoute::Health => "health",
-        DomainRoute::Node => "node",
     }
 }

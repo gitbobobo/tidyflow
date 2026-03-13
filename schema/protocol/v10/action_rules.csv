@@ -49,6 +49,7 @@ exact,project,import_template
 exact,project,templates
 prefix,project,template_
 contains,settings,client_settings
+exact,node,node_refresh_network
 prefix,node,node_
 prefix,ai,ai_
 prefix,evidence,evidence_
