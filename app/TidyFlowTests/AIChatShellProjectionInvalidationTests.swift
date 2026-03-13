@@ -7,6 +7,7 @@ import XCTest
 /// - tailRevision 增长但其他 shell 字段不变时，签名不变（不触发 projection 刷新）
 /// - isStreaming、pendingQuestionVersion、abortPendingSessionId 等 shell 字段变化时，签名确实变化
 /// - pendingQuestionCount 变化时签名变化（question/tool 状态更新应刷新 shell）
+@MainActor
 final class AIChatShellProjectionInvalidationTests: XCTestCase {
 
     // MARK: - tailRevision 变化不影响签名
