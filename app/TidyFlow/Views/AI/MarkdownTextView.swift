@@ -29,43 +29,8 @@ enum AIChatMarkdownRole {
     case assistant
 }
 
-private enum StreamingMarkdownRenderPolicy {
-    struct Configuration {
-        let minInterval: CFAbsoluteTime
-        let maxInterval: CFAbsoluteTime
-        let minimumMeaningfulDelta: Int
-    }
-
-    static func configuration(for text: String) -> Configuration {
-        let length = text.utf16.count
-        switch length {
-        case 0..<1_200:
-            return Configuration(minInterval: 0.20, maxInterval: 0.45, minimumMeaningfulDelta: 24)
-        case 1_200..<4_000:
-            return Configuration(minInterval: 0.30, maxInterval: 0.75, minimumMeaningfulDelta: 64)
-        default:
-            return Configuration(minInterval: 0.50, maxInterval: 1.20, minimumMeaningfulDelta: 120)
-        }
-    }
-
-    static func hasMeaningfulIncrement(renderedText: String, newText: String) -> Bool {
-        guard renderedText != newText else { return false }
-        guard newText.count >= renderedText.count else { return true }
-
-        let config = configuration(for: newText)
-        let delta = newText.utf16.count - renderedText.utf16.count
-        if delta >= config.minimumMeaningfulDelta {
-            return true
-        }
-
-        return newText.last == "\n" ||
-            newText.hasSuffix("```") ||
-            newText.last == "." ||
-            newText.last == "。" ||
-            newText.last == ":" ||
-            newText.last == "："
-    }
-}
+// StreamingMarkdownRenderPolicy 已迁移至 StreamingMarkdownRenderStrategy.swift，
+// MarkdownTextView 改用 StreamingMarkdownRenderScheduler。
 
 /// 聊天消息 Markdown 渲染器：每个可见文本 part 对应一个 StructuredText。
 /// 流式输出期间按文本体积自适应降频，减少全量 Markdown 解析开销。
@@ -128,10 +93,12 @@ struct MarkdownTextView: View {
             }
             .onChange(of: isStreaming) { _, streaming in
                 if !streaming {
-                    // 流式结束，立即渲染最终文本确保一致
+                    // 流式结束，使用调度器决策确保最终态渲染
                     deferredRenderTask?.cancel()
                     deferredRenderTask = nil
-                    if renderedText != text {
+                    let scheduler = StreamingMarkdownRenderScheduler()
+                    let decision = scheduler.decideOnStreamEnd(renderedText: renderedText, finalText: text)
+                    if case .renderNow = decision {
                         commitRender(text, reason: "stream_end")
                     }
                     logStreamingSummary(finalLength: text.utf16.count)
@@ -151,45 +118,54 @@ struct MarkdownTextView: View {
     /// 流式期间按文本体积自适应节流 Markdown 渲染。
     /// 非流式场景下直接更新，无额外开销。
     private func throttledRender(_ newText: String) {
-        guard isStreaming else {
-            if renderedText != newText {
-                renderedText = newText
-            }
-            return
-        }
-
         guard newText != latestPendingText || newText != renderedText else { return }
         latestPendingText = newText
 
+        let scheduler = StreamingMarkdownRenderScheduler()
         let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - lastRenderTime
-        let config = StreamingMarkdownRenderPolicy.configuration(for: newText)
-        let hasMeaningfulIncrement = StreamingMarkdownRenderPolicy.hasMeaningfulIncrement(
+        let decision = scheduler.decide(
             renderedText: renderedText,
-            newText: newText
+            incomingText: newText,
+            isStreaming: isStreaming,
+            lastRenderTime: lastRenderTime,
+            now: now
         )
 
-        let shouldRenderNow =
-            elapsed >= config.maxInterval ||
-            (hasMeaningfulIncrement && elapsed >= config.minInterval)
-
-        if shouldRenderNow {
+        switch decision {
+        case .noop:
+            return
+        case .renderNow(let reason):
             deferredRenderTask?.cancel()
             deferredRenderTask = nil
-            commitRender(newText, reason: hasMeaningfulIncrement ? "meaningful_increment" : "max_interval")
-            return
-        }
-
-        deferredRenderTask?.cancel()
-        let remaining = max(
-            0,
-            (hasMeaningfulIncrement ? config.minInterval : config.maxInterval) - elapsed
-        )
-        deferredRenderTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(remaining))
-            guard !Task.isCancelled else { return }
-            commitRender(latestPendingText, reason: hasMeaningfulIncrement ? "deferred_increment" : "deferred_max_interval")
-            deferredRenderTask = nil
+            let logReason: StaticString
+            switch reason {
+            case .meaningfulIncrement: logReason = "meaningful_increment"
+            case .maxIntervalElapsed: logReason = "max_interval"
+            case .streamEnded: logReason = "stream_end"
+            case .nonStreaming: logReason = "non_streaming"
+            }
+            commitRender(newText, reason: logReason)
+        case .deferRender(let interval):
+            deferredRenderTask?.cancel()
+            deferredRenderTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { return }
+                let latestDecision = scheduler.decide(
+                    renderedText: renderedText,
+                    incomingText: latestPendingText,
+                    isStreaming: isStreaming,
+                    lastRenderTime: lastRenderTime,
+                    now: CFAbsoluteTimeGetCurrent()
+                )
+                if case .renderNow = latestDecision {
+                    commitRender(latestPendingText, reason: "deferred_flush")
+                } else if case .noop = latestDecision {
+                    // 无需渲染
+                } else {
+                    commitRender(latestPendingText, reason: "deferred_fallback")
+                }
+                deferredRenderTask = nil
+            }
         }
     }
 

@@ -785,7 +785,7 @@ struct AIChatSnapshot {
     var questionRequestToCallId: [String: String]
 }
 
-private enum AIChatStreamEvent {
+enum AIChatStreamEvent {
     case messageUpdated(messageId: String, role: String)
     case partUpdated(messageId: String, part: AIProtocolPartInfo)
     case partDelta(messageId: String, partId: String, partType: String, field: String, delta: String)
@@ -896,6 +896,7 @@ final class AIChatStore {
         label: "cn.tidyflow.ai.stream.reducer",
         qos: .userInitiated
     )
+    private var lastPublishedTailSnapshot: [AIChatMessage] = []
     private static let streamCommitInterval: TimeInterval = 0.05
     weak var performanceTracer: TFPerformanceTracer?
     var performanceContextProvider: (() -> (project: String, workspace: String)?)?
@@ -1013,6 +1014,13 @@ final class AIChatStore {
     }
 
     func replaceMessages(_ newMessages: [AIChatMessage]) {
+        replaceMessages(newMessages, shouldPublishTailSignals: true)
+    }
+
+    private func replaceMessages(
+        _ newMessages: [AIChatMessage],
+        shouldPublishTailSignals: Bool
+    ) {
         flushPendingStreamEvents()
         messages = newMessages
         abortPendingSessionId = nil
@@ -1029,7 +1037,9 @@ final class AIChatStore {
         questionRequestToCallId = [:]
         rebuildIndexes()
         recomputeIsStreaming()
-        publishTailSignals()
+        if shouldPublishTailSignals {
+            publishTailSignals()
+        }
     }
 
     func applyPerfFixtureScenario(_ scenario: AIChatPerfFixtureScenario) {
@@ -1074,7 +1084,7 @@ final class AIChatStore {
             }
             return AIChatMessage(messageId: message.id, role: role, parts: dedupedParts, isStreaming: false)
         }
-        replaceMessages(mapped)
+        replaceMessages(mapped, shouldPublishTailSignals: false)
         if isStreaming,
            let assistantIndex = messages.indices.reversed().first(where: { messages[$0].role == .assistant }) {
             markOnlyStreamingAssistant(at: assistantIndex)
@@ -1212,66 +1222,7 @@ final class AIChatStore {
     }
 
     private static func coalesceStreamEvents(_ events: [AIChatStreamEvent]) -> [AIChatStreamEvent] {
-        guard !events.isEmpty else { return [] }
-
-        var result: [AIChatStreamEvent] = []
-        var pendingMessageUpdates: [String: String] = [:]
-        var pendingMessageOrder: [String] = []
-        var pendingDelta: AIChatStreamEvent?
-
-        func flushMessageUpdates() {
-            guard !pendingMessageOrder.isEmpty else { return }
-            for messageId in pendingMessageOrder {
-                if let role = pendingMessageUpdates.removeValue(forKey: messageId) {
-                    result.append(.messageUpdated(messageId: messageId, role: role))
-                }
-            }
-            pendingMessageOrder.removeAll(keepingCapacity: true)
-        }
-
-        func flushPendingDelta() {
-            if let pendingDelta {
-                result.append(pendingDelta)
-            }
-            pendingDelta = nil
-        }
-
-        for event in events {
-            switch event {
-            case .messageUpdated(let messageId, let role):
-                flushPendingDelta()
-                if pendingMessageUpdates[messageId] == nil {
-                    pendingMessageOrder.append(messageId)
-                }
-                pendingMessageUpdates[messageId] = role
-            case .partUpdated:
-                flushMessageUpdates()
-                flushPendingDelta()
-                result.append(event)
-            case .partDelta(let messageId, let partId, let partType, let field, let delta):
-                flushMessageUpdates()
-                if case let .partDelta(existingMessageId, existingPartId, existingPartType, existingField, existingDelta)? = pendingDelta,
-                   existingMessageId == messageId,
-                   existingPartId == partId,
-                   existingPartType == partType,
-                   existingField == field {
-                    pendingDelta = .partDelta(
-                        messageId: messageId,
-                        partId: partId,
-                        partType: partType,
-                        field: field,
-                        delta: existingDelta + delta
-                    )
-                } else {
-                    flushPendingDelta()
-                    pendingDelta = event
-                }
-            }
-        }
-
-        flushMessageUpdates()
-        flushPendingDelta()
-        return result
+        AIChatStreamCoalescer.coalesce(events)
     }
 
     /// 仅接受单调不回退、且不出现 revision 断层的流式更新。
@@ -1781,7 +1732,13 @@ final class AIChatStore {
     }
 
     private func publishTailSignals() {
-        tailRevision &+= 1
+        let summary = AIChatStreamCoalescer.summarizeTailChange(
+            before: lastPublishedTailSnapshot,
+            after: messages
+        )
+        if summary.hasMeaningfulChange {
+            tailRevision &+= 1
+        }
         latestAssistantPartMeta = messages.reversed().lazy
             .filter { $0.role == .assistant }
             .compactMap { message in
@@ -1795,6 +1752,7 @@ final class AIChatStore {
                 )
             }
             .first
+        lastPublishedTailSnapshot = messages
     }
 
     private func isRunningToolPart(_ part: AIChatPart) -> Bool {

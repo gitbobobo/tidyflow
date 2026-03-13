@@ -533,6 +533,117 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertFalse(store.recentHistoryIsLoading)
     }
 
+    func testIdenticalSessionCacheSnapshotDoesNotRepublishTailSignals() {
+        let store = AIChatStore()
+        let snapshot = [
+            AIProtocolMessageInfo(
+                id: "m1",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [makeTextPart(id: "p1", text: "hello")]
+            ),
+        ]
+
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: false)
+        let revisionAfterFirstApply = store.tailRevision
+
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: false)
+
+        XCTAssertEqual(
+            store.tailRevision,
+            revisionAfterFirstApply,
+            "相同会话快照重复应用时不应再次发布 tail signal"
+        )
+    }
+
+    func testIdenticalStreamingSessionCacheSnapshotDoesNotRepublishTailSignals() {
+        let store = AIChatStore()
+        let snapshot = [
+            AIProtocolMessageInfo(
+                id: "m1",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [makeTextPart(id: "p1", text: "hello")]
+            ),
+        ]
+
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: true)
+        let revisionAfterFirstApply = store.tailRevision
+
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: true)
+
+        XCTAssertEqual(
+            store.tailRevision,
+            revisionAfterFirstApply,
+            "相同流式会话快照重复应用时不应再次发布 tail signal"
+        )
+    }
+
+    func testSummarizeTailChangeTreatsRemappedSessionCacheSnapshotAsNoMeaningfulChange() {
+        let before = [
+            AIChatMessage(
+                id: "local-before",
+                messageId: "m1",
+                role: .assistant,
+                parts: [AIChatPart(id: "p1", kind: .text, text: "hello")],
+                isStreaming: false
+            ),
+        ]
+        let after = [
+            AIChatMessage(
+                id: "local-after",
+                messageId: "m1",
+                role: .assistant,
+                parts: [AIChatPart(id: "p1", kind: .text, text: "hello")],
+                isStreaming: false
+            ),
+        ]
+
+        XCTAssertEqual(
+            AIChatStreamCoalescer.summarizeTailChange(before: before, after: after),
+            .noMeaningfulChange,
+            "相同 messageId 的 remap 快照不应因为本地 UUID 变化被视为尾部替换"
+        )
+    }
+
+    func testSessionSwitchClearsPublicationBaselineForSameSnapshot() {
+        let store = AIChatStore()
+        let snapshot = [
+            AIProtocolMessageInfo(
+                id: "m1",
+                role: "assistant",
+                createdAt: nil,
+                agent: nil,
+                modelProviderID: nil,
+                modelID: nil,
+                parts: [makeTextPart(id: "p1", text: "hello")]
+            ),
+        ]
+
+        store.setCurrentSessionId("session-a")
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: false)
+        let revisionAfterSessionA = store.tailRevision
+
+        store.clearMessages()
+        let revisionAfterClear = store.tailRevision
+        XCTAssertGreaterThan(revisionAfterClear, revisionAfterSessionA)
+
+        store.setCurrentSessionId("session-b")
+        store.replaceMessagesFromSessionCache(snapshot, isStreaming: false)
+
+        XCTAssertGreaterThan(
+            store.tailRevision,
+            revisionAfterClear,
+            "切换会话并清空缓存后，同一快照在新会话中应重新发布"
+        )
+    }
+
     // MARK: - AI 聊天舞台生命周期与缓存隔离
 
     /// 验证舞台 enter → ready 迁移后，工具切换（switchTool）正确重置上下文。

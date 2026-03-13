@@ -220,4 +220,37 @@ final class MessageListVirtualizationBehaviorTests: XCTestCase {
             index: 100, isStreaming: false, fullRenderRange: rangeB, totalCount: 50
         ), "50 条消息场景中 index=100 超出范围，不应完整渲染")
     }
+
+    func testSharedMessageListViewTypeIsReusedBySubAgentAndEvolutionReplay() {
+        let messages = [
+            AIChatMessage(
+                id: "m1",
+                messageId: "m1",
+                role: .assistant,
+                parts: [AIChatPart(id: "p1", kind: .text, text: "hello")]
+            ),
+        ]
+        let subAgentView = MessageListView(
+            messages: messages,
+            sessionToken: "sub-session",
+            onQuestionReply: { _, _ in },
+            onQuestionReject: { _ in },
+            onQuestionReplyAsMessage: { _ in },
+            onOpenLinkedSession: { _ in }
+        )
+        let replayView = MessageListView(
+            messages: messages,
+            sessionToken: "replay-session",
+            onQuestionReply: { _, _ in },
+            onQuestionReject: { _ in },
+            onQuestionReplyAsMessage: { _ in },
+            onOpenLinkedSession: nil
+        )
+
+        let subAgentBodyType = String(reflecting: type(of: subAgentView.body))
+        let replayBodyType = String(reflecting: type(of: replayView.body))
+
+        XCTAssertEqual(subAgentBodyType, replayBodyType, "子会话 viewer 与 Evolution replay 应复用同一 MessageListView 实现")
+        XCTAssertTrue(subAgentBodyType.contains("AIChatTranscriptContainer"))
+    }
 }

@@ -156,3 +156,189 @@ final class WSSetupIdempotenceTests: XCTestCase {
         XCTAssertEqual(appState.wsClient.webSocketTaskIdentity, "task-1")
     }
 }
+
+// MARK: - MainThreadReliefRegressionTests
+
+/// 验证高频 delta flush 场景下事件聚合与会话隔离的回归用例。
+///
+/// 覆盖：
+/// - 300 个连续 delta 事件被聚合为有界事件集，不产生 O(N) UI 刷新
+/// - 会话切换后聚合器不跨 session 合并状态
+final class MainThreadReliefRegressionTests: XCTestCase {
+
+    // MARK: - 高频 delta 聚合界限
+
+    func testHighFrequencyDeltaEventsCoalesceIntoBoundedResultSet() {
+        // 300 个连续同 partId/field delta 应聚合为 1 个 delta
+        let events: [AIChatStreamEvent] = (0..<300).map { i in
+            AIChatStreamEvent.partDelta(
+                messageId: "msg-1",
+                partId: "part-1",
+                partType: "text",
+                field: "text",
+                delta: "token\(i) "
+            )
+        }
+        let result = AIChatStreamCoalescer.coalesce(events)
+        // 聚合后应为单个 delta（同 partId/field 完全合并）
+        XCTAssertEqual(result.count, 1, "300 个连续同字段 delta 应聚合为 1 个事件")
+        if case let .partDelta(_, _, _, _, delta) = result[0] {
+            XCTAssertTrue(delta.contains("token0 "), "聚合结果应包含首个 token")
+            XCTAssertTrue(delta.contains("token299 "), "聚合结果应包含末个 token")
+        } else {
+            XCTFail("聚合结果类型不正确")
+        }
+    }
+
+    func testInterleavedDifferentFieldsDontCoalesce() {
+        // 不同 field 的 delta 不应合并
+        let events: [AIChatStreamEvent] = [
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "text", delta: "aaa"),
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "reasoning", delta: "bbb"),
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "text", delta: "ccc"),
+        ]
+        let result = AIChatStreamCoalescer.coalesce(events)
+        XCTAssertEqual(result.count, 3, "不同 field 的 delta 不应合并")
+    }
+
+    func testPartUpdatedBreaksCoalescingBoundary() {
+        // partUpdated 会打断前后 delta 的合并
+        let events: [AIChatStreamEvent] = [
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "text", delta: "a"),
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "text", delta: "b"),
+            .partUpdated(messageId: "msg-1", part: AIProtocolPartInfo(
+                id: "part-1", partType: "text", text: nil, mime: nil, filename: nil,
+                url: nil, synthetic: nil, ignored: nil, source: nil,
+                toolName: nil, toolCallId: nil, toolKind: nil, toolView: nil
+            )),
+            .partDelta(messageId: "msg-1", partId: "part-1", partType: "text", field: "text", delta: "c"),
+        ]
+        let result = AIChatStreamCoalescer.coalesce(events)
+        XCTAssertEqual(result.count, 3, "partUpdated 前后的 delta 不应合并")
+        if case let .partDelta(_, _, _, _, delta) = result[0] {
+            XCTAssertEqual(delta, "ab", "partUpdated 前的 delta 应合并")
+        }
+    }
+
+    // MARK: - 会话切换聚合隔离
+
+    func testCoalescerDoesNotMergeEventsAcrossSessionSwitch() {
+        // session A 的 delta 与 session B 的 delta 在同一批次时，
+        // 不同 messageId 表示不同消息，不应被合并
+        let sessionAEvents: [AIChatStreamEvent] = (0..<50).map { _ in
+            AIChatStreamEvent.partDelta(
+                messageId: "session-A-msg",
+                partId: "part-1",
+                partType: "text",
+                field: "text",
+                delta: "A"
+            )
+        }
+        let sessionBEvents: [AIChatStreamEvent] = (0..<50).map { _ in
+            AIChatStreamEvent.partDelta(
+                messageId: "session-B-msg",
+                partId: "part-1",
+                partType: "text",
+                field: "text",
+                delta: "B"
+            )
+        }
+        // 混合两个会话的事件（模拟错误场景）
+        let mixed = sessionAEvents + sessionBEvents
+        let result = AIChatStreamCoalescer.coalesce(mixed)
+        // 不同 messageId 不应合并：应有 2 个 delta（A 批、B 批各一个）
+        XCTAssertEqual(result.count, 2, "不同 session 消息的 delta 不应合并")
+        if case let .partDelta(msgId, _, _, _, _) = result[0] {
+            XCTAssertEqual(msgId, "session-A-msg", "第一批应为 session A")
+        }
+        if case let .partDelta(msgId, _, _, _, _) = result[1] {
+            XCTAssertEqual(msgId, "session-B-msg", "第二批应为 session B")
+        }
+    }
+
+    func testTailChangeSummaryDetectsNewMessage() {
+        let before: [AIChatMessage] = [
+            makeMsg(id: "msg-1", text: "Hello"),
+        ]
+        let after: [AIChatMessage] = [
+            makeMsg(id: "msg-1", text: "Hello"),
+            makeMsg(id: "msg-2", text: "World"),
+        ]
+        let summary = AIChatStreamCoalescer.summarizeTailChange(before: before, after: after)
+        XCTAssertEqual(summary, .appendedNewMessage)
+    }
+
+    func testTailChangeSummaryDetectsTextGrowth() {
+        let before: [AIChatMessage] = [makeMsg(id: "msg-1", text: "Hello")]
+        let after: [AIChatMessage] = [makeMsg(id: "msg-1", text: "Hello world")]
+        let summary = AIChatStreamCoalescer.summarizeTailChange(before: before, after: after)
+        XCTAssertEqual(summary, .grewTailText)
+    }
+
+    func testTailChangeSummaryDetectsNoChange() {
+        let messages: [AIChatMessage] = [makeMsg(id: "msg-1", text: "Hello")]
+        let summary = AIChatStreamCoalescer.summarizeTailChange(before: messages, after: messages)
+        XCTAssertEqual(summary, .noMeaningfulChange)
+    }
+
+    func testHighFrequencyDeltaFlushPublishesBoundedTailRevisions() {
+        let store = AIChatStore()
+        store.applySessionCacheOps(
+            [
+                .messageUpdated(messageId: "assistant-1", role: "assistant"),
+                .partUpdated(messageId: "assistant-1", part: makeTextPart(id: "part-1", text: "")),
+            ],
+            isStreaming: true
+        )
+        store.flushPendingStreamEvents()
+        let baseline = store.tailRevision
+
+        let deltaOps: [AIProtocolSessionCacheOp] = (0..<300).map { index in
+            .partDelta(
+                messageId: "assistant-1",
+                partId: "part-1",
+                partType: "text",
+                field: "text",
+                delta: "token\(index)"
+            )
+        }
+        store.applySessionCacheOps(deltaOps, isStreaming: true)
+        store.flushPendingStreamEvents()
+
+        XCTAssertLessThanOrEqual(
+            store.tailRevision - baseline,
+            1,
+            "300 次 delta 在一次 flush 中应只产生有界的 tail 发布"
+        )
+        XCTAssertTrue(store.messages.first?.parts.first?.text?.contains("token299") == true)
+    }
+
+    // MARK: - Helper
+
+    private func makeMsg(id: String, text: String) -> AIChatMessage {
+        AIChatMessage(
+            id: id,
+            messageId: id,
+            role: .assistant,
+            parts: [AIChatPart(id: "\(id)-part", kind: .text, text: text)]
+        )
+    }
+
+    private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
+        AIProtocolPartInfo(
+            id: id,
+            partType: "text",
+            text: text,
+            mime: nil,
+            filename: nil,
+            url: nil,
+            synthetic: nil,
+            ignored: nil,
+            source: nil,
+            toolName: nil,
+            toolCallId: nil,
+            toolKind: nil,
+            toolView: nil
+        )
+    }
+}

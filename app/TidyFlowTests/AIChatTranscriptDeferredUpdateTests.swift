@@ -180,3 +180,173 @@ final class AIChatTranscriptDeferredUpdateTests: XCTestCase {
         XCTAssertEqual(state.pendingAction, .fullRefresh)
     }
 }
+
+// MARK: - AIChatTranscriptViewportState 测试
+
+/// 验证 AIChatTranscriptViewportState 可见窗口更新与 prepend 锚点语义。
+final class AIChatTranscriptViewportStateTests: XCTestCase {
+
+    func testResetClearsAllFields() {
+        var state = AIChatTranscriptViewportState()
+        state.visibleMessageIDs = ["m1", "m2"]
+        state.stableFullRenderRange = 0...5
+        state.pendingPrependAnchorID = "anchor-1"
+        state.lastKnownContentHeight = 1500
+
+        state.reset()
+
+        XCTAssertTrue(state.visibleMessageIDs.isEmpty)
+        XCTAssertNil(state.stableFullRenderRange)
+        XCTAssertNil(state.pendingPrependAnchorID)
+        XCTAssertEqual(state.lastKnownContentHeight, 0)
+    }
+
+    func testApplyVisibleIndicesUpdatesStableRange() {
+        var state = AIChatTranscriptViewportState()
+        let window = MessageVirtualizationWindow(bufferCount: 5, warmStartMultiplier: 2)
+
+        state.applyVisibleIndices([10, 11, 12], totalCount: 30, window: window)
+
+        XCTAssertNotNil(state.stableFullRenderRange, "有效可见索引应更新稳定渲染范围")
+    }
+
+    func testApplyEmptyVisibleIndicesDoesNotClearRange() {
+        var state = AIChatTranscriptViewportState()
+        state.stableFullRenderRange = 0...10
+
+        let window = MessageVirtualizationWindow(bufferCount: 5, warmStartMultiplier: 2)
+        state.applyVisibleIndices([], totalCount: 20, window: window)
+
+        // 空可见索引时不应清除已有稳定范围（防止瞬时清空）
+        XCTAssertNotNil(state.stableFullRenderRange, "空可见索引不应清除稳定渲染范围")
+    }
+}
+
+// MARK: - AIChatTranscriptUpdatePlanner 测试
+
+/// 验证 AIChatTranscriptUpdatePlanner 刷新策略计算语义。
+final class AIChatTranscriptUpdatePlannerTests: XCTestCase {
+
+    func testTailOnlyUpdateProducesTailSyncStrategy() {
+        let msgs = (0..<5).map { i in makeMsg(id: "m\(i)", streaming: i == 4) }
+        let strategy = AIChatTranscriptUpdatePlanner.strategy(
+            previousSourceCount: 5,
+            currentSourceCount: 5,
+            isStreamingTail: true,
+            hasPendingAnchor: false
+        )
+        XCTAssertEqual(strategy, .tailSync, "仅尾部流式更新应为 tailSync")
+        _ = msgs
+    }
+
+    func testNewMessageProducesFullRefreshStrategy() {
+        let strategy = AIChatTranscriptUpdatePlanner.strategy(
+            previousSourceCount: 4,
+            currentSourceCount: 5,
+            isStreamingTail: false,
+            hasPendingAnchor: false
+        )
+        XCTAssertEqual(strategy, .fullRefresh, "消息数增加应为 fullRefresh")
+    }
+
+    func testPrependAnchorTakesPriorityOverFullRefresh() {
+        let strategy = AIChatTranscriptUpdatePlanner.strategy(
+            previousSourceCount: 4,
+            currentSourceCount: 10,
+            isStreamingTail: false,
+            hasPendingAnchor: true
+        )
+        if case .preserveAnchor = strategy {
+            // 正确
+        } else {
+            XCTFail("有 prepend 锚点时应返回 preserveAnchor，got \(strategy)")
+        }
+    }
+
+    func testUnchangedCountAndNoStreamingProducesNoneStrategy() {
+        let strategy = AIChatTranscriptUpdatePlanner.strategy(
+            previousSourceCount: 5,
+            currentSourceCount: 5,
+            isStreamingTail: false,
+            hasPendingAnchor: false
+        )
+        XCTAssertEqual(strategy, .none, "无变化无流式应返回 none")
+    }
+
+    func testPlanPreservesViewportRangeAndPrependAnchor() {
+        let messages = (0..<8).map { index in
+            AIChatMessage(
+                id: "m\(index)",
+                messageId: "m\(index)",
+                role: .assistant,
+                parts: [AIChatPart(id: "p\(index)", kind: .text, text: "msg-\(index)")]
+            )
+        }
+        var viewport = AIChatTranscriptViewportState()
+        viewport.stableFullRenderRange = 2...6
+        viewport.pendingPrependAnchorID = "m5"
+
+        let plan = AIChatTranscriptUpdatePlanner.plan(
+            sourceMessages: messages,
+            pendingQuestions: [:],
+            viewportState: viewport,
+            cachedDisplayMessages: Array(messages.dropFirst(2)),
+            cachedSourceCount: 6,
+            isScrollInFlight: false
+        )
+
+        if case .preserveAnchor(let anchorID) = plan.refreshStrategy {
+            XCTAssertEqual(anchorID, "m5")
+        } else {
+            XCTFail("prepend 历史时应优先生成 preserveAnchor 策略")
+        }
+        XCTAssertEqual(plan.fullRenderRange, 2...6, "planner 应保留 viewport 提供的稳定渲染范围")
+        XCTAssertEqual(plan.pendingAnchorID, "m5")
+    }
+
+    func testPlanUsesTailSyncForLongStreamingTranscript() {
+        let sourceMessages = (0..<320).map { index in
+            AIChatMessage(
+                id: "m\(index)",
+                messageId: "m\(index)",
+                role: .assistant,
+                parts: [AIChatPart(id: "p\(index)", kind: .text, text: "token-\(index)")],
+                isStreaming: index == 319
+            )
+        }
+        let cachedMessages = (0..<320).map { index in
+            AIChatMessage(
+                id: "m\(index)",
+                messageId: "m\(index)",
+                role: .assistant,
+                parts: [AIChatPart(id: "p\(index)", kind: .text, text: index == 319 ? "old-tail" : "token-\(index)")],
+                isStreaming: index == 319
+            )
+        }
+
+        let plan = AIChatTranscriptUpdatePlanner.plan(
+            sourceMessages: sourceMessages,
+            pendingQuestions: [:],
+            viewportState: AIChatTranscriptViewportState(),
+            cachedDisplayMessages: cachedMessages,
+            cachedSourceCount: 320,
+            isScrollInFlight: false
+        )
+
+        XCTAssertEqual(plan.refreshStrategy, .tailSync, "长会话尾部流式输出应走 tailSync")
+        XCTAssertEqual(plan.displayMessages.count, 320)
+        XCTAssertEqual(plan.displayMessages.last?.parts.first?.text, "token-319")
+    }
+
+    // MARK: - Helper
+
+    private func makeMsg(id: String, streaming: Bool = false) -> AIChatMessage {
+        AIChatMessage(
+            id: id,
+            messageId: id,
+            role: .assistant,
+            parts: [AIChatPart(id: "\(id)-p", kind: .text, text: "text")],
+            isStreaming: streaming
+        )
+    }
+}
