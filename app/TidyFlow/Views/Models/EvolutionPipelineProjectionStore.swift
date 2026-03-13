@@ -409,6 +409,35 @@ enum EvolutionPipelineProjectionSemantics {
             performance: .empty
         )
     }
+
+    /// 从 AppState 中构建当前工作区的性能投影（采样决策 + 过滤指标 + 仪表盘投影）
+    @MainActor
+    static func buildPerformanceProjection(
+        appState: AppState
+    ) -> EvolutionPipelinePerformanceProjection {
+        let project = appState.selectedProjectName
+        let workspace = appState.selectedWorkspaceKey
+        let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace ?? "")
+        let contextKey = "\(project)/\(normalizedWorkspace)"
+        let currentDecision = appState.evolutionPerformanceSamplingDecisions[contextKey] ?? .paused
+        let filteredMetrics = EvolutionRealtimeSamplingSemantics.filterMetrics(
+            snapshot: appState.performanceObservability,
+            project: project,
+            workspace: normalizedWorkspace,
+            clientInstanceId: appState.perfReporter.clientInstanceId
+        )
+        let scopeKey = PerformanceScopeKey(
+            project: project,
+            workspace: workspace ?? "",
+            surface: .evolutionWorkspace
+        )
+        let dashboard = appState.performanceDashboardStore.projection(for: scopeKey)
+        return EvolutionPipelinePerformanceProjection(
+            decision: currentDecision,
+            metrics: filteredMetrics,
+            dashboard: dashboard
+        )
+    }
 #endif
 
 #if os(iOS)
@@ -718,6 +747,78 @@ enum EvolutionPipelineProjectionSemantics {
         EvolutionPipelineDateFormatting.isExecutionCompletedStatus(status)
     }
 
+    // MARK: - 当前循环已完成时间线构建
+
+    /// 从 `EvolutionWorkspaceItemV2` 构建当前循环的已完成时间线条目。
+    ///
+    /// 该方法承接原先 `EvolutionPipelineView.updateTimeline()` 中的
+    /// 过滤、排序、映射逻辑，移到共享语义层以隔离视图重算边界。
+    static func buildCompletedTimeline(
+        from item: EvolutionWorkspaceItemV2?
+    ) -> [PipelineTimelineEntry] {
+        guard let item else { return [] }
+        let sortedExecutions = item.executions
+            .filter { isExecutionCompletedStatus($0.status) }
+            .sorted { lhs, rhs in
+                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                case (false, false):
+                    if lhs.startedAt != rhs.startedAt {
+                        return lhs.startedAt < rhs.startedAt
+                    }
+                case (false, true):
+                    return true
+                case (true, false):
+                    return false
+                case (true, true):
+                    break
+                }
+                return lhs.sessionID < rhs.sessionID
+            }
+        return sortedExecutions.map { execution in
+            PipelineTimelineEntry(
+                id: execution.sessionID + "|" + execution.startedAt,
+                stage: EvolutionStageSemantics.runtimeStageKey(execution.stage),
+                agent: execution.agent,
+                toolCallCount: execution.toolCallCount,
+                completedAt: EvolutionPipelineDateFormatting.pipelineTimeLabel(from: execution.completedAt),
+                aiToolName: execution.aiTool,
+                durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+            )
+        }
+    }
+
+    /// 计算时间线快照签名，仅包含会影响"已完成时间线"的字段
+    static func timelineSignature(for item: EvolutionWorkspaceItemV2) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.cycleID)
+        hasher.combine(item.globalLoopRound)
+        hasher.combine(item.executions.count)
+
+        var completedExecutionCount = 0
+        for execution in item.executions where isExecutionCompletedStatus(execution.status) {
+            completedExecutionCount += 1
+            hasher.combine(execution.sessionID)
+            hasher.combine(execution.stage)
+            hasher.combine(execution.status)
+            hasher.combine(execution.startedAt)
+            hasher.combine(execution.completedAt ?? "")
+            hasher.combine(execution.durationMs ?? 0)
+            hasher.combine(execution.toolCallCount)
+        }
+        hasher.combine(completedExecutionCount)
+
+        if completedExecutionCount == 0 {
+            for agent in item.agents {
+                hasher.combine(agent.stage)
+                hasher.combine(agent.status)
+                hasher.combine(agent.toolCallCount)
+                hasher.combine(agent.startedAt ?? "")
+                hasher.combine(agent.durationMs ?? 0)
+            }
+        }
+        return hasher.finalize()
+    }
+
     private static let rfc3339Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -775,6 +876,21 @@ enum EvolutionPipelineDateFormatting {
     static func formatDurationMs(_ ms: UInt64) -> String {
         formatDuration(TimeInterval(ms) / 1000.0)
     }
+
+    /// 将 ISO 8601 时间字符串转为 HH:mm 格式标签
+    static func pipelineTimeLabel(from isoString: String?) -> String {
+        guard let isoString, !isoString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let date = rfc3339Date(from: isoString) else {
+            return pipelineTimeFormatter.string(from: Date())
+        }
+        return pipelineTimeFormatter.string(from: date)
+    }
+
+    private static let pipelineTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 }
 
 @MainActor
@@ -842,6 +958,17 @@ final class EvolutionPipelineProjectionStore {
         .sink { _ in refresh() }
         .store(in: &cancellables)
 
+        // 性能投影独立通道：不走结构 refresh，只更新 performance 子投影
+        let perfRefresh = { [weak self, weak appState] in
+            guard let self, let appState else { return }
+            self.refreshPerformanceIfNeeded(appState: appState)
+        }
+        appState.$performanceObservability
+            .map { _ in () }
+            .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+            .sink { _ in perfRefresh() }
+            .store(in: &cancellables)
+
         refresh()
     }
 
@@ -867,6 +994,12 @@ final class EvolutionPipelineProjectionStore {
                 )
             )
         )
+    }
+
+    /// 仅刷新性能投影（采样决策、指标、仪表盘），签名未变时跳过，不触发结构投影全量 refresh
+    private func refreshPerformanceIfNeeded(appState: AppState) {
+        let next = EvolutionPipelineProjectionSemantics.buildPerformanceProjection(appState: appState)
+        _ = updatePerformanceProjection(next)
     }
     #endif
 

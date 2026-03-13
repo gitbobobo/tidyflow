@@ -152,18 +152,23 @@ public struct EvolutionPipelinePerformanceProjection: Equatable, Sendable {
     public let decision: EvolutionRealtimeSamplingDecision
     /// 已过滤的实时指标投影
     public let metrics: EvolutionRealtimeMetricsProjection
+    /// 仪表盘投影（预算状态、趋势、回归摘要），View 直接消费，不再透过 performanceDashboardStore 读取
+    public let dashboard: PerformanceDashboardProjection
 
     public static let empty = EvolutionPipelinePerformanceProjection(
         decision: .paused,
-        metrics: .empty
+        metrics: .empty,
+        dashboard: .empty()
     )
 
     public init(
         decision: EvolutionRealtimeSamplingDecision,
-        metrics: EvolutionRealtimeMetricsProjection
+        metrics: EvolutionRealtimeMetricsProjection,
+        dashboard: PerformanceDashboardProjection = .empty()
     ) {
         self.decision = decision
         self.metrics = metrics
+        self.dashboard = dashboard
     }
 
     /// 当前采样档位

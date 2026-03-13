@@ -119,10 +119,6 @@ struct EvolutionPipelineView: View {
     private var currentItem: EvolutionWorkspaceItemV2? { projection.currentItem }
     private var blockingRequest: EvolutionBlockingRequestProjection? { projection.blockingRequest }
 
-    private var evolutionPerfProjection: PerformanceDashboardProjection {
-        let key = PerformanceScopeKey(project: project, workspace: workspace ?? "", surface: .evolutionWorkspace)
-        return appState.performanceDashboardStore.projection(for: key)
-    }
     private var cycleHistories: [PipelineCycleHistory] { projection.cycleHistories }
     private var runningAgents: [EvolutionAgentInfoV2] { projection.runningAgents }
     private var openableRunningStages: Set<String> {
@@ -250,7 +246,11 @@ struct EvolutionPipelineView: View {
         let _ = Self.debugPrintChangesIfNeeded()
         VStack(spacing: 0) {
             // 标题
-            pipelineHeader
+            EvolutionPipelineHeaderSectionView(
+                bottleneckCount: projection.activeBottleneckCount,
+                maxRiskScore: projection.maxRiskScore,
+                performanceDashboard: projection.performance.dashboard
+            )
             Divider()
 
             if !workspaceReady {
@@ -261,9 +261,12 @@ struct EvolutionPipelineView: View {
                         // 上方内容区：始终展示当前循环运行态
                         cycleDetailArea
 
-                        // 智能决策区块（v1.45）：展示 Core 权威决策摘要，紧随循环运行态
+                        // 智能决策区块：展示 Core 权威决策摘要
                         if projection.workspaceReady {
-                            analysisDecisionView
+                            EvolutionAnalysisDecisionSectionView(
+                                decisionSummary: projection.currentDecisionSummary,
+                                hasCurrentItem: currentItem != nil
+                            )
                         }
 
                         Divider()
@@ -295,26 +298,10 @@ struct EvolutionPipelineView: View {
             "workspace": workspace ?? "none"
         ])
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
-            resetLocalTimeline()
-            // 工作区切换时通知共享 store 清空对应 buffer
-            if let ws = workspace {
-                appState.performanceDashboardStore.clearRealtimeBuffers(project: project, workspace: ws)
-            }
-            clearRealtimeTrendBuffer()
-            syncStartOptions()
-            refreshData()
-            updatePerformanceMonitor()
+            handleWorkspaceOrProjectSwitch()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
-            resetLocalTimeline()
-            // 工作区切换时通知共享 store 清空对应 buffer
-            if let ws = workspace {
-                appState.performanceDashboardStore.clearRealtimeBuffers(project: project, workspace: ws)
-            }
-            clearRealtimeTrendBuffer()
-            syncStartOptions()
-            refreshData()
-            updatePerformanceMonitor()
+            handleWorkspaceOrProjectSwitch()
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
@@ -322,7 +309,6 @@ struct EvolutionPipelineView: View {
         }
         .onChange(of: workspaceContextKey) { _, _ in
             updateRealtimeIndicatorsActivation()
-            updatePerformanceMonitor()
         }
         .onChange(of: appState.isSceneActive) { _, _ in
             updateRealtimeIndicatorsActivation()
@@ -345,7 +331,13 @@ struct EvolutionPipelineView: View {
             appendRealtimeTrendSample()
         }
         .sheet(item: $selectedCycleDetail) { payload in
-            cycleDetailSheet(payload)
+            EvolutionCycleDetailSheetView(
+                payload: payload,
+                onOpenSession: { entry, cycleID in
+                    openHistorySessionFromDetail(entry: entry, cycleID: cycleID)
+                },
+                onClose: { selectedCycleDetail = nil }
+            )
         }
         .sheet(isPresented: $isBlockerSheetPresented) {
             blockerSheet
@@ -366,41 +358,6 @@ struct EvolutionPipelineView: View {
             Self._printChanges()
 #endif
         }
-    }
-
-    // MARK: - 分析摘要指示器（v1.45）
-
-    @ViewBuilder
-    private var analysisStatusIndicator: some View {
-        let bottleneckCount = projection.activeBottleneckCount
-        let riskScore = projection.maxRiskScore
-
-        if bottleneckCount > 0 || riskScore > 0.5 {
-            HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(riskScore > 0.7 ? .red : .orange)
-                    .font(.caption)
-                Text("\(bottleneckCount) 瓶颈")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .help("Core 识别到 \(bottleneckCount) 个性能瓶颈，综合风险 \(String(format: "%.0f%%", riskScore * 100))")
-        }
-    }
-
-    // MARK: - 标题栏
-
-    private var pipelineHeader: some View {
-        HStack(spacing: 8) {
-            Text("evolution.page.title".localized)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-            analysisStatusIndicator
-            Spacer()
-            EvolutionPerformanceBadge(projection: evolutionPerfProjection)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     // MARK: - 无工作空间
@@ -519,136 +476,6 @@ struct EvolutionPipelineView: View {
     }
 
     // MARK: - 智能决策区块（v1.45）
-
-    /// 智能决策展示区块
-    ///
-    /// 所有数据来自 `projection.currentDecisionSummary`（Core 权威，Projection 层预计算），
-    /// View 只做展示映射，不做二次推导。
-    @ViewBuilder
-    private var analysisDecisionView: some View {
-        if let summary = projection.currentDecisionSummary {
-            VStack(alignment: .leading, spacing: 8) {
-                // 区块标题
-                HStack(spacing: 4) {
-                    Image(systemName: "brain")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Text("evolution.page.pipeline.intelligentDecision".localized)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    // 压力级别胶囊
-                    Text(summary.pressureLevel.rawValue.capitalized)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(pressureColor(summary.pressureLevel))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(pressureColor(summary.pressureLevel).opacity(0.12)))
-                }
-
-                // 健康与风险评分行
-                HStack(spacing: 12) {
-                    decisionScoreChip(
-                        label: "evolution.page.pipeline.healthScore".localized,
-                        value: summary.healthScore,
-                        invert: false
-                    )
-                    decisionScoreChip(
-                        label: "evolution.page.pipeline.riskScore".localized,
-                        value: summary.overallRiskScore,
-                        invert: true
-                    )
-                    Spacer()
-                }
-
-                // 瓶颈列表（最多展示 3 条，避免过长）
-                if !summary.bottlenecks.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(summary.bottlenecks.prefix(3).enumerated()), id: \.offset) { _, bottleneck in
-                            HStack(alignment: .top, spacing: 4) {
-                                Image(systemName: "exclamationmark.circle")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(riskScoreColor(bottleneck.riskScore))
-                                Text(bottleneck.reasonCode)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                }
-
-                // 前 3 条建议
-                if !summary.suggestions.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(summary.suggestions.prefix(3).enumerated()), id: \.offset) { _, sug in
-                            HStack(alignment: .top, spacing: 4) {
-                                Image(systemName: sug.scope == .system ? "arrow.triangle.2.circlepath" : "arrow.right.circle")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.blue)
-                                Text(sug.summary)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.primary.opacity(0.03))
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            // 当前工作区存在循环但摘要尚未到达时，显示空态占位
-            if projection.currentItem != nil {
-                HStack(spacing: 4) {
-                    Image(systemName: "brain")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text("evolution.page.pipeline.noDecisionSummary".localized)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private func pressureColor(_ level: ResourcePressureLevel) -> Color {
-        switch level {
-        case .low: return .green
-        case .moderate: return .yellow
-        case .high: return .orange
-        case .critical: return .red
-        }
-    }
-
-    private func riskScoreColor(_ score: Double) -> Color {
-        if score >= 0.8 { return .red }
-        if score >= 0.5 { return .orange }
-        if score >= 0.2 { return .yellow }
-        return .green
-    }
-
-    @ViewBuilder
-    private func decisionScoreChip(label: String, value: Double, invert: Bool) -> some View {
-        let displayColor: Color = invert
-            ? riskScoreColor(value)
-            : (value >= 0.8 ? .green : (value >= 0.5 ? .yellow : .red))
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 8))
-                .foregroundColor(.secondary)
-            Text(String(format: "%.0f%%", value * 100))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(displayColor)
-        }
-    }
 
     @ViewBuilder
     private var cycleStatusBanner: some View {
@@ -807,7 +634,7 @@ struct EvolutionPipelineView: View {
         LazyVStack(alignment: .leading, spacing: 6) {
             // 本轮循环（有运行数据时才显示）
             if hasCurrentCycleRow {
-                cycleListRow(
+                EvolutionCycleListRowView(
                     round: currentCycleRound,
                     color: .green,
                     title: currentCycleDisplayTitle,
@@ -822,31 +649,34 @@ struct EvolutionPipelineView: View {
                             durationSeconds: entry.durationSeconds
                         )
                     },
+                    isHistory: false,
+                    failureSummary: nil,
+                    hasDocumentAction: true,
                     onDocumentTap: {
                         if let cycleID = currentItem?.cycleID {
                             openPlanDocumentSheet(for: cycleID)
                         }
-                    }
-                ) {
-                    openCurrentCycleDetailSheet()
-                }
+                    },
+                    onTap: { openCurrentCycleDetailSheet() }
+                )
             }
 
             // 历史循环
             ForEach(cycleHistories) { cycle in
                 let isFailed = cycle.status?.lowercased().hasPrefix("failed") ?? false
-                cycleListRow(
+                EvolutionCycleListRowView(
                     round: cycle.round,
                     color: isFailed ? .red : .gray,
                     title: cycle.displayTitle,
+                    badge: nil,
                     startTimeText: cycleStartTimeText(cycle.startDate),
                     stageEntries: cycleStageEntries(for: cycle),
                     isHistory: true,
                     failureSummary: cycle.failureSummary,
-                    onDocumentTap: { openPlanDocumentSheet(for: cycle.id) }
-                ) {
-                    openHistoryCycleDetailSheet(cycle)
-                }
+                    hasDocumentAction: true,
+                    onDocumentTap: { openPlanDocumentSheet(for: cycle.id) },
+                    onTap: { openHistoryCycleDetailSheet(cycle) }
+                )
             }
 
             if !hasCurrentCycleRow && cycleHistories.isEmpty {
@@ -932,105 +762,7 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    /// 循环列表行
-    private func cycleListRow(
-        round: Int,
-        color: Color,
-        title: String,
-        badge: String? = nil,
-        startTimeText: String,
-        stageEntries: [PipelineCycleStageEntry]? = nil,
-        isHistory: Bool = false,
-        failureSummary: String? = nil,
-        onDocumentTap: (() -> Void)? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        // 计算总耗时
-        let totalDuration: TimeInterval = stageEntries?.reduce(0) { $0 + $1.durationSeconds } ?? 0
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 6) {
-                roundBadge(round: round, color: color)
-
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Spacer()
-
-                if let onDocumentTap {
-                    Button(action: onDocumentTap) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("evolution.page.action.previewPlanDocument".localized)
-                }
-            }
-
-            HStack(spacing: 8) {
-                HStack(spacing: 2) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 8))
-                    Text(startTimeText)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                }
-                .foregroundColor(.secondary)
-
-                if totalDuration > 0 {
-                    HStack(spacing: 2) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 8))
-                        Text(Self.formatDuration(totalDuration))
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    }
-                    .foregroundColor(.secondary)
-                }
-
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(color.opacity(0.8)))
-                }
-            }
-
-            // 失败诊断摘要（历史循环失败时显示）
-            if let failureSummary {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(.red)
-                    Text(failureSummary)
-                        .font(.system(size: 9))
-                        .foregroundColor(.red.opacity(0.9))
-                        .lineLimit(2)
-                }
-            }
-
-            // 分段彩色线条
-            if let entries = stageEntries, !entries.isEmpty {
-                proportionalStageBar(entries: entries, height: 4)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isHistory ? Color.secondary.opacity(0.05) : color.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(isHistory ? Color.secondary.opacity(0.10) : color.opacity(0.22), lineWidth: 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .onTapGesture(perform: action)
-    }
-
+    /// 循环列表行中的轮次圆形标记
     private func roundBadge(round: Int, color: Color) -> some View {
         Text("\(max(1, round))")
             .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -1044,64 +776,6 @@ struct EvolutionPipelineView: View {
                 Circle()
                     .stroke(color.opacity(0.45), lineWidth: 1)
             )
-    }
-
-    private struct StageBarSegment: Identifiable {
-        let entry: PipelineCycleStageEntry
-        let ratio: CGFloat
-        var id: String { entry.id }
-    }
-
-    private func proportionalStageBar(entries: [PipelineCycleStageEntry], height: CGFloat) -> some View {
-        let segments = stageBarSegments(entries)
-        let segmentSpacing: CGFloat = 2
-
-        return GeometryReader { geo in
-            let totalSpacing = segmentSpacing * CGFloat(max(segments.count - 1, 0))
-            let drawableWidth = max(geo.size.width - totalSpacing, 0)
-            HStack(spacing: segmentSpacing) {
-                ForEach(segments) { segment in
-                    RoundedRectangle(cornerRadius: height / 2)
-                        .fill(stageColor(segment.entry.stage))
-                        .frame(width: max(0, drawableWidth * segment.ratio), height: height)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(.easeInOut(duration: 0.3), value: stageBarAnimationToken(segments))
-        }
-        .frame(height: height)
-        .clipShape(Capsule())
-    }
-
-    private func stageBarAnimationToken(_ segments: [StageBarSegment]) -> String {
-        segments
-            .map { segment in
-                "\(segment.id)=\(String(format: "%.6f", Double(segment.ratio)))"
-            }
-            .joined(separator: "|")
-    }
-
-    private func stageBarSegments(_ entries: [PipelineCycleStageEntry]) -> [StageBarSegment] {
-        guard !entries.isEmpty else { return [] }
-
-        let rawDurations = entries.map { max(0, $0.durationSeconds) }
-        let positiveDurations = rawDurations.filter { $0 > 0 }
-        let weights: [TimeInterval]
-
-        if !positiveDurations.isEmpty {
-            let averagePositive = positiveDurations.reduce(0, +) / Double(positiveDurations.count)
-            let fallbackWeight = max(averagePositive * 0.12, 0.3)
-            weights = rawDurations.map { duration in
-                duration > 0 ? duration : fallbackWeight
-            }
-        } else {
-            weights = Array(repeating: 1, count: entries.count)
-        }
-
-        let totalWeight = max(weights.reduce(0, +), 0.0001)
-        return zip(entries, weights).map { entry, weight in
-            StageBarSegment(entry: entry, ratio: CGFloat(weight / totalWeight))
-        }
     }
 
     private func openCurrentCycleDetailSheet() {
@@ -1244,198 +918,6 @@ struct EvolutionPipelineView: View {
                 sessionID: nil
             )
         }
-    }
-
-    @ViewBuilder
-    private func cycleDetailSheet(_ payload: PipelineCycleDetailPayload) -> some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 8) {
-                        roundBadge(round: payload.round, color: .indigo)
-                        Text(payload.title)
-                            .font(.title3.weight(.semibold))
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(1)
-                        Spacer()
-                        if let status = trimmedNonEmptyText(payload.status) {
-                            let info = cycleStatusInfo(status)
-                            Text(info.label)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(info.color)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Capsule().fill(info.color.opacity(0.12)))
-                                .fixedSize()
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        detailMetaBadge(
-                            icon: "clock",
-                            label: "evolution.page.pipeline.startTimeLabel".localized,
-                            value: payload.startTimeText
-                        )
-                        if let totalDurationText = payload.totalDurationText {
-                            detailMetaBadge(
-                                icon: "timer",
-                                label: "evolution.page.pipeline.durationLabel".localized,
-                                value: totalDurationText
-                            )
-                        }
-                    }
-
-                    if let reason = trimmedNonEmptyText(payload.terminalReasonCode) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "info.circle")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            Text(localizedTerminalReason(reason))
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    if let error = trimmedNonEmptyText(payload.terminalErrorMessage) {
-                        Text(error)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Divider()
-
-                    Text("evolution.page.pipeline.timelineTitle".localized)
-                        .font(.headline)
-
-                    if payload.timelineEntries.isEmpty {
-                        Text("evolution.page.pipeline.noTimeline".localized)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(payload.timelineEntries) { entry in
-                                cycleTimelineRow(entry, payload: payload)
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-            }
-            .navigationTitle(String(format: "evolution.page.pipeline.roundLabel".localized, payload.round))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("common.close".localized) {
-                        selectedCycleDetail = nil
-                    }
-                }
-            }
-        }
-        .frame(minWidth: 620, minHeight: 460)
-    }
-
-    private func cycleTimelineRow(_ entry: PipelineCycleTimelineEntry, payload: PipelineCycleDetailPayload) -> some View {
-        let canOpenChat = hasResolvedTimelineSession(entry)
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: stageIconName(entry.stage))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(stageColor(entry.stage))
-                .frame(width: 18, height: 18)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(stageDisplayName(entry.stage))
-                        .font(.system(size: 12, weight: .semibold))
-                    if let agent = trimmedNonEmptyText(entry.agent) {
-                        Text(agent)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    detailTimelineText(icon: "clock", value: timelineStartTimeText(entry.startedAt))
-                    detailTimelineText(icon: "timer", value: timelineDurationText(entry))
-                    let aiTool = trimmedNonEmptyText(entry.aiToolName) ?? "-"
-                    detailTimelineText(icon: "sparkles", value: "\("evolution.page.pipeline.aiTool".localized): \(aiTool)")
-                }
-                .foregroundColor(.secondary)
-            }
-            Spacer(minLength: 0)
-            if canOpenChat {
-                Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(stageColor(entry.stage).opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(stageColor(entry.stage).opacity(0.2), lineWidth: 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture {
-            guard canOpenChat else { return }
-            openHistorySessionFromDetail(entry: entry, cycleID: payload.cycleID)
-        }
-    }
-
-    private func hasResolvedTimelineSession(_ entry: PipelineCycleTimelineEntry) -> Bool {
-        trimmedNonEmptyText(entry.sessionID) != nil &&
-            entry.aiToolRawValue.flatMap(AIChatTool.init(rawValue:)) != nil
-    }
-
-    private func detailMetaBadge(icon: String, label: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-            Text(label)
-                .font(.system(size: 10))
-            Text(value)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-        }
-        .foregroundColor(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(Color.secondary.opacity(0.12))
-        )
-    }
-
-    private func detailTimelineText(icon: String, value: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(value)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .lineLimit(1)
-        }
-    }
-
-    private func timelineStartTimeText(_ startedAt: String?) -> String {
-        guard let date = executionStartDate(startedAt) else {
-            return "\("evolution.page.pipeline.startTimeLabel".localized): -"
-        }
-        return "\("evolution.page.pipeline.startTimeLabel".localized): \(Self.cycleDetailTimeFormatter.string(from: date))"
-    }
-
-    private func timelineDurationText(_ entry: PipelineCycleTimelineEntry) -> String {
-        if let durationSeconds = entry.durationSeconds, durationSeconds > 0 {
-            return "\("evolution.page.pipeline.durationLabel".localized): \(Self.formatDuration(durationSeconds))"
-        }
-        let normalized = normalizedStageStatus(entry.status)
-        if normalized == "running" || normalized == "进行中" {
-            return "\("evolution.page.pipeline.durationLabel".localized): \(formatElapsedTimeFrom(entry.startedAt))"
-        }
-        return "\("evolution.page.pipeline.durationLabel".localized): \("evolution.page.pipeline.durationUnknown".localized)"
     }
 
     private func executionStartDate(_ value: String?) -> Date? {
@@ -1936,12 +1418,6 @@ struct EvolutionPipelineView: View {
         return formatter
     }()
 
-    private static let pipelineTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
     // MARK: - 数据逻辑
 
     private func updateTimeline() {
@@ -1955,50 +1431,21 @@ struct EvolutionPipelineView: View {
         }
 
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
-        // 注意：自动切轮期间，核心快照可能会先清空 executions 再递增轮次，
-        // 不能依赖 completedTimeline 非空，否则会漏拉历史列表。
         if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 {
             completedTimeline.removeAll()
             cycleStartDate = Date()
-            // 从工作空间文件夹重新加载历史数据
             if let ws = workspace {
                 appState.requestEvolutionCycleHistory(project: project, workspace: ws)
             }
         }
         lastRecordedRound = item.globalLoopRound
 
-        let signature = timelineSnapshotSignature(for: item)
+        let signature = EvolutionPipelineProjectionSemantics.timelineSignature(for: item)
         guard signature != timelineSnapshotSignature else { return }
         timelineSnapshotSignature = signature
 
-        let sortedExecutions = item.executions
-            .filter { isExecutionCompletedStatus($0.status) }
-            .sorted { lhs, rhs in
-                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
-                case (false, false):
-                    if lhs.startedAt != rhs.startedAt {
-                        return lhs.startedAt < rhs.startedAt
-                    }
-                case (false, true):
-                    return true
-                case (true, false):
-                    return false
-                case (true, true):
-                    break
-                }
-                return lhs.sessionID < rhs.sessionID
-            }
-        let newTimeline = sortedExecutions.map { execution in
-            PipelineTimelineEntry(
-                id: execution.sessionID + "|" + execution.startedAt,
-                stage: normalizedStageKey(execution.stage),
-                agent: execution.agent,
-                toolCallCount: execution.toolCallCount,
-                completedAt: pipelineTimeLabel(from: execution.completedAt),
-                aiToolName: execution.aiTool,
-                durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-            )
-        }
+        // 委托共享语义层执行过滤、排序、映射
+        let newTimeline = EvolutionPipelineProjectionSemantics.buildCompletedTimeline(from: item)
         if completedTimeline != newTimeline {
             completedTimeline = newTimeline
         }
@@ -2015,6 +1462,21 @@ struct EvolutionPipelineView: View {
 
     private func resetLocalTimeline() {
         resetCurrentCycleTimeline()
+    }
+
+    /// 工作区或项目切换时的统一入口——清理旧缓冲、重置状态、刷新数据、重启监控
+    private func handleWorkspaceOrProjectSwitch() {
+        resetLocalTimeline()
+        // 清空旧工作区的 dashboard buffer，防止污染新工作区
+        if let ws = workspace {
+            appState.performanceDashboardStore.clearRealtimeBuffers(project: project, workspace: ws)
+        }
+        clearRealtimeTrendBuffer()
+        // 停止旧 monitor key 防止残留任务
+        stopPerformanceMonitor()
+        syncStartOptions()
+        refreshData()
+        updatePerformanceMonitor()
     }
 
     private func updateRealtimeIndicatorsActivation() {
@@ -2521,10 +1983,14 @@ struct EvolutionPipelineView: View {
     }
 
     private func refreshData() {
-        appState.requestEvolutionSnapshot()
-        // 从工作空间文件夹加载历史循环数据
+        // 使用定向 snapshot（携带当前 project/workspace），避免无过滤全量请求
+        let proj = project
         if let ws = workspace {
-            appState.requestEvolutionCycleHistory(project: project, workspace: ws)
+            appState.requestEvolutionSnapshot(project: proj, workspace: ws)
+            appState.requestEvolutionCycleHistory(project: proj, workspace: ws)
+        } else {
+            // 工作区未就绪时仅发无过滤请求以获取初始列表
+            appState.requestEvolutionSnapshot()
         }
     }
 
@@ -2574,47 +2040,6 @@ struct EvolutionPipelineView: View {
 
     private func isExecutionCompletedStatus(_ status: String) -> Bool {
         EvolutionPipelineDateFormatting.isExecutionCompletedStatus(status)
-    }
-
-    private func pipelineTimeLabel(from isoString: String?) -> String {
-        guard let isoString = trimmedNonEmptyText(isoString),
-              let date = EvolutionPipelineDateFormatting.rfc3339Date(from: isoString) else {
-            return Self.pipelineTimeFormatter.string(from: Date())
-        }
-        return Self.pipelineTimeFormatter.string(from: date)
-    }
-
-    /// 时间线签名：仅包含会影响“已完成时间线”的字段，避免高频快照下重复排序/映射。
-    private func timelineSnapshotSignature(for item: EvolutionWorkspaceItemV2) -> Int {
-        var hasher = Hasher()
-        hasher.combine(item.cycleID)
-        hasher.combine(item.globalLoopRound)
-        hasher.combine(item.executions.count)
-
-        var completedExecutionCount = 0
-        for execution in item.executions where isExecutionCompletedStatus(execution.status) {
-            completedExecutionCount += 1
-            hasher.combine(execution.sessionID)
-            hasher.combine(execution.stage)
-            hasher.combine(execution.status)
-            hasher.combine(execution.startedAt)
-            hasher.combine(execution.completedAt ?? "")
-            hasher.combine(execution.durationMs ?? 0)
-            hasher.combine(execution.toolCallCount)
-        }
-        hasher.combine(completedExecutionCount)
-
-        // 兼容启动初期（尚无 executions）时的展示依赖。
-        if completedExecutionCount == 0 {
-            for agent in item.agents {
-                hasher.combine(agent.stage)
-                hasher.combine(agent.status)
-                hasher.combine(agent.toolCallCount)
-                hasher.combine(agent.startedAt ?? "")
-                hasher.combine(agent.durationMs ?? 0)
-            }
-        }
-        return hasher.finalize()
     }
 
     private func stageDisplayName(_ stage: String) -> String {
@@ -2881,48 +2306,6 @@ private struct SharedElapsedTimeText: View {
         return EvolutionPipelineDateFormatting.formatDuration(
             max(0, now.timeIntervalSince(startedAtDate))
         )
-    }
-}
-
-private struct EvolutionPerformanceBadge: View {
-    let projection: PerformanceDashboardProjection
-
-    var body: some View {
-        if projection.budgetStatus != .unknown {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(badgeColor)
-                    .frame(width: 7, height: 7)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("性能: \(projection.budgetStatus.label)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if !projection.regressionSummary.degradationReasons.isEmpty {
-                        Text(projection.regressionSummary.degradationReasons.first ?? "")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-                if projection.isTrendDegrading {
-                    Image(systemName: "chart.line.downtrend.xyaxis")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        }
-    }
-
-    private var badgeColor: Color {
-        switch projection.budgetStatus {
-        case .pass:    return .green
-        case .warn:    return .yellow
-        case .fail:    return .red
-        case .unknown: return .gray
-        }
     }
 }
 
