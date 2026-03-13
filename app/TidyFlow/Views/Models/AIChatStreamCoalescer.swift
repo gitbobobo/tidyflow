@@ -1,5 +1,12 @@
 import Foundation
 
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
+    }
+}
+
 // MARK: - 流式增量聚合共享类型
 //
 // 将 AIChatStore 内的流式事件聚合与尾部变化摘要逻辑提取为纯类型，

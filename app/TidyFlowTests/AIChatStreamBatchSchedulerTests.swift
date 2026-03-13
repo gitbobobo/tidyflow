@@ -154,10 +154,19 @@ final class AIChatStreamBatchSchedulerTests: XCTestCase {
 
     func testMessageUpdatedEventClassifiedAsStructural() {
         let store = AIChatStore()
+        store.setCurrentSessionId("scope-a")
         store.enqueueMessageUpdated(messageId: "m1", role: "assistant")
         store.flushPendingStreamEvents()
-        XCTAssertFalse(store.messages.isEmpty || store.messages.first?.role == .assistant || true,
-                        "messageUpdated enqueue 不应崩溃")
+        XCTAssertEqual(store.messages.count, 1, "messageUpdated 入队后应建立消息壳层")
+        XCTAssertEqual(store.messages.first?.messageId, "m1")
+        XCTAssertEqual(store.messages.first?.role, .assistant)
+
+        let isolatedStore = AIChatStore()
+        isolatedStore.setCurrentSessionId("scope-old")
+        isolatedStore.enqueueMessageUpdated(messageId: "m-old", role: "assistant")
+        isolatedStore.setCurrentSessionId("scope-new")
+        isolatedStore.flushPendingStreamEvents()
+        XCTAssertTrue(isolatedStore.messages.isEmpty, "切换作用域后旧 session 的 messageUpdated 不应写入新会话")
     }
 
     // MARK: - 终态调度集成验证

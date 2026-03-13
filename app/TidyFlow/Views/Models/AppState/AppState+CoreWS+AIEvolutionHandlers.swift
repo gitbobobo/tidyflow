@@ -546,7 +546,7 @@ extension AppState {
             for: ev.aiTool,
             trigger: "chat_done"
         )
-        store.handleChatDone(sessionId: ev.sessionId)
+        store.commitTerminalState(sessionId: ev.sessionId)
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
         // v1.42：存储路由决策与预算状态（按 project/workspace/aiTool/session 隔离）
@@ -606,7 +606,8 @@ extension AppState {
         TFLog.app.error(
             "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
         )
-        store.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        store.commitTerminalState(sessionId: ev.sessionId)
+        store.appendTerminalErrorMessage(ev.error)
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
         // v1.42：存储路由决策（即使出错也记录最后的路由，便于问题排查）

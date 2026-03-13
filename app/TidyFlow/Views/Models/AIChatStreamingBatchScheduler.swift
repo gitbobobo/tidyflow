@@ -39,6 +39,7 @@ struct AIChatStreamBatchDecision {
 /// - 结构性事件（messageUpdated / partUpdated）或流结束 → 立即 flush
 /// - 纯文本 partDelta 允许延迟合批；积压越深、文本越多，允许更长延迟
 /// - 任意情况下等待不超过 `maxStaleness` 上限
+/// - 终态收敛由 AIChatStore 先显式 `flushPendingStreamEvents()`，再统一清理瞬态
 enum AIChatStreamingBatchScheduler {
 
     /// 纯 delta 批次的绝对陈旧上限（秒）

@@ -808,6 +808,17 @@ struct ScopedAIChatStreamEvent {
     let event: AIChatStreamEvent
 }
 
+/// 已从 ingress 队列摘出、等待主线程应用的 flush 批次。
+/// 终态提交时需要与 pending 事件一起回收，避免“已排队但未应用”的 delta 丢失。
+struct QueuedAIChatStreamFlush {
+    let id: UInt64
+    let scope: AIChatStreamScope
+    let events: [AIChatStreamEvent]
+    let rawEventCount: Int
+    let rawUTF16Delta: Int
+    let hadStructuralEvent: Bool
+}
+
 // MARK: - Prepared Snapshot
 
 /// snapshot 分支的后台预处理结果；在后台线程构建，在主线程一次性提交。
@@ -908,6 +919,7 @@ final class AIChatStore {
     /// 进入 awaiting 前的消息数量快照；用于过滤“旧 user 消息更新”误触发收敛。
     private var awaitingUserEchoBaselineIndex: Int?
     private var pendingStreamEvents: [ScopedAIChatStreamEvent] = []
+    private var queuedMainThreadFlushes: [QueuedAIChatStreamFlush] = []
     private var streamFlushWorkItem: DispatchWorkItem?
     private let streamIngressQueue = DispatchQueue(
         label: "cn.tidyflow.ai.stream.reducer",
@@ -917,6 +929,7 @@ final class AIChatStore {
     // 以下属性仅在 streamIngressQueue 上访问，用于批处理决策
     private var pendingHasStructuralEvent: Bool = false
     private var pendingUTF16DeltaCount: Int = 0
+    private var nextQueuedMainThreadFlushID: UInt64 = 0
     /// 当前流式 ingress 作用域（主线程读写 generation，streamIngressQueue 读取 snapshot）
     private var streamScopeGeneration: UInt64 = 0
     /// streamIngressQueue 上缓存的作用域快照，由 invalidateStreamScope() 同步更新
@@ -927,6 +940,15 @@ final class AIChatStore {
     /// 当前主线程作用域
     private var currentStreamScope: AIChatStreamScope {
         AIChatStreamScope(sessionId: currentSessionId, generation: streamScopeGeneration)
+    }
+
+    /// 当 sessionId 直接变更时，同步更新 ingress 队列使用的作用域快照，
+    /// 避免结构性事件立即 flush 时仍按旧 session 过滤。
+    private func syncIngressScopeSnapshotToCurrentScope() {
+        let newScope = currentStreamScope
+        streamIngressQueue.sync {
+            ingressScopeSnapshot = newScope
+        }
     }
 
     /// 失效旧作用域：递增 generation 并同步取消延迟 flush、清空 pending 事件。
@@ -943,6 +965,7 @@ final class AIChatStore {
                 )
             }
             pendingStreamEvents.removeAll(keepingCapacity: true)
+            queuedMainThreadFlushes.removeAll(keepingCapacity: true)
             pendingHasStructuralEvent = false
             pendingUTF16DeltaCount = 0
             ingressScopeSnapshot = newScope
@@ -966,6 +989,7 @@ final class AIChatStore {
     func applySnapshot(_ snapshot: AIChatSnapshot) {
         invalidateStreamScope()
         currentSessionId = snapshot.currentSessionId
+        syncIngressScopeSnapshotToCurrentScope()
         subscribedSessionIds = snapshot.subscribedSessionIds
         if let currentSessionId {
             subscribedSessionIds.insert(currentSessionId)
@@ -1013,6 +1037,7 @@ final class AIChatStore {
     func clearAll() {
         invalidateStreamScope()
         currentSessionId = nil
+        syncIngressScopeSnapshotToCurrentScope()
         // 清除所有会话订阅，防止旧会话流式事件在 clearAll 后仍被接受
         subscribedSessionIds = []
         messages = []
@@ -1095,6 +1120,7 @@ final class AIChatStore {
 
     func applyPerfFixtureScenario(_ scenario: AIChatPerfFixtureScenario) {
         currentSessionId = scenario.sessionId
+        syncIngressScopeSnapshotToCurrentScope()
         subscribedSessionIds = [scenario.sessionId]
         messages = scenario.seedMessages
         historyHasMore = false
@@ -1252,16 +1278,25 @@ final class AIChatStore {
                 guard scoped.scope == scope else { return nil }
                 return scoped.event
             }
+            let validQueuedFlushes = queuedMainThreadFlushes.filter { $0.scope == scope }
+            let queuedEvents = validQueuedFlushes.flatMap(\.events)
             let droppedCount = pendingStreamEvents.count - validEvents.count
+            let droppedQueuedCount = queuedMainThreadFlushes.count - validQueuedFlushes.count
             if droppedCount > 0 {
                 TFLog.perf.debug(
                     "ai_stream_drain_dropped=\(droppedCount, privacy: .public) scope_gen=\(scope.generation, privacy: .public)"
                 )
             }
+            if droppedQueuedCount > 0 {
+                TFLog.perf.debug(
+                    "ai_stream_drain_queued_dropped=\(droppedQueuedCount, privacy: .public) scope_gen=\(scope.generation, privacy: .public)"
+                )
+            }
             pendingStreamEvents.removeAll(keepingCapacity: true)
+            queuedMainThreadFlushes.removeAll(keepingCapacity: true)
             pendingHasStructuralEvent = false
             pendingUTF16DeltaCount = 0
-            return Self.coalesceStreamEvents(validEvents)
+            return Self.coalesceStreamEvents(validEvents + queuedEvents)
         }
     }
 
@@ -1291,39 +1326,18 @@ final class AIChatStore {
         let events = Self.coalesceStreamEvents(validRawEvents)
         guard !events.isEmpty else { return }
 
-        let rawEventCount = validRawEvents.count
-        let capturedScope = currentScope
+        nextQueuedMainThreadFlushID &+= 1
+        let flush = QueuedAIChatStreamFlush(
+            id: nextQueuedMainThreadFlushID,
+            scope: currentScope,
+            events: events,
+            rawEventCount: validRawEvents.count,
+            rawUTF16Delta: rawUTF16Delta,
+            hadStructuralEvent: hadStructuralEvent
+        )
+        queuedMainThreadFlushes.append(flush)
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            // 主线程二次校验：若到达时作用域已变化，直接丢弃
-            guard self.currentStreamScope == capturedScope else {
-                TFLog.perf.debug(
-                    "ai_stream_flush_rejected_on_main events=\(events.count, privacy: .public) captured_gen=\(capturedScope.generation, privacy: .public) current_gen=\(self.currentStreamScope.generation, privacy: .public)"
-                )
-                return
-            }
-            let perfTraceId: String? = {
-                guard let context = self.performanceContextProvider?(),
-                      let tracer = self.performanceTracer else { return nil }
-                return tracer.begin(TFPerformanceContext(
-                    event: .aiMessageTailFlush,
-                    project: context.project,
-                    workspace: context.workspace,
-                    metadata: [
-                        "events": String(events.count),
-                        "raw_events": String(rawEventCount),
-                        "utf16_delta": String(rawUTF16Delta),
-                        "structural": hadStructuralEvent ? "1" : "0",
-                    ]
-                ))
-            }()
-            self.applyStreamEvents(events)
-            if let perfTraceId, let tracer = self.performanceTracer {
-                tracer.end(perfTraceId)
-            }
-            TFLog.perf.debug(
-                "ai_stream_commit events=\(events.count, privacy: .public) raw_events=\(rawEventCount, privacy: .public) utf16_delta=\(rawUTF16Delta, privacy: .public) structural=\(hadStructuralEvent ? 1 : 0, privacy: .public)"
-            )
+            self?.applyQueuedMainThreadFlush(flush.id)
         }
     }
 
@@ -1391,6 +1405,7 @@ final class AIChatStore {
             subscribedSessionIds.insert(new)
         }
         currentSessionId = sessionId
+        syncIngressScopeSnapshotToCurrentScope()
     }
 
     func setAbortPendingSessionId(_ sessionId: String?) {
@@ -1627,10 +1642,11 @@ final class AIChatStore {
             guard case let .messageUpdated(messageId, roleToken) = event else { continue }
             let role = roleFromToken(roleToken)
             let msgIdx = ensureMessage(messageId: messageId, roleHint: role)
-            if role == .user || (role == nil && messages[msgIdx].role == .user) {
+            guard let message = messages[safe: msgIdx] else { continue }
+            if role == .user || (role == nil && message.role == .user) {
                 markUserEchoReceived(messageId: messageId)
             }
-            if messages[msgIdx].role == .assistant {
+            if message.role == .assistant {
                 if awaitingUserEcho, pendingUserEchoAssistantMessageId == nil {
                     pendingUserEchoAssistantMessageId = messageId
                 }
@@ -1679,10 +1695,11 @@ final class AIChatStore {
                 }
                 let msgIdx = ensureMessage(messageId: messageId, roleHint: roleHint)
                 upsertPart(msgIdx: msgIdx, part: part)
-                if messages[msgIdx].role == .assistant {
+                guard let message = messages[safe: msgIdx] else { continue }
+                if message.role == .assistant {
                     if awaitingUserEcho,
                        pendingUserEchoAssistantMessageId == nil,
-                       let assistantMessageId = messages[msgIdx].messageId {
+                       let assistantMessageId = message.messageId {
                         pendingUserEchoAssistantMessageId = assistantMessageId
                     }
                     if let current = latestMessageIndex {
@@ -1707,10 +1724,11 @@ final class AIChatStore {
                 }
                 let msgIdx = ensureMessage(messageId: messageId, roleHint: roleHint)
                 appendDelta(msgIdx: msgIdx, partId: partId, partType: partType, field: field, delta: delta)
-                if messages[msgIdx].role == .assistant {
+                guard let message = messages[safe: msgIdx] else { continue }
+                if message.role == .assistant {
                     if awaitingUserEcho,
                        pendingUserEchoAssistantMessageId == nil,
-                       let assistantMessageId = messages[msgIdx].messageId {
+                       let assistantMessageId = message.messageId {
                         pendingUserEchoAssistantMessageId = assistantMessageId
                     }
                     if let current = latestMessageIndex {
@@ -1730,66 +1748,19 @@ final class AIChatStore {
     }
 
     func handleChatDone(sessionId: String) {
-        // 终态：先冲刷当前作用域的待处理事件，再失效作用域
-        flushPendingStreamEvents()
-        invalidateStreamScope()
-        clearAbortPendingIfMatches(sessionId)
-        suppressActiveToolStreaming(for: sessionId)
-        // 严格模式兜底：若 user echo 未回传，也要收敛输入状态，避免输入框长期不清空/禁用。
-        if awaitingUserEcho {
-            awaitingUserEcho = false
-            awaitingUserEchoBaselineIndex = nil
-            lastUserEchoMessageId = "done-\(sessionId)-\(UUID().uuidString)"
-        }
-        hasPendingFirstContent = false
-        recentHistoryIsLoading = false
-        isStreaming = false
-        pendingToolQuestions = [:]
-        questionRequestToCallId = [:]
-        clearAssistantStreaming()
-        messages.removeAll { msg in
-            msg.role == .assistant && msg.messageId == nil && msg.parts.isEmpty
-        }
-        rebuildIndexes()
-        recomputeIsStreaming()
-        publishTailSignals()
+        commitTerminalState(sessionId: sessionId)
     }
 
     func handleChatError(sessionId: String, error: String) {
-        // 终态：先冲刷当前作用域的待处理事件，再失效作用域
-        flushPendingStreamEvents()
-        invalidateStreamScope()
-        clearAbortPendingIfMatches(sessionId)
-        suppressActiveToolStreaming(for: sessionId)
-        awaitingUserEcho = false
-        hasPendingFirstContent = false
-        awaitingUserEchoBaselineIndex = nil
-        pendingUserEchoAssistantMessageId = nil
-        recentHistoryIsLoading = false
-        isStreaming = false
-        pendingToolQuestions = [:]
-        questionRequestToCallId = [:]
-        clearAssistantStreaming()
-        messages.removeAll { msg in
-            msg.role == .assistant && msg.messageId == nil && msg.parts.isEmpty
-        }
-        messages.append(
-            AIChatMessage(
-                role: .assistant,
-                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "⚠️ \(error)", toolName: nil)],
-                isStreaming: false
-            )
-        )
-        rebuildIndexes()
-        recomputeIsStreaming()
-        publishTailSignals()
+        commitTerminalState(sessionId: sessionId)
+        appendTerminalErrorMessage(error)
     }
 
     /// 终态提交入口：统一处理 terminal update、done、error 三类收敛。
     ///
     /// 固定执行顺序：
     /// 1. 校验作用域与 revision
-    /// 2. 同步冲刷当前作用域待处理事件（isStreamEnding=true，立即 flush）
+    /// 2. 显式调用 flushPendingStreamEvents() 冲刷当前作用域待处理事件
     /// 3. 清除 streaming/abort/pending-first-content/question 等瞬态
     /// 4. 单次发布 tail 信号
     ///
@@ -1797,7 +1768,7 @@ final class AIChatStore {
     /// 不再通过 `applySessionCacheOps([], isStreaming: false)` 间接收敛。
     func commitTerminalState(sessionId: String) {
         // 1. 终态立即冲刷当前作用域的待处理事件
-        flushPendingStreamEventsForTerminal()
+        flushPendingStreamEvents()
         // 2. 失效作用域，阻止后续延迟 flush
         invalidateStreamScope()
         // 3. 清除瞬态
@@ -1823,25 +1794,58 @@ final class AIChatStore {
         publishTailSignals()
     }
 
-    /// 终态场景的同步冲刷：使用 isStreamEnding=true 触发立即 flush 语义。
-    private func flushPendingStreamEventsForTerminal() {
-        let scope = currentStreamScope
-        let events: [AIChatStreamEvent] = streamIngressQueue.sync {
-            streamFlushWorkItem?.cancel()
-            streamFlushWorkItem = nil
-            let validEvents = pendingStreamEvents.compactMap { scoped -> AIChatStreamEvent? in
-                guard scoped.scope == scope else { return nil }
-                return scoped.event
-            }
-            pendingStreamEvents.removeAll(keepingCapacity: true)
-            pendingHasStructuralEvent = false
-            pendingUTF16DeltaCount = 0
-            return Self.coalesceStreamEvents(validEvents)
-        }
-        applyStreamEvents(events)
+    // MARK: - Internal Helpers
+
+    func appendTerminalErrorMessage(_ error: String) {
+        messages.append(
+            AIChatMessage(
+                role: .assistant,
+                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "⚠️ \(error)", toolName: nil)],
+                isStreaming: false
+            )
+        )
+        rebuildIndexes()
+        recomputeIsStreaming()
+        publishTailSignals()
     }
 
-    // MARK: - Internal Helpers
+    private func applyQueuedMainThreadFlush(_ flushID: UInt64) {
+        let flush: QueuedAIChatStreamFlush? = streamIngressQueue.sync {
+            guard let index = queuedMainThreadFlushes.firstIndex(where: { $0.id == flushID }) else {
+                return nil
+            }
+            return queuedMainThreadFlushes.remove(at: index)
+        }
+        guard let flush else { return }
+        guard currentStreamScope == flush.scope else {
+            TFLog.perf.debug(
+                "ai_stream_flush_rejected_on_main events=\(flush.events.count, privacy: .public) captured_gen=\(flush.scope.generation, privacy: .public) current_gen=\(self.currentStreamScope.generation, privacy: .public)"
+            )
+            return
+        }
+        let perfTraceId: String? = {
+            guard let context = performanceContextProvider?(),
+                  let tracer = performanceTracer else { return nil }
+            return tracer.begin(TFPerformanceContext(
+                event: .aiMessageTailFlush,
+                project: context.project,
+                workspace: context.workspace,
+                metadata: [
+                    "events": String(flush.events.count),
+                    "raw_events": String(flush.rawEventCount),
+                    "utf16_delta": String(flush.rawUTF16Delta),
+                    "structural": flush.hadStructuralEvent ? "1" : "0",
+                ]
+            ))
+        }()
+        applyStreamEvents(flush.events)
+        if let perfTraceId, let tracer = performanceTracer {
+            tracer.end(perfTraceId)
+        }
+        TFLog.perf.debug(
+            "ai_stream_commit events=\(flush.events.count, privacy: .public) raw_events=\(flush.rawEventCount, privacy: .public) utf16_delta=\(flush.rawUTF16Delta, privacy: .public) structural=\(flush.hadStructuralEvent ? 1 : 0, privacy: .public)"
+        )
+    }
 
     private func scheduleStreamFlushIfNeeded() {
         let input = AIChatStreamBatchInput(
@@ -2089,11 +2093,10 @@ final class AIChatStore {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         let oldMessage = messages[msgIdx]
 
-        if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
-           existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-            var existingPart = messages[msgIdx].parts[existing.partIdx]
+        if let partIdx = validatedPartIndex(part.id, in: msgIdx),
+           var existingPart = messages[msgIdx].parts[safe: partIdx] {
             AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
-            messages[msgIdx].parts[existing.partIdx] = existingPart
+            messages[msgIdx].parts[partIdx] = existingPart
             updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
             touchRenderRevision(at: msgIdx)
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
@@ -2176,17 +2179,18 @@ final class AIChatStore {
         }()
 
         if field == "progress", normalizedPartType == AIChatPartKind.tool.rawValue {
-            if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
-               existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-                var part = messages[msgIdx].parts[existing.partIdx]
+            if let partIdx = validatedPartIndex(partId, in: msgIdx),
+               var part = messages[msgIdx].parts[safe: partIdx] {
                 var sections = part.toolView?.sections ?? []
                 if let index = toolDeltaSectionIndex(in: sections, field: field) {
-                    if sections[index].content.isEmpty {
-                        sections[index].content = delta
+                    guard var section = sections[safe: index] else { return }
+                    if section.content.isEmpty {
+                        section.content = delta
                     } else {
-                        sections[index].content.append("\n")
-                        sections[index].content.append(contentsOf: delta)
+                        section.content.append("\n")
+                        section.content.append(contentsOf: delta)
                     }
+                    sections[index] = section
                 } else {
                     sections.append(makeToolDeltaSection(field: field, content: delta))
                 }
@@ -2206,7 +2210,7 @@ final class AIChatStore {
                     sections: sections
                 )
                 part.kind = .tool
-                messages[msgIdx].parts[existing.partIdx] = part
+                messages[msgIdx].parts[partIdx] = part
                 updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
                 touchRenderRevision(at: msgIdx)
                 return
@@ -2246,12 +2250,13 @@ final class AIChatStore {
         }
 
         if field == "output", normalizedPartType == AIChatPartKind.tool.rawValue {
-            if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
-               existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-                var part = messages[msgIdx].parts[existing.partIdx]
+            if let partIdx = validatedPartIndex(partId, in: msgIdx),
+               var part = messages[msgIdx].parts[safe: partIdx] {
                 var sections = part.toolView?.sections ?? []
                 if let index = toolDeltaSectionIndex(in: sections, field: field) {
-                    sections[index].content.append(contentsOf: delta)
+                    guard var section = sections[safe: index] else { return }
+                    section.content.append(contentsOf: delta)
+                    sections[index] = section
                 } else {
                     sections.append(makeToolDeltaSection(field: field, content: delta))
                 }
@@ -2271,7 +2276,7 @@ final class AIChatStore {
                     sections: sections
                 )
                 part.kind = .tool
-                messages[msgIdx].parts[existing.partIdx] = part
+                messages[msgIdx].parts[partIdx] = part
                 updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
                 touchRenderRevision(at: msgIdx)
                 return
@@ -2312,13 +2317,14 @@ final class AIChatStore {
 
         guard field == "text" else { return }
 
-        if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
-           existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-            if messages[msgIdx].parts[existing.partIdx].text != nil {
-                messages[msgIdx].parts[existing.partIdx].text!.append(contentsOf: delta)
+        if let partIdx = validatedPartIndex(partId, in: msgIdx),
+           var part = messages[msgIdx].parts[safe: partIdx] {
+            if part.text != nil {
+                part.text!.append(contentsOf: delta)
             } else {
-                messages[msgIdx].parts[existing.partIdx].text = delta
+                part.text = delta
             }
+            messages[msgIdx].parts[partIdx] = part
             updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
             touchRenderRevision(at: msgIdx)
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
@@ -2337,6 +2343,24 @@ final class AIChatStore {
         if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
             markUserEchoReceived(messageId: messageId)
         }
+    }
+
+    private func validatedPartIndex(_ partId: String, in msgIdx: Int) -> Int? {
+        guard messages.indices.contains(msgIdx) else {
+            partIndexByPartId.removeValue(forKey: partId)
+            return nil
+        }
+        if let existing = partIndexByPartId[partId],
+           existing.msgIdx == msgIdx,
+           messages[msgIdx].parts.indices.contains(existing.partIdx) {
+            return existing.partIdx
+        }
+        partIndexByPartId.removeValue(forKey: partId)
+        guard let partIdx = messages[msgIdx].parts.firstIndex(where: { $0.id == partId }) else {
+            return nil
+        }
+        partIndexByPartId[partId] = (msgIdx, partIdx)
+        return partIdx
     }
 
     private func markOnlyStreamingAssistant(at msgIdx: Int) {

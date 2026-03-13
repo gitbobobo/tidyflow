@@ -361,8 +361,7 @@ final class AIChatStoreSessionCacheTests: XCTestCase {
         XCTAssertGreaterThan(store.testStreamScopeGeneration, genBefore,
                              "clearAll 应递增 generation")
     }
-
-
+    private func makeTextPart(id: String, text: String?) -> AIProtocolPartInfo {
         AIProtocolPartInfo(
             id: id,
             partType: "text",
