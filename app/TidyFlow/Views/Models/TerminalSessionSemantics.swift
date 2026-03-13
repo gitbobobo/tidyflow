@@ -395,6 +395,7 @@ enum TerminalSessionSemantics {
     ///
     /// 优先使用 Core 聚合的 `AiDisplayStatus`，不再依赖客户端自行推导。
     /// macOS 与 iOS 双端共用此投影函数，确保标签栏展示语义一致。
+    /// `active_tool_name` 通过 `displayName(forAITool:)` 映射为用户友好显示名。
     static func terminalAIStatus(
         fromCoordinatorState state: WorkspaceCoordinatorState
     ) -> TerminalAIStatus {
@@ -403,7 +404,7 @@ enum TerminalSessionSemantics {
         case .idle:
             return .idle
         case .running:
-            return .running(toolName: ai.activeToolName)
+            return .running(toolName: displayName(forAITool: ai.activeToolName))
         case .awaitingInput:
             return .awaitingInput
         case .success:
@@ -412,6 +413,21 @@ enum TerminalSessionSemantics {
             return .failure(message: ai.lastErrorMessage)
         case .cancelled:
             return .cancelled
+        }
+    }
+
+    /// 将 AI 工具标识符映射为用户友好的显示名称。
+    ///
+    /// 优先识别已知工具（codex、opencode、claude、kimi），
+    /// 未知工具直接返回原始标识符作为回退，不崩溃、不返回 nil（除非输入为空）。
+    static func displayName(forAITool identifier: String?) -> String? {
+        guard let id = identifier, !id.isEmpty else { return nil }
+        switch id.lowercased() {
+        case "codex":    return "Codex"
+        case "opencode": return "OpenCode"
+        case "claude":   return "Claude"
+        case "kimi":     return "Kimi"
+        default:         return id
         }
     }
 

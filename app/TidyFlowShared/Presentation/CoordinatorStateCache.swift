@@ -144,6 +144,12 @@ public final class CoordinatorStateCache: @unchecked Sendable {
         return worst
     }
 
+    /// 判断指定工作区是否已有来自 Core 的协调状态（用于本地同步降级为兜底的判断）。
+    /// 当此方法返回 true 时，本地事件驱动的状态同步应跳过，避免覆盖 Core 权威状态。
+    public func hasState(forGlobalKey key: String) -> Bool {
+        cache[key] != nil
+    }
+
     /// 获取指定工作区是否需要关注（非 healthy）
     public func needsAttention(for id: CoordinatorWorkspaceId) -> Bool {
         guard let state = state(for: id) else { return false }
