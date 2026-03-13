@@ -1668,6 +1668,8 @@ struct MobileEvolutionView: View {
     @State private var selectedCycleDetail: MobileCycleDetailPayload?
     /// 当前活跃的性能监控 key（workspaceContextKey），用于生命周期管理
     @State private var activeMonitorKey: String = ""
+    /// Evolution 面板性能 fixture 执行器（仅在 UI_TEST_MODE + evolution_panel 场景下激活）
+    @StateObject private var evolutionPerfFixtureRunner = EvolutionPerfFixtureRunner()
 
     private struct EvolutionBlockerDraft {
         var selected: Bool
@@ -1701,8 +1703,62 @@ struct MobileEvolutionView: View {
     private var primaryControlButtonTint: Color {
         primaryControlShowsStop ? .red : .green
     }
+
+    private var isEvolutionPerfFixtureActive: Bool {
+        EvolutionPerfFixtureScenario.current() != nil
+    }
+
+    private var evolutionPerfStatusValue: String {
+        evolutionPerfFixtureRunner.isCompleted ? "running completed" : "running"
+    }
+
+    @ViewBuilder
+    private var evolutionPerfAccessibilityMarkers: some View {
+        if isEvolutionPerfFixtureActive {
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement()
+                    .accessibilityIdentifier("tf.ios.evolution.pipeline")
+                    .accessibilityLabel("evolution_panel")
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement()
+                    .accessibilityIdentifier("tf.perf.evolution.status")
+                    .accessibilityLabel(evolutionPerfStatusValue)
+                    .accessibilityValue(evolutionPerfStatusValue)
+                if evolutionPerfFixtureRunner.isCompleted {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement()
+                        .accessibilityIdentifier("tf.perf.evolution.completed")
+                        .accessibilityLabel("true")
+                        .accessibilityValue("true")
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(false)
+        }
+    }
+
     var body: some View {
         List {
+            // Evolution 面板性能 fixture 状态条（仅在 UI_TEST_MODE + evolution_panel 场景下显示）
+            if isEvolutionPerfFixtureActive {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(evolutionPerfStatusValue)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                        Text(evolutionPerfFixtureRunner.isCompleted ? "true" : "false")
+                            .font(.caption2.monospaced())
+                            .foregroundColor(evolutionPerfFixtureRunner.isCompleted ? .green : .secondary)
+                        Text("rounds \(evolutionPerfFixtureRunner.statusText)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
             Section("evolution.page.scheduler.section".localized) {
                 LabeledContent("evolution.page.scheduler.activation".localized) {
                     HStack(spacing: 6) {
@@ -2094,6 +2150,9 @@ struct MobileEvolutionView: View {
         .sheet(item: $selectedCycleDetail) { detail in
             mobileCycleDetailSheet(detail)
         }
+        .overlay(alignment: .topLeading) {
+            evolutionPerfAccessibilityMarkers
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("common.refresh".localized) {
@@ -2111,9 +2170,28 @@ struct MobileEvolutionView: View {
             syncStartOptionsFromItem()
             appState.requestEvolutionCycleHistory(project: project, workspace: workspace)
             startPerformanceMonitor()
+            // Evolution 面板性能 fixture：UI_TEST_MODE + evolution_panel 场景下直接启动
+            if let fixtureScenario = EvolutionPerfFixtureScenario.current() {
+                NSLog(
+                    "[PerfFixture][Evolution] attach identifiers scenario=%@ project=%@ workspace=%@ status=%@",
+                    fixtureScenario.id,
+                    fixtureScenario.project,
+                    fixtureScenario.workspace,
+                    evolutionPerfStatusValue
+                )
+                evolutionPerfFixtureRunner.run { roundIndex in
+                    projectionStore.applyFixtureRound(
+                        project: fixtureScenario.project,
+                        workspace: fixtureScenario.workspace,
+                        cycleID: fixtureScenario.cycleID,
+                        roundIndex: roundIndex
+                    )
+                }
+            }
         }
         .onDisappear {
             stopPerformanceMonitor()
+            evolutionPerfFixtureRunner.cancel()
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             loadProfiles()

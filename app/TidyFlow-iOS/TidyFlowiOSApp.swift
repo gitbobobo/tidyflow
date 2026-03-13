@@ -31,6 +31,10 @@ struct TidyFlowiOSApp: App {
         AIChatPerfFixtureScenario.current()
     }
 
+    private var evolutionPerfFixtureScenario: EvolutionPerfFixtureScenario? {
+        EvolutionPerfFixtureScenario.current()
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack(alignment: .top) {
@@ -107,12 +111,20 @@ struct TidyFlowiOSApp: App {
 
     @ViewBuilder
     private var rootView: some View {
-        if let perfFixtureScenario {
+        if let evolutionScenario = evolutionPerfFixtureScenario {
+            // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页
+            MobileEvolutionView(
+                appState: appState,
+                project: evolutionScenario.project,
+                workspace: evolutionScenario.workspace
+            )
+        } else if let chatScenario = perfFixtureScenario {
+            // 聊天流式性能 fixture：直接进入 MobileAIChatView，绕过连接页
             MobileAIChatView(
                 appState: appState,
                 aiChatStore: appState.aiChatStore,
-                project: perfFixtureScenario.project,
-                workspace: perfFixtureScenario.workspace
+                project: chatScenario.project,
+                workspace: chatScenario.workspace
             )
         } else {
             ConnectionView()

@@ -530,6 +530,10 @@ final class MobileAppState: ObservableObject {
         if Self.uiTestModeEnabled {
             ConnectionStorage.clear()
             hasSavedConnection = false
+            if EvolutionPerfFixtureScenario.current() != nil || AIChatPerfFixtureScenario.current() != nil {
+                connectionPhase = .connected
+                connectionMessage = "ui_test_perf_fixture"
+            }
             return
         }
         // 恢复已保存的连接信息
