@@ -62,6 +62,7 @@ impl EvolutionManager {
             terminal_reason_code,
             terminal_error_message,
             rate_limit_error_message,
+            recovery_dto,
             coordination_state,
             coordination_scope,
             coordination_reason,
@@ -94,6 +95,7 @@ impl EvolutionManager {
                 entry.terminal_reason_code.clone(),
                 entry.terminal_error_message.clone(),
                 entry.rate_limit_error_message.clone(),
+                entry.recovery.as_ref().map(|r| r.to_dto()),
                 entry.coordination_state.clone(),
                 entry.coordination_scope.clone(),
                 entry.coordination_reason.clone(),
@@ -135,6 +137,7 @@ impl EvolutionManager {
                 terminal_reason_code,
                 terminal_error_message,
                 rate_limit_error_message,
+                recovery: recovery_dto,
                 coordination_state,
                 coordination_scope,
                 coordination_reason,
@@ -315,6 +318,7 @@ mod tests {
             coordination_peer_project: None,
             coordination_peer_workspace: None,
             coordination_queue_index: None,
+            recovery: None,
         }
     }
 

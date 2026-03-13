@@ -244,6 +244,7 @@ fn build_cycle_history_item(
         duration_ms,
         error_code,
         retryable,
+        recovery: None,
     })
 }
 
@@ -523,6 +524,7 @@ impl EvolutionManager {
                     terminal_error_message: None,
                     rate_limit_resume_at: None,
                     rate_limit_error_message: None,
+                    recovery: None,
                     stage_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
@@ -699,6 +701,7 @@ impl EvolutionManager {
             entry.terminal_error_message = None;
             entry.rate_limit_resume_at = None;
             entry.rate_limit_error_message = None;
+            entry.recovery = None;
         }
 
         self.broadcast(
@@ -825,6 +828,7 @@ impl EvolutionManager {
                 duration_ms,
                 error_code,
                 retryable,
+                recovery: w.recovery.as_ref().map(|r| r.to_dto()),
                 coordination_state: w.coordination_state.clone(),
                 coordination_scope: w.coordination_scope.clone(),
                 coordination_reason: w.coordination_reason.clone(),

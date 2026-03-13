@@ -7,6 +7,10 @@ use super::consts::{
     SESSION_RETRY_BACKOFF_MAX_SECS,
 };
 use super::coordination::CoordinationGateResult;
+use super::types::{
+    classify_failure, EvolutionFailureDiagnosisCode, EvolutionRecoveryInfo,
+    EvolutionRecoveryPhase, EvolutionRecoveryStrategy,
+};
 use super::EvolutionManager;
 use crate::ai::AiMessage;
 use crate::server::context::HandlerContext;
@@ -30,55 +34,11 @@ fn is_round_limit_exceeded(global_loop_round: u32, loop_round_limit: u32) -> boo
 }
 
 fn is_rate_limit_error_text(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    (lower.contains("429")
-        && (lower.contains("rate limit")
-            || lower.contains("too many requests")
-            || lower.contains("quota")
-            || lower.contains("reset")
-            || lower.contains("retry")))
-        || text.contains("限额")
-        || text.contains("频率限制")
-        || text.contains("请求过多")
-        || text.contains("速率限制")
+    classify_failure(text) == EvolutionFailureDiagnosisCode::RateLimit
 }
 
 fn is_retryable_session_error_text(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-
-    // 明确排除：这类属于确定性失败，不应该进入自动重试
-    if lower.contains("context window")
-        || lower.contains("evo_stage_output_invalid")
-        || lower.contains("evo_llm_output_unparseable")
-        // WI-005: 边界场景（空项目/目录缺失）属于非瞬态，不参与自动重试
-        || lower.contains("evo_boundary_empty_project")
-        || lower.contains("evo_boundary_workspace_missing")
-    {
-        return false;
-    }
-
-    lower.contains("stage stream error: unknown error")
-        || lower.contains("stage stream timeout")
-        || lower.contains("stdout closed")
-        || lower.contains("request timeout")
-        || lower.contains("connection reset")
-        || lower.contains("connection aborted")
-        || lower.contains("broken pipe")
-        || lower.contains("transport error")
-        || lower.contains("network error")
-        || lower.contains("service unavailable")
-        || lower.contains("pre-flight check")
-        || lower.contains("connection refused")
-        || lower.contains("agent not available")
-        // WI-005: 缺失 cycle 目录属于瞬态（可能是时序问题），允许重试
-        || lower.contains("evo_boundary_cycle_dir_missing")
-        || text.contains("连接超时")
-        || text.contains("连接重置")
-        || text.contains("连接中断")
-        || text.contains("网络错误")
-        || text.contains("服务不可用")
-        || text.contains("AI服务不可用")
-        || text.contains("无法连接")
+    classify_failure(text) == EvolutionFailureDiagnosisCode::TransientSession
 }
 
 fn looks_like_datetime_head(bytes: &[u8], start: usize) -> bool {
@@ -392,6 +352,18 @@ impl EvolutionManager {
             entry.terminal_error_message = None;
             entry.rate_limit_resume_at = Some(resume_at_rfc3339.clone());
             entry.rate_limit_error_message = Some(truncate_error_message(err, 800));
+            // 写入恢复对象
+            entry.recovery = Some(EvolutionRecoveryInfo {
+                phase: EvolutionRecoveryPhase::Recovering,
+                strategy: EvolutionRecoveryStrategy::WaitRateLimit,
+                diagnosis_code: EvolutionFailureDiagnosisCode::RateLimit,
+                diagnosis_summary: truncate_error_message(err, 200),
+                resume_at: Some(resume_at_rfc3339.clone()),
+                retry_count: 0,
+                retry_limit: 0,
+                degraded_until: None,
+                updated_at: Utc::now().to_rfc3339(),
+            });
         }
 
         self.persist_stage_file(key, stage, "rate_limited", Some(err), None)
@@ -400,6 +372,7 @@ impl EvolutionManager {
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "system").await;
         self.broadcast_scheduler(ctx).await;
+        self.emit_recovery_health_incident(key, project, workspace).await;
 
         warn!(
             "evolution stage rate limited: key={}, stage={}, resume_at={}, error={}",
@@ -465,8 +438,20 @@ impl EvolutionManager {
                 .stage_statuses
                 .insert(stage.to_string(), "pending".to_string());
             entry.terminal_error_message = None;
+            // 瞬态会话重试写入恢复对象，不再复用 rate_limit 字段
             entry.rate_limit_resume_at = Some(resume_at_rfc3339.clone());
-            entry.rate_limit_error_message = Some(truncate_error_message(err, 800));
+            entry.rate_limit_error_message = None;
+            entry.recovery = Some(EvolutionRecoveryInfo {
+                phase: EvolutionRecoveryPhase::Recovering,
+                strategy: EvolutionRecoveryStrategy::RetryStage,
+                diagnosis_code: EvolutionFailureDiagnosisCode::TransientSession,
+                diagnosis_summary: truncate_error_message(err, 200),
+                resume_at: Some(resume_at_rfc3339.clone()),
+                retry_count: retry_attempt,
+                retry_limit: MAX_SESSION_RETRY_ATTEMPTS,
+                degraded_until: None,
+                updated_at: Utc::now().to_rfc3339(),
+            });
         }
 
         self.persist_stage_file(key, stage, "retrying", Some(err), None)
@@ -515,6 +500,7 @@ impl EvolutionManager {
                                 entry.rate_limit_resume_at = None;
                                 entry.rate_limit_error_message = None;
                                 entry.terminal_error_message = None;
+                                entry.recovery = None;
                                 entry.status = "queued".to_string();
                                 should_emit_recovered = true;
                             }
@@ -527,6 +513,7 @@ impl EvolutionManager {
                             entry.rate_limit_resume_at = None;
                             entry.rate_limit_error_message = None;
                             entry.terminal_error_message = None;
+                            entry.recovery = None;
                             should_emit_recovered = true;
                         }
                     }
@@ -544,6 +531,48 @@ impl EvolutionManager {
                 self.persist_cycle_file(&key).await.ok();
                 self.broadcast_cycle_update(&key, &ctx, "system").await;
                 self.broadcast_scheduler(&ctx).await;
+            }
+
+            // 降级冷却检查：degraded_until 未到期时保持 queued，不占用并发
+            {
+                let mut should_wait_degradation = false;
+                let mut degradation_expired = false;
+                {
+                    let mut state = self.state.lock().await;
+                    if let Some(entry) = state.workspaces.get_mut(&key) {
+                        if let Some(ref recovery) = entry.recovery {
+                            if recovery.phase == EvolutionRecoveryPhase::Degraded {
+                                if let Some(ref degraded_until) = recovery.degraded_until {
+                                    if let Ok(t) = DateTime::parse_from_rfc3339(degraded_until) {
+                                        if t.with_timezone(&Utc) > Utc::now() {
+                                            entry.status = "queued".to_string();
+                                            should_wait_degradation = true;
+                                        } else {
+                                            degradation_expired = true;
+                                        }
+                                    } else {
+                                        degradation_expired = true;
+                                    }
+                                } else {
+                                    degradation_expired = true;
+                                }
+                            }
+                        }
+                        if degradation_expired {
+                            entry.recovery = None;
+                            entry.status = "queued".to_string();
+                        }
+                    }
+                }
+                if should_wait_degradation {
+                    sleep(Duration::from_millis(RATE_LIMIT_WAIT_SLICE_MS as u64)).await;
+                    continue;
+                }
+                if degradation_expired {
+                    self.persist_cycle_file(&key).await.ok();
+                    self.broadcast_cycle_update(&key, &ctx, "system").await;
+                    self.broadcast_scheduler(&ctx).await;
+                }
             }
 
             match self.apply_project_coordination_gate(&key, &ctx).await {
@@ -741,6 +770,9 @@ impl EvolutionManager {
                         key, stage, err
                     );
                     self.mark_failed_system(&key, &err, &ctx).await;
+                    // 失败后检查是否需要进入降级冷却
+                    self.check_and_apply_degradation(&key, &project, &workspace, &ctx)
+                        .await;
                     return;
                 }
             }
@@ -770,6 +802,137 @@ impl EvolutionManager {
             if stop_now {
                 self.mark_interrupted(&key, &ctx).await;
                 return;
+            }
+        }
+    }
+
+    /// 检查观测聚合中的降级/延迟排队建议，并应用降级冷却
+    async fn check_and_apply_degradation(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+        ctx: &HandlerContext,
+    ) {
+        let aggregates =
+            crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
+
+        // 查找当前 (project, workspace) 的聚合
+        let ws_aggregate = aggregates.iter().find(|a| a.project == project && a.workspace == workspace);
+        let Some(agg) = ws_aggregate else {
+            return;
+        };
+
+        let now = Utc::now();
+        let (cooldown_minutes, reason) = if agg.consecutive_failures >= 3 {
+            (15i64, "consecutive_failures_threshold")
+        } else if agg.rate_limit_hit_count >= 3 {
+            (5i64, "rate_limit_frequency")
+        } else {
+            return;
+        };
+
+        let degraded_until = now + chrono::Duration::minutes(cooldown_minutes);
+        let degraded_until_rfc3339 = degraded_until.to_rfc3339();
+
+        {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(key) else {
+                return;
+            };
+            // 只在工作区未处于活跃恢复中时应用降级
+            if entry.recovery.as_ref().map(|r| r.phase == EvolutionRecoveryPhase::Recovering).unwrap_or(false) {
+                return;
+            }
+            entry.recovery = Some(EvolutionRecoveryInfo {
+                phase: EvolutionRecoveryPhase::Degraded,
+                strategy: EvolutionRecoveryStrategy::DeferWorkspace,
+                diagnosis_code: if agg.consecutive_failures >= 3 {
+                    EvolutionFailureDiagnosisCode::UnknownSystem
+                } else {
+                    EvolutionFailureDiagnosisCode::RateLimit
+                },
+                diagnosis_summary: format!(
+                    "工作区 {}/{} 触发降级冷却：{}，冷却 {} 分钟",
+                    project, workspace, reason, cooldown_minutes
+                ),
+                resume_at: None,
+                retry_count: 0,
+                retry_limit: 0,
+                degraded_until: Some(degraded_until_rfc3339.clone()),
+                updated_at: now.to_rfc3339(),
+            });
+        }
+
+        // 写入降级 health incident
+        self.emit_recovery_health_incident(key, project, workspace).await;
+
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast_cycle_update(key, ctx, "system").await;
+        self.broadcast_scheduler(ctx).await;
+
+        warn!(
+            "evolution workspace degraded: key={}, reason={}, degraded_until={}",
+            key, reason, degraded_until_rfc3339
+        );
+    }
+
+    /// 根据当前恢复状态发射健康 incident
+    async fn emit_recovery_health_incident(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+    ) {
+        let recovery = {
+            let state = self.state.lock().await;
+            state.workspaces.get(key).and_then(|e| e.recovery.clone())
+        };
+        let Some(recovery) = recovery else {
+            return;
+        };
+
+        let registry = crate::server::health::global();
+        let Ok(mut reg) = registry.try_write() else {
+            return;
+        };
+
+        let ctx = crate::server::protocol::health::HealthContext::for_workspace(project, workspace);
+        match recovery.phase {
+            EvolutionRecoveryPhase::Recovering | EvolutionRecoveryPhase::Degraded => {
+                reg.record_evolution_incident(
+                    format!("evo_recovery:{}", recovery.diagnosis_code.as_str()),
+                    format!(
+                        "Evolution {}: {}",
+                        recovery.phase.as_str(),
+                        recovery.diagnosis_summary.chars().take(100).collect::<String>()
+                    ),
+                    crate::server::protocol::health::IncidentSeverity::Warning,
+                    ctx,
+                );
+            }
+            EvolutionRecoveryPhase::Failed => {
+                // artifact_contract_violation / stage_timeout / unknown_system -> Critical
+                let is_critical = matches!(
+                    recovery.diagnosis_code,
+                    EvolutionFailureDiagnosisCode::ArtifactContractViolation
+                        | EvolutionFailureDiagnosisCode::StageTimeout
+                        | EvolutionFailureDiagnosisCode::UnknownSystem
+                );
+                let severity = if is_critical {
+                    crate::server::protocol::health::IncidentSeverity::Critical
+                } else {
+                    crate::server::protocol::health::IncidentSeverity::Warning
+                };
+                reg.record_evolution_incident(
+                    format!("evo_critical:{}", recovery.diagnosis_code.as_str()),
+                    format!(
+                        "Evolution failed: {}",
+                        recovery.diagnosis_summary.chars().take(100).collect::<String>()
+                    ),
+                    severity,
+                    ctx,
+                );
             }
         }
     }
@@ -976,5 +1139,19 @@ mod tests {
         assert!(is_retryable_session_error_text(
             "evo_boundary_cycle_dir_missing: cycle 目录不存在: /tmp/evo/cycle-1"
         ));
+    }
+
+    #[test]
+    fn rate_limit_delegates_to_classifier() {
+        assert!(is_rate_limit_error_text("429 rate limit"));
+        assert!(!is_rate_limit_error_text("normal error"));
+    }
+
+    #[test]
+    fn transient_session_delegates_to_classifier() {
+        assert!(is_retryable_session_error_text(
+            "stage stream error: unknown error"
+        ));
+        assert!(!is_retryable_session_error_text("context window exceeded"));
     }
 }

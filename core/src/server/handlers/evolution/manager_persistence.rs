@@ -579,6 +579,17 @@ impl EvolutionManager {
                 "resume_at": entry.rate_limit_resume_at.clone(),
                 "last_error": entry.rate_limit_error_message.clone(),
             },
+            "recovery": entry.recovery.as_ref().map(|r| serde_json::json!({
+                "phase": r.phase.as_str(),
+                "strategy": r.strategy.as_str(),
+                "diagnosis_code": r.diagnosis_code.as_str(),
+                "diagnosis_summary": r.diagnosis_summary,
+                "resume_at": r.resume_at,
+                "retry_count": r.retry_count,
+                "retry_limit": r.retry_limit,
+                "degraded_until": r.degraded_until,
+                "updated_at": r.updated_at,
+            })),
             "created_at": entry.created_at.clone(),
             "updated_at": Utc::now().to_rfc3339(),
         });

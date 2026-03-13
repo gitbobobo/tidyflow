@@ -5798,6 +5798,7 @@ impl EvolutionManager {
             entry.stop_requested = true;
             entry.terminal_reason_code = Some("evo_stop_requested".to_string());
             entry.terminal_error_message = None;
+            entry.recovery = None;
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -5872,6 +5873,19 @@ impl EvolutionManager {
             entry.terminal_error_message = Some(normalized_err.clone());
             entry.rate_limit_resume_at = None;
             entry.rate_limit_error_message = None;
+            // 写入 failed 恢复对象，便于客户端与健康系统消费
+            let diagnosis_code = super::types::classify_failure(&normalized_err);
+            entry.recovery = Some(super::types::EvolutionRecoveryInfo {
+                phase: super::types::EvolutionRecoveryPhase::Failed,
+                strategy: super::types::EvolutionRecoveryStrategy::None,
+                diagnosis_code,
+                diagnosis_summary: normalized_err.chars().take(200).collect::<String>(),
+                resume_at: None,
+                retry_count: 0,
+                retry_limit: 0,
+                degraded_until: None,
+                updated_at: Utc::now().to_rfc3339(),
+            });
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -9304,6 +9318,7 @@ mod tests {
             coordination_peer_project: None,
             coordination_peer_workspace: None,
             coordination_queue_index: None,
+            recovery: None,
         }
     }
 

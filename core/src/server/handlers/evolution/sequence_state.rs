@@ -267,6 +267,7 @@ mod tests {
             coordination_peer_project: None,
             coordination_peer_workspace: None,
             coordination_queue_index: None,
+            recovery: None,
         }
     }
 
