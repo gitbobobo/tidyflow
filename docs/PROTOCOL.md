@@ -370,6 +370,26 @@ idle → entering → active ⇄ resuming
 - 发现项中的 `host` 来自解析后的服务地址，优先 IPv4。
 - 协议版本不匹配的节点会被 Core 过滤，不进入 discovery 列表。
 
+## 节点配对语义（v10）
+
+- 客户端对外仍只使用：
+  - `node_pair_peer`
+  - `node_unpair_peer`
+  - `node_pairing_result`
+  - `node_network_updated`
+- 配对成功后，发起端与接收端都会把对方写入各自的 `paired_nodes`，因此双端“已配对节点”列表都会出现对方。
+- Core 内部节点协作用到两个内部 HTTP 端点：
+  - `POST /api/v1/node/pair/register`
+  - `POST /api/v1/node/pair/unregister`
+- `register` 仅供 Core 间双向落库使用：
+  - 发起端先读取 `GET /api/v1/node/self?pair_key=...`
+  - 然后向对端 `POST /api/v1/node/pair/register`
+  - 接收端按 HTTP 来源 IP 记录发起端地址，并立即广播 `node_network_updated`
+- `unregister` 仅供 Core 间双向取消配对使用：
+  - 任一端本地删除成功后，会尝试调用对端 `POST /api/v1/node/pair/unregister`
+  - 对端根据已绑定的 `auth_token` 删除对应 `paired_nodes` 条目，并广播 `node_network_updated`
+  - 若对端当前不可达，本端仍保持删除成功，不做自动恢复
+
 ## 兼容策略
 
 - 本版本不向后兼容 v6。

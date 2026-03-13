@@ -1,6 +1,7 @@
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::{send_message, OutboundTx as WebSocket};
+use tracing::{info, warn};
 
 pub async fn handle_node_message(
     client_msg: &ClientMessage,
@@ -65,7 +66,27 @@ pub async fn handle_node_message(
             Ok(true)
         }
         ClientMessage::NodePairPeer { host, port, pair_key } => {
+            info!(
+                target_host = %host,
+                target_port = %port,
+                pair_key_len = pair_key.trim().len(),
+                "received node_pair_peer websocket request"
+            );
             let result = runtime.pair_peer(host, *port, pair_key).await;
+            match &result {
+                Ok(peer) => info!(
+                    target_host = %host,
+                    target_port = %port,
+                    peer_node_id = %peer.peer_node_id,
+                    "node_pair_peer websocket request succeeded"
+                ),
+                Err(err) => warn!(
+                    target_host = %host,
+                    target_port = %port,
+                    error = %err,
+                    "node_pair_peer websocket request failed"
+                ),
+            }
             let message = match result {
                 Ok(peer) => ServerMessage::NodePairingResult {
                     ok: true,
@@ -79,9 +100,20 @@ pub async fn handle_node_message(
                 },
             };
             send_message(socket, &message).await?;
+            if matches!(message, ServerMessage::NodePairingResult { ok: true, .. }) {
+                let runtime = runtime.clone();
+                tokio::spawn(async move {
+                    info!("starting post-pair background network refresh");
+                    match runtime.refresh_network().await {
+                        Ok(()) => info!("post-pair background network refresh completed"),
+                        Err(err) => warn!(error = %err, "post-pair background network refresh failed"),
+                    }
+                });
+            }
             Ok(true)
         }
         ClientMessage::NodeUnpairPeer { peer_node_id } => {
+            info!(peer_node_id = %peer_node_id, "received node_unpair_peer websocket request");
             runtime.unpair_peer(peer_node_id).await?;
             send_message(
                 socket,
@@ -92,6 +124,7 @@ pub async fn handle_node_message(
                 },
             )
             .await?;
+            info!(peer_node_id = %peer_node_id, "node_unpair_peer websocket request completed");
             Ok(true)
         }
         ClientMessage::NodeRefreshNetwork => {

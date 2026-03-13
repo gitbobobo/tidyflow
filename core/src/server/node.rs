@@ -41,6 +41,26 @@ pub struct NodeNetworkHttpResponse {
     pub active_locks: Vec<NodeActiveLockInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairPeerIdentityPayload {
+    pub node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodePairRegisterHttpRequest {
+    pub pair_key: String,
+    pub peer_identity: PairPeerIdentityPayload,
+    pub peer_auth_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodePairUnregisterHttpRequest {
+    pub auth_token: String,
+}
+
 #[derive(Debug, Clone)]
 struct DiscoveredNode {
     fullname: String,
@@ -106,6 +126,14 @@ impl NodeRuntime {
         save_tx: tokio::sync::mpsc::Sender<()>,
         bind_addr: String,
     ) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|err| {
+                warn!(error = %err, "failed to build node runtime reqwest client, falling back to default client");
+                reqwest::Client::new()
+            });
         let discovery_daemon = match ServiceDaemon::new() {
             Ok(daemon) => Some(Arc::new(daemon)),
             Err(err) => {
@@ -120,7 +148,7 @@ impl NodeRuntime {
             port: Arc::new(Mutex::new(None)),
             discovered: Arc::new(Mutex::new(HashMap::new())),
             active_locks: Arc::new(Mutex::new(HashMap::new())),
-            client: reqwest::Client::new(),
+            client,
             discovery_daemon,
             advertised_service: Arc::new(Mutex::new(None)),
             background_started: AtomicBool::new(false),
@@ -235,6 +263,91 @@ impl NodeRuntime {
         matched
     }
 
+    pub async fn validate_auth_token_for_peer(
+        &self,
+        token: &str,
+        expected_peer_node_id: &str,
+    ) -> bool {
+        let mut matched = false;
+        {
+            let mut state = self.app_state.write().await;
+            if let Some(entry) = state.node_auth_tokens.iter_mut().find(|entry| {
+                entry.token == token
+                    && entry.peer_node_id.as_deref() == Some(expected_peer_node_id)
+            }) {
+                entry.last_used_at_unix = Some(now_unix_ts());
+                matched = true;
+            }
+        }
+        if matched {
+            let _ = self.save_tx.send(()).await;
+        }
+        matched
+    }
+
+    pub async fn register_peer_from_remote(
+        &self,
+        remote_ip: IpAddr,
+        peer_identity: PairPeerIdentityPayload,
+        peer_auth_token: String,
+    ) -> Result<NodePeerInfo, String> {
+        self.ensure_identity().await;
+        let self_node_id = self.self_info().await.node_id;
+        if peer_identity.node_id == self_node_id {
+            return Err("不允许与自身节点配对".to_string());
+        }
+        info!(
+            remote_ip = %remote_ip,
+            peer_node_id = %peer_identity.node_id,
+            peer_port = peer_identity.port,
+            "registering paired peer from remote node"
+        );
+        let entry = PairedNodeEntry {
+            peer_node_id: peer_identity.node_id.clone(),
+            peer_name: peer_identity
+                .node_name
+                .clone()
+                .unwrap_or_else(|| peer_identity.node_id.clone()),
+            addresses: vec![remote_ip.to_string()],
+            port: peer_identity.port,
+            auth_token: peer_auth_token,
+            trust_source: "paired".to_string(),
+            introduced_by: None,
+            last_seen_at_unix: Some(now_unix_ts()),
+            status: "paired".to_string(),
+        };
+        self.upsert_local_peer_entry(entry.clone()).await;
+        info!(
+            peer_node_id = %entry.peer_node_id,
+            peer_name = %entry.peer_name,
+            remote_ip = %remote_ip,
+            peer_port = entry.port,
+            "paired peer persisted from remote registration"
+        );
+        Ok(node_peer_info_from_entry(&entry, true))
+    }
+
+    pub async fn unregister_peer_by_auth_token(&self, auth_token: &str) -> Result<String, String> {
+        let peer_node_id = self
+            .resolve_peer_node_id_for_auth_token(auth_token)
+            .await
+            .ok_or_else(|| "auth_token 无效".to_string())?;
+        info!(
+            peer_node_id = %peer_node_id,
+            "processing remote unregister request for paired peer"
+        );
+        let removed = self.remove_local_peer(&peer_node_id).await;
+        if removed.is_none() {
+            return Err("auth_token 未关联已配对节点".to_string());
+        }
+        let _ = self.refresh_network().await;
+        info!(
+            peer_node_id = %peer_node_id,
+            "paired peer removed from remote unregister request"
+        );
+        Ok(peer_node_id)
+    }
+
     pub async fn list_discovery_items(&self) -> Vec<NodeDiscoveryItemInfo> {
         let discovered = self.discovered.lock().await.clone();
         let state = self.app_state.read().await;
@@ -270,17 +383,7 @@ impl NodeRuntime {
             .paired_nodes
             .iter()
             .cloned()
-            .map(|peer| NodePeerInfo {
-                peer_node_id: peer.peer_node_id,
-                peer_name: peer.peer_name,
-                addresses: peer.addresses,
-                port: peer.port,
-                trust_source: peer.trust_source,
-                introduced_by: peer.introduced_by,
-                last_seen_at_unix: peer.last_seen_at_unix,
-                status: peer.status,
-                auth_token: include_tokens.then_some(peer.auth_token),
-            })
+            .map(|peer| node_peer_info_from_entry(&peer, include_tokens))
             .collect();
         let active_locks = self
             .active_locks
@@ -312,11 +415,25 @@ impl NodeRuntime {
         pair_key: &str,
     ) -> Result<NodePeerInfo, String> {
         self.ensure_identity().await;
+        let self_info = self.self_info().await;
+        let self_port = self_info
+            .port
+            .ok_or_else(|| "本地节点端口未就绪".to_string())?;
+        info!(
+            target_host = host.trim(),
+            target_port = port,
+            self_node_id = %self_info.node_id,
+            pair_key_len = pair_key.trim().len(),
+            "starting node pairing handshake"
+        );
+        let requester_node_id = url::form_urlencoded::byte_serialize(self_info.node_id.as_bytes())
+            .collect::<String>();
         let url = format!(
-            "http://{}:{}/api/v1/node/self?pair_key={}",
+            "http://{}:{}/api/v1/node/self?pair_key={}&requester_node_id={}",
             host.trim(),
             port,
-            url::form_urlencoded::byte_serialize(pair_key.trim().as_bytes()).collect::<String>()
+            url::form_urlencoded::byte_serialize(pair_key.trim().as_bytes()).collect::<String>(),
+            requester_node_id,
         );
         let response = self
             .client
@@ -325,7 +442,7 @@ impl NodeRuntime {
             .await
             .map_err(|e| format!("节点握手失败: {}", e))?;
         if !response.status().is_success() {
-            return Err(format!("节点握手失败: HTTP {}", response.status()));
+            return Err(read_http_error(response, "节点握手失败").await);
         }
         let payload: NodeSelfHttpResponse = response
             .json()
@@ -335,59 +452,92 @@ impl NodeRuntime {
             .auth_token
             .clone()
             .ok_or_else(|| "对端未返回 auth_token".to_string())?;
-        let self_node_id = self.self_info().await.node_id;
+        let self_node_id = self_info.node_id.clone();
         if payload.identity.node_id == self_node_id {
             return Err("不允许与自身节点配对".to_string());
         }
+        info!(
+            target_host = host.trim(),
+            target_port = port,
+            peer_node_id = %payload.identity.node_id,
+            peer_port = payload.identity.port.unwrap_or_default(),
+            "node pairing handshake succeeded"
+        );
 
-        let peer_info = {
-            let mut state = self.app_state.write().await;
-            let entry = PairedNodeEntry {
-                peer_node_id: payload.identity.node_id.clone(),
-                peer_name: payload
-                    .identity
-                    .node_name
-                    .clone()
-                    .unwrap_or_else(|| payload.identity.node_id.clone()),
-                addresses: vec![host.trim().to_string()],
-                port,
-                auth_token: auth_token.clone(),
-                trust_source: "paired".to_string(),
-                introduced_by: None,
-                last_seen_at_unix: Some(now_unix_ts()),
-                status: "paired".to_string(),
-            };
-            upsert_peer(&mut state.paired_nodes, entry.clone());
-            NodePeerInfo {
-                peer_node_id: entry.peer_node_id,
-                peer_name: entry.peer_name,
-                addresses: entry.addresses,
-                port: entry.port,
-                trust_source: entry.trust_source,
-                introduced_by: entry.introduced_by,
-                last_seen_at_unix: entry.last_seen_at_unix,
-                status: entry.status,
-                auth_token: Some(entry.auth_token),
-            }
+        let peer_auth_token = self
+            .issue_auth_token(Some(payload.identity.node_id.clone()))
+            .await;
+        let register_url = format!("http://{}:{}/api/v1/node/pair/register", host.trim(), port);
+        let register_request = NodePairRegisterHttpRequest {
+            pair_key: pair_key.trim().to_string(),
+            peer_identity: PairPeerIdentityPayload {
+                node_id: self_info.node_id.clone(),
+                node_name: self_info.node_name.clone(),
+                port: self_port,
+            },
+            peer_auth_token,
         };
-        let _ = self.save_tx.send(()).await;
-        let _ = self.refresh_network().await;
-        Ok(peer_info)
+        let register_response = self
+            .client
+            .post(register_url)
+            .json(&register_request)
+            .send()
+            .await
+            .map_err(|e| format!("对端登记失败: {}", e))?;
+        if !register_response.status().is_success() {
+            return Err(read_http_error(register_response, "对端登记失败").await);
+        }
+        info!(
+            target_host = host.trim(),
+            target_port = port,
+            peer_node_id = %payload.identity.node_id,
+            "remote node pair registration succeeded"
+        );
+
+        let entry = PairedNodeEntry {
+            peer_node_id: payload.identity.node_id.clone(),
+            peer_name: payload
+                .identity
+                .node_name
+                .clone()
+                .unwrap_or_else(|| payload.identity.node_id.clone()),
+            addresses: vec![host.trim().to_string()],
+            port,
+            auth_token: auth_token.clone(),
+            trust_source: "paired".to_string(),
+            introduced_by: None,
+            last_seen_at_unix: Some(now_unix_ts()),
+            status: "paired".to_string(),
+        };
+        self.upsert_local_peer_entry(entry.clone()).await;
+        info!(
+            peer_node_id = %entry.peer_node_id,
+            peer_name = %entry.peer_name,
+            target_host = host.trim(),
+            target_port = port,
+            "paired peer persisted locally and pairing result ready"
+        );
+        Ok(node_peer_info_from_entry(&entry, true))
     }
 
     pub async fn unpair_peer(&self, peer_node_id: &str) -> Result<(), String> {
-        {
-            let mut state = self.app_state.write().await;
-            state.paired_nodes.retain(|peer| {
-                peer.peer_node_id != peer_node_id
-                    && peer.introduced_by.as_deref() != Some(peer_node_id)
-            });
-            state
-                .node_auth_tokens
-                .retain(|token| token.peer_node_id.as_deref() != Some(peer_node_id));
-        }
-        let _ = self.save_tx.send(()).await;
+        info!(peer_node_id = %peer_node_id, "starting local unpair");
+        let removed = self.remove_local_peer(peer_node_id).await;
+        let Some(peer) = removed else {
+            info!(peer_node_id = %peer_node_id, "local unpair skipped because peer was already absent");
+            return Ok(());
+        };
         self.refresh_network().await?;
+        info!(peer_node_id = %peer.peer_node_id, "local unpair persisted, syncing remote unregister");
+        if let Err(err) = self.sync_remote_unregister(&peer).await {
+            warn!(
+                peer = %peer.peer_node_id,
+                error = %err,
+                "local unpair succeeded but remote unregister failed"
+            );
+        } else {
+            info!(peer_node_id = %peer.peer_node_id, "remote unregister completed after local unpair");
+        }
         Ok(())
     }
 
@@ -473,6 +623,12 @@ impl NodeRuntime {
             .first()
             .cloned()
             .ok_or_else(|| "peer address missing".to_string())?;
+        debug!(
+            peer_node_id = %peer.peer_node_id,
+            host = %host,
+            port = peer.port,
+            "fetching peer network snapshot"
+        );
         let url = format!(
             "http://{}:{}/api/v1/node/network?auth_token={}",
             host,
@@ -511,6 +667,78 @@ impl NodeRuntime {
         if changed {
             let _ = self.save_tx.send(()).await;
         }
+    }
+
+    async fn upsert_local_peer_entry(&self, entry: PairedNodeEntry) {
+        {
+            let mut state = self.app_state.write().await;
+            upsert_peer(&mut state.paired_nodes, entry);
+        }
+        let _ = self.save_tx.send(()).await;
+    }
+
+    async fn remove_local_peer(&self, peer_node_id: &str) -> Option<PairedNodeEntry> {
+        let removed = {
+            let mut state = self.app_state.write().await;
+            let removed = state
+                .paired_nodes
+                .iter()
+                .find(|peer| peer.peer_node_id == peer_node_id)
+                .cloned();
+            state.paired_nodes.retain(|peer| {
+                peer.peer_node_id != peer_node_id
+                    && peer.introduced_by.as_deref() != Some(peer_node_id)
+            });
+            state
+                .node_auth_tokens
+                .retain(|token| token.peer_node_id.as_deref() != Some(peer_node_id));
+            removed
+        };
+        if removed.is_some() {
+            let _ = self.save_tx.send(()).await;
+        }
+        removed
+    }
+
+    async fn resolve_peer_node_id_for_auth_token(&self, auth_token: &str) -> Option<String> {
+        let mut matched = None;
+        {
+            let mut state = self.app_state.write().await;
+            if let Some(entry) = state
+                .node_auth_tokens
+                .iter_mut()
+                .find(|entry| entry.token == auth_token)
+            {
+                entry.last_used_at_unix = Some(now_unix_ts());
+                matched = entry.peer_node_id.clone();
+            }
+        }
+        if matched.is_some() {
+            let _ = self.save_tx.send(()).await;
+        }
+        matched.filter(|peer_node_id| !peer_node_id.trim().is_empty())
+    }
+
+    async fn sync_remote_unregister(&self, peer: &PairedNodeEntry) -> Result<(), String> {
+        let host = peer
+            .addresses
+            .first()
+            .cloned()
+            .ok_or_else(|| "peer address missing".to_string())?;
+        let url = format!("http://{}:{}/api/v1/node/pair/unregister", host, peer.port);
+        let response = self
+            .client
+            .post(url)
+            .json(&NodePairUnregisterHttpRequest {
+                auth_token: peer.auth_token.clone(),
+            })
+            .send()
+            .await
+            .map_err(|e| format!("远端取消配对失败: {}", e))?;
+        if !response.status().is_success() {
+            return Err(read_http_error(response, "远端取消配对失败").await);
+        }
+        Ok(())
     }
 
     pub async fn try_acquire_network_lock(
@@ -984,6 +1212,36 @@ fn upsert_peer(peers: &mut Vec<PairedNodeEntry>, entry: PairedNodeEntry) {
     }
 }
 
+fn node_peer_info_from_entry(peer: &PairedNodeEntry, include_tokens: bool) -> NodePeerInfo {
+    NodePeerInfo {
+        peer_node_id: peer.peer_node_id.clone(),
+        peer_name: peer.peer_name.clone(),
+        addresses: peer.addresses.clone(),
+        port: peer.port,
+        trust_source: peer.trust_source.clone(),
+        introduced_by: peer.introduced_by.clone(),
+        last_seen_at_unix: peer.last_seen_at_unix,
+        status: peer.status.clone(),
+        auth_token: include_tokens.then_some(peer.auth_token.clone()),
+    }
+}
+
+async fn read_http_error(response: reqwest::Response, prefix: &str) -> String {
+    let status = response.status();
+    let message = response
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|value| {
+            value
+                .get("message")
+                .and_then(|message| message.as_str())
+                .map(|message| message.to_string())
+        })
+        .unwrap_or_else(|| format!("HTTP {}", status));
+    format!("{prefix}: {message}")
+}
+
 fn generate_secret(prefix: &str) -> String {
     let mut bytes = [0u8; 32];
     bytes[..16].copy_from_slice(Uuid::new_v4().as_bytes());
@@ -1001,14 +1259,43 @@ pub fn now_unix_ts() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DISCOVERY_SERVICE_TYPE, DiscoverySnapshot, build_discovery_advertisement,
-        discovery_hostname, is_loopback_bind_addr, map_resolved_service_to_discovered_node,
-        select_discovery_host,
+        DISCOVERY_SERVICE_TYPE, DiscoverySnapshot, NodePairUnregisterHttpRequest,
+        NodeRuntime, NodeSelfHttpResponse, PairPeerIdentityPayload,
+        build_discovery_advertisement, discovery_hostname, is_loopback_bind_addr,
+        map_resolved_service_to_discovered_node, select_discovery_host,
     };
-    use crate::server::protocol::PROTOCOL_VERSION;
+    use crate::server::protocol::{NodeSelfInfo, PROTOCOL_VERSION};
+    use crate::workspace::state::AppState;
+    use axum::{
+        Json, Router,
+        http::StatusCode,
+        routing::{get, post},
+    };
     use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
     use std::collections::HashMap;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::sync::{RwLock, mpsc};
+
+    fn test_runtime() -> Arc<NodeRuntime> {
+        let app_state = Arc::new(RwLock::new(AppState::default()));
+        let (save_tx, _save_rx) = mpsc::channel(8);
+        Arc::new(NodeRuntime::new(
+            app_state,
+            save_tx,
+            "0.0.0.0".to_string(),
+        ))
+    }
+
+    async fn spawn_test_server(router: Router) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (port, handle)
+    }
 
     #[test]
     fn discovery_advertisement_should_require_remote_access() {
@@ -1208,5 +1495,126 @@ mod tests {
             }
         }
         assert_eq!(removed_fullname.as_deref(), Some(fullname.as_str()));
+    }
+
+    #[tokio::test]
+    async fn auth_token_validation_should_require_expected_peer_binding() {
+        let runtime = test_runtime();
+        let token = runtime.issue_auth_token(Some("peer-a".to_string())).await;
+
+        assert!(runtime.validate_auth_token_for_peer(&token, "peer-a").await);
+        assert!(!runtime.validate_auth_token_for_peer(&token, "peer-b").await);
+    }
+
+    #[tokio::test]
+    async fn remote_register_should_persist_source_ip_and_payload_port() {
+        let runtime = test_runtime();
+        let peer = runtime
+            .register_peer_from_remote(
+                "192.168.31.113".parse().unwrap(),
+                PairPeerIdentityPayload {
+                    node_id: "peer-a".to_string(),
+                    node_name: Some("Peer A".to_string()),
+                    port: 8439,
+                },
+                "remote-token".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let snapshot = runtime.list_network_snapshot(true).await;
+        assert_eq!(snapshot.peers.len(), 1);
+        assert_eq!(snapshot.peers[0].peer_node_id, "peer-a");
+        assert_eq!(snapshot.peers[0].addresses, vec!["192.168.31.113"]);
+        assert_eq!(snapshot.peers[0].port, 8439);
+        assert_eq!(snapshot.peers[0].auth_token.as_deref(), Some("remote-token"));
+        assert_eq!(peer.addresses, vec!["192.168.31.113"]);
+        assert_eq!(peer.port, 8439);
+    }
+
+    #[tokio::test]
+    async fn pair_peer_should_not_persist_locally_when_remote_register_fails() {
+        let runtime = test_runtime();
+        runtime.set_server_endpoint("0.0.0.0".to_string(), 3439).await;
+
+        let router = Router::new()
+            .route(
+                "/api/v1/node/self",
+                get(|| async {
+                    Json(NodeSelfHttpResponse {
+                        identity: NodeSelfInfo {
+                            node_id: "peer-b".to_string(),
+                            node_name: Some("Peer B".to_string()),
+                            bootstrap_pair_key: "remote-bootstrap".to_string(),
+                            discovery_enabled: true,
+                            remote_access_enabled: true,
+                            bind_addr: Some("0.0.0.0".to_string()),
+                            port: Some(8439),
+                        },
+                        auth_token: Some("remote-auth-token".to_string()),
+                    })
+                }),
+            )
+            .route(
+                "/api/v1/node/pair/register",
+                post(|| async {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "message": "register failed",
+                        })),
+                    )
+                }),
+            );
+        let (port, handle) = spawn_test_server(router).await;
+
+        let result = runtime.pair_peer("127.0.0.1", port, "tfpair-test").await;
+        handle.abort();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("对端登记失败: register failed")
+        );
+        let snapshot = runtime.list_network_snapshot(true).await;
+        assert!(snapshot.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unpair_peer_should_remove_locally_when_remote_unregister_fails() {
+        let runtime = test_runtime();
+        let router = Router::new().route(
+            "/api/v1/node/pair/unregister",
+            post(|Json(_payload): Json<NodePairUnregisterHttpRequest>| async {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "message": "remote unavailable",
+                    })),
+                )
+            }),
+        );
+        let (port, handle) = spawn_test_server(router).await;
+
+        runtime
+            .register_peer_from_remote(
+                "127.0.0.1".parse().unwrap(),
+                PairPeerIdentityPayload {
+                    node_id: "peer-c".to_string(),
+                    node_name: Some("Peer C".to_string()),
+                    port,
+                },
+                "remote-issued-token".to_string(),
+            )
+            .await
+            .unwrap();
+
+        runtime.unpair_peer("peer-c").await.unwrap();
+        handle.abort();
+
+        let snapshot = runtime.list_network_snapshot(true).await;
+        assert!(snapshot.peers.is_empty());
     }
 }

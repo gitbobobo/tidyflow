@@ -35,6 +35,14 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/api/v1/node/network",
             get(crate::server::ws::http_api::node_network_handler),
         )
+        .route(
+            "/api/v1/node/pair/register",
+            post(crate::server::ws::http_api::node_pair_register_handler),
+        )
+        .route(
+            "/api/v1/node/pair/unregister",
+            post(crate::server::ws::http_api::node_pair_unregister_handler),
+        )
         .route("/api/v1/projects", get(crate::server::ws::http_api::projects_handler))
         .route(
             "/api/v1/projects/:project/workspaces",
