@@ -335,17 +335,27 @@ public final class PerformanceDashboardStore: ObservableObject {
 
     /// 从磁盘读取最近一次 perf-regression 报告并更新摘要。
     /// 应在 app 启动和 perf-regression 完成后调用。
+    /// 支持完整比较器报告（scenarios[] 含 metrics/issues）和精简仪表盘快照（scenarios_summary[]）。
     public func loadRegressionReport(atPath path: String) {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return
         }
+        applyRegressionReportJSON(json)
+    }
+
+    /// 从 JSON 字典直接应用回归报告（供测试和内部调用使用）。
+    public func applyRegressionReportJSON(_ json: [String: Any]) {
         let generatedAtStr = json["generated_at"] as? String ?? ""
         let generatedAt = ISO8601DateFormatter().date(from: generatedAtStr) ?? Date()
-        let scenarios = json["scenarios"] as? [[String: Any]] ?? []
         let overallStr = json["overall"] as? String ?? "unknown"
         let overallStatus = PerformanceBudgetStatus(rawValue: overallStr) ?? .unknown
+
+        // 兼容两种格式：完整报告 scenarios[] 和精简快照 scenarios_summary[]
+        let scenarios = json["scenarios"] as? [[String: Any]]
+            ?? json["scenarios_summary"] as? [[String: Any]]
+            ?? []
 
         var bySurface: [PerformanceTrackedSurface: [[String: Any]]] = [:]
         for scenario in scenarios {
@@ -354,7 +364,6 @@ public final class PerformanceDashboardStore: ObservableObject {
             if !surfaceIdStr.isEmpty {
                 effectiveSurfaceId = surfaceIdStr
             } else {
-                // 向后兼容：surface_id 可能不在旧格式 scenario 里，按 scenario_id 推断
                 let sid = scenario["scenario_id"] as? String ?? ""
                 effectiveSurfaceId = sid.hasPrefix("evolution") ? "evolution_workspace" : "chat_session"
             }
@@ -364,13 +373,20 @@ public final class PerformanceDashboardStore: ObservableObject {
 
         for surface in PerformanceTrackedSurface.allCases {
             let surfaceScenarios = bySurface[surface] ?? []
-            var worstStatus: PerformanceBudgetStatus = .unknown
+            var worstStatus: PerformanceBudgetStatus? = nil
             var worstScenarioId: String? = nil
             var allIssues: [String] = []
             for sc in surfaceScenarios {
                 let scStatus = PerformanceBudgetStatus(rawValue: sc["overall"] as? String ?? "") ?? .unknown
                 let scId = sc["scenario_id"] as? String
-                if scStatus > worstStatus {
+                let shouldReplaceWorst: Bool
+                if let worstStatus {
+                    // 回归报告聚合时将 unknown 视为“缺数据”，不能压过真实 pass/warn/fail。
+                    shouldReplaceWorst = regressionSeverityRank(scStatus) > regressionSeverityRank(worstStatus)
+                } else {
+                    shouldReplaceWorst = true
+                }
+                if shouldReplaceWorst {
                     worstStatus = scStatus
                     worstScenarioId = scId
                 }
@@ -378,7 +394,7 @@ public final class PerformanceDashboardStore: ObservableObject {
                     allIssues.append(contentsOf: issues)
                 }
             }
-            let finalStatus = surfaceScenarios.isEmpty ? overallStatus : worstStatus
+            let finalStatus = surfaceScenarios.isEmpty ? overallStatus : (worstStatus ?? .unknown)
             regressionSummaries[surface] = PerformanceRegressionSummary(
                 overall: finalStatus,
                 degradationReasons: allIssues,
@@ -390,6 +406,13 @@ public final class PerformanceDashboardStore: ObservableObject {
         for key in projections.keys {
             rebuildProjection(for: key, now: Date())
         }
+    }
+
+    /// 从性能仪表盘快照文件加载回归摘要（精简格式）。
+    /// 默认路径: build/perf/performance-dashboard-snapshot.json
+    /// 应在 app 启动、WS 连接恢复或手动刷新时调用。
+    public func loadDashboardSnapshot(atPath path: String = "build/perf/performance-dashboard-snapshot.json") {
+        loadRegressionReport(atPath: path)
     }
 
     // MARK: - 清空实时缓冲（工作区切换时调用）
@@ -512,5 +535,14 @@ public final class PerformanceDashboardStore: ObservableObject {
         if p95Ms > 200 { return .fail }
         if p95Ms > 50  { return .warn }
         return .pass
+    }
+
+    private func regressionSeverityRank(_ status: PerformanceBudgetStatus) -> Int {
+        switch status {
+        case .unknown: return -1
+        case .pass: return 0
+        case .warn: return 1
+        case .fail: return 2
+        }
     }
 }

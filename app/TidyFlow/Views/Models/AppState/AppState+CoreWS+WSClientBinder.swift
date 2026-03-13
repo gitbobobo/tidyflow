@@ -124,6 +124,14 @@ extension AppState {
             }
         }
 
+        // 启动时加载回归报告快照，确保共享 Store 拥有基线数据
+        Task { @MainActor [weak self] in
+            let snapshotPath = Bundle.main.bundleURL
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("build/perf/performance-dashboard-snapshot.json").path
+            self?.performanceDashboardStore.loadDashboardSnapshot(atPath: snapshotPath)
+        }
+
         // v1.41: 系统健康快照（Core 权威真源）- 更新共享健康状态，双端统一消费
         wsClient.onHealthSnapshot = { [weak self] snapshot in
             self?.systemHealthSnapshot = snapshot

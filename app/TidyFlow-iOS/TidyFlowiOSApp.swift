@@ -36,6 +36,21 @@ struct TidyFlowiOSApp: App {
         EvolutionPerfFixtureScenario.current()
     }
 
+    private enum PerfFixtureLaunchDestination {
+        case aiChat(AIChatPerfFixtureScenario)
+        case evolution(EvolutionPerfFixtureScenario)
+    }
+
+    private var perfFixtureLaunchDestination: PerfFixtureLaunchDestination? {
+        if let evolutionPerfFixtureScenario {
+            return .evolution(evolutionPerfFixtureScenario)
+        }
+        if let perfFixtureScenario {
+            return .aiChat(perfFixtureScenario)
+        }
+        return nil
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack(alignment: .top) {
@@ -120,23 +135,26 @@ struct TidyFlowiOSApp: App {
 
     @ViewBuilder
     private var rootView: some View {
-        if let evolutionScenario = evolutionPerfFixtureScenario {
-            // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页。
-            // 支持基础场景 evolution_panel 与多工作区场景 evolution_panel_multi_workspace。
-            MobileEvolutionView(
-                appState: appState,
-                project: evolutionScenario.project,
-                workspace: evolutionScenario.workspace
-            )
-        } else if let chatScenario = perfFixtureScenario {
-            // 聊天流式性能 fixture：直接进入 MobileAIChatView，绕过连接页。
-            // 支持基础场景 stream_heavy 与多工作区场景 chat_stream_workspace_switch。
-            MobileAIChatView(
-                appState: appState,
-                aiChatStore: appState.aiChatStore,
-                project: chatScenario.project,
-                workspace: chatScenario.workspace
-            )
+        if let destination = perfFixtureLaunchDestination {
+            switch destination {
+            case .evolution(let evolutionScenario):
+                // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页。
+                // 支持基础场景 evolution_panel 与多工作区场景 evolution_panel_multi_workspace。
+                MobileEvolutionView(
+                    appState: appState,
+                    project: evolutionScenario.project,
+                    workspace: evolutionScenario.workspace
+                )
+            case .aiChat(let chatScenario):
+                // 聊天流式性能 fixture：直接进入 MobileAIChatView，绕过连接页。
+                // 支持基础场景 stream_heavy 与多工作区场景 chat_stream_workspace_switch。
+                MobileAIChatView(
+                    appState: appState,
+                    aiChatStore: appState.aiChatStore,
+                    project: chatScenario.project,
+                    workspace: chatScenario.workspace
+                )
+            }
         } else {
             ConnectionView()
         }

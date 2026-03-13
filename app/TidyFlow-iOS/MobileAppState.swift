@@ -4580,6 +4580,13 @@ final class MobileAppState: ObservableObject {
             }
         }
 
+        // 启动时加载回归报告快照，确保共享 Store 拥有基线数据
+        DispatchQueue.main.async { [weak self] in
+            let snapshotPath = Bundle.main.bundleURL
+                .appendingPathComponent("build/perf/performance-dashboard-snapshot.json").path
+            self?.performanceDashboardStore.loadDashboardSnapshot(atPath: snapshotPath)
+        }
+
         // v1.45: 智能演化分析摘要 — 全量替换，与 macOS 保持相同解析/缓存语义
         wsClient.onEvolutionAnalysisSummaries = { [weak self] summaries in
             let updated = Dictionary(uniqueKeysWithValues: summaries.map { summary in
