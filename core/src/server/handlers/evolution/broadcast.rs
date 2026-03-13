@@ -62,6 +62,10 @@ impl EvolutionManager {
             terminal_reason_code,
             terminal_error_message,
             rate_limit_error_message,
+            coordination_state,
+            coordination_reason,
+            coordination_peer_workspace,
+            coordination_queue_index,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -86,6 +90,10 @@ impl EvolutionManager {
                 entry.terminal_reason_code.clone(),
                 entry.terminal_error_message.clone(),
                 entry.rate_limit_error_message.clone(),
+                entry.coordination_state.clone(),
+                entry.coordination_reason.clone(),
+                entry.coordination_peer_workspace.clone(),
+                entry.coordination_queue_index,
             )
         };
 
@@ -119,6 +127,10 @@ impl EvolutionManager {
                 terminal_reason_code,
                 terminal_error_message,
                 rate_limit_error_message,
+                coordination_state,
+                coordination_reason,
+                coordination_peer_workspace,
+                coordination_queue_index,
             },
         )
         .await;
@@ -283,6 +295,10 @@ mod tests {
             session_executions: Vec::new(),
             stage_started_ats: HashMap::new(),
             stage_duration_ms: HashMap::new(),
+            coordination_state: None,
+            coordination_reason: None,
+            coordination_peer_workspace: None,
+            coordination_queue_index: None,
         }
     }
 

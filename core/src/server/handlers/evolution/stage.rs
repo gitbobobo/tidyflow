@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::server::handlers::evolution_prompts::{
-    STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT, STAGE_PLAN_PROMPT,
-    STAGE_REIMPLEMENT_PROMPT, STAGE_VERIFY_PROMPT,
+    STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT,
+    STAGE_INTEGRATION_PROMPT, STAGE_PLAN_PROMPT, STAGE_REIMPLEMENT_PROMPT, STAGE_VERIFY_PROMPT,
 };
 use crate::server::protocol::EvolutionAgentInfo;
 
@@ -28,9 +28,14 @@ pub(super) fn build_agents(
     stage_duration_ms: &HashMap<String, u64>,
 ) -> Vec<EvolutionAgentInfo> {
     let extra_stages = runtime_extra_stages(stage_statuses);
-    let mut agents = Vec::with_capacity(STAGES.len() + extra_stages.len());
+    let base_stages: Vec<&str> = STAGES
+        .iter()
+        .copied()
+        .filter(|stage| stage_statuses.contains_key(*stage))
+        .collect();
+    let mut agents = Vec::with_capacity(base_stages.len() + extra_stages.len());
 
-    for stage in STAGES {
+    for stage in base_stages {
         let status = stage_statuses
             .get(stage)
             .cloned()
@@ -84,6 +89,7 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
         "auto_commit" => "AutoCommitAgent",
+        "integration" => "IntegrationAgent",
         _ => "UnknownAgent",
     }
 }
@@ -92,7 +98,8 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
-        "auto_commit" => Some("direction"),
+        "auto_commit" => Some("integration"),
+        "integration" => Some("direction"),
         _ => None,
     }
 }
@@ -111,6 +118,7 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
         "auto_commit" => Some(STAGE_AUTO_COMMIT_PROMPT),
+        "integration" => Some(STAGE_INTEGRATION_PROMPT),
         _ => None,
     }
 }
@@ -130,6 +138,7 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
         "auto_commit" => Some("builtin://evolution/stage.auto_commit.prompt"),
+        "integration" => Some("builtin://evolution/stage.integration.prompt"),
         _ => None,
     }
 }

@@ -13,6 +13,7 @@ static EVOLUTION_MANAGER: OnceLock<Arc<EvolutionManager>> = OnceLock::new();
 
 mod blocker;
 mod broadcast;
+mod coordination;
 mod consts;
 mod manager_persistence;
 mod manager_stage;
@@ -28,7 +29,7 @@ mod workspace_control;
 
 use consts::{
     BACKLOG_CONTRACT_VERSION_V2, DEFAULT_LOOP_ROUND_LIMIT, DEFAULT_MAX_PARALLEL,
-    DEFAULT_VERIFY_LIMIT, MAX_STAGE_RUNTIME_SECS, STAGES,
+    DEFAULT_VERIFY_LIMIT, MAX_STAGE_RUNTIME_SECS,
 };
 use types::{EvolutionState, SnapshotResult, StageSession, StartWorkspaceReq, WorkspaceRunState};
 
@@ -118,6 +119,7 @@ impl EvolutionManager {
                 max_parallel_workspaces: DEFAULT_MAX_PARALLEL,
                 seq_by_workspace: HashMap::new(),
                 workspaces: HashMap::new(),
+                project_coordination: HashMap::new(),
                 adaptive: types::AdaptiveSchedulingState::default(),
             })),
             workers: Arc::new(Mutex::new(HashMap::new())),

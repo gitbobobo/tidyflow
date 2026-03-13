@@ -654,6 +654,10 @@ mod tests {
             duration_ms: None,
             error_code: None,
             retryable: false,
+            coordination_state: None,
+            coordination_reason: None,
+            coordination_peer_workspace: None,
+            coordination_queue_index: None,
         }
     }
 

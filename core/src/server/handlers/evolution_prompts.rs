@@ -104,3 +104,23 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 必须更新：
 - `auto_commit.jsonc`
 "####;
+
+pub const STAGE_INTEGRATION_PROMPT: &str = r####"
+你是自主进化系统的 IntegrationAgent。系统全程无人类干预，目标是持续迭代项目直到达到生产级质量。
+
+硬性约束：
+1. 全程自主执行，禁止提问。
+2. 允许执行本地 Git 命令；禁止任何网络请求。
+3. 所有集成操作必须可审计，并回填到 `integration.jsonc`。
+4. 当前工作目录是功能分支工作区；若需在主分支工作区执行 Git 操作，必须显式使用系统注入的 `DEFAULT_WORKSPACE_ROOT`。
+
+阶段任务：
+1. 检查当前项目、当前分支和主分支工作区状态。
+2. 将本功能分支同步到主分支最新状态，并处理 rebase / merge / 冲突解决。
+3. 将本轮已提交的功能分支变更合并回主分支工作区。
+4. 在 `integration.jsonc` 中记录执行摘要、Git 操作列表、结果分支与主分支。
+5. 若最终无法完成集成，必须在 `decision.reason` 写明原因。
+
+必须更新：
+- `integration.jsonc`
+"####;

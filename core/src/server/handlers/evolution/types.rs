@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::server::protocol::{
     EvolutionSchedulerInfo, EvolutionSessionExecutionEntry, EvolutionStageProfileInfo,
@@ -10,6 +10,7 @@ pub(super) struct EvolutionState {
     pub(super) max_parallel_workspaces: u32,
     pub(super) seq_by_workspace: HashMap<String, u64>,
     pub(super) workspaces: HashMap<String, WorkspaceRunState>,
+    pub(super) project_coordination: HashMap<String, ProjectCoordinationState>,
     pub(super) adaptive: AdaptiveSchedulingState,
 }
 
@@ -48,12 +49,28 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_started_ats: HashMap<String, String>,
     /// 各代理运行耗时（毫秒），仅在完成后填充
     pub(super) stage_duration_ms: HashMap<String, u64>,
+    /// 当前协作等待/占用状态，仅用于编排可视化与等待逻辑
+    pub(super) coordination_state: Option<String>,
+    /// 当前协作等待原因
+    pub(super) coordination_reason: Option<String>,
+    /// 造成当前等待或占用的对端工作区
+    pub(super) coordination_peer_workspace: Option<String>,
+    /// 当前工作区在项目级 integration FIFO 队列中的位置（从 0 开始）
+    pub(super) coordination_queue_index: Option<u32>,
 }
 
 #[derive(Clone)]
 pub(super) struct StageSession {
     pub(super) ai_tool: String,
     pub(super) session_id: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct ProjectCoordinationState {
+    pub(super) direction_lock_owner: Option<String>,
+    pub(super) integration_lock_owner: Option<String>,
+    pub(super) pending_integration_queue: VecDeque<String>,
+    pub(super) active_direction_summaries: HashMap<String, String>,
 }
 
 #[derive(Clone)]

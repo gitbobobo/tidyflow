@@ -34,9 +34,9 @@ impl ImplementationStageKind {
     }
 }
 
-pub(super) const STAGES: [&str; 3] = ["direction", "plan", "auto_commit"];
+pub(super) const STAGES: [&str; 4] = ["direction", "plan", "auto_commit", "integration"];
 
-pub(super) const PROFILE_STAGES: [&str; 7] = [
+pub(super) const PROFILE_STAGES: [&str; 8] = [
     "direction",
     "plan",
     "implement_general",
@@ -44,6 +44,7 @@ pub(super) const PROFILE_STAGES: [&str; 7] = [
     "implement_advanced",
     "verify",
     "auto_commit",
+    "integration",
 ];
 
 pub(super) const IMPLEMENTATION_STAGE_KINDS: [ImplementationStageKind; 2] = [
@@ -64,6 +65,14 @@ pub(super) const SESSION_RETRY_BACKOFF_MAX_SECS: u64 = 30;
 
 // 关键阶段产物要求的 schema 版本
 pub(super) const STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION: &str = "2.0";
+
+pub(super) fn base_stages_for_workspace(workspace: &str) -> Vec<&'static str> {
+    if workspace.trim() == "default" {
+        vec!["direction", "plan", "auto_commit"]
+    } else {
+        STAGES.to_vec()
+    }
+}
 
 pub(super) fn parse_implement_stage_instance(
     stage: &str,
@@ -131,6 +140,7 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
             "direction" => (0, 0, 0, String::new()),
             "plan" => (1, 0, 0, String::new()),
             "auto_commit" => (5, 0, 0, String::new()),
+            "integration" => (6, 0, 0, String::new()),
             other => {
                 if let Some((kind, index)) = parse_implement_stage_instance(other) {
                     return (2, index, kind_sort_rank(kind), String::new());
@@ -141,7 +151,7 @@ pub(super) fn compare_runtime_stage_names(left: &str, right: &str) -> Ordering {
                 if let Some(index) = parse_verify_stage_instance(other) {
                     return (4, index, 0, String::new());
                 }
-                (6, 0, 0, other.to_string())
+                (7, 0, 0, other.to_string())
             }
         }
     }
@@ -175,6 +185,7 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
         "direction" => Some("direction.jsonc".to_string()),
         "plan" => Some("plan.jsonc".to_string()),
         "auto_commit" => Some("auto_commit.jsonc".to_string()),
+        "integration" => Some("integration.jsonc".to_string()),
         "implement_general" => Some("implement_general.jsonc".to_string()),
         "implement_visual" => Some("implement_visual.jsonc".to_string()),
         "implement_advanced" => Some("implement_advanced.jsonc".to_string()),
@@ -195,7 +206,7 @@ pub(super) fn stage_artifact_file(stage: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::stage_profile_stage;
+    use super::{base_stages_for_workspace, stage_profile_stage};
 
     #[test]
     fn reimplement_stage_should_always_map_to_advanced_profile() {
@@ -212,5 +223,17 @@ mod tests {
     #[test]
     fn verify_stage_should_still_map_to_verify_profile() {
         assert_eq!(stage_profile_stage("verify.1").as_deref(), Some("verify"));
+    }
+
+    #[test]
+    fn base_stages_should_skip_integration_for_default_workspace() {
+        assert_eq!(
+            base_stages_for_workspace("default"),
+            vec!["direction", "plan", "auto_commit"]
+        );
+        assert_eq!(
+            base_stages_for_workspace("feature/demo"),
+            vec!["direction", "plan", "auto_commit", "integration"]
+        );
     }
 }

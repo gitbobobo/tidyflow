@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
+use crate::server::context::HandlerContext;
+
 use super::consts::{
     compare_runtime_stage_names, parse_implement_stage_instance, parse_reimplement_stage_instance,
     parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file, verify_stage_name,
@@ -12,7 +14,7 @@ use super::stage::{agent_name, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{
     cycle_dir_path, evolution_workspace_dir, read_json, sanitize_validation_attempts, write_json,
 };
-use super::{EvolutionManager, StageSession, STAGES};
+use super::{EvolutionManager, StageSession};
 
 fn stage_artifact_path(cycle_dir: &Path, stage: &str) -> PathBuf {
     stage_artifact_file(stage)
@@ -265,6 +267,13 @@ fn build_prompt_context(
     backlog_contract_version: u32,
     cycle_dir: &Path,
     workspace_root: &str,
+    default_workspace_root: &Path,
+    default_branch: &str,
+    is_default_workspace: bool,
+    project_active_directions: Vec<serde_json::Value>,
+    project_integration_queue: Vec<String>,
+    active_integration_workspace: Option<String>,
+    coordination_queue_index: Option<u32>,
 ) -> serde_json::Value {
     let implement_kind = implementation_stage_kind_for_stage(stage)
         .map(|kind| kind.as_str().to_string())
@@ -289,11 +298,19 @@ fn build_prompt_context(
         "PLAN_MARKDOWN_PATH": cycle_dir.join("plan.md"),
         "VERIFY_ARTIFACT_PATH": verify_artifact_path,
         "AUTO_COMMIT_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "auto_commit"),
+        "INTEGRATION_ARTIFACT_PATH": stage_artifact_path(cycle_dir, "integration"),
         "LAST_REIMPLEMENT_ARTIFACT_PATH": if verify_iteration > 0 {
             stage_artifact_path(cycle_dir, &reimplement_stage_name(verify_iteration))
         } else {
             cycle_dir.join("reimplement.none.jsonc")
         },
+        "DEFAULT_WORKSPACE_ROOT": default_workspace_root,
+        "DEFAULT_BRANCH": default_branch,
+        "IS_DEFAULT_WORKSPACE": is_default_workspace,
+        "PROJECT_ACTIVE_DIRECTIONS": project_active_directions,
+        "PROJECT_INTEGRATION_QUEUE": project_integration_queue,
+        "ACTIVE_INTEGRATION_WORKSPACE": active_integration_workspace.unwrap_or_default(),
+        "INTEGRATION_QUEUE_INDEX": coordination_queue_index,
         "IMPLEMENT_STAGE_KIND": implement_kind,
         "TASKS_TO_COMPLETE": "",
         "REPAIR_ITEMS_TO_COMPLETE": "",
@@ -332,7 +349,9 @@ fn required_context_keys(
     ];
 
     match stage {
-        "direction" => {}
+        "direction" => {
+            push_required_key(&mut keys, "PROJECT_ACTIVE_DIRECTIONS");
+        }
         "plan" => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
@@ -348,6 +367,16 @@ fn required_context_keys(
         "auto_commit" => {
             push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
             push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
+        }
+        "integration" => {
+            push_required_key(&mut keys, "PLAN_MARKDOWN_PATH");
+            push_required_key(&mut keys, "VERIFY_ARTIFACT_PATH");
+            push_required_key(&mut keys, "AUTO_COMMIT_ARTIFACT_PATH");
+            push_required_key(&mut keys, "INTEGRATION_ARTIFACT_PATH");
+            push_required_key(&mut keys, "DEFAULT_WORKSPACE_ROOT");
+            push_required_key(&mut keys, "DEFAULT_BRANCH");
+            push_required_key(&mut keys, "PROJECT_INTEGRATION_QUEUE");
+            push_required_key(&mut keys, "ACTIVE_INTEGRATION_WORKSPACE");
         }
         _ if implementation_stage_kind_for_stage(stage).is_some() => {
             push_required_key(&mut keys, "DIRECTION_ARTIFACT_PATH");
@@ -438,14 +467,7 @@ impl EvolutionManager {
             .and_then(|value| value.as_object())
             .cloned()
             .unwrap_or_default();
-        let mut pipeline: Vec<String> = STAGES.iter().map(|stage| (*stage).to_string()).collect();
-        let mut extra_stages: Vec<String> = entry
-            .stage_statuses
-            .keys()
-            .filter(|stage| !STAGES.contains(&stage.as_str()))
-            .cloned()
-            .collect();
-        pipeline.append(&mut extra_stages);
+        let mut pipeline: Vec<String> = entry.stage_statuses.keys().cloned().collect();
         pipeline.sort_by(|left, right| compare_runtime_stage_names(left, right));
         pipeline.dedup();
 
@@ -605,6 +627,7 @@ impl EvolutionManager {
         stage: &str,
         round: u32,
         already_injected_keys: &HashSet<String>,
+        ctx: &HandlerContext,
     ) -> Result<(String, HashSet<String>), String> {
         let prompt_body = prompt_template_for_stage(stage)
             .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
@@ -621,6 +644,12 @@ impl EvolutionManager {
                 entry.workspace_root.clone(),
             )
         };
+        let project_ctx = crate::server::context::resolve_project(&ctx.app_state, project)
+            .await
+            .map_err(|err| err.to_string())?;
+        let project_active_directions = self.project_direction_summaries(project, key).await;
+        let (project_integration_queue, active_integration_workspace, coordination_queue_index) =
+            self.project_integration_context(project, key).await;
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let context = build_prompt_context(
@@ -634,6 +663,13 @@ impl EvolutionManager {
             backlog_contract_version,
             &cycle_dir,
             &workspace_root,
+            &project_ctx.root_path,
+            &project_ctx.default_branch,
+            workspace == "default",
+            project_active_directions,
+            project_integration_queue,
+            active_integration_workspace,
+            coordination_queue_index,
         );
         let mut context_map = context
             .as_object()
@@ -792,6 +828,13 @@ mod tests {
             2,
             cycle_dir,
             "/tmp/workspace",
+            Path::new("/tmp/project-root"),
+            "main",
+            true,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
         );
         assert_eq!(
             context

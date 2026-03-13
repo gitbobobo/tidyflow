@@ -2153,6 +2153,14 @@ public struct EvolutionWorkspaceItemV2: Equatable {
     public let errorCode: String?
     /// 是否可安全重试（Core 判定）
     public let retryable: Bool
+    /// 编排协作状态（等待方向/等待主线/等待 integration 等）
+    public let coordinationState: String?
+    /// 编排协作原因
+    public let coordinationReason: String?
+    /// 当前等待或占用关联的对端工作区
+    public let coordinationPeerWorkspace: String?
+    /// integration FIFO 队列位置（从 0 开始）
+    public let coordinationQueueIndex: Int?
 
     /// 预计算的签名，避免在刷新链路中重复 hash 遍历
     public let statusStageRoundSignature: Int
@@ -2214,11 +2222,15 @@ public struct EvolutionWorkspaceItemV2: Equatable {
             startedAt: json["started_at"] as? String,
             durationMs: json["duration_ms"] as? UInt64,
             errorCode: json["error_code"] as? String,
-            retryable: json["retryable"] as? Bool ?? false
+            retryable: json["retryable"] as? Bool ?? false,
+            coordinationState: json["coordination_state"] as? String,
+            coordinationReason: json["coordination_reason"] as? String,
+            coordinationPeerWorkspace: json["coordination_peer_workspace"] as? String,
+            coordinationQueueIndex: json["coordination_queue_index"].map { Int(parseInt64($0)) }
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2238,6 +2250,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.coordinationState = coordinationState
+        self.coordinationReason = coordinationReason
+        self.coordinationPeerWorkspace = coordinationPeerWorkspace
+        self.coordinationQueueIndex = coordinationQueueIndex
 
         // 预计算签名，避免多次重复遍历 agents/executions 做 hash
         var ssrHasher = Hasher()
@@ -2258,6 +2274,10 @@ public struct EvolutionWorkspaceItemV2: Equatable {
         ssrHasher.combine(durationMs ?? 0)
         ssrHasher.combine(errorCode ?? "")
         ssrHasher.combine(retryable)
+        ssrHasher.combine(coordinationState ?? "")
+        ssrHasher.combine(coordinationReason ?? "")
+        ssrHasher.combine(coordinationPeerWorkspace ?? "")
+        ssrHasher.combine(coordinationQueueIndex ?? -1)
         self.statusStageRoundSignature = ssrHasher.finalize()
 
         var tlHasher = Hasher()
@@ -2342,6 +2362,10 @@ public struct EvoCycleUpdatedV2 {
     public let errorCode: String?
     /// 是否可安全重试（v1.43+）
     public let retryable: Bool
+    public let coordinationState: String?
+    public let coordinationReason: String?
+    public let coordinationPeerWorkspace: String?
+    public let coordinationQueueIndex: Int?
 
     public static func from(json: [String: Any]) -> EvoCycleUpdatedV2? {
         guard let project = json["project"] as? String,
@@ -2371,11 +2395,15 @@ public struct EvoCycleUpdatedV2 {
             startedAt: json["started_at"] as? String,
             durationMs: (json["duration_ms"] as? NSNumber)?.uint64Value,
             errorCode: json["error_code"] as? String,
-            retryable: json["retryable"] as? Bool ?? false
+            retryable: json["retryable"] as? Bool ?? false,
+            coordinationState: json["coordination_state"] as? String,
+            coordinationReason: json["coordination_reason"] as? String,
+            coordinationPeerWorkspace: json["coordination_peer_workspace"] as? String,
+            coordinationQueueIndex: json["coordination_queue_index"].map { Int(parseInt64($0)) }
         )
     }
 
-    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false) {
+    public init(project: String, workspace: String, cycleID: String, title: String?, status: String, currentStage: String, globalLoopRound: Int, loopRoundLimit: Int, verifyIteration: Int, verifyIterationLimit: Int, agents: [EvolutionAgentInfoV2], executions: [EvolutionSessionExecutionEntryV2], terminalReasonCode: String?, terminalErrorMessage: String?, rateLimitErrorMessage: String?, startedAt: String? = nil, durationMs: UInt64? = nil, errorCode: String? = nil, retryable: Bool = false, coordinationState: String? = nil, coordinationReason: String? = nil, coordinationPeerWorkspace: String? = nil, coordinationQueueIndex: Int? = nil) {
         self.project = project
         self.workspace = workspace
         self.cycleID = cycleID
@@ -2395,6 +2423,10 @@ public struct EvoCycleUpdatedV2 {
         self.durationMs = durationMs
         self.errorCode = errorCode
         self.retryable = retryable
+        self.coordinationState = coordinationState
+        self.coordinationReason = coordinationReason
+        self.coordinationPeerWorkspace = coordinationPeerWorkspace
+        self.coordinationQueueIndex = coordinationQueueIndex
     }
 }
 

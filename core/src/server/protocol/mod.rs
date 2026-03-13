@@ -1769,6 +1769,14 @@ pub enum ServerMessage {
         terminal_error_message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_state: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_reason: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_peer_workspace: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coordination_queue_index: Option<u32>,
     },
     #[serde(rename = "evo_snapshot")]
     EvoSnapshot {
@@ -2439,6 +2447,14 @@ pub struct EvolutionWorkspaceItem {
     /// 是否可安全重试（Core 根据终态类型判定：failed_exhausted 可重试，failed_system 不可重试）
     #[serde(default)]
     pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_peer_workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination_queue_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

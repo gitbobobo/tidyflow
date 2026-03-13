@@ -11,12 +11,12 @@ use crate::server::protocol::{
     EvolutionWorkspaceItem, ServerMessage,
 };
 
-use super::consts::compare_runtime_stage_names;
+use super::consts::{base_stages_for_workspace, compare_runtime_stage_names};
 use super::stage::{agent_name, build_agents};
 use super::utils::{evolution_workspace_dir, read_json, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
-    BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT, STAGES,
+    BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT,
 };
 
 fn initial_global_loop_round() -> u32 {
@@ -482,7 +482,7 @@ impl EvolutionManager {
         let mut stage_statuses = HashMap::new();
         let mut stage_tool_call_counts = HashMap::new();
         let mut stage_seen_tool_calls = HashMap::new();
-        for stage in STAGES {
+        for stage in base_stages_for_workspace(&req.workspace) {
             stage_statuses.insert(stage.to_string(), "pending".to_string());
             stage_tool_call_counts.insert(stage.to_string(), 0);
             stage_seen_tool_calls.insert(stage.to_string(), HashSet::new());
@@ -533,6 +533,10 @@ impl EvolutionManager {
                     session_executions: Vec::new(),
                     stage_started_ats: HashMap::new(),
                     stage_duration_ms: HashMap::new(),
+                    coordination_state: None,
+                    coordination_reason: None,
+                    coordination_peer_workspace: None,
+                    coordination_queue_index: None,
                 },
             );
             round
@@ -817,6 +821,10 @@ impl EvolutionManager {
                 duration_ms,
                 error_code,
                 retryable,
+                coordination_state: w.coordination_state.clone(),
+                coordination_reason: w.coordination_reason.clone(),
+                coordination_peer_workspace: w.coordination_peer_workspace.clone(),
+                coordination_queue_index: w.coordination_queue_index,
             });
         }
 

@@ -857,6 +857,32 @@ macOS 与 iOS 均通过 `AIMessageHandler` 协议的单一适配器接收所有 
 - `EvolutionWorkspaceItem`：新增 `started_at`、`duration_ms`、`error_code`、`retryable`
 - `EvolutionCycleHistoryItem`：新增 `duration_ms`、`error_code`、`retryable`
 
+### Evolution 协作编排扩展（v1.47+）
+
+为支持同项目多工作区并行自主进化，Evolution 运行态进一步新增以下公开字段：
+
+- `EvolutionWorkspaceItem`：新增 `coordination_state`、`coordination_reason`、`coordination_peer_workspace`、`coordination_queue_index`
+- `evo_cycle_updated`：同步携带以上字段，客户端无需再额外拉取协作态
+
+字段语义如下：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `coordination_state` | `string?` | 项目级协作状态。当前约定值包括 `waiting_direction_turn`、`waiting_mainline_stage_completion`、`waiting_integration_slot`、`waiting_project_integration_drain`、`integrating` |
+| `coordination_reason` | `string?` | 面向用户展示的等待/协作原因 |
+| `coordination_peer_workspace` | `string?` | 当前正在等待或被其阻塞的工作区 |
+| `coordination_queue_index` | `u32?` | 在同项目 FIFO integration 队列中的位置，从 `0` 开始 |
+
+新增阶段与编排边界：
+
+1. `current_stage` 允许出现公开阶段 `integration`。
+2. `integration` 只适用于非 `default` 工作区；`default` 工作区不会进入该阶段。
+3. 同一项目同一时刻只允许一个工作区执行 `direction`。
+4. 同一项目同一时刻只允许一个工作区执行 `integration`，等待顺序严格按 FIFO。
+5. 功能分支进入 `integration` 前，必须等待 `default` 工作区完成当前阶段。
+6. 一旦项目内有运行中或排队中的 `integration`，`default` 工作区只能停在阶段边界等待，直到队列清空后才能进入下一阶段。
+7. macOS 与 iOS 必须直接消费 Core 下发的协作字段展示等待态，不允许在客户端本地重建 FIFO 队列或推导阻塞原因。
+
 ### 设计原则
 
 1. **Core 权威输出**：所有新增字段由 Rust Core 计算并填充，客户端只消费、不推导。

@@ -6,6 +6,7 @@ use super::consts::{
     MAX_SESSION_RETRY_ATTEMPTS, MAX_STAGE_RUNTIME_SECS, SESSION_RETRY_BACKOFF_BASE_SECS,
     SESSION_RETRY_BACKOFF_MAX_SECS,
 };
+use super::coordination::CoordinationGateResult;
 use super::EvolutionManager;
 use crate::ai::AiMessage;
 use crate::server::context::HandlerContext;
@@ -543,6 +544,18 @@ impl EvolutionManager {
                 self.persist_cycle_file(&key).await.ok();
                 self.broadcast_cycle_update(&key, &ctx, "system").await;
                 self.broadcast_scheduler(&ctx).await;
+            }
+
+            match self.apply_project_coordination_gate(&key).await {
+                CoordinationGateResult::Ready => {}
+                CoordinationGateResult::Wait => {
+                    self.persist_cycle_file(&key).await.ok();
+                    self.broadcast_cycle_update(&key, &ctx, "orchestrator").await;
+                    self.broadcast_scheduler(&ctx).await;
+                    sleep(Duration::from_millis(self.coordination_wait_slice_ms().await)).await;
+                    continue;
+                }
+                CoordinationGateResult::Missing => return,
             }
 
             while !self.can_run_with_priority(&key).await {

@@ -203,6 +203,11 @@ domains:
       - workspace
   - id: evolution
     action_rule: prefix("evo_")
+    # v1.47: 多工作区自主进化协作
+    # - current_stage 允许公开阶段 integration
+    # - EvolutionWorkspaceItem / evo_cycle_updated 新增 coordination_* 字段
+    # - 同项目 direction / integration 均受项目级串行约束
+    # - integration 仅适用于非 default 工作区，且队列严格 FIFO
     # HTTP 只读端点（已移除对应 WS 读取 action）
     http_read_endpoints:
       - GET /api/v1/evolution/snapshot

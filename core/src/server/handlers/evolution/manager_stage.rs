@@ -31,7 +31,8 @@ use super::utils::{
     cycle_dir_path, inject_stage_artifact_updated_at, read_json, read_text,
     sanitize_validation_attempt, sanitize_validation_attempts, write_json, write_jsonc_text,
 };
-use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
+use super::consts::base_stages_for_workspace;
+use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS};
 
 const VALIDATION_REMINDER_MAX_RETRIES: u32 = 3;
 const IMPLEMENT_CONFIG_RESERVED_PREFIX: &str = "__evo_internal_";
@@ -1913,6 +1914,29 @@ fn auto_commit_stage_template(cycle_id: &str) -> String {
     )
 }
 
+fn integration_stage_template(cycle_id: &str) -> String {
+    render_jsonc_template(
+        r#"{
+  // Integration 阶段模板：记录本轮分支集成闭环
+  "$schema_version": "2.0",
+  "stage": "integration",
+  "cycle_id": "__CYCLE_ID__",
+  "status": "running",
+  "decision": {
+    "result": "n/a",
+    "reason": ""
+  },
+  "summary": "",
+  "git_actions": [],
+  "result_branch": "",
+  "default_branch": "",
+  "updated_at": ""
+}
+"#,
+        &[("__CYCLE_ID__", cycle_id.to_string())],
+    )
+}
+
 impl EvolutionManager {
     fn validate_plan_artifact(
         cycle_dir: &Path,
@@ -2860,6 +2884,71 @@ impl EvolutionManager {
         report.into_error("artifact_contract_violation")
     }
 
+    fn validate_integration_artifact(
+        cycle_dir: &Path,
+        validation_ctx: Option<&StageValidationContext>,
+    ) -> Result<(), ArtifactValidationError> {
+        let stage_integration = read_json_file(cycle_dir, "integration.jsonc")
+            .map_err(|e| ArtifactValidationError::new("artifact_contract_violation", e))?;
+        let mut report = ValidationReport::default();
+        report.capture(ensure_schema_version(
+            "integration.jsonc",
+            &stage_integration,
+            STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
+        ));
+        report.capture(ensure_stage_field_matches(
+            "integration.jsonc",
+            &stage_integration,
+            "integration",
+        ));
+        if let Some(ctx) = validation_ctx {
+            report.capture(ensure_cycle_id_matches(
+                "integration.jsonc",
+                &stage_integration,
+                &ctx.cycle_id,
+            ));
+            report.capture(ensure_artifact_freshness(
+                "integration.jsonc",
+                &stage_integration,
+                ctx.stage_started_at,
+            ));
+        }
+
+        for key in ["summary", "result_branch", "default_branch", "updated_at"] {
+            match stage_integration.get(key) {
+                Some(value) => match value.as_str() {
+                    Some(text) if !text.trim().is_empty() => {}
+                    Some(_) => report.push(format!("integration.jsonc.{} 不能为空", key)),
+                    None => report.push(format!("integration.jsonc.{} 必须是非空字符串", key)),
+                },
+                None => report.push(format!("integration.jsonc.{} 缺少", key)),
+            }
+        }
+        if !stage_integration
+            .get("git_actions")
+            .map(|value| value.is_array())
+            .unwrap_or(false)
+        {
+            report.push("integration.jsonc.git_actions 必须是数组");
+        }
+
+        let status = stage_integration
+            .get("status")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if matches!(status, "failed" | "blocked") {
+            let has_reason = stage_integration
+                .pointer("/decision/reason")
+                .and_then(|value| value.as_str())
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if !has_reason {
+                report.push("integration.jsonc 在 failed/blocked 状态下必须填写 decision.reason");
+            }
+        }
+        report.into_error("artifact_contract_violation")
+    }
+
     fn validate_stage_artifacts_with_context(
         stage: &str,
         cycle_dir: &Path,
@@ -2871,6 +2960,7 @@ impl EvolutionManager {
             "direction" => Self::validate_direction_artifact(cycle_dir, validation_ctx),
             "plan" => Self::validate_plan_artifact(cycle_dir, validation_ctx),
             "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
+            "integration" => Self::validate_integration_artifact(cycle_dir, validation_ctx),
             _ if is_runtime_verify_stage(stage) => Self::validate_verify_artifact(
                 stage,
                 cycle_dir,
@@ -3056,6 +3146,7 @@ impl EvolutionManager {
                 cycle_dir.join(PLAN_MARKDOWN_FILE),
             ],
             "auto_commit" => vec![cycle_dir.join("auto_commit.jsonc")],
+            "integration" => vec![cycle_dir.join("integration.jsonc")],
             other => stage_artifact_file(other)
                 .map(|file_name| vec![cycle_dir.join(file_name)])
                 .unwrap_or_default(),
@@ -3137,6 +3228,12 @@ impl EvolutionManager {
                 Self::ensure_jsonc_template(
                     &cycle_dir.join("auto_commit.jsonc"),
                     &auto_commit_stage_template(&cycle_id),
+                )?;
+            }
+            "integration" => {
+                Self::ensure_jsonc_template(
+                    &cycle_dir.join("integration.jsonc"),
+                    &integration_stage_template(&cycle_id),
                 )?;
             }
             _ if is_runtime_implement_stage(stage) => {
@@ -3455,7 +3552,7 @@ impl EvolutionManager {
     }
 
     fn supports_validation_reminder(stage: &str) -> bool {
-        matches!(stage, "direction" | "plan" | "auto_commit")
+        matches!(stage, "direction" | "plan" | "auto_commit" | "integration")
             || is_runtime_verify_stage(stage)
             || is_runtime_implement_stage(stage)
             || is_runtime_reimplement_stage(stage)
@@ -3477,6 +3574,7 @@ impl EvolutionManager {
             "direction" => "direction.jsonc / cycle.jsonc".to_string(),
             "plan" => "plan.jsonc / plan.md / direction.jsonc".to_string(),
             "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
+            "integration" => "integration.jsonc / auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
                 if is_runtime_verify_stage(stage) {
                     if let Some(file_name) = stage_artifact_file(stage) {
@@ -4428,6 +4526,9 @@ impl EvolutionManager {
         self.persist_stage_file(key, stage, "failed", Some(error_message), None)
             .await
             .ok();
+        if matches!(stage, "direction" | "integration") {
+            self.release_project_coordination(key, Some(stage)).await;
+        }
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "system").await;
     }
@@ -4508,6 +4609,7 @@ impl EvolutionManager {
                 stage,
                 round,
                 &injected_context_keys,
+                ctx,
             )
             .await?;
         injected_context_keys.extend(prompt_injected_keys);
@@ -4996,7 +5098,7 @@ impl EvolutionManager {
         let mut post_stage_changed: Option<(String, String, String, String, String)> = None;
         let mut auto_next_cycle = false;
         let mut auto_loop_gate: Option<(String, String, String, String)> = None;
-        let mut should_start_next_round_after_auto_commit = false;
+        let mut should_start_next_round_after_terminal_stage = false;
         let next_repair_plan = if is_runtime_verify_stage(stage) && !verify_pass {
             let Some(cycle_id) = cycle_for_validation.as_ref() else {
                 self.mark_failed_with_code(
@@ -5208,17 +5310,48 @@ impl EvolutionManager {
                     }
                 }
                 "auto_commit" => {
+                    entry.terminal_reason_code = None;
+                    entry.terminal_error_message = None;
+                    if entry.workspace == "default" {
+                        if entry.status != "failed_system" {
+                            entry.status = "completed".to_string();
+                        }
+                        should_start_next_round_after_terminal_stage = should_start_next_round(
+                            "completed",
+                            entry.global_loop_round,
+                            entry.loop_round_limit,
+                        );
+                        if should_start_next_round_after_terminal_stage {
+                            auto_loop_gate = Some((
+                                entry.project.clone(),
+                                entry.workspace.clone(),
+                                entry.workspace_root.clone(),
+                                entry.cycle_id.clone(),
+                            ));
+                        }
+                    } else {
+                        Self::ensure_runtime_stage_state_pending(
+                            &mut entry.stage_statuses,
+                            &mut entry.stage_tool_call_counts,
+                            "integration",
+                        );
+                        entry.stage_started_ats.remove("integration");
+                        entry.stage_duration_ms.remove("integration");
+                        next_stage = "integration".to_string();
+                    }
+                }
+                "integration" => {
                     if entry.status != "failed_system" {
                         entry.status = "completed".to_string();
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;
                     }
-                    should_start_next_round_after_auto_commit = should_start_next_round(
+                    should_start_next_round_after_terminal_stage = should_start_next_round(
                         "completed",
                         entry.global_loop_round,
                         entry.loop_round_limit,
                     );
-                    if should_start_next_round_after_auto_commit {
+                    if should_start_next_round_after_terminal_stage {
                         auto_loop_gate = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -5230,7 +5363,7 @@ impl EvolutionManager {
                 _ => {}
             }
 
-            let should_advance = !matches!(stage, "auto_commit") && next_stage != previous;
+            let should_advance = next_stage != previous;
             if should_advance {
                 entry.current_stage = next_stage.clone();
                 stage_changed = Some((
@@ -5258,7 +5391,7 @@ impl EvolutionManager {
                 return false;
             }
         }
-        if !matches!(stage, "auto_commit") && stage_changed.is_none() {
+        if !matches!(stage, "integration") && stage_changed.is_none() && stage != "auto_commit" {
             warn!(
                 "evolution after_stage_success no stage_changed emitted: key={}, stage={}, verify_pass={}",
                 key, stage, verify_pass
@@ -5287,7 +5420,7 @@ impl EvolutionManager {
                     &workspace_root,
                     "auto_loop",
                     Some(&cycle_id),
-                    Some("auto_commit"),
+                    Some(stage),
                     ctx,
                 )
                 .await
@@ -5311,7 +5444,7 @@ impl EvolutionManager {
             }
         }
 
-        if stage == "auto_commit" && should_start_next_round_after_auto_commit {
+        if matches!(stage, "auto_commit" | "integration") && should_start_next_round_after_terminal_stage {
             let mut state = self.state.lock().await;
             let Some(entry) = state.workspaces.get_mut(key) else {
                 return false;
@@ -5335,7 +5468,7 @@ impl EvolutionManager {
             entry.stage_seen_tool_calls.clear();
             entry.stage_started_ats.clear();
             entry.stage_duration_ms.clear();
-            for s in STAGES {
+            for s in base_stages_for_workspace(&entry.workspace) {
                 entry
                     .stage_statuses
                     .insert(s.to_string(), "pending".to_string());
@@ -5345,7 +5478,7 @@ impl EvolutionManager {
                 entry.project.clone(),
                 entry.workspace.clone(),
                 entry.cycle_id.clone(),
-                "auto_commit".to_string(),
+                stage.to_string(),
                 "direction".to_string(),
             ));
         }
@@ -5404,6 +5537,9 @@ impl EvolutionManager {
             .await;
         }
 
+        if matches!(stage, "direction" | "integration") {
+            self.release_project_coordination(key, Some(stage)).await;
+        }
         if let Err(err) = self.persist_cycle_file(key).await {
             warn!(
                 "evolution after_stage_success persist_cycle_file failed: key={}, stage={}, error={}",
@@ -5462,10 +5598,14 @@ impl EvolutionManager {
                 entry.project.clone(),
                 entry.workspace.clone(),
                 entry.cycle_id.clone(),
+                entry.current_stage.clone(),
             ))
         };
 
-        if let Some((project, workspace, cycle_id)) = maybe {
+        if let Some((project, workspace, cycle_id, current_stage)) = maybe {
+            if matches!(current_stage.as_str(), "direction" | "integration") {
+                self.release_project_coordination(key, Some(&current_stage)).await;
+            }
             self.persist_cycle_file(key).await.ok();
             self.broadcast(
                 ctx,
@@ -5532,10 +5672,14 @@ impl EvolutionManager {
                 entry.project.clone(),
                 entry.workspace.clone(),
                 entry.cycle_id.clone(),
+                entry.current_stage.clone(),
             ))
         };
 
-        if let Some((project, workspace, cycle_id)) = maybe {
+        if let Some((project, workspace, cycle_id, current_stage)) = maybe {
+            if matches!(current_stage.as_str(), "direction" | "integration") {
+                self.release_project_coordination(key, Some(&current_stage)).await;
+            }
             // WI-004: 结构化错误日志落盘，包含 cycle_id、error_code、message
             log_evolution_error(&cycle_id, "system", code, &normalized_err);
             // WI-003: Evolution 系统故障写入健康注册表，供修复执行器消费
@@ -6313,8 +6457,13 @@ mod tests {
     }
 
     #[test]
-    fn next_stage_auto_commit_should_loop_back_to_direction() {
-        assert_eq!(next_stage("auto_commit"), Some("direction"));
+    fn next_stage_auto_commit_should_enter_integration() {
+        assert_eq!(next_stage("auto_commit"), Some("integration"));
+    }
+
+    #[test]
+    fn next_stage_integration_should_loop_back_to_direction() {
+        assert_eq!(next_stage("integration"), Some("direction"));
     }
 
     #[test]

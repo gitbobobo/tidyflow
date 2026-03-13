@@ -25,6 +25,35 @@
 6. `app/TidyFlow/Networking/WSClient+Send.swift` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 7. `app/TidyFlow/Web/main/protocol-rules.js` 的规则块必须由生成器产物保持同步，不允许手改漂移。
 
+## Evolution 协作状态契约（v1.47+）
+
+Evolution 在多项目、多工作区场景下默认启用项目级协作编排。协议层新增以下公开语义：
+
+### 阶段语义
+
+1. `current_stage` 允许出现公开阶段 `integration`。
+2. `integration` 只适用于非 `default` 工作区；`default` 工作区不会进入该阶段。
+3. 功能分支工作区本轮只有在 `integration` 成功后，才允许进入下一轮 `direction`。
+
+### 新增字段
+
+`EvolutionWorkspaceItem` 与 `evo_cycle_updated` 载荷新增以下可选字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `coordination_state` | `string?` | 当前协作状态，如等待方向轮次、等待主线完成当前阶段、等待 integration 槽位 |
+| `coordination_reason` | `string?` | 面向用户展示的具体等待原因 |
+| `coordination_peer_workspace` | `string?` | 当前正在等待或被其阻塞的对端工作区 |
+| `coordination_queue_index` | `u32?` | 当前工作区在项目内 FIFO integration 队列中的位置，从 0 开始 |
+
+### 编排约束
+
+1. 同一项目同一时刻只允许一个工作区执行 `direction`，其他工作区进入等待态。
+2. 同一项目同一时刻只允许一个工作区执行 `integration`，等待顺序严格按 FIFO 排队。
+3. 功能分支进入 `integration` 前，必须等待 `default` 工作区完成当前阶段。
+4. 一旦项目内存在运行中或排队中的 `integration`，`default` 工作区只能停在阶段边界等待，直到 FIFO 队列清空。
+5. macOS 与 iOS 必须直接消费上述字段展示等待状态，不允许在客户端本地重新推导队列与阻塞原因。
+
 ## 可观测性字段职责边界（v1.42）
 
 `system_snapshot` HTTP 响应携带的可观测性数据分为三类，职责互不重叠：
