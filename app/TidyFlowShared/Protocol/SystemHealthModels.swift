@@ -1422,6 +1422,10 @@ public struct ClientPerformanceReport: Codable, Equatable, Sendable {
     public var aiSessionListRequest: LatencyMetricWindow
     public var aiMessageTailFlush: LatencyMetricWindow
     public var evidencePageAppend: LatencyMetricWindow
+    /// 终端输出刷新延迟（客户端共享热点）
+    public var terminalOutputFlush: LatencyMetricWindow
+    /// Git 面板投影重算延迟（客户端共享热点）
+    public var gitPanelProjection: LatencyMetricWindow
     public var reportedAt: UInt64
 
     public init(clientInstanceId: String, platform: String, project: String, workspace: String,
@@ -1432,6 +1436,8 @@ public struct ClientPerformanceReport: Codable, Equatable, Sendable {
                 aiSessionListRequest: LatencyMetricWindow = .empty,
                 aiMessageTailFlush: LatencyMetricWindow = .empty,
                 evidencePageAppend: LatencyMetricWindow = .empty,
+                terminalOutputFlush: LatencyMetricWindow = .empty,
+                gitPanelProjection: LatencyMetricWindow = .empty,
                 reportedAt: UInt64 = 0) {
         self.clientInstanceId = clientInstanceId
         self.platform = platform
@@ -1444,6 +1450,8 @@ public struct ClientPerformanceReport: Codable, Equatable, Sendable {
         self.aiSessionListRequest = aiSessionListRequest
         self.aiMessageTailFlush = aiMessageTailFlush
         self.evidencePageAppend = evidencePageAppend
+        self.terminalOutputFlush = terminalOutputFlush
+        self.gitPanelProjection = gitPanelProjection
         self.reportedAt = reportedAt
     }
 
@@ -1456,7 +1464,27 @@ public struct ClientPerformanceReport: Codable, Equatable, Sendable {
         case aiSessionListRequest = "ai_session_list_request"
         case aiMessageTailFlush = "ai_message_tail_flush"
         case evidencePageAppend = "evidence_page_append"
+        case terminalOutputFlush = "terminal_output_flush"
+        case gitPanelProjection = "git_panel_projection"
         case reportedAt = "reported_at"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        clientInstanceId = try container.decode(String.self, forKey: .clientInstanceId)
+        platform = try container.decode(String.self, forKey: .platform)
+        project = try container.decode(String.self, forKey: .project)
+        workspace = try container.decode(String.self, forKey: .workspace)
+        memory = try container.decode(MemoryUsageSnapshot.self, forKey: .memory)
+        workspaceSwitch = try container.decode(LatencyMetricWindow.self, forKey: .workspaceSwitch)
+        fileTreeRequest = try container.decode(LatencyMetricWindow.self, forKey: .fileTreeRequest)
+        fileTreeExpand = try container.decode(LatencyMetricWindow.self, forKey: .fileTreeExpand)
+        aiSessionListRequest = try container.decode(LatencyMetricWindow.self, forKey: .aiSessionListRequest)
+        aiMessageTailFlush = try container.decode(LatencyMetricWindow.self, forKey: .aiMessageTailFlush)
+        evidencePageAppend = try container.decode(LatencyMetricWindow.self, forKey: .evidencePageAppend)
+        terminalOutputFlush = try container.decodeIfPresent(LatencyMetricWindow.self, forKey: .terminalOutputFlush) ?? .empty
+        gitPanelProjection = try container.decodeIfPresent(LatencyMetricWindow.self, forKey: .gitPanelProjection) ?? .empty
+        reportedAt = try container.decode(UInt64.self, forKey: .reportedAt)
     }
 }
 
@@ -1525,6 +1553,10 @@ public enum PerformanceDiagnosisReason: String, Codable, CaseIterable, Sendable 
     case fileTreeLatencyHigh = "file_tree_latency_high"
     case aiSessionListLatencyHigh = "ai_session_list_latency_high"
     case messageFlushLatencyHigh = "message_flush_latency_high"
+    /// 终端输出刷新延迟过高
+    case terminalOutputFlushLatencyHigh = "terminal_output_flush_latency_high"
+    /// Git 面板投影重算延迟过高
+    case gitPanelProjectionLatencyHigh = "git_panel_projection_latency_high"
     case coreMemoryPressure = "core_memory_pressure"
     case clientMemoryPressure = "client_memory_pressure"
     case memoryGrowthUnbounded = "memory_growth_unbounded"

@@ -9,6 +9,10 @@ public enum PerformanceTrackedSurface: String, Equatable, Hashable, CaseIterable
     case chatSession = "chat_session"
     /// 自主进化工作区面板（对应 baselines: evolution_panel, evolution_panel_multi_workspace）
     case evolutionWorkspace = "evolution_workspace"
+    /// 终端输出界面（对应 baselines: terminal_output, terminal_output_multi_workspace）
+    case terminalOutput = "terminal_output"
+    /// Git 面板界面（对应 baselines: git_panel, git_panel_multi_workspace）
+    case gitPanel = "git_panel"
 
     /// 对应的场景 ID 列表（用于从回归报告中匹配）
     public var scenarioIds: [String] {
@@ -17,6 +21,10 @@ public enum PerformanceTrackedSurface: String, Equatable, Hashable, CaseIterable
             return ["chat_stream", "chat_stream_workspace_switch"]
         case .evolutionWorkspace:
             return ["evolution_panel", "evolution_panel_multi_workspace"]
+        case .terminalOutput:
+            return ["terminal_output", "terminal_output_multi_workspace"]
+        case .gitPanel:
+            return ["git_panel", "git_panel_multi_workspace"]
         }
     }
 
@@ -25,6 +33,8 @@ public enum PerformanceTrackedSurface: String, Equatable, Hashable, CaseIterable
         switch self {
         case .chatSession:        return "聊天"
         case .evolutionWorkspace: return "Evolution"
+        case .terminalOutput:     return "终端"
+        case .gitPanel:           return "Git"
         }
     }
 }

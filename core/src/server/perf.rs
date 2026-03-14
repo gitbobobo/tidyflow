@@ -1624,6 +1624,10 @@ const FILE_TREE_LATENCY_WARNING_MS: u64 = 500;
 const FILE_TREE_LATENCY_CRITICAL_MS: u64 = 2000;
 const AI_SESSION_LIST_LATENCY_WARNING_MS: u64 = 500;
 const MESSAGE_FLUSH_LATENCY_WARNING_MS: u64 = 200;
+const TERMINAL_OUTPUT_FLUSH_LATENCY_WARNING_MS: u64 = 150;
+const TERMINAL_OUTPUT_FLUSH_LATENCY_CRITICAL_MS: u64 = 500;
+const GIT_PANEL_PROJECTION_LATENCY_WARNING_MS: u64 = 200;
+const GIT_PANEL_PROJECTION_LATENCY_CRITICAL_MS: u64 = 800;
 const QUEUE_DEPTH_WARNING: u64 = 50;
 const QUEUE_DEPTH_CRITICAL: u64 = 200;
 const CORE_MEMORY_WARNING_BYTES: u64 = 512 * 1024 * 1024;
@@ -1932,6 +1936,98 @@ pub fn build_performance_diagnoses(
                 client_instance_id: Some(client.client_instance_id.clone()),
                 diagnosed_at: now,
             });
+        }
+
+        // 终端输出刷新延迟
+        let term_flush_p95 = client.terminal_output_flush.p95_ms;
+        if term_flush_p95 > 0 && client.terminal_output_flush.sample_count > 0 {
+            if term_flush_p95 >= TERMINAL_OUTPUT_FLUSH_LATENCY_CRITICAL_MS {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:terminal_output_flush_latency_high:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Critical,
+                    reason: PerformanceDiagnosisReason::TerminalOutputFlushLatencyHigh,
+                    summary: format!(
+                        "[{}/{}:{}] 终端输出刷新 p95={}ms，超过临界阈值 {}ms",
+                        client.project, client.workspace, client.client_instance_id,
+                        term_flush_p95, TERMINAL_OUTPUT_FLUSH_LATENCY_CRITICAL_MS
+                    ),
+                    evidence: vec![format!("client.terminal_output_flush.p95_ms={}", term_flush_p95)],
+                    recommended_action: "检查终端输出批次大小和渲染管线吞吐量".to_string(),
+                    context: ctx.clone(),
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            } else if term_flush_p95 >= TERMINAL_OUTPUT_FLUSH_LATENCY_WARNING_MS {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:terminal_output_flush_latency_high:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Warning,
+                    reason: PerformanceDiagnosisReason::TerminalOutputFlushLatencyHigh,
+                    summary: format!(
+                        "[{}/{}:{}] 终端输出刷新 p95={}ms，超过警告阈值 {}ms",
+                        client.project, client.workspace, client.client_instance_id,
+                        term_flush_p95, TERMINAL_OUTPUT_FLUSH_LATENCY_WARNING_MS
+                    ),
+                    evidence: vec![format!("client.terminal_output_flush.p95_ms={}", term_flush_p95)],
+                    recommended_action: "监控终端输出刷新延迟趋势".to_string(),
+                    context: ctx.clone(),
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            }
+        }
+
+        // Git 面板投影重算延迟
+        let git_proj_p95 = client.git_panel_projection.p95_ms;
+        if git_proj_p95 > 0 && client.git_panel_projection.sample_count > 0 {
+            if git_proj_p95 >= GIT_PANEL_PROJECTION_LATENCY_CRITICAL_MS {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:git_panel_projection_latency_high:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Critical,
+                    reason: PerformanceDiagnosisReason::GitPanelProjectionLatencyHigh,
+                    summary: format!(
+                        "[{}/{}:{}] Git 面板投影重算 p95={}ms，超过临界阈值 {}ms",
+                        client.project, client.workspace, client.client_instance_id,
+                        git_proj_p95, GIT_PANEL_PROJECTION_LATENCY_CRITICAL_MS
+                    ),
+                    evidence: vec![format!("client.git_panel_projection.p95_ms={}", git_proj_p95)],
+                    recommended_action: "检查 Git 状态条目数量和投影构建逻辑".to_string(),
+                    context: ctx.clone(),
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            } else if git_proj_p95 >= GIT_PANEL_PROJECTION_LATENCY_WARNING_MS {
+                diagnoses.push(PerformanceDiagnosis {
+                    diagnosis_id: format!(
+                        "perf:git_panel_projection_latency_high:{}:{}",
+                        client.client_instance_id, now
+                    ),
+                    scope: PerformanceDiagnosisScope::ClientInstance,
+                    severity: PerformanceDiagnosisSeverity::Warning,
+                    reason: PerformanceDiagnosisReason::GitPanelProjectionLatencyHigh,
+                    summary: format!(
+                        "[{}/{}:{}] Git 面板投影重算 p95={}ms，超过警告阈值 {}ms",
+                        client.project, client.workspace, client.client_instance_id,
+                        git_proj_p95, GIT_PANEL_PROJECTION_LATENCY_WARNING_MS
+                    ),
+                    evidence: vec![format!("client.git_panel_projection.p95_ms={}", git_proj_p95)],
+                    recommended_action: "监控 Git 面板投影重算延迟趋势".to_string(),
+                    context: ctx.clone(),
+                    client_instance_id: Some(client.client_instance_id.clone()),
+                    diagnosed_at: now,
+                });
+            }
         }
 
         // 跨层延迟失配
@@ -2390,6 +2486,8 @@ mod perf_observability_tests {
             ai_session_list_request: empty_latency(),
             ai_message_tail_flush: empty_latency(),
             evidence_page_append: empty_latency(),
+            terminal_output_flush: empty_latency(),
+            git_panel_projection: empty_latency(),
             reported_at: 0,
         }
     }

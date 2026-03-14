@@ -674,6 +674,12 @@ pub struct ClientPerformanceReport {
     pub ai_message_tail_flush: LatencyMetricWindow,
     /// 证据分页追加延迟
     pub evidence_page_append: LatencyMetricWindow,
+    /// 终端输出刷新延迟（客户端共享热点）
+    #[serde(default)]
+    pub terminal_output_flush: LatencyMetricWindow,
+    /// Git 面板投影重算延迟（客户端共享热点）
+    #[serde(default)]
+    pub git_panel_projection: LatencyMetricWindow,
     /// 上报时间（Unix ms）
     pub reported_at: u64,
 }
@@ -705,6 +711,10 @@ pub enum PerformanceDiagnosisReason {
     FileTreeLatencyHigh,
     AiSessionListLatencyHigh,
     MessageFlushLatencyHigh,
+    /// 终端输出刷新延迟过高
+    TerminalOutputFlushLatencyHigh,
+    /// Git 面板投影重算延迟过高
+    GitPanelProjectionLatencyHigh,
     CoreMemoryPressure,
     ClientMemoryPressure,
     MemoryGrowthUnbounded,
@@ -720,6 +730,8 @@ impl std::fmt::Display for PerformanceDiagnosisReason {
             Self::FileTreeLatencyHigh => "file_tree_latency_high",
             Self::AiSessionListLatencyHigh => "ai_session_list_latency_high",
             Self::MessageFlushLatencyHigh => "message_flush_latency_high",
+            Self::TerminalOutputFlushLatencyHigh => "terminal_output_flush_latency_high",
+            Self::GitPanelProjectionLatencyHigh => "git_panel_projection_latency_high",
             Self::CoreMemoryPressure => "core_memory_pressure",
             Self::ClientMemoryPressure => "client_memory_pressure",
             Self::MemoryGrowthUnbounded => "memory_growth_unbounded",
