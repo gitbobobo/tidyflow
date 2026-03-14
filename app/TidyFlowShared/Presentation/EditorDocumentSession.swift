@@ -207,6 +207,78 @@ extension EditorDocumentKey {
     }
 }
 
+// MARK: - 编辑器请求键
+
+/// 编辑器文件读写请求的去重键（project + workspace + path）。
+/// 用于追踪进行中的读取/保存请求，防止重复请求和响应误归属。
+public struct EditorRequestKey: Hashable, Sendable {
+    public let project: String
+    public let workspace: String
+    public let path: String
+
+    public init(project: String, workspace: String, path: String) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+    }
+}
+
+// MARK: - 共享文档会话状态变换辅助 API
+//
+// 这些方法封装文档生命周期中的典型状态变换，
+// macOS 与 iOS 共用同一套规则，避免各端各写 baseline/hash/dirty 推导逻辑。
+
+extension EditorDocumentSession {
+
+    /// 内容哈希计算（与 macOS AppState+FileOps 中的 contentHash 保持一致）
+    public static func contentHash(_ content: String) -> Int {
+        content.hashValue
+    }
+
+    /// 文档加载成功后的状态更新。
+    ///
+    /// 写入 content、baselineContentHash、lastLoadedAt、loadStatus = .ready、isDirty = false、conflictState = .none。
+    public mutating func applyLoadSuccess(content: String, at date: Date = Date()) {
+        self.content = content
+        self.baselineContentHash = Self.contentHash(content)
+        self.isDirty = false
+        self.lastLoadedAt = date
+        self.loadStatus = .ready
+        self.conflictState = .none
+    }
+
+    /// 文本编辑后的状态更新。
+    ///
+    /// 只更新 content、重新计算 isDirty，并在非磁盘删除状态下清除冲突标记。
+    public mutating func applyContentEdit(_ newContent: String) {
+        self.content = newContent
+        self.isDirty = Self.contentHash(newContent) != self.baselineContentHash
+        // 编辑操作清除 changedOnDisk 冲突（用户已知悉并继续编辑），
+        // 但保留 deletedOnDisk（文件已不存在，用户需要明确处理）。
+        if self.conflictState == .changedOnDisk {
+            self.conflictState = .none
+        }
+    }
+
+    /// 保存成功后的状态更新。
+    ///
+    /// 用当前文本刷新 baseline/hash，清掉 dirty 和冲突。
+    public mutating func applySaveSuccess(at date: Date = Date()) {
+        self.baselineContentHash = Self.contentHash(self.content)
+        self.isDirty = false
+        self.lastLoadedAt = date
+        self.loadStatus = .ready
+        self.conflictState = .none
+    }
+
+    /// 磁盘变化通知后的状态更新。
+    ///
+    /// 只更新 conflictState，不自行推导额外状态。
+    public mutating func applyDiskChange(kind: EditorConflictState) {
+        self.conflictState = kind
+    }
+}
+
 // MARK: - 编辑器会话级命令
 
 /// 编辑器会话级命令枚举，统一命令分发入口。
