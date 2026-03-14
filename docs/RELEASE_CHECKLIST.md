@@ -71,16 +71,20 @@
 > 本节基于 WI-001 新增的多工作区 fixture 场景与 PerformanceDashboardStore 共享投影层。
 
 - [ ] 确认 `scripts/tools/performance_gate_contract.json` 的 `contract_version` 为 `"2.0"`
-- [ ] 确认 `scripts/tools/apple_client_perf_baselines.json` 包含以下场景：
+- [ ] 确认 `scripts/tools/apple_client_perf_baselines.json` 包含以下 8 个场景：
   - `chat_stream`（聊天流式，surface_id=chat_session）
   - `evolution_panel`（Evolution 面板，surface_id=evolution_workspace）
   - `chat_stream_workspace_switch`（聊天+工作区切换，surface_id=chat_session）
   - `evolution_panel_multi_workspace`（Evolution 并行工作区，surface_id=evolution_workspace）
+  - `terminal_output`（终端输出刷新，surface_id=terminal_output）
+  - `terminal_output_multi_workspace`（终端多工作区，surface_id=terminal_output）
+  - `git_panel`（Git 面板投影，surface_id=git_panel）
+  - `git_panel_multi_workspace`（Git 面板多工作区，surface_id=git_panel）
 - [ ] 执行 `./scripts/tidyflow perf-regression`，确认生成：
   - `build/perf/apple-client-regression-report.json`（schema_version=2，含 context_fields 和 scenarios[].surface_id）
   - `build/perf/performance-dashboard-snapshot.json`（overall、scenarios_summary、generated_at）
   - `build/perf/performance-gate-report.json`（overall、release_blocking、reason_codes）
-- [ ] 执行比较器自测：`python3 scripts/tools/check_apple_client_perf_regression.py --self-test`，确认输出 `所有自测样例通过`（包含样例 6-9）
+- [ ] 执行比较器自测：`python3 scripts/tools/check_apple_client_perf_regression.py --self-test`，确认输出 `所有自测样例通过`（包含样例 6-9 及 14-17 终端/Git 新场景）
 - [ ] 若发现新场景 `warn` 或 `fail`：
   - 排查实时趋势：查看 `build/perf/apple-client-regression-report.json` 中对应 scenario 的 `issues` 字段
   - 参考 `PerformanceDashboardProjection.isTrendDegrading` 语义判断是否是趋势性退化

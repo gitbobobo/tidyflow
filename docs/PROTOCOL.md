@@ -1860,10 +1860,19 @@ macOS 与 iOS 双端消费同一 `WorkspaceAggregatedSummary` 类型，不各自
     "ai_session_list_request": { ... },
     "ai_message_tail_flush": { ... },
     "evidence_page_append": { ... },
+    "terminal_output_flush": { ... },
+    "git_panel_projection": { ... },
     "reported_at": 1741800000000
   }
 }
 ```
+
+**新增客户端热点字段（v7 兼容扩展）：**
+
+| 字段 | 类型 | 语义 | 兼容策略 |
+|------|------|------|----------|
+| `terminal_output_flush` | `LatencyMetricWindow` | 共享终端输出刷新链路 P95 延迟；落点在终端容器公共输出路径，非单个 View 计时 | 旧客户端不发送时 Core 以 `#[serde(default)]` 填零值，不触发诊断 |
+| `git_panel_projection` | `LatencyMetricWindow` | `GitWorkspaceProjectionStore` 投影刷新链路 P95 延迟；落点在共享投影更新路径 | 同上 |
 
 Core 接收后将 `client_performance_report` 写入全局注册表，聚合到下一次 `performance_observability` 快照中。
 
@@ -1888,7 +1897,24 @@ Core 自动分析快照并产出诊断：
 **诊断 scope 说明：**
 - `system`：全局系统级（WS 管线延迟、队列积压、Core 内存压力）
 - `workspace`：工作区级（文件索引/Git 状态刷新延迟）
-- `client_instance`：客户端实例级（客户端内存、工作区切换、AI/文件延迟、跨层失配）
+- `client_instance`：客户端实例级（客户端内存、工作区切换、AI/文件延迟、终端输出刷新、Git 面板投影、跨层失配）
+
+**PerformanceDiagnosisReason 枚举值（12 个）：**
+
+| 原因码 | scope | 语义 |
+|--------|-------|------|
+| `ws_pipeline_latency_high` | system | WS 管线延迟高 |
+| `queue_backpressure_high` | system | 队列积压高 |
+| `core_memory_pressure` | system | Core 内存压力 |
+| `workspace_switch_latency_high` | client_instance | 工作区切换延迟高 |
+| `file_tree_latency_high` | client_instance | 文件树延迟高 |
+| `ai_session_list_latency_high` | client_instance | AI 会话列表延迟高 |
+| `message_flush_latency_high` | client_instance | 消息刷新延迟高 |
+| `client_memory_pressure` | client_instance | 客户端内存压力 |
+| `memory_growth_unbounded` | client_instance | 内存增长无界 |
+| `cross_layer_latency_mismatch` | client_instance | 跨层延迟失配 |
+| `terminal_output_flush_latency_high` | client_instance | 终端输出刷新延迟高（warning≥150ms, critical≥500ms） |
+| `git_panel_projection_latency_high` | client_instance | Git 面板投影延迟高（warning≥200ms, critical≥800ms） |
 
 ---
 
