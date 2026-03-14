@@ -309,12 +309,6 @@ final class AppStateEvolutionMessageHandlerAdapter: WeakTargetMessageAdapter<App
     }
 }
 
-final class AppStateEvidenceMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, EvidenceMessageHandler {
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) { dispatchToTarget { $0.handleEvidenceSnapshot(snapshot) } }
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) { dispatchToTarget { $0.handleEvidenceRebuildPrompt(prompt) } }
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) { dispatchToTarget { $0.handleEvidenceItemChunk(chunk) } }
-}
-
 final class AppStateErrorMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, ErrorMessageHandler {
     func handleClientError(_ message: String) {
         dispatchToTarget { $0.handleClientErrorMessage(message) }

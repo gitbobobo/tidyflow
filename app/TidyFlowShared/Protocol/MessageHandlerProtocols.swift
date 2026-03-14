@@ -211,18 +211,6 @@ public extension EvolutionMessageHandler {
     func handleEvolutionError(_ error: CoreError) {}
 }
 
-public protocol EvidenceMessageHandler: AnyObject {
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2)
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2)
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2)
-}
-
-public extension EvidenceMessageHandler {
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) {}
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) {}
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) {}
-}
-
 public protocol ErrorMessageHandler: AnyObject {
     func handleClientError(_ message: String)
     func handleCoreError(_ error: CoreError)

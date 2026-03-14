@@ -811,27 +811,6 @@ pub enum ClientMessage {
         workspace: String,
         loop_round_limit: u32,
     },
-    #[serde(rename = "evidence_get_snapshot")]
-    EvidenceGetSnapshot {
-        project: String,
-        workspace: String,
-    },
-    #[serde(rename = "evidence_get_rebuild_prompt")]
-    EvidenceGetRebuildPrompt {
-        project: String,
-        workspace: String,
-    },
-    #[serde(rename = "evidence_read_item")]
-    EvidenceReadItem {
-        project: String,
-        workspace: String,
-        item_id: String,
-        #[serde(default)]
-        offset: u64,
-        #[serde(default)]
-        limit: Option<u32>,
-    },
-
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
 
@@ -1887,43 +1866,7 @@ pub enum ServerMessage {
         message: String,
         commits: Vec<AIGitCommit>,
     },
-    #[serde(rename = "evidence_snapshot")]
-    EvidenceSnapshot {
-        project: String,
-        workspace: String,
-        evidence_root: String,
-        index_file: String,
-        index_exists: bool,
-        detected_subsystems: Vec<EvidenceSubsystemInfo>,
-        detected_device_types: Vec<String>,
-        items: Vec<EvidenceItemInfo>,
-        issues: Vec<EvidenceIssueInfo>,
-        updated_at: String,
-    },
-    #[serde(rename = "evidence_rebuild_prompt")]
-    EvidenceRebuildPrompt {
-        project: String,
-        workspace: String,
-        prompt: String,
-        evidence_root: String,
-        index_file: String,
-        detected_subsystems: Vec<EvidenceSubsystemInfo>,
-        detected_device_types: Vec<String>,
-        generated_at: String,
-    },
-    #[serde(rename = "evidence_item_chunk")]
-    EvidenceItemChunk {
-        project: String,
-        workspace: String,
-        item_id: String,
-        offset: u64,
-        next_offset: u64,
-        eof: bool,
-        total_size_bytes: u64,
-        mime_type: String,
-        #[serde(with = "serde_bytes")]
-        content: Vec<u8>,
-    },
+
     #[serde(rename = "evo_error")]
     EvoError {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -2682,41 +2625,6 @@ pub struct EvolutionCycleStageHistoryEntry {
     pub duration_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvidenceSubsystemInfo {
-    pub id: String,
-    pub kind: String,
-    pub path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvidenceIssueInfo {
-    pub code: String,
-    pub level: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvidenceItemInfo {
-    pub item_id: String,
-    pub device_type: String,
-    #[serde(rename = "type")]
-    pub evidence_type: String,
-    pub order: u32,
-    pub path: String,
-    pub title: String,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scenario: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subsystem: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    pub size_bytes: u64,
-    pub exists: bool,
-    pub mime_type: String,
-}
-
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -2749,7 +2657,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "project_commands".to_string(),
         "remote_term_tracking".to_string(),
         "task_history".to_string(),
-        "evidence".to_string(),
         "evolution".to_string(),
     ]
 }

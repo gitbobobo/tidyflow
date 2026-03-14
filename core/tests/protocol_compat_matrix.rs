@@ -583,42 +583,6 @@ async fn test_evolution_ws_read_via_http_required() {
     );
 }
 
-/// 测试 evidence domain 的 WS 读取入口返回 read_via_http_required
-///
-/// 验证 evidence_get_snapshot action 在 WS 上返回门禁响应，
-/// 且响应携带 project/workspace 字段。
-#[tokio::test]
-async fn test_evidence_ws_read_via_http_required() {
-    let _lock = acquire_test_lock().await;
-    let server = ServerGuard::start().expect("启动服务器失败");
-    let port = server.port();
-    let (mut write, mut read) = connect(port).await.expect("连接失败");
-    let _ = wait_for_action(&mut read, "hello").await;
-
-    write
-        .send(Message::Binary(encode_client_message(
-            "evidence",
-            "evidence_get_snapshot",
-            json!({ "project": "testproject", "workspace": "default" }),
-        )))
-        .await
-        .unwrap();
-    let resp = wait_for_error_with_code(&mut read, "read_via_http_required")
-        .await
-        .expect("evidence_get_snapshot 应返回携带 read_via_http_required 代码的 error");
-    // 注：error 消息的 domain 统一映射为 "misc"
-    assert_eq!(
-        resp.payload["project"].as_str().unwrap_or(""),
-        "testproject",
-        "error payload 应携带 project 字段"
-    );
-    assert_eq!(
-        resp.payload["workspace"].as_str().unwrap_or(""),
-        "default",
-        "error payload 应携带 workspace 字段"
-    );
-}
-
 /// 测试 v9 中所有已迁移查询入口在 WS 上统一返回 read_via_http_required。
 #[tokio::test]
 async fn test_v9_ws_query_surface_requires_http() {

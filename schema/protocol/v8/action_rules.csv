@@ -7,8 +7,6 @@
 #   → WS 读取已移除，Core 返回 read_via_http_required，必须通过 HTTP /api/v1/projects/:project/workspaces/:workspace/ai/... 读取
 # - evo_get_snapshot / evo_get_agent_profile / evo_list_cycle_history
 #   → WS 读取已移除，Core 返回 read_via_http_required，必须通过 HTTP /api/v1/evolution/... 读取
-# - evidence_get_snapshot / evidence_get_rebuild_prompt / evidence_read_item
-#   → WS 读取已移除，Core 返回 read_via_http_required，必须通过 HTTP /api/v1/evidence/... 读取
 #
 # 多工作区边界：所有 domain 的 HTTP 响应和 WS 事件必须携带 (project, workspace) 字段；
 # 不允许仅凭 workspace 名称路由，不允许以 default 或当前选中工作区作为隐含单例。
@@ -36,7 +34,6 @@ prefix,project,cancel_project_command
 contains,settings,client_settings
 prefix,log,log_
 prefix,ai,ai_
-prefix,evidence,evidence_
 prefix,evolution,evo_
 # v1.40: 冲突向导（已由 git 前缀规则覆盖，此处作文档显式说明）
 prefix,git,git_conflict_

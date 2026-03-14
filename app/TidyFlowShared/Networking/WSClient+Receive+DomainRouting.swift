@@ -41,7 +41,6 @@ extension WSClient {
         ("project", "template_"),
         ("node", "node_"),
         ("ai", "ai_"),
-        ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ("git", "git_conflict_"),
         ("health", "health_"),
@@ -101,8 +100,6 @@ extension WSClient {
             return handleNodeDomain(action, json: json)
         case "ai":
             return handleAiDomain(action, json: json)
-        case "evidence":
-            return handleEvidenceDomain(action, json: json)
         case "evolution":
             return handleEvolutionDomain(action, json: json)
         case "health":

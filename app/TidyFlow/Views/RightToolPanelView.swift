@@ -18,7 +18,7 @@ struct CapsuleSegmentedControl: View {
 
     var body: some View {
         GeometryReader { geo in
-            let tools: [RightTool] = [.explorer, .search, .git, .todos, .evidence, .evolution]
+            let tools: [RightTool] = [.explorer, .search, .git, .todos, .evolution]
             let segmentW = max(0, geo.size.width) / CGFloat(tools.count)
             let fullH = max(24, geo.size.height - 4)
 
@@ -62,7 +62,6 @@ struct CapsuleSegmentedControl: View {
         case .git: return "arrow.triangle.branch"
         case .todos: return "checklist"
         case .sessions: return "bubble.left.and.bubble.right"
-        case .evidence: return "photo.stack"
         case .evolution: return "brain.head.profile"
         }
     }
@@ -74,7 +73,6 @@ struct CapsuleSegmentedControl: View {
         case .git: return "Git"
         case .todos: return "rightPanel.todos".localized
         case .sessions: return "rightPanel.sessions".localized
-        case .evidence: return "rightPanel.evidence".localized
         case .evolution: return "evolution.page.title".localized
         }
     }
@@ -116,8 +114,6 @@ struct InspectorContentView: View {
                 case .sessions:
                     // 会话列表已移至聊天界面左侧侧边栏，右侧面板不再显示
                     EmptyView()
-                case .evidence:
-                    EvidenceTabView(appState: appState)
                 case .evolution:
                     EvolutionPipelineView(appState: appState)
                 case .none:

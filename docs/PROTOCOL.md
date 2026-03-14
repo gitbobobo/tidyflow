@@ -92,10 +92,6 @@
   - Evolution 快照与循环历史不再返回 `handoff` 字段；计划文档请直接读取循环目录下的 `plan.md`
   - Evolution 运行时 `stage` 支持动态实例名，例如 `implement.general.1`、`implement.visual.2`、`verify.1`、`reimplement.1`
   - 当前循环的真实 AI 会话 ID 通过 `evo_cycle_updated.executions` 实时下发；前端应直接消费 execution 记录而不是再按 stage 发起读取查询
-- Evidence：
-  - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot`
-  - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt`
-  - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk`
 - System：
   - `GET /api/v1/system/snapshot`
 
@@ -327,8 +323,7 @@ idle → entering → active ⇄ resuming
   - Git：`git_status` `git_diff` `git_branches` `git_log` `git_show` `git_op_status` `git_integration_status` `git_check_branch_up_to_date` `git_conflict_detail`
   - AI：`ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options`
   - Evolution：`evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`
-  - Evidence：`evidence_get_snapshot` `evidence_get_rebuild_prompt` `evidence_read_item`
-- 保留：
+  - 保留：
   - AI 订阅控制：`ai_session_subscribe` `ai_session_unsubscribe`
   - AI/Evolution 实时推送事件
   - 所有写操作 action

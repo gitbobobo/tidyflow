@@ -141,7 +141,6 @@
 			AICSG001 /* AIChatStageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICSG011 /* AIChatStageView.swift */; };
 
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
-		EVT00001 /* EvidenceTabSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVT00011 /* EvidenceTabSemantics.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
 		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
@@ -170,7 +169,6 @@
 		MOB00053 /* MobileCommandIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00043 /* MobileCommandIconView.swift */; };
 		MOB00055 /* DisconnectBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00054 /* DisconnectBannerView.swift */; };
 		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
-		EVDS0001 /* EvidenceViewerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVDS0011 /* EvidenceViewerStore.swift */; };
 		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
 		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
 		FAQ00001 /* FAQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAQ00011 /* FAQView.swift */; };
@@ -235,7 +233,6 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		AIPJ0001 /* AIChatPresentationProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPJ0011 /* AIChatPresentationProjection.swift */; };
 		EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVP0011 /* EvolutionPipelineProjectionStore.swift */; };
 		EVPO0001 /* EvolutionProfileOptionsProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */; };
-		EVPR0001 /* EvidenceProjectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVPR0011 /* EvidenceProjectionStore.swift */; };
 		HOTS0001 /* SwiftUIHotspotBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = HOTS0011 /* SwiftUIHotspotBaseline.swift */; };
 		AITE0001 /* AIChatTranscriptEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AITE0011 /* AIChatTranscriptEngine.swift */; };
 		AISC0001 /* AIChatStreamCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISC0011 /* AIChatStreamCoalescer.swift */; };
@@ -300,7 +297,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		POBS0001 /* PerformanceObservabilitySemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = POBS0011 /* PerformanceObservabilitySemanticsTests.swift */; };
 		SYHS0001 /* SystemHealthSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SYHS0011 /* SystemHealthSemanticsTests.swift */; };
 /* End PBXBuildFile section */
-		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
 			TST10001 /* ChatScrollPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10011 /* ChatScrollPolicyTests.swift */; };
 			TST10002 /* AIChatProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10012 /* AIChatProtocolModelsTests.swift */; };
@@ -324,7 +320,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			TST10031 /* CodexChatConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10029 /* CodexChatConfigurationTests.swift */; };
 			TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002A /* CodexSlashCommandIntegrationTests.swift */; };
 			TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002B /* AISessionSubscribeAckDispatchTests.swift */; };
-			TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */; };
 			TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002D /* WorkspaceVisualSemanticsTests.swift */; };
 		TST10036 /* GitPanelSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002E /* GitPanelSemanticLayerTests.swift */; };
 		TST10037 /* GitConflictWizardSemanticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002F /* GitConflictWizardSemanticTests.swift */; };
@@ -467,7 +462,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			TST10029 /* CodexChatConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexChatConfigurationTests.swift; sourceTree = "<group>"; };
 			TST1002A /* CodexSlashCommandIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSlashCommandIntegrationTests.swift; sourceTree = "<group>"; };
 			TST1002B /* AISessionSubscribeAckDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionSubscribeAckDispatchTests.swift; sourceTree = "<group>"; };
-			TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEvidenceTabPresentationTests.swift; sourceTree = "<group>"; };
 			TST1002D /* WorkspaceVisualSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceVisualSemanticsTests.swift; sourceTree = "<group>"; };
 		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST1002F /* GitConflictWizardSemanticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSemanticTests.swift; sourceTree = "<group>"; };
@@ -480,7 +474,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
 		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
 		E2E10120 /* TidyFlowE2ETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -539,7 +532,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		B3A0001A /* AIChatProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModels.swift; sourceTree = "<group>"; };
-		EVT00011 /* EvidenceTabSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceTabSemantics.swift; sourceTree = "<group>"; };
 		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
 		B3A00019 /* BranchPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchPickerView.swift; sourceTree = "<group>"; };
 		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
@@ -549,7 +541,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
 		E4200012 /* TFLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFLogger.swift; sourceTree = "<group>"; };
 		EDS00002 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
-		EVDS0011 /* EvidenceViewerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceViewerStore.swift; sourceTree = "<group>"; };
 		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
 		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
 		FAQ00011 /* FAQView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FAQView.swift; sourceTree = "<group>"; };
@@ -611,7 +602,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		AIPJ0011 /* AIChatPresentationProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPresentationProjection.swift; sourceTree = "<group>"; };
 		EVP0011 /* EvolutionPipelineProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionPipelineProjectionStore.swift; sourceTree = "<group>"; };
 		EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionProfileOptionsProjectionStore.swift; sourceTree = "<group>"; };
-		EVPR0011 /* EvidenceProjectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceProjectionStore.swift; sourceTree = "<group>"; };
 		HOTS0011 /* SwiftUIHotspotBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIHotspotBaseline.swift; sourceTree = "<group>"; };
 		AITE0011 /* AIChatTranscriptEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatTranscriptEngine.swift; sourceTree = "<group>"; };
 		AISC0011 /* AIChatStreamCoalescer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStreamCoalescer.swift; sourceTree = "<group>"; };
@@ -945,7 +935,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		E2E10130 /* TidyFlowE2ETests */ = {
 			isa = PBXGroup;
 			children = (
-				E2E10101 /* EvidenceRecorder.swift */,
 				E2E10102 /* TidyFlowE2ETests.swift */,
 			);
 			path = TidyFlowE2ETests;
@@ -978,7 +967,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST10029 /* CodexChatConfigurationTests.swift */,
 					TST1002A /* CodexSlashCommandIntegrationTests.swift */,
 					TST1002B /* AISessionSubscribeAckDispatchTests.swift */,
-					TST1002C /* WorkspaceEvidenceTabPresentationTests.swift */,
 					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
 					TST1002F /* GitConflictWizardSemanticTests.swift */,
@@ -1064,7 +1052,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 			isa = PBXGroup;
 			children = (
 				B3A0001A /* AIChatProtocolModels.swift */,
-				EVT00011 /* EvidenceTabSemantics.swift */,
 				SPL00013 /* FileProtocolModels.swift */,
 				SPL00012 /* GitProtocolModels.swift */,
 				SPL00011 /* ProjectProtocolModels.swift */,
@@ -1126,7 +1113,6 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
-				EVDS0011 /* EvidenceViewerStore.swift */,
 				MDL000108 /* FileBrowserModels.swift */,
 				EXSL0011 /* ExplorerSemanticLayer.swift */,
 				MDL000101 /* Notifications.swift */,
@@ -1136,7 +1122,6 @@ TSST011 /* TerminalSessionStore.swift */,
 				AIPJ0011 /* AIChatPresentationProjection.swift */,
 				EVP0011 /* EvolutionPipelineProjectionStore.swift */,
 				EVPO0011 /* EvolutionProfileOptionsProjectionStore.swift */,
-				EVPR0011 /* EvidenceProjectionStore.swift */,
 				AICS0011 /* AIChatShellProjectionStore.swift */,
 				ASBS0011 /* AIChatStreamingBatchScheduler.swift */,
 				ASRC0011 /* AIChatStreamingRenderCoordinator.swift */,
@@ -1412,7 +1397,6 @@ TSST011 /* TerminalSessionStore.swift */,
 				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
 				GCS000012 /* GitCacheState.swift in Sources */,
 				FCS000012 /* FileCacheState.swift in Sources */,
-				EVDS0001 /* EvidenceViewerStore.swift in Sources */,
 				SPL00041 /* GitCacheState+DiffStatus.swift in Sources */,
 				SPL00042 /* GitCacheState+Operations.swift in Sources */,
 				MDL000301 /* Notifications.swift in Sources */,
@@ -1459,7 +1443,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				AIPJ0001 /* AIChatPresentationProjection.swift in Sources */,
 				EVP0001 /* EvolutionPipelineProjectionStore.swift in Sources */,
 				EVPO0001 /* EvolutionProfileOptionsProjectionStore.swift in Sources */,
-				EVPR0001 /* EvidenceProjectionStore.swift in Sources */,
 				AICS0001 /* AIChatShellProjectionStore.swift in Sources */,
 				ASBS0001 /* AIChatStreamingBatchScheduler.swift in Sources */,
 				ASRC0001 /* AIChatStreamingRenderCoordinator.swift in Sources */,
@@ -1532,7 +1515,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				B3A0000A /* AIChatProtocolModels.swift in Sources */,
 				CERC00001 /* CoreErrorCode.swift in Sources */,
-				EVT00001 /* EvidenceTabSemantics.swift in Sources */,
 				SPL00001 /* ProjectProtocolModels.swift in Sources */,
 				SPL00002 /* GitProtocolModels.swift in Sources */,
 				SPL00003 /* FileProtocolModels.swift in Sources */,
@@ -1578,7 +1560,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST10031 /* CodexChatConfigurationTests.swift in Sources */,
 				TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */,
 				TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */,
-				TST10034 /* WorkspaceEvidenceTabPresentationTests.swift in Sources */,
 				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
 				TST10037 /* GitConflictWizardSemanticTests.swift in Sources */,
@@ -1641,7 +1622,6 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E2E10001 /* EvidenceRecorder.swift in Sources */,
 				E2E10002 /* TidyFlowE2ETests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

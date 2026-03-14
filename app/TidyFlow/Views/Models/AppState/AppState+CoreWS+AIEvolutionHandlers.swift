@@ -1046,112 +1046,12 @@ extension AppState {
         } else {
             evolutionPendingActionByWorkspace.removeAll()
         }
-        for key in evidenceLoadingByWorkspace.keys {
-            evidenceLoadingByWorkspace[key] = false
-            evidenceErrorByWorkspace[key] = message
-        }
-        let promptCallbacks = evidencePromptCompletionByWorkspace
-        evidencePromptCompletionByWorkspace.removeAll()
-        for (_, completion) in promptCallbacks {
-            completion(nil, message)
-        }
-        let readRequests = evidenceReadRequestByWorkspace
-        evidenceReadRequestByWorkspace.removeAll()
-        for (_, request) in readRequests {
-            if request.autoContinue {
-                request.fullCompletion(nil, message)
-            } else {
-                request.pageCompletion(nil, message)
-            }
-        }
     }
 
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         evolutionCycleHistories[key] = cycles
-    }
-
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(snapshot.workspace)
-        let key = globalWorkspaceKey(projectName: snapshot.project, workspaceName: normalizedWorkspace)
-        evidenceSnapshotsByWorkspace[key] = snapshot
-        if evidenceLoadingByWorkspace[key] != false { evidenceLoadingByWorkspace[key] = false }
-        if evidenceErrorByWorkspace[key] != nil { evidenceErrorByWorkspace[key] = nil }
-    }
-
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(prompt.workspace)
-        let key = globalWorkspaceKey(projectName: prompt.project, workspaceName: normalizedWorkspace)
-        if let completion = evidencePromptCompletionByWorkspace.removeValue(forKey: key) {
-            completion(prompt, nil)
-        }
-    }
-
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(chunk.workspace)
-        let key = globalWorkspaceKey(projectName: chunk.project, workspaceName: normalizedWorkspace)
-        guard var request = evidenceReadRequestByWorkspace[key] else { return }
-        guard request.itemID == chunk.itemID else { return }
-
-        guard chunk.offset == request.expectedOffset else {
-            // 同一条目的旧分块回包（通常由重入读取触发）直接丢弃，避免误判中断。
-            if chunk.offset < request.expectedOffset {
-                return
-            }
-            // 首块期待偏移为 0；若先收到更大偏移，通常是上一次读取会话的滞后分块。
-            if request.expectedOffset == 0 {
-                return
-            }
-            evidenceReadRequestByWorkspace.removeValue(forKey: key)
-            if request.autoContinue {
-                request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")
-            } else {
-                request.pageCompletion(nil, "证据分块偏移不连续，读取已中断")
-            }
-            return
-        }
-
-        request.totalSizeBytes = chunk.totalSizeBytes
-        request.mimeType = chunk.mimeType
-        request.expectedOffset = chunk.nextOffset
-
-        if !request.autoContinue {
-            evidenceReadRequestByWorkspace.removeValue(forKey: key)
-            request.pageCompletion(
-                .init(
-                    mimeType: chunk.mimeType,
-                    content: chunk.content,
-                    offset: chunk.offset,
-                    nextOffset: chunk.nextOffset,
-                    totalSizeBytes: chunk.totalSizeBytes,
-                    eof: chunk.eof
-                ),
-                nil
-            )
-            return
-        }
-
-        // 预分配容量，减少大证据文件的重复内存拷贝
-        if request.content.isEmpty, chunk.totalSizeBytes > 0 {
-            request.content.reserveCapacity(Int(chunk.totalSizeBytes))
-        }
-        request.content.append(contentsOf: chunk.content)
-
-        if chunk.eof {
-            evidenceReadRequestByWorkspace.removeValue(forKey: key)
-            request.fullCompletion((mimeType: request.mimeType, content: request.content), nil)
-            return
-        }
-
-        evidenceReadRequestByWorkspace[key] = request
-        wsClient.requestEvidenceReadItem(
-            project: request.project,
-            workspace: request.workspace,
-            itemID: request.itemID,
-            offset: request.expectedOffset,
-            limit: request.limit
-        )
     }
 
     func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {

@@ -79,7 +79,6 @@ public class WSClient: NSObject, ObservableObject {
     public weak var nodeMessageHandler: NodeMessageHandler?
     public weak var terminalMessageHandler: TerminalMessageHandler?
     public weak var aiMessageHandler: AIMessageHandler?
-    public weak var evidenceMessageHandler: EvidenceMessageHandler?
     public weak var evolutionMessageHandler: EvolutionMessageHandler?
     public weak var errorMessageHandler: ErrorMessageHandler?
 
@@ -199,9 +198,6 @@ public class WSClient: NSObject, ObservableObject {
     public var onEvoBlockersUpdated: ((EvolutionBlockersUpdatedV2) -> Void)?
     public var onEvoCycleHistory: ((String, String, [EvolutionCycleHistoryItemV2]) -> Void)?
     public var onEvoAutoCommitResult: ((EvoAutoCommitResult) -> Void)?
-    public var onEvidenceSnapshot: ((EvidenceSnapshotV2) -> Void)?
-    public var onEvidenceRebuildPrompt: ((EvidenceRebuildPromptV2) -> Void)?
-    public var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?
     /// 工作区缓存可观测性快照（由 /api/v1/system/snapshot HTTP 响应驱动，按 (project, workspace) 隔离）
     public var onSystemSnapshot: ((SystemSnapshotCacheMetrics) -> Void)?
     /// 工作区级 Evolution 摘要（由 system_snapshot.workspace_items 提取，按 (project, workspace) 隔离）

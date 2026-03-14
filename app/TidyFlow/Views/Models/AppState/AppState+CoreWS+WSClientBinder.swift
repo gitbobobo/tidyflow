@@ -72,7 +72,6 @@ extension AppState {
         let nodeHandler = AppStateNodeMessageHandlerAdapter(target: self)
         let terminalHandler = AppStateTerminalMessageHandlerAdapter(target: self)
         let aiHandler = AppStateAIMessageHandlerAdapter(target: self)
-        let evidenceHandler = AppStateEvidenceMessageHandlerAdapter(target: self)
         let evolutionHandler = AppStateEvolutionMessageHandlerAdapter(target: self)
         let errorHandler = AppStateErrorMessageHandlerAdapter(target: self)
         wsGitMessageHandler = gitHandler
@@ -82,7 +81,6 @@ extension AppState {
         wsNodeMessageHandler = nodeHandler
         wsTerminalMessageHandler = terminalHandler
         wsAIMessageHandler = aiHandler
-        wsEvidenceMessageHandler = evidenceHandler
         wsEvolutionMessageHandler = evolutionHandler
         wsErrorMessageHandler = errorHandler
         wsClient.gitMessageHandler = gitHandler
@@ -92,7 +90,6 @@ extension AppState {
         wsClient.nodeMessageHandler = nodeHandler
         wsClient.terminalMessageHandler = terminalHandler
         wsClient.aiMessageHandler = aiHandler
-        wsClient.evidenceMessageHandler = evidenceHandler
         wsClient.evolutionMessageHandler = evolutionHandler
         wsClient.errorMessageHandler = errorHandler
 

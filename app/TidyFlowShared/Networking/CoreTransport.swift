@@ -42,7 +42,7 @@ public enum CoreConnectionState: Equatable {
 /// HTTP 读取请求的多工作区上下文。
 /// 用于回调时判断失败归属，保证多工作区并行时不互相污染状态。
 public struct HTTPReadRequestContext: Equatable {
-    /// 请求所属 domain（如 "ai"、"evidence"、"evolution"）
+    /// 请求所属 domain（如 "ai"、"evolution"）
     public let domain: String
     /// 请求所属项目
     public let project: String

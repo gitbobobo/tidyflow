@@ -2,31 +2,6 @@ import Foundation
 import Combine
 import TidyFlowShared
 
-// MARK: - v1.24: 剪贴板模型
-
-struct EvidenceReadRequestState {
-    struct PagePayload {
-        let mimeType: String
-        let content: [UInt8]
-        let offset: UInt64
-        let nextOffset: UInt64
-        let totalSizeBytes: UInt64
-        let eof: Bool
-    }
-
-    let project: String
-    let workspace: String
-    let itemID: String
-    let limit: UInt32?
-    let autoContinue: Bool
-    var expectedOffset: UInt64
-    var totalSizeBytes: UInt64?
-    var mimeType: String
-    var content: [UInt8]
-    let fullCompletion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
-    let pageCompletion: (_ payload: PagePayload?, _ errorMessage: String?) -> Void
-}
-
 enum StartupPhase: Equatable {
     case loading
     case ready
@@ -201,7 +176,6 @@ class AppState: ObservableObject {
     var wsNodeMessageHandler: NodeMessageHandler?
     var wsTerminalMessageHandler: TerminalMessageHandler?
     var wsAIMessageHandler: AIMessageHandler?
-    var wsEvidenceMessageHandler: EvidenceMessageHandler?
     var wsEvolutionMessageHandler: EvolutionMessageHandler?
     var wsErrorMessageHandler: ErrorMessageHandler?
 
@@ -433,9 +407,6 @@ class AppState: ObservableObject {
     @Published var evolutionPlanDocumentLoading: Bool = false
     @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
-    @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
-    @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
-    @Published var evidenceErrorByWorkspace: [String: String] = [:]
     /// 内部 one-shot hint，无视图直接观察
     var aiChatOneShotHintByWorkspace: [String: String] = [:]
     /// 内部 one-shot 输入预填，无视图直接观察
@@ -526,10 +497,6 @@ class AppState: ObservableObject {
     var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
     /// Evolution 面板性能监控：当前采样决策（按 workspaceContextKey）
     var evolutionPerformanceSamplingDecisions: [String: EvolutionRealtimeSamplingDecision] = [:]
-    /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
-    var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
-    /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
-    var evidenceReadRequestByWorkspace: [String: EvidenceReadRequestState] = [:]
     /// Evolution：计划文档读取上下文（按 cycle 文件路径识别）
     var pendingEvolutionPlanDocumentReadPath: String?
 

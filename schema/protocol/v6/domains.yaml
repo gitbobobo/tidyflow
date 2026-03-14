@@ -21,7 +21,5 @@ domains:
   # - ACP content 双栈兼容：text/image/audio/resource/resource_link
   - id: ai
     action_rule: prefix("ai_")
-  - id: evidence
-    action_rule: prefix("evidence_")
   - id: evolution
     action_rule: prefix("evo_")

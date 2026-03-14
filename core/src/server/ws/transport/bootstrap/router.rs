@@ -162,18 +162,6 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::http_api::evolution_cycle_history_handler),
         )
         .route(
-            "/api/v1/evidence/projects/:project/workspaces/:workspace/snapshot",
-            get(crate::server::ws::http_api::evidence_snapshot_handler),
-        )
-        .route(
-            "/api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt",
-            get(crate::server::ws::http_api::evidence_rebuild_prompt_handler),
-        )
-        .route(
-            "/api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk",
-            get(crate::server::ws::http_api::evidence_item_chunk_handler),
-        )
-        .route(
             "/api/v1/system/snapshot",
             get(crate::server::ws::http_api::system_snapshot_handler),
         )

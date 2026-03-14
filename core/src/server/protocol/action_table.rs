@@ -37,7 +37,6 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("project", "template_"),
     ("node", "node_"),
     ("ai", "ai_"),
-    ("evidence", "evidence_"),
     ("evolution", "evo_"),
     ("git", "git_conflict_"),
     ("health", "health_"),

@@ -126,20 +126,6 @@ domains:
       - project
       - workspace
       - session_id  # AI 消息中条件必须
-  - id: evidence
-    action_rule: prefix("evidence_")
-    # HTTP 只读端点（已移除对应 WS 读取 action）
-    http_read_endpoints:
-      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot
-      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt
-      - GET /api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk
-    ws_read_via_http_required:
-      - evidence_get_snapshot
-      - evidence_get_rebuild_prompt
-      - evidence_read_item
-    required_boundary_fields:
-      - project
-      - workspace
   - id: evolution
     action_rule: prefix("evo_")
     # HTTP 只读端点（已移除对应 WS 读取 action）

@@ -172,12 +172,6 @@ final class MobileAppStateEvolutionMessageHandlerAdapter: WeakTargetMessageAdapt
     func handleEvolutionError(_ error: CoreError) { dispatchToTarget { $0.handleEvolutionError(error) } }
 }
 
-final class MobileAppStateEvidenceMessageHandlerAdapter: WeakTargetMessageAdapter<MobileAppState>, EvidenceMessageHandler {
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) { dispatchToTarget { $0.handleEvidenceSnapshot(snapshot) } }
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) { dispatchToTarget { $0.handleEvidenceRebuildPrompt(prompt) } }
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) { dispatchToTarget { $0.handleEvidenceItemChunk(chunk) } }
-}
-
 final class MobileAppStateErrorMessageHandlerAdapter: WeakTargetMessageAdapter<MobileAppState>, ErrorMessageHandler {
     func handleClientError(_ message: String) { dispatchToTarget { $0.handleClientError(message) } }
     func handleCoreError(_ error: CoreError) { dispatchToTarget { $0.handleCoreError(error) } }

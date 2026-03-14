@@ -398,41 +398,6 @@ extension WSClient {
         }
     }
 
-    public func handleEvidenceDomain(_ action: String, json: [String: Any]) -> Bool {
-        switch action {
-        case "evidence_snapshot":
-            if let ev = EvidenceSnapshotV2.from(json: json) {
-                if let handler = evidenceMessageHandler {
-                    handler.handleEvidenceSnapshot(ev)
-                } else {
-                    onEvidenceSnapshot?(ev)
-                }
-            }
-            return true
-        case "evidence_rebuild_prompt":
-            if let ev = EvidenceRebuildPromptV2.from(json: json) {
-                invalidateHTTPQueries(.evidenceWorkspace(project: ev.project, workspace: ev.workspace))
-                if let handler = evidenceMessageHandler {
-                    handler.handleEvidenceRebuildPrompt(ev)
-                } else {
-                    onEvidenceRebuildPrompt?(ev)
-                }
-            }
-            return true
-        case "evidence_item_chunk":
-            if let ev = EvidenceItemChunkV2.from(json: json) {
-                if let handler = evidenceMessageHandler {
-                    handler.handleEvidenceItemChunk(ev)
-                } else {
-                    onEvidenceItemChunk?(ev)
-                }
-            }
-            return true
-        default:
-            return false
-        }
-    }
-
     private func parseEvolutionProfilesFromClientSettings(_ raw: Any?) -> [String: [EvolutionStageProfileInfoV2]] {
         guard let rawMap = raw as? [String: Any] else { return [:] }
         var result: [String: [EvolutionStageProfileInfoV2]] = [:]

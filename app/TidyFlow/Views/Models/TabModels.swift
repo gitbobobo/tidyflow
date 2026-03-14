@@ -76,7 +76,6 @@ enum BottomPanelCategory: String, Codable, CaseIterable {
 enum WorkspaceSpecialPage: String, Codable {
     case aiChat
     case evolution
-    case evidence
 }
 
 struct TabModel: Identifiable, Codable, Equatable {

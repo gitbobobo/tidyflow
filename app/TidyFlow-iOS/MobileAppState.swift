@@ -89,29 +89,6 @@ private struct MobileTerminalPresentation {
     var isPinned: Bool
 }
 
-struct MobileEvidenceReadRequestState {
-    struct PagePayload {
-        let mimeType: String
-        let content: [UInt8]
-        let offset: UInt64
-        let nextOffset: UInt64
-        let totalSizeBytes: UInt64
-        let eof: Bool
-    }
-
-    let project: String
-    let workspace: String
-    let itemID: String
-    let limit: UInt32?
-    let autoContinue: Bool
-    var expectedOffset: UInt64
-    var totalSizeBytes: UInt64?
-    var mimeType: String
-    var content: [UInt8]
-    let fullCompletion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
-    let pageCompletion: (_ payload: PagePayload?, _ errorMessage: String?) -> Void
-}
-
 @MainActor
 protocol MobileTerminalOutputSink: AnyObject {
     func writeOutput(_ bytes: [UInt8])
@@ -291,9 +268,6 @@ final class MobileAppState: ObservableObject {
     var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
     /// Evolution 面板性能采样决策（按 workspaceContextKey）
     var evolutionPerformanceSamplingDecisions: [String: EvolutionRealtimeSamplingDecision] = [:]
-    @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
-    @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
-    @Published var evidenceErrorByWorkspace: [String: String] = [:]
     @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
     @Published var aiChatOneShotPrefillByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
@@ -310,9 +284,6 @@ final class MobileAppState: ObservableObject {
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
     @Published var evolutionPendingActionByWorkspace: [String: EvolutionPendingActionState] = [:]
-    var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
-    var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
-
     // v1.41: 系统健康快照（Core 权威真源，与 macOS 使用同一套共享模型）
     @Published var systemHealthSnapshot: SystemHealthSnapshot?
     /// 按 incident key（"project:workspace:incidentId"）追踪修复状态
@@ -436,7 +407,6 @@ final class MobileAppState: ObservableObject {
     private var _terminalHandlerAdapter: MobileAppStateTerminalMessageHandlerAdapter?
     private var _evolutionHandlerAdapter: MobileAppStateEvolutionMessageHandlerAdapter?
     private var _nodeHandlerAdapter: MobileAppStateNodeMessageHandlerAdapter?
-    private var _evidenceHandlerAdapter: MobileAppStateEvidenceMessageHandlerAdapter?
     private var _errorHandlerAdapter: MobileAppStateErrorMessageHandlerAdapter?
     /// 工作区缓存可观测性指标（Core 权威输出，按 "project:workspace" 隔离）
     /// 由 onSystemSnapshot 回调更新，macOS 与 iOS 语义对齐，不在客户端本地推导。
@@ -1848,117 +1818,6 @@ final class MobileAppState: ObservableObject {
             currentStatus: currentStatus,
             pendingAction: evolutionPendingActionByWorkspace[key]
         )
-    }
-
-    func requestEvidenceSnapshot(project: String, workspace: String) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        evidenceLoadingByWorkspace[key] = true
-        evidenceErrorByWorkspace[key] = nil
-        wsClient.requestEvidenceSnapshot(project: project, workspace: normalizedWorkspace)
-    }
-
-    func requestEvidenceRebuildPrompt(
-        project: String,
-        workspace: String,
-        completion: @escaping (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void
-    ) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        evidencePromptCompletionByWorkspace[key] = completion
-        wsClient.requestEvidenceRebuildPrompt(project: project, workspace: normalizedWorkspace)
-    }
-
-    func readEvidenceItem(
-        project: String,
-        workspace: String,
-        itemID: String,
-        limit: UInt32? = 262_144,
-        completion: @escaping (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
-    ) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        if let inFlight = evidenceReadRequestByWorkspace[key],
-           inFlight.itemID == itemID,
-           inFlight.autoContinue {
-            return
-        }
-        evidenceReadRequestByWorkspace[key] = MobileEvidenceReadRequestState(
-            project: project,
-            workspace: normalizedWorkspace,
-            itemID: itemID,
-            limit: limit,
-            autoContinue: true,
-            expectedOffset: 0,
-            totalSizeBytes: nil,
-            mimeType: "application/octet-stream",
-            content: [],
-            fullCompletion: completion,
-            pageCompletion: { _, _ in }
-        )
-        wsClient.requestEvidenceReadItem(
-            project: project,
-            workspace: normalizedWorkspace,
-            itemID: itemID,
-            offset: 0,
-            limit: limit
-        )
-    }
-
-    func readEvidenceItemPage(
-        project: String,
-        workspace: String,
-        itemID: String,
-        offset: UInt64 = 0,
-        limit: UInt32? = 131_072,
-        completion: @escaping (_ payload: MobileEvidenceReadRequestState.PagePayload?, _ errorMessage: String?) -> Void
-    ) {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        if let inFlight = evidenceReadRequestByWorkspace[key],
-           inFlight.itemID == itemID,
-           !inFlight.autoContinue,
-           inFlight.expectedOffset == offset {
-            return
-        }
-        evidenceReadRequestByWorkspace[key] = MobileEvidenceReadRequestState(
-            project: project,
-            workspace: normalizedWorkspace,
-            itemID: itemID,
-            limit: limit,
-            autoContinue: false,
-            expectedOffset: offset,
-            totalSizeBytes: nil,
-            mimeType: "application/octet-stream",
-            content: [],
-            fullCompletion: { _, _ in },
-            pageCompletion: completion
-        )
-        wsClient.requestEvidenceReadItem(
-            project: project,
-            workspace: normalizedWorkspace,
-            itemID: itemID,
-            offset: offset,
-            limit: limit
-        )
-    }
-
-    func evidenceSnapshot(project: String, workspace: String) -> EvidenceSnapshotV2? {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        return evidenceSnapshotsByWorkspace[key]
-    }
-
-    func isEvidenceLoading(project: String, workspace: String) -> Bool {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        return evidenceLoadingByWorkspace[key] ?? false
-    }
-
-    func evidenceError(project: String, workspace: String) -> String? {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        return evidenceErrorByWorkspace[key]
     }
 
     func setAIChatOneShotHint(project: String, workspace: String, message: String) {
@@ -4566,7 +4425,6 @@ final class MobileAppState: ObservableObject {
         let aiHandler = MobileAppStateAIMessageHandlerAdapter(target: self)
         let evolutionHandler = MobileAppStateEvolutionMessageHandlerAdapter(target: self)
         let nodeHandler = MobileAppStateNodeMessageHandlerAdapter(target: self)
-        let evidenceHandler = MobileAppStateEvidenceMessageHandlerAdapter(target: self)
         let errorHandler = MobileAppStateErrorMessageHandlerAdapter(target: self)
 
         _gitHandlerAdapter = gitHandler
@@ -4576,7 +4434,6 @@ final class MobileAppState: ObservableObject {
         _aiHandlerAdapter = aiHandler
         _evolutionHandlerAdapter = evolutionHandler
         _nodeHandlerAdapter = nodeHandler
-        _evidenceHandlerAdapter = evidenceHandler
         _errorHandlerAdapter = errorHandler
 
         wsClient.gitMessageHandler = gitHandler
@@ -4586,7 +4443,6 @@ final class MobileAppState: ObservableObject {
         wsClient.aiMessageHandler = aiHandler
         wsClient.evolutionMessageHandler = evolutionHandler
         wsClient.nodeMessageHandler = nodeHandler
-        wsClient.evidenceMessageHandler = evidenceHandler
         wsClient.errorMessageHandler = errorHandler
 
         // 工作区缓存可观测性快照：更新 Core 权威指标（语义与 macOS 对齐）

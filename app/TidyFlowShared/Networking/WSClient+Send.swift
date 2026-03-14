@@ -798,7 +798,6 @@ extension WSClient {
         ("project", "template_"),
         ("node", "node_"),
         ("ai", "ai_"),
-        ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ("git", "git_conflict_"),
         ("health", "health_"),
@@ -999,8 +998,6 @@ extension WSClient {
             handled = handleAiDomain(action, json: json)
         case "evolution":
             handled = handleEvolutionDomain(action, json: json)
-        case "evidence":
-            handled = handleEvidenceDomain(action, json: json)
         default:
             handled = false
         }
@@ -1165,7 +1162,6 @@ extension WSClient {
         case gitProject(project: String)
         case aiWorkspace(project: String, workspace: String, aiTool: String? = nil)
         case evolutionWorkspace(project: String, workspace: String)
-        case evidenceWorkspace(project: String, workspace: String)
     }
 
     public func invalidateHTTPQueries(_ scope: HTTPQueryInvalidationScope) {
@@ -1218,9 +1214,6 @@ extension WSClient {
                         return projectMatch && workspaceMatch
                     }
                     return key.path.hasPrefix(workspacePrefix)
-                case let .evidenceWorkspace(project, workspace):
-                    let prefix = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
-                    return key.path.hasPrefix(prefix)
                 }
             }
         }
@@ -2500,58 +2493,6 @@ extension WSClient {
             domain: "evolution",
             path: path,
             fallbackAction: "evo_cycle_history",
-            cacheMode: cacheMode
-        )
-    }
-
-    public func requestEvidenceSnapshot(
-        project: String,
-        workspace: String,
-        cacheMode: HTTPQueryCacheMode = .default
-    ) {
-        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/snapshot"
-        requestReadViaHTTP(
-            domain: "evidence",
-            path: path,
-            fallbackAction: "evidence_snapshot",
-            cacheMode: cacheMode
-        )
-    }
-
-    public func requestEvidenceRebuildPrompt(
-        project: String,
-        workspace: String,
-        cacheMode: HTTPQueryCacheMode = .default
-    ) {
-        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/rebuild-prompt"
-        requestReadViaHTTP(
-            domain: "evidence",
-            path: path,
-            fallbackAction: "evidence_rebuild_prompt",
-            cacheMode: cacheMode
-        )
-    }
-
-    public func requestEvidenceReadItem(
-        project: String,
-        workspace: String,
-        itemID: String,
-        offset: UInt64 = 0,
-        limit: UInt32? = 262_144,
-        cacheMode: HTTPQueryCacheMode = .default
-    ) {
-        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/items/\(encodePathComponent(itemID))/chunk"
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "offset", value: "\(offset)")
-        ]
-        if let limit {
-            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
-        }
-        requestReadViaHTTP(
-            domain: "evidence",
-            path: path,
-            queryItems: queryItems,
-            fallbackAction: "evidence_item_chunk",
             cacheMode: cacheMode
         )
     }

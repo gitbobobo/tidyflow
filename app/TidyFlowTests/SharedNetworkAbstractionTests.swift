@@ -94,14 +94,13 @@ final class MessageHandlerAdapterPatternTests: XCTestCase {
         let _: KeyPath<any CoreWSClientProtocol, (any NodeMessageHandler)?> = \.nodeMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any TerminalMessageHandler)?> = \.terminalMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any AIMessageHandler)?> = \.aiMessageHandler
-        let _: KeyPath<any CoreWSClientProtocol, (any EvidenceMessageHandler)?> = \.evidenceMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any EvolutionMessageHandler)?> = \.evolutionMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any ErrorMessageHandler)?> = \.errorMessageHandler
     }
 
     /// 验证 ServerEnvelopeMeta domain 覆盖核心消息域，确保共享路由入口完整。
     func testServerEnvelopeMetaDomainCoverage() {
-        let coreDomains: Set<String> = ["git", "project", "file", "terminal", "ai", "core", "evolution", "evidence"]
+        let coreDomains: Set<String> = ["git", "project", "file", "terminal", "ai", "core", "evolution"]
         for domain in coreDomains {
             let meta = ServerEnvelopeMeta(
                 seq: 1, domain: domain, action: "test", kind: "result",

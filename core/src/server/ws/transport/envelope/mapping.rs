@@ -30,9 +30,6 @@ pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
     if action.starts_with("ai_") {
         return "ai".to_string();
     }
-    if action.starts_with("evidence_") {
-        return "evidence".to_string();
-    }
     if action.starts_with("evo_") {
         return "evolution".to_string();
     }

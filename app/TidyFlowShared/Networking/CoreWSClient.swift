@@ -24,7 +24,6 @@ public protocol CoreWSClientProtocol: CoreMessageDispatcher {
     var nodeMessageHandler: (any NodeMessageHandler)? { get set }
     var terminalMessageHandler: (any TerminalMessageHandler)? { get set }
     var aiMessageHandler: (any AIMessageHandler)? { get set }
-    var evidenceMessageHandler: (any EvidenceMessageHandler)? { get set }
     var evolutionMessageHandler: (any EvolutionMessageHandler)? { get set }
     var errorMessageHandler: (any ErrorMessageHandler)? { get set }
 }

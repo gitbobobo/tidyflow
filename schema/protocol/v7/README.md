@@ -58,7 +58,6 @@
 |------------|---------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
 | ai         | `ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options` | `GET /api/v1/projects/:project/workspaces/:workspace/ai/...`                                     |
 | evolution  | `evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`                                                 | `GET /api/v1/evolution/...`                                                                      |
-| evidence   | `evidence_get_snapshot` `evidence_get_rebuild_prompt` `evidence_read_item`                                          | `GET /api/v1/evidence/projects/:project/workspaces/:workspace/...`                               |
 | system     | —（无 WS 读取）                                                                                                     | `GET /api/v1/system/snapshot`（免鉴权）                                                          |
 
 ### WS 专用写入与流式事件
