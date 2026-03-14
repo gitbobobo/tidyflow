@@ -948,6 +948,18 @@ pub enum ServerMessage {
         truncated: bool,
     },
 
+    // v1.42: 文件内容搜索结果
+    FileContentSearchResult {
+        project: String,
+        workspace: String,
+        query: String,
+        scope: String,
+        items: Vec<file::FileContentSearchItem>,
+        total_matches: u32,
+        truncated: bool,
+        search_duration_ms: u64,
+    },
+
     // v1.10: File external change conflict detection
     /// 文件外部变更冲突检测通知（由 watcher 触发）
     FileConflictDetected {

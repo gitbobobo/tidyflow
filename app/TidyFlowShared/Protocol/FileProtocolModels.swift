@@ -425,3 +425,100 @@ public struct FileListResult {
         self.items = items
     }
 }
+
+// MARK: - v1.42: 文件内容搜索结果
+
+/// 文件内容搜索：匹配范围
+public struct FileContentSearchMatchRange: Equatable, Sendable {
+    public let start: Int
+    public let end: Int
+
+    public static func from(json: [String: Any]) -> FileContentSearchMatchRange? {
+        guard let start = json["start"] as? Int,
+              let end = json["end"] as? Int else { return nil }
+        return FileContentSearchMatchRange(start: start, end: end)
+    }
+
+    public init(start: Int, end: Int) {
+        self.start = start
+        self.end = end
+    }
+}
+
+/// 文件内容搜索：单条匹配
+public struct FileContentSearchItem: Equatable, Sendable {
+    public let path: String
+    public let line: Int
+    public let column: Int
+    public let preview: String
+    public let matchRanges: [FileContentSearchMatchRange]
+    public let beforeContext: [String]
+    public let afterContext: [String]
+
+    public static func from(json: [String: Any]) -> FileContentSearchItem? {
+        guard let path = json["path"] as? String,
+              let line = json["line"] as? Int,
+              let column = json["column"] as? Int,
+              let preview = json["preview"] as? String else { return nil }
+        let matchRanges = (json["match_ranges"] as? [[String: Any]])?.compactMap {
+            FileContentSearchMatchRange.from(json: $0)
+        } ?? []
+        let beforeContext = json["before_context"] as? [String] ?? []
+        let afterContext = json["after_context"] as? [String] ?? []
+        return FileContentSearchItem(
+            path: path, line: line, column: column, preview: preview,
+            matchRanges: matchRanges, beforeContext: beforeContext, afterContext: afterContext
+        )
+    }
+
+    public init(path: String, line: Int, column: Int, preview: String,
+                matchRanges: [FileContentSearchMatchRange], beforeContext: [String], afterContext: [String]) {
+        self.path = path
+        self.line = line
+        self.column = column
+        self.preview = preview
+        self.matchRanges = matchRanges
+        self.beforeContext = beforeContext
+        self.afterContext = afterContext
+    }
+}
+
+/// 文件内容搜索：完整结果
+public struct FileContentSearchResult: Equatable, Sendable {
+    public let project: String
+    public let workspace: String
+    public let query: String
+    public let scope: String
+    public let items: [FileContentSearchItem]
+    public let totalMatches: Int
+    public let truncated: Bool
+    public let searchDurationMs: Int
+
+    public static func from(json: [String: Any]) -> FileContentSearchResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let query = json["query"] as? String else { return nil }
+        let scope = json["scope"] as? String ?? "workspace"
+        let itemsJson = json["items"] as? [[String: Any]] ?? []
+        let items = itemsJson.compactMap { FileContentSearchItem.from(json: $0) }
+        let totalMatches = json["total_matches"] as? Int ?? items.count
+        let truncated = json["truncated"] as? Bool ?? false
+        let searchDurationMs = json["search_duration_ms"] as? Int ?? 0
+        return FileContentSearchResult(
+            project: project, workspace: workspace, query: query, scope: scope,
+            items: items, totalMatches: totalMatches, truncated: truncated, searchDurationMs: searchDurationMs
+        )
+    }
+
+    public init(project: String, workspace: String, query: String, scope: String,
+                items: [FileContentSearchItem], totalMatches: Int, truncated: Bool, searchDurationMs: Int) {
+        self.project = project
+        self.workspace = workspace
+        self.query = query
+        self.scope = scope
+        self.items = items
+        self.totalMatches = totalMatches
+        self.truncated = truncated
+        self.searchDurationMs = searchDurationMs
+    }
+}

@@ -623,6 +623,78 @@ pub async fn file_index_message(
     }
 }
 
+pub async fn file_content_search_message(
+    root: &Path,
+    project: &str,
+    workspace: &str,
+    query: &str,
+    case_sensitive: bool,
+) -> ServerMessage {
+    let root = root.to_path_buf();
+    let query_owned = query.to_string();
+
+    let result = tokio::task::spawn_blocking(move || {
+        file_index::search_file_contents(&root, &query_owned, case_sensitive)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(search_result)) => {
+            let items = search_result
+                .items
+                .into_iter()
+                .map(|item| {
+                    crate::server::protocol::file::FileContentSearchItem {
+                        path: item.path,
+                        line: item.line,
+                        column: item.column,
+                        preview: item.preview,
+                        match_ranges: item
+                            .match_ranges
+                            .into_iter()
+                            .map(|(start, end)| {
+                                crate::server::protocol::file::FileContentSearchMatchRange {
+                                    start,
+                                    end,
+                                }
+                            })
+                            .collect(),
+                        before_context: item.before_context,
+                        after_context: item.after_context,
+                    }
+                })
+                .collect();
+
+            ServerMessage::FileContentSearchResult {
+                project: project.to_string(),
+                workspace: workspace.to_string(),
+                query: query.to_string(),
+                scope: "workspace".to_string(),
+                items,
+                total_matches: search_result.total_matches,
+                truncated: search_result.truncated,
+                search_duration_ms: search_result.search_duration_ms,
+            }
+        }
+        Ok(Err(e)) => ServerMessage::Error {
+            code: "io_error".to_string(),
+            message: format!("文件内容搜索失败: {}", e),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
+        },
+        Err(e) => ServerMessage::Error {
+            code: "internal_error".to_string(),
+            message: format!("搜索任务失败: {}", e),
+            project: None,
+            workspace: None,
+            session_id: None,
+            cycle_id: None,
+        },
+    }
+}
+
 pub fn file_rename_message(
     root: &Path,
     project: &str,

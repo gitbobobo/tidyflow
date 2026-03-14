@@ -90,6 +90,7 @@ public class WSClient: NSObject, ObservableObject {
     // Message handlers
     public var onFileIndexResult: ((FileIndexResult) -> Void)?
     public var onFileListResult: ((FileListResult) -> Void)?
+    public var onFileContentSearchResult: ((FileContentSearchResult) -> Void)?
     public var onGitDiffResult: ((GitDiffResult) -> Void)?
     public var onGitStatusResult: ((GitStatusResult) -> Void)?
     public var onGitLogResult: ((GitLogResult) -> Void)?

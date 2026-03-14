@@ -1173,7 +1173,8 @@ extension WSClient {
                     let prefix = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/"
                     return key.path.hasPrefix(prefix) && (
                         key.fallbackAction == "file_index_result" ||
-                        key.fallbackAction == "file_list_result"
+                        key.fallbackAction == "file_list_result" ||
+                        key.fallbackAction == "file_content_search_result"
                     )
                 case let .fileRead(project, workspace, path):
                     let targetPath = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/content"
@@ -1232,6 +1233,29 @@ extension WSClient {
             path: path,
             queryItems: queryItems,
             fallbackAction: "file_index_result",
+            cacheMode: cacheMode
+        )
+    }
+
+    /// 请求文件内容搜索
+    public func requestFileContentSearch(
+        project: String,
+        workspace: String,
+        query: String,
+        caseSensitive: Bool = false,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let path = "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/files/search"
+        var queryItems = [URLQueryItem(name: "query", value: query)]
+        if caseSensitive {
+            queryItems.append(URLQueryItem(name: "case_sensitive", value: "true"))
+        }
+        requestReadViaHTTP(
+            domain: "file",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "file_content_search_result",
             cacheMode: cacheMode
         )
     }

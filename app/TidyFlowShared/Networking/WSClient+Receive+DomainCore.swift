@@ -457,6 +457,15 @@ extension WSClient {
                 }
             }
             return true
+        case "file_content_search_result":
+            if let result = FileContentSearchResult.from(json: json) {
+                if let handler = fileMessageHandler {
+                    handler.handleFileContentSearchResult(result)
+                } else {
+                    onFileContentSearchResult?(result)
+                }
+            }
+            return true
         default:
             return false
         }

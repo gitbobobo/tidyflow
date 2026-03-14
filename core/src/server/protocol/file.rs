@@ -141,6 +141,53 @@ impl std::fmt::Display for FileChangeKind {
     }
 }
 
+/// 文件内容搜索：单个匹配范围（字节偏移，用于高亮）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContentSearchMatchRange {
+    /// 匹配起始列（0-based）
+    pub start: u32,
+    /// 匹配结束列（exclusive, 0-based）
+    pub end: u32,
+}
+
+/// 文件内容搜索：单条匹配结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContentSearchItem {
+    /// 文件相对路径（相对于工作区根目录）
+    pub path: String,
+    /// 命中行号（1-based）
+    pub line: u32,
+    /// 命中列号（0-based）
+    pub column: u32,
+    /// 命中行预览文本
+    pub preview: String,
+    /// 命中范围列表（在 preview 中的偏移）
+    pub match_ranges: Vec<FileContentSearchMatchRange>,
+    /// 命中行之前的上下文行
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_context: Vec<String>,
+    /// 命中行之后的上下文行
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_context: Vec<String>,
+}
+
+/// 文件内容搜索：完整搜索结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContentSearchResult {
+    pub project: String,
+    pub workspace: String,
+    pub query: String,
+    /// 搜索范围（当前固定为 "workspace"）
+    pub scope: String,
+    pub items: Vec<FileContentSearchItem>,
+    /// 总命中数
+    pub total_matches: u32,
+    /// 结果是否被截断
+    pub truncated: bool,
+    /// 搜索耗时（毫秒）
+    pub search_duration_ms: u64,
+}
+
 /// 文件相关的客户端消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

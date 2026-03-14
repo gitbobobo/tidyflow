@@ -84,6 +84,7 @@ public actor HTTPQueryClient {
         switch fallbackAction {
         case
             "file_list_result",
+            "file_content_search_result",
             "git_status_result",
             "git_branches_result",
             "git_op_status_result",

@@ -18,7 +18,9 @@ pub(in crate::server::ws) use ai::{
 pub(in crate::server::ws) use evolution::{
     evolution_agent_profile_handler, evolution_cycle_history_handler, evolution_snapshot_handler,
 };
-pub(in crate::server::ws) use file::{file_content_handler, file_index_handler, file_list_handler};
+pub(in crate::server::ws) use file::{
+    file_content_handler, file_index_handler, file_list_handler, file_search_handler,
+};
 pub(in crate::server::ws) use git::{
     git_branches_handler, git_check_branch_up_to_date_handler, git_commit_show_handler,
     git_conflict_detail_handler, git_diff_handler, git_integration_status_handler, git_log_handler,

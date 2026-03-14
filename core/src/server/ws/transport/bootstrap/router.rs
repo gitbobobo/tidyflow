@@ -78,6 +78,10 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::http_api::file_content_handler),
         )
         .route(
+            "/api/v1/projects/:project/workspaces/:workspace/files/search",
+            get(crate::server::ws::http_api::file_search_handler),
+        )
+        .route(
             "/api/v1/projects/:project/workspaces/:workspace/git/status",
             get(crate::server::ws::http_api::git_status_handler),
         )

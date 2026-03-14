@@ -94,6 +94,7 @@ public protocol FileMessageHandler: AnyObject {
     func handleFileMoveResult(_ result: FileMoveResult)
     func handleFileWriteResult(_ result: FileWriteResult)
     func handleFileChanged(_ notification: FileChangedNotification)
+    func handleFileContentSearchResult(_ result: FileContentSearchResult)
     func handleWatchSubscribed(_ result: WatchSubscribedResult)
     func handleWatchUnsubscribed()
 }
@@ -108,6 +109,7 @@ public extension FileMessageHandler {
     func handleFileMoveResult(_ result: FileMoveResult) {}
     func handleFileWriteResult(_ result: FileWriteResult) {}
     func handleFileChanged(_ notification: FileChangedNotification) {}
+    func handleFileContentSearchResult(_ result: FileContentSearchResult) {}
     func handleWatchSubscribed(_ result: WatchSubscribedResult) {}
     func handleWatchUnsubscribed() {}
 }

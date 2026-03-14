@@ -99,6 +99,43 @@ pub(in crate::server::ws) async fn file_index_handler(
     json_from_server_message(response)
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(in crate::server::ws) struct FileSearchQuery {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+pub(in crate::server::ws) async fn file_search_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<FileSearchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let search_query = query.query.as_deref().unwrap_or("");
+    let case_sensitive = query.case_sensitive.unwrap_or(false);
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::file::query::query_file_content_search(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+        search_query,
+        case_sensitive,
+    )
+    .await
+    .map_err(|e| {
+        qctx.map_query_error(match e {
+            crate::server::protocol::ServerMessage::Error { message, .. } => message,
+            _ => "file search failed".to_string(),
+        })
+    })?;
+    json_from_server_message(response)
+}
+
 pub(in crate::server::ws) async fn file_content_handler(
     State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
     headers: HeaderMap,

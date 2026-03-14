@@ -34,6 +34,28 @@ pub(crate) async fn query_file_index(
     Ok(file_app::file_index_message(&ws_ctx.root_path, project, workspace, query).await)
 }
 
+pub(crate) async fn query_file_content_search(
+    app_state: &SharedAppState,
+    project: &str,
+    workspace: &str,
+    query: &str,
+    case_sensitive: bool,
+) -> Result<crate::server::protocol::ServerMessage, crate::server::protocol::ServerMessage> {
+    let ws_ctx = resolve_workspace(app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_server_error())?;
+    Ok(
+        file_app::file_content_search_message(
+            &ws_ctx.root_path,
+            project,
+            workspace,
+            query,
+            case_sensitive,
+        )
+        .await,
+    )
+}
+
 pub async fn handle_query_message(
     client_msg: &ClientMessage,
     socket: &WebSocket,
