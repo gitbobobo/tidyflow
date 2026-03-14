@@ -20,6 +20,31 @@ domains:
     action_rule: prefix("term_") | one_of("spawn_terminal","kill_terminal","input","resize")
   - id: file
     action_rule: prefix("file_") | prefix("watch_") | one_of("clipboard_image_upload")
+    # v1.42 文件内容搜索（HTTP 只读）
+    http_read_endpoints:
+      - GET /api/v1/projects/:project/workspaces/:workspace/files?path=...
+      - GET /api/v1/projects/:project/workspaces/:workspace/files/index?query=...
+      - GET /api/v1/projects/:project/workspaces/:workspace/files/content?path=...
+      - GET /api/v1/projects/:project/workspaces/:workspace/files/search?query=...&case_sensitive=false
+    ws_read_via_http_required:
+      - file_list
+      - file_index
+      - file_read
+      - file_content_search
+    # WS 专用流式推送事件（写向客户端）
+    ws_stream_events:
+      - file_list_result
+      - file_index_result
+      - file_content_search_result
+      - watch_change
+    required_boundary_fields:
+      - project
+      - workspace
+    # 缓存失效语义：fileWorkspace scope
+    # 文件变更事件（watch_change）触发同工作区 file_list_result、file_index_result、
+    # file_content_search_result 缓存失效。
+    # 客户端必须按 (project, workspace) 二元组作为搜索缓存键，不允许按 path 或 workspace 名称单独缓存。
+    # 搜索结果包含 truncated 标志：大仓库以 1000 条结果 / 5000 文件为硬截断上限。
   - id: git
     action_rule: prefix("git_") | one_of("cancel_ai_task")
     # v1.43 统一运行状态面板新增字段（向后兼容）：

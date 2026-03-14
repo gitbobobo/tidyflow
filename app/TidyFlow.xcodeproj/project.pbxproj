@@ -122,6 +122,7 @@
 		EXSL0001 /* ExplorerSemanticLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0011 /* ExplorerSemanticLayer.swift */; };
 		EXSL0002 /* ExplorerSemanticLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0011 /* ExplorerSemanticLayer.swift */; };
 		EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXSL0013 /* ExplorerSemanticLayerTests.swift */; };
+		GSS10001 /* GlobalSearchSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = GSS10011 /* GlobalSearchSemanticsTests.swift */; };
 		AISHC001 /* AISessionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHC011 /* AISessionHistoryCoordinator.swift */; };
 		AISHC002 /* AISessionHistoryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AISHC011 /* AISessionHistoryCoordinator.swift */; };
 		AIC0002A /* AISessionStatusRequestLimiter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00028 /* AISessionStatusRequestLimiter.swift */; };
@@ -479,6 +480,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TDC10011 /* AIChatTranscriptDisplayCacheSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatTranscriptDisplayCacheSemanticsTests.swift; sourceTree = "<group>"; };
 		EXSL0011 /* ExplorerSemanticLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayer.swift; sourceTree = "<group>"; };
 		EXSL0013 /* ExplorerSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerSemanticLayerTests.swift; sourceTree = "<group>"; };
+		GSS10011 /* GlobalSearchSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSearchSemanticsTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
 		E2E10120 /* TidyFlowE2ETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1009,6 +1011,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST10047 /* AIChatStageProjectionTests.swift */,
 					TST10049 /* EvolutionRecoveryModelTests.swift */,
 					EXSL0013 /* ExplorerSemanticLayerTests.swift */,
+					GSS10011 /* GlobalSearchSemanticsTests.swift */,
 					CSEM0013 /* ConnectionSemanticLayerTests.swift */,
 WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
@@ -1589,6 +1592,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST1003D /* TypedMessagePackEnvelopeTests.swift in Sources */,
 				TST1003F /* SwiftUIPerformanceProjectionTests.swift in Sources */,
 				EXSL0003 /* ExplorerSemanticLayerTests.swift in Sources */,
+				GSS10001 /* GlobalSearchSemanticsTests.swift in Sources */,
 WTS0005 /* WorkspaceTaskSemanticLayerTests.swift in Sources */,
 CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,

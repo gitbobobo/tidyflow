@@ -67,6 +67,7 @@
   - `GET /api/v1/projects/:project/workspaces/:workspace/files?path=...`
   - `GET /api/v1/projects/:project/workspaces/:workspace/files/index?query=...`
   - `GET /api/v1/projects/:project/workspaces/:workspace/files/content?path=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/files/search?query=...&case_sensitive=false`
 - Git：
   - `GET /api/v1/projects/:project/workspaces/:workspace/git/status`
   - `GET /api/v1/projects/:project/workspaces/:workspace/git/diff?path=...&mode=...&base=...`
@@ -319,7 +320,7 @@ idle → entering → active ⇄ resuming
   - Project：`list_projects` `list_workspaces` `list_tasks` `list_templates` `export_template`
   - Settings：`get_client_settings`
   - Terminal：`term_list`
-  - File：`file_list` `file_index` `file_read`
+  - File：`file_list` `file_index` `file_read` `file_content_search`
   - Git：`git_status` `git_diff` `git_branches` `git_log` `git_show` `git_op_status` `git_integration_status` `git_check_branch_up_to_date` `git_conflict_detail`
   - AI：`ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options`
   - Evolution：`evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`
@@ -1994,3 +1995,67 @@ Core 启动
 | `ai_context.high_load_rebuild_pressure` | AI 上下文高重建压力 |
 
 运行：`./scripts/tidyflow perf-regression`
+
+## v1.42：文件内容搜索（File Content Search）
+
+### 概述
+
+新增工作区级文件内容全文搜索能力，通过 HTTP 只读端点提供，不新增 WS 搜索流。搜索复用现有工作区 root 解析与文件索引忽略目录策略。
+
+### HTTP 端点
+
+```
+GET /api/v1/projects/:project/workspaces/:workspace/files/search?query=...&case_sensitive=false
+```
+
+| 参数 | 类型 | 必须 | 说明 |
+|------|------|------|------|
+| `query` | string | 是 | 搜索关键词 |
+| `case_sensitive` | bool | 否 | 是否区分大小写，默认 `false` |
+
+### 响应结构
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `project` | string | 项目标识 |
+| `workspace` | string | 工作区标识 |
+| `query` | string | 原始搜索查询 |
+| `scope` | string | 搜索范围标识 |
+| `total_matches` | u32 | 匹配总数 |
+| `truncated` | bool | 是否因上限截断 |
+| `search_duration_ms` | u64 | 搜索耗时（毫秒） |
+| `items` | array | 匹配条目列表 |
+
+#### 单条匹配条目（`items[*]`）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `project` | string | 项目标识 |
+| `workspace` | string | 工作区标识 |
+| `path` | string | 文件相对路径 |
+| `line` | u32 | 匹配行号（1-based） |
+| `column` | u32 | 匹配列偏移（0-based） |
+| `preview` | string | 匹配行原始内容 |
+| `match_ranges` | array | 匹配高亮区间 `[{start, end}]` |
+| `before_context` | array | 前置上下文行（最多 2 行） |
+| `after_context` | array | 后置上下文行（最多 2 行） |
+
+### 搜索约束
+
+- 仅扫描文本文件，跳过二进制文件（前 8KB 检测 null 字节）。
+- 默认跳过隐藏目录和常见构建产物（`node_modules`、`target`、`.git` 等）。
+- 硬截断上限：最多 1000 条匹配结果，最多扫描 5000 个文件；超限返回 `truncated: true`。
+- 结果按 `path ASC → line ASC → column ASC` 排序。
+
+### 缓存与失效语义
+
+- 搜索结果走 `HTTPQueryCache`，默认 30 秒过期。
+- 文件变更事件（`watch_change`）触发同工作区 `.fileWorkspace` scope 缓存失效，包含 `file_content_search_result`。
+- 客户端必须按 `(project, workspace)` 二元组作为搜索缓存键。
+- 不同 `query` 产生不同缓存条目，scope 失效时整个工作区搜索缓存清空。
+
+### 多工作区隔离约束
+
+- 搜索请求和结果携带 `project` / `workspace` 字段作为归属标识。
+- 来自后台工作区的 HTTP 返回不允许覆盖当前激活工作区的搜索状态。
+- 同名工作区跨项目必须独立缓存（按 `project:workspace` globalKey）。

@@ -18,7 +18,10 @@ pub use context::{
     ProjectContext, SharedAppState, WorkspaceContext,
 };
 pub use file_api::{list_files, read_file, resolve_safe_path, write_file, FileApiError, FileEntry};
-pub use file_index::{index_files, FileIndexResult, DEFAULT_IGNORE_DIRS, MAX_FILE_COUNT};
+pub use file_index::{
+    index_files, search_file_contents, FileContentSearchItemInternal,
+    FileContentSearchResultInternal, FileIndexResult, DEFAULT_IGNORE_DIRS, MAX_FILE_COUNT,
+};
 pub use git::{git_diff, git_status, GitDiffResult, GitError, GitStatusResult, MAX_DIFF_SIZE};
 pub use protocol::{
     ClientMessage, GitStatusEntry, ProjectInfo, ServerMessage, WorkspaceInfo, PROTOCOL_VERSION,
