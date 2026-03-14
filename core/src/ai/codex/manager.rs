@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 const REQUEST_TIMEOUT_SECS: u64 = 120;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS: u64 = 5000;
@@ -96,6 +96,7 @@ pub struct CodexServerRequest {
 
 #[derive(Debug)]
 pub struct CodexAppServerManager {
+    lifecycle: Arc<Mutex<()>>,
     process: Arc<Mutex<Option<Child>>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, AppServerRequestError>>>>>,
@@ -148,6 +149,7 @@ impl CodexAppServerManager {
         let (notifications_tx, _) = broadcast::channel(2048);
         let (requests_tx, _) = broadcast::channel(256);
         Self {
+            lifecycle: Arc::new(Mutex::new(())),
             process: Arc::new(Mutex::new(None)),
             stdin: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -191,14 +193,24 @@ impl CodexAppServerManager {
     }
 
     pub async fn ensure_server_running(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.ensure_server_running_locked().await
+    }
+
+    async fn ensure_server_running_locked(&self) -> Result<(), String> {
         if self.is_running().await && *self.started.lock().await {
             return Ok(());
         }
-        self.stop_server().await?;
-        self.start_server().await
+        self.stop_server_locked().await?;
+        self.start_server_locked().await
     }
 
     pub async fn start_server(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.start_server_locked().await
+    }
+
+    async fn start_server_locked(&self) -> Result<(), String> {
         let mut process_lock = self.process.lock().await;
         if process_lock.is_some() && *self.started.lock().await {
             return Ok(());
@@ -266,7 +278,11 @@ impl CodexAppServerManager {
         self.spawn_stdout_reader(stdout);
         self.spawn_stderr_reader(stderr);
 
-        self.initialize_connection().await?;
+        if let Err(err) = self.initialize_connection().await {
+            error!("{} initialize failed: {}", self.display_name, err);
+            let _ = self.stop_server_locked().await;
+            return Err(err);
+        }
         *self.started.lock().await = true;
 
         info!("{} initialized", self.display_name);
@@ -274,6 +290,11 @@ impl CodexAppServerManager {
     }
 
     pub async fn stop_server(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.stop_server_locked().await
+    }
+
+    async fn stop_server_locked(&self) -> Result<(), String> {
         *self.started.lock().await = false;
         self.reject_all_pending(&format!("{} stopped", self.display_name))
             .await;

@@ -7,8 +7,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 
 const HEALTH_CHECK_INTERVAL_MS: u64 = 100;
-const HEALTH_CHECK_TIMEOUT_MS: u64 = 3000;
-const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 30;
+const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 100;
+const HEALTH_CHECK_TIMEOUT_MS: u64 = HEALTH_CHECK_INTERVAL_MS * MAX_HEALTH_CHECK_ATTEMPTS as u64;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS: u64 = 5000;
 const HEALTH_CHECK_SUCCESS_CACHE_MS: u64 = 1000;
 
@@ -199,6 +199,28 @@ impl OpenCodeManager {
                 *last_success = Some(Instant::now());
                 info!("Health check passed on attempt {}", attempt);
                 return Ok(());
+            }
+
+            {
+                let mut process = self.process.lock().await;
+                if let Some(child) = process.as_mut() {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            error!(
+                                "OpenCode server exited before health check passed: status={}",
+                                status
+                            );
+                            return Err(format!(
+                                "OpenCode server exited before health check passed: {}",
+                                status
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            warn!("Failed to query OpenCode server status: {}", err);
+                        }
+                    }
+                }
             }
 
             if attempt < MAX_HEALTH_CHECK_ATTEMPTS {

@@ -71,6 +71,17 @@ pub struct AcpSessionMetadata {
     pub config_values: HashMap<String, Value>,
 }
 
+impl AcpSessionMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.models.is_empty()
+            && self.current_model_id.is_none()
+            && self.modes.is_empty()
+            && self.current_mode_id.is_none()
+            && self.config_options.is_empty()
+            && self.config_values.is_empty()
+    }
+}
+
 #[derive(Clone)]
 pub struct AcpClient {
     transport: Arc<dyn AcpTransport>,

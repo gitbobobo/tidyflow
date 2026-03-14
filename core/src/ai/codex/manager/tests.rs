@@ -1,6 +1,8 @@
 use super::{AcpContentEncodingMode, AppServerRequestError, CodexAppServerManager};
 use serde_json::json;
+use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 #[test]
 fn acp_initialize_payload_should_match_schema_fields() {
@@ -268,4 +270,72 @@ async fn drop_should_cleanup_spawned_child_process() {
         "CodexAppServerManager child process should exit after drop, pid={}",
         pid
     );
+}
+
+#[tokio::test]
+async fn ensure_server_running_should_serialize_concurrent_startup() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let script_path = temp_dir.path().join("fake_app_server.py");
+    let counter_path = temp_dir.path().join("starts.log");
+    fs::write(
+        &script_path,
+        r#"import json
+import sys
+import time
+
+counter_path = sys.argv[1]
+with open(counter_path, "a", encoding="utf-8") as handle:
+    handle.write("started\n")
+    handle.flush()
+
+for raw in sys.stdin:
+    line = raw.strip()
+    if not line:
+        continue
+    message = json.loads(line)
+    method = message.get("method")
+    if method == "initialize":
+        time.sleep(0.2)
+        print(json.dumps({"id": message["id"], "result": {"userAgent": "fake"}}), flush=True)
+    elif method == "initialized":
+        continue
+    else:
+        print(json.dumps({"id": message["id"], "result": {}}), flush=True)
+"#,
+    )
+    .expect("write fake app-server script");
+
+    let manager = Arc::new(CodexAppServerManager::new_with_command(
+        temp_dir.path().to_path_buf(),
+        "/usr/bin/python3",
+        vec![
+            "-u".to_string(),
+            script_path.display().to_string(),
+            counter_path.display().to_string(),
+        ],
+        "Fake app-server",
+    ));
+
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let manager = manager.clone();
+        tasks.push(tokio::spawn(async move {
+            manager.ensure_server_running().await
+        }));
+    }
+
+    for task in tasks {
+        task.await
+            .expect("task join")
+            .expect("ensure server running");
+    }
+
+    let starts = fs::read_to_string(&counter_path).expect("read starts log");
+    assert_eq!(
+        starts.lines().count(),
+        1,
+        "concurrent ensure_server_running should only start one child process"
+    );
+
+    manager.stop_server().await.expect("stop fake app-server");
 }

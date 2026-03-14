@@ -582,10 +582,14 @@ pub(crate) fn parse_session_metadata(value: &Value) -> AcpSessionMetadata {
             .chars()
             .take(600)
             .collect::<String>();
-        warn!(
-            "ACP session metadata parse empty: top_level_keys={:?}, raw_snippet={}",
-            top_keys, snippet
-        );
+        if value.as_object().map(|obj| obj.is_empty()).unwrap_or(false) {
+            debug!("ACP session metadata parse empty object");
+        } else {
+            warn!(
+                "ACP session metadata parse empty: top_level_keys={:?}, raw_snippet={}",
+                top_keys, snippet
+            );
+        }
     } else {
         debug!(
             "ACP session metadata parsed: models_count={}, modes_count={}, config_options_count={}, current_model_id={:?}, current_mode_id={:?}",

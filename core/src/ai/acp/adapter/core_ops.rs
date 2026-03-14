@@ -1655,6 +1655,20 @@ impl AcpAgent {
                                 &mut history_plan_current,
                                 &mut history_plan_history,
                             );
+                            if metadata.is_empty() {
+                                metadata = if let Some(cached) =
+                                    self.metadata_for_session(directory, session_id).await
+                                {
+                                    cached
+                                } else {
+                                    self.metadata_by_directory
+                                        .lock()
+                                        .await
+                                        .get(&Self::normalize_directory(directory))
+                                        .cloned()
+                                        .unwrap_or_default()
+                                };
+                            }
                             if let Some(mode_id) = observed_mode_id.as_deref() {
                                 Self::apply_current_mode_to_metadata(&mut metadata, mode_id);
                             }
