@@ -82,6 +82,8 @@ public struct EditorDocumentSession: Equatable, Sendable {
     public var canUndo: Bool
     /// 当前编辑器是否可重做（来自共享编辑历史语义层）
     public var canRedo: Bool
+    /// 当前文档选区集合（共享状态，文档唯一真相源）
+    public var selectionSet: EditorSelectionSet
     /// 上次成功加载的时间
     public var lastLoadedAt: Date
     /// 加载状态
@@ -96,6 +98,7 @@ public struct EditorDocumentSession: Equatable, Sendable {
         isDirty: Bool = false,
         canUndo: Bool = false,
         canRedo: Bool = false,
+        selectionSet: EditorSelectionSet = .zero,
         lastLoadedAt: Date = .distantPast,
         loadStatus: EditorDocumentLoadStatus = .idle,
         conflictState: EditorConflictState = .none
@@ -106,6 +109,7 @@ public struct EditorDocumentSession: Equatable, Sendable {
         self.isDirty = isDirty
         self.canUndo = canUndo
         self.canRedo = canRedo
+        self.selectionSet = selectionSet
         self.lastLoadedAt = lastLoadedAt
         self.loadStatus = loadStatus
         self.conflictState = conflictState
@@ -243,6 +247,7 @@ extension EditorDocumentSession {
         self.content = content
         self.baselineContentHash = Self.contentHash(content)
         self.isDirty = false
+        self.selectionSet = .zero
         self.lastLoadedAt = date
         self.loadStatus = .ready
         self.conflictState = .none

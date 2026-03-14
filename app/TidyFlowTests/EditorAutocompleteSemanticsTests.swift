@@ -232,7 +232,7 @@ final class EditorAutocompleteSemanticsTests: XCTestCase {
         let result = engine.accept(item: guardItem, state: state, currentText: text)
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.text, "let guard")
-        XCTAssertEqual(result?.selection.location, 9) // "let guard" 长度
+        XCTAssertEqual(result?.selections.primarySnapshot.location, 9) // "let guard" 长度
     }
 
     func testReplacementStaticFunction() {

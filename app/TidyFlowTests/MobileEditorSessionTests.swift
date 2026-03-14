@@ -619,7 +619,7 @@ final class MobileEditorHistoryTests: XCTestCase {
         let result2 = engine.accept(item: item, state: state, currentText: text)
 
         XCTAssertEqual(result1?.text, result2?.text, "共享替换语义应确定性一致")
-        XCTAssertEqual(result1?.selection.location, result2?.selection.location)
+        XCTAssertEqual(result1?.selections.primarySnapshot.location, result2?.selections.primarySnapshot.location)
     }
 
     func testReplacementStaticFunctionConsistency() {
@@ -646,7 +646,7 @@ final class MobileEditorHistoryTests: XCTestCase {
         XCTAssertEqual(replacement.replacementText, item.insertText)
         XCTAssertEqual(replacement.rangeLocation, state.replacementRange.location)
         XCTAssertEqual(replacement.rangeLength, state.replacementRange.length)
-        XCTAssertEqual(replacement.caretLocation, result?.selection.location)
+        XCTAssertEqual(replacement.caretLocation, result?.selections.primarySnapshot.location)
     }
 
     func testAutocompleteStateIsolationBetweenDocuments() {
@@ -764,7 +764,7 @@ final class MobileEditorHistoryTests: XCTestCase {
         XCTAssertEqual(replacement.rangeLocation, state.replacementRange.location)
         XCTAssertEqual(replacement.rangeLength, state.replacementRange.length)
         XCTAssertEqual(replacement.replacementText, guardItem.insertText)
-        XCTAssertEqual(replacement.caretLocation, acceptResult?.selection.location)
+        XCTAssertEqual(replacement.caretLocation, acceptResult?.selections.primarySnapshot.location)
     }
 
     func testCrossProjectSamePathNoSharedAutocompleteState() {

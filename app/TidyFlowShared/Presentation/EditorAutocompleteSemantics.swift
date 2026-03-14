@@ -444,12 +444,15 @@ public final class EditorAutocompleteEngine {
         )
     }
 
-    /// 接受候选项，返回替换后的新文本和新选区
+    /// 接受候选项，返回替换后的新文本和新选区集合。
+    ///
+    /// 自动补全只作用于主选区。接受补全后清空附加选区，
+    /// 返回的 `selections` 仅含一个主选区，避免不可预测结果。
     public func accept(
         item: EditorAutocompleteItem,
         state: EditorAutocompleteState,
         currentText: String
-    ) -> (text: String, selection: EditorSelectionSnapshot)? {
+    ) -> (text: String, selections: EditorSelectionSet)? {
         let nsText = currentText as NSString
         let range = state.replacementRange
 
@@ -464,7 +467,7 @@ public final class EditorAutocompleteEngine {
 
         return (
             text: newText,
-            selection: EditorSelectionSnapshot(location: caretLocation, length: 0)
+            selections: .single(location: caretLocation, length: 0)
         )
     }
 

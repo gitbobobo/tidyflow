@@ -9,6 +9,11 @@ import Foundation
 // - 所有 API 均为纯函数/静态方法，输入值 → 输出值，不持有可变状态。
 // - 非法正则返回错误字符串而不是抛异常；调用方决定如何展示。
 // - 匹配范围使用 Swift 原生 Range<String.Index>，不使用 NSRange。
+//
+// 多选区行为约定：
+// - 查找结果的导航（next/previous）只跟踪主选区焦点，不受附加选区影响。
+// - replaceCurrent / replaceAll 操作基于搜索结果，不依赖当前选区。
+// - 若需要对"当前全部选区中选中的文本"执行替换，使用 replaceInSelectedRegions。
 
 /// 查找替换纯值引擎，提供匹配查找、替换、索引钳制与高亮目标行解析。
 public enum EditorFindReplaceEngine {
@@ -204,5 +209,72 @@ public enum EditorFindReplaceEngine {
     public static func matchStatusText(currentIndex: Int, matchCount: Int) -> String {
         guard matchCount > 0, currentIndex >= 0 else { return "0/0" }
         return "\(currentIndex + 1)/\(matchCount)"
+    }
+
+    // MARK: - 多选区替换
+
+    /// 将全部选区中选中的文本替换为指定文本（对全部选区广播执行）。
+    ///
+    /// - Parameters:
+    ///   - text: 当前文本
+    ///   - selectionSet: 当前选区集合
+    ///   - replaceText: 替换文本
+    /// - Returns: 替换后的文本和新的选区集合（每个选区变为替换文本末尾的零长度光标）；
+    ///           如果没有非空选区则返回 nil。
+    public static func replaceInSelectedRegions(
+        in text: String,
+        selectionSet: EditorSelectionSet,
+        replaceText: String
+    ) -> (text: String, selections: EditorSelectionSet)? {
+        // 只替换有非空选区的区域
+        let nonEmptyRegions = selectionSet.regions.filter { $0.length > 0 }
+        guard !nonEmptyRegions.isEmpty else { return nil }
+
+        // 按 location 降序排列，逆序替换
+        let sorted = nonEmptyRegions.sorted { $0.location > $1.location }
+        let replaceLen = (replaceText as NSString).length
+
+        var newText = text as NSString
+        var newRegions: [EditorSelectionRegion] = []
+
+        for region in sorted {
+            let range = NSRange(location: region.location, length: region.length)
+            guard range.location >= 0, range.location + range.length <= newText.length else { continue }
+            newText = newText.replacingCharacters(in: range, with: replaceText) as NSString
+        }
+
+        // 计算新选区位置：逆序已经完成替换，重新按升序计算偏移
+        let ascSorted = nonEmptyRegions.sorted { $0.location < $1.location }
+        var offset = 0
+        for region in ascSorted {
+            let newLoc = region.location + offset
+            let caretLoc = newLoc + replaceLen
+            newRegions.append(EditorSelectionRegion(
+                location: caretLoc,
+                length: 0,
+                isPrimary: region.isPrimary
+            ))
+            offset += replaceLen - region.length
+        }
+
+        // 保留原来没有非空选区的零长度光标
+        let zeroRegions = selectionSet.regions.filter { $0.length == 0 }
+        for region in zeroRegions {
+            let adjustedLoc = region.location + {
+                var adj = 0
+                for r in ascSorted where r.location < region.location {
+                    adj += replaceLen - r.length
+                }
+                return adj
+            }()
+            newRegions.append(EditorSelectionRegion(
+                location: adjustedLoc,
+                length: 0,
+                isPrimary: region.isPrimary && !nonEmptyRegions.contains(where: { $0.isPrimary })
+            ))
+        }
+
+        let resultSelections = EditorSelectionSet(regions: newRegions).normalized()
+        return (text: String(newText), selections: resultSelections)
     }
 }

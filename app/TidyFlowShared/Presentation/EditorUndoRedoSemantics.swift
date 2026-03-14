@@ -12,9 +12,10 @@ import Foundation
 // - 命令合并规则固定：连续输入或连续退格在 600ms 内按相邻区间合并。
 // - 程序化回放（撤销/重做写回文本）不再次入栈。
 
-// MARK: - 选区快照
+// MARK: - 选区快照（兼容类型）
 
-/// 编辑命令执行前后的选区记录（UTF-16 offset）
+/// 单选区快照，保留为兼容桥接别名或主选区快照。
+/// 新代码应优先使用 `EditorSelectionRegion` 和 `EditorSelectionSet`。
 public struct EditorSelectionSnapshot: Equatable, Sendable {
     /// 选区起始位置（UTF-16 offset）
     public let location: Int
@@ -24,6 +25,149 @@ public struct EditorSelectionSnapshot: Equatable, Sendable {
     public init(location: Int, length: Int) {
         self.location = location
         self.length = length
+    }
+}
+
+// MARK: - 多选区值类型
+
+/// 单个选区区域（UTF-16 offset），支持主选区标记。
+public struct EditorSelectionRegion: Equatable, Sendable {
+    /// 选区起始位置（UTF-16 offset）
+    public let location: Int
+    /// 选区长度（UTF-16 offset）
+    public let length: Int
+    /// 是否为主选区
+    public let isPrimary: Bool
+
+    public init(location: Int, length: Int, isPrimary: Bool = false) {
+        self.location = location
+        self.length = length
+        self.isPrimary = isPrimary
+    }
+
+    /// 选区结束位置（UTF-16 offset）
+    public var endLocation: Int { location + length }
+
+    /// 转换为兼容的 `EditorSelectionSnapshot`
+    public var snapshot: EditorSelectionSnapshot {
+        EditorSelectionSnapshot(location: location, length: length)
+    }
+}
+
+/// 文档当前全部选区的值类型集合。
+///
+/// 设计约束：
+/// - 至少有一个主选区。
+/// - 归一化后按 `location` 升序，重叠或相邻选区合并。
+/// - 所有偏移使用 UTF-16。
+public struct EditorSelectionSet: Equatable, Sendable {
+    /// 所有选区区域
+    public let regions: [EditorSelectionRegion]
+
+    public init(regions: [EditorSelectionRegion]) {
+        precondition(!regions.isEmpty, "EditorSelectionSet 至少需要一个选区")
+        if regions.contains(where: { $0.isPrimary }) {
+            self.regions = regions
+        } else {
+            var adjusted = regions
+            adjusted[0] = EditorSelectionRegion(
+                location: regions[0].location,
+                length: regions[0].length,
+                isPrimary: true
+            )
+            self.regions = adjusted
+        }
+    }
+
+    /// 主选区
+    public var primarySelection: EditorSelectionRegion {
+        regions.first(where: { $0.isPrimary }) ?? regions[0]
+    }
+
+    /// 主选区的兼容快照
+    public var primarySnapshot: EditorSelectionSnapshot {
+        primarySelection.snapshot
+    }
+
+    /// 附加选区（非主选区）
+    public var additionalSelections: [EditorSelectionRegion] {
+        regions.filter { !$0.isPrimary }
+    }
+
+    /// 选区数量
+    public var count: Int { regions.count }
+
+    /// 是否为单选区
+    public var isSingleSelection: Bool { regions.count == 1 }
+
+    // MARK: - 工厂方法
+
+    /// 从单个位置和长度构建仅含一个主选区的集合
+    public static func single(location: Int, length: Int) -> EditorSelectionSet {
+        EditorSelectionSet(regions: [
+            EditorSelectionRegion(location: location, length: length, isPrimary: true)
+        ])
+    }
+
+    /// 从兼容快照构建仅含一个主选区的集合
+    public static func single(_ snapshot: EditorSelectionSnapshot) -> EditorSelectionSet {
+        .single(location: snapshot.location, length: snapshot.length)
+    }
+
+    /// 零长度主选区（文档开头）
+    public static let zero = EditorSelectionSet.single(location: 0, length: 0)
+
+    // MARK: - 归一化
+
+    /// 按 location 升序排序后合并重叠选区
+    public func normalized() -> EditorSelectionSet {
+        sortedByLocation().mergedOverlaps()
+    }
+
+    /// 按 location 升序排序
+    public func sortedByLocation() -> EditorSelectionSet {
+        let sorted = regions.sorted { $0.location < $1.location }
+        return EditorSelectionSet(regions: sorted)
+    }
+
+    /// 合并重叠或相邻选区，保留主选区标记
+    public func mergedOverlaps() -> EditorSelectionSet {
+        guard regions.count > 1 else { return self }
+        let sorted = regions.sorted { $0.location < $1.location }
+        var merged: [EditorSelectionRegion] = [sorted[0]]
+
+        for i in 1..<sorted.count {
+            let current = sorted[i]
+            let last = merged[merged.count - 1]
+
+            if current.location <= last.endLocation {
+                let newEnd = max(last.endLocation, current.endLocation)
+                let isPrimary = last.isPrimary || current.isPrimary
+                merged[merged.count - 1] = EditorSelectionRegion(
+                    location: last.location,
+                    length: newEnd - last.location,
+                    isPrimary: isPrimary
+                )
+            } else {
+                merged.append(current)
+            }
+        }
+
+        return EditorSelectionSet(regions: merged)
+    }
+
+    /// 将所有选区钳制到有效 UTF-16 偏移范围
+    public func clamped(toUTF16Length maxLength: Int) -> EditorSelectionSet {
+        let clamped = regions.map { region -> EditorSelectionRegion in
+            let loc = min(max(region.location, 0), maxLength)
+            let endLoc = min(max(region.endLocation, 0), maxLength)
+            return EditorSelectionRegion(
+                location: loc,
+                length: endLoc - loc,
+                isPrimary: region.isPrimary
+            )
+        }
+        return EditorSelectionSet(regions: clamped)
     }
 }
 
@@ -47,20 +191,43 @@ public struct EditorTextMutation: Equatable, Sendable {
 
 // MARK: - 编辑命令
 
-/// 历史栈中记录的命令对象
+/// 历史栈中记录的命令对象，支持单次命令包含多个原子 mutation（多光标编辑）。
+///
+/// `mutations` 按 `rangeLocation` 降序排列（逆序应用以避免偏移失效）。
+/// `replacedTexts` 与 `mutations` 一一对应。
+/// 一条多 mutation 命令在撤销/重做时视为一条历史记录。
 public struct EditorEditCommand: Equatable, Sendable {
-    /// 文本变更
-    public let mutation: EditorTextMutation
-    /// 变更前的选区
-    public let beforeSelection: EditorSelectionSnapshot
-    /// 变更后的选区
-    public let afterSelection: EditorSelectionSnapshot
+    /// 批量文本变更（按 location 降序排列，逆序应用以避免偏移失效）
+    public let mutations: [EditorTextMutation]
+    /// 变更前的选区集合
+    public let beforeSelections: EditorSelectionSet
+    /// 变更后的选区集合
+    public let afterSelections: EditorSelectionSet
     /// 命令时间戳
     public let timestamp: Date
+    /// 每个 mutation 对应的原始文本（用于 undo 回放时恢复，与 mutations 一一对应）
+    public let replacedTexts: [String]
 
-    /// 变更前被替换区间原始文本（用于 undo 回放时恢复）
-    public let replacedText: String
+    public init(
+        mutations: [EditorTextMutation],
+        beforeSelections: EditorSelectionSet,
+        afterSelections: EditorSelectionSet,
+        timestamp: Date,
+        replacedTexts: [String]
+    ) {
+        precondition(mutations.count == replacedTexts.count,
+                     "mutations 与 replacedTexts 数量必须一致")
+        // 按 location 降序排列，保证应用时不产生偏移串扰
+        let indexed = zip(mutations, replacedTexts)
+            .sorted { $0.0.rangeLocation > $1.0.rangeLocation }
+        self.mutations = indexed.map { $0.0 }
+        self.replacedTexts = indexed.map { $0.1 }
+        self.beforeSelections = beforeSelections
+        self.afterSelections = afterSelections
+        self.timestamp = timestamp
+    }
 
+    /// 兼容单 mutation 构造器（保持旧调用点不变）
     public init(
         mutation: EditorTextMutation,
         beforeSelection: EditorSelectionSnapshot,
@@ -68,12 +235,27 @@ public struct EditorEditCommand: Equatable, Sendable {
         timestamp: Date,
         replacedText: String
     ) {
-        self.mutation = mutation
-        self.beforeSelection = beforeSelection
-        self.afterSelection = afterSelection
-        self.timestamp = timestamp
-        self.replacedText = replacedText
+        self.init(
+            mutations: [mutation],
+            beforeSelections: .single(beforeSelection),
+            afterSelections: .single(afterSelection),
+            timestamp: timestamp,
+            replacedTexts: [replacedText]
+        )
     }
+
+    // MARK: - 兼容单 mutation 访问器
+
+    /// 首个 mutation（兼容单 mutation 场景）
+    public var mutation: EditorTextMutation { mutations[0] }
+    /// 变更前的主选区快照
+    public var beforeSelection: EditorSelectionSnapshot { beforeSelections.primarySnapshot }
+    /// 变更后的主选区快照
+    public var afterSelection: EditorSelectionSnapshot { afterSelections.primarySnapshot }
+    /// 首个 mutation 对应的原始文本
+    public var replacedText: String { replacedTexts[0] }
+    /// 是否为单 mutation 命令
+    public var isSingleMutation: Bool { mutations.count == 1 }
 }
 
 // MARK: - 历史状态
@@ -118,8 +300,8 @@ public struct EditorUndoHistoryConfiguration: Equatable, Sendable {
 public struct EditorHistoryApplyResult: Equatable, Sendable {
     /// 操作后的文本
     public let text: String
-    /// 操作后应恢复的选区
-    public let selection: EditorSelectionSnapshot
+    /// 操作后应恢复的选区集合
+    public let selections: EditorSelectionSet
     /// 操作后的历史状态
     public let history: EditorUndoHistoryState
     /// 是否可撤销
@@ -129,17 +311,20 @@ public struct EditorHistoryApplyResult: Equatable, Sendable {
 
     public init(
         text: String,
-        selection: EditorSelectionSnapshot,
+        selections: EditorSelectionSet,
         history: EditorUndoHistoryState,
         canUndo: Bool,
         canRedo: Bool
     ) {
         self.text = text
-        self.selection = selection
+        self.selections = selections
         self.history = history
         self.canUndo = canUndo
         self.canRedo = canRedo
     }
+
+    /// 兼容旧接口：返回主选区快照
+    public var selection: EditorSelectionSnapshot { selections.primarySnapshot }
 }
 
 // MARK: - 编辑历史语义引擎（纯函数）
@@ -171,8 +356,10 @@ public enum EditorUndoHistorySemantics {
         // 记录新编辑时清空 redo 栈
         newHistory.redoStack.removeAll()
 
-        // 尝试与栈顶合并
-        if let lastCommand = newHistory.undoStack.last,
+        // 只对单 mutation 命令尝试合并（批量命令不合并）
+        if command.isSingleMutation,
+           let lastCommand = newHistory.undoStack.last,
+           lastCommand.isSingleMutation,
            canCoalesce(lastCommand, with: command, configuration: configuration) {
             let merged = coalesce(lastCommand, with: command)
             newHistory.undoStack[newHistory.undoStack.count - 1] = merged
@@ -186,12 +373,12 @@ public enum EditorUndoHistorySemantics {
             newHistory.undoStack.removeFirst(overflow)
         }
 
-        // 应用 mutation 得到新文本
-        let newText = applyMutation(to: currentText, mutation: command.mutation)
+        // 应用所有 mutations 得到新文本
+        let newText = applyMutations(to: currentText, mutations: command.mutations)
 
         return EditorHistoryApplyResult(
             text: newText,
-            selection: command.afterSelection,
+            selections: command.afterSelections,
             history: newHistory,
             canUndo: !newHistory.undoStack.isEmpty,
             canRedo: !newHistory.redoStack.isEmpty
@@ -214,18 +401,22 @@ public enum EditorUndoHistorySemantics {
         var newHistory = history
         let command = newHistory.undoStack.removeLast()
 
-        // 反向操作：用 replacedText 恢复到变更前的文本
-        let inverseMutation = EditorTextMutation(
-            rangeLocation: command.mutation.rangeLocation,
-            rangeLength: (command.mutation.replacementText as NSString).length,
-            replacementText: command.replacedText
-        )
-        let restoredText = applyMutation(to: currentText, mutation: inverseMutation)
+        // 反向应用：逆序遍历 mutations（从低位到高位），用 replacedText 恢复
+        var restoredText = currentText
+        for i in (0..<command.mutations.count).reversed() {
+            let mut = command.mutations[i]
+            let inverseMutation = EditorTextMutation(
+                rangeLocation: mut.rangeLocation,
+                rangeLength: (mut.replacementText as NSString).length,
+                replacementText: command.replacedTexts[i]
+            )
+            restoredText = applyMutation(to: restoredText, mutation: inverseMutation)
+        }
         newHistory.redoStack.append(command)
 
         return EditorHistoryApplyResult(
             text: restoredText,
-            selection: command.beforeSelection,
+            selections: command.beforeSelections,
             history: newHistory,
             canUndo: !newHistory.undoStack.isEmpty,
             canRedo: !newHistory.redoStack.isEmpty
@@ -248,12 +439,12 @@ public enum EditorUndoHistorySemantics {
         var newHistory = history
         let command = newHistory.redoStack.removeLast()
 
-        let newText = applyMutation(to: currentText, mutation: command.mutation)
+        let newText = applyMutations(to: currentText, mutations: command.mutations)
         newHistory.undoStack.append(command)
 
         return EditorHistoryApplyResult(
             text: newText,
-            selection: command.afterSelection,
+            selections: command.afterSelections,
             history: newHistory,
             canUndo: !newHistory.undoStack.isEmpty,
             canRedo: !newHistory.redoStack.isEmpty
@@ -282,11 +473,21 @@ public enum EditorUndoHistorySemantics {
 
     // MARK: - 内部辅助方法
 
-    /// 将 mutation 应用到文本
+    /// 将单个 mutation 应用到文本
     static func applyMutation(to text: String, mutation: EditorTextMutation) -> String {
         let nsText = text as NSString
         let range = NSRange(location: mutation.rangeLocation, length: mutation.rangeLength)
         return nsText.replacingCharacters(in: range, with: mutation.replacementText)
+    }
+
+    /// 批量应用 mutations 到文本。
+    /// mutations 须按 rangeLocation 降序排列（从后向前应用，避免偏移失效）。
+    static func applyMutations(to text: String, mutations: [EditorTextMutation]) -> String {
+        var result = text
+        for mutation in mutations {
+            result = applyMutation(to: result, mutation: mutation)
+        }
+        return result
     }
 
     /// 判断两条命令是否可合并
