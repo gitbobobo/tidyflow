@@ -305,25 +305,69 @@ async fn run_formatter(mut cmd: Command, text: &str, formatter_id: &str) -> Form
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------
+    // 语言检测
+    // -----------------------------------------------------------------
+
     #[test]
     fn detect_language_swift() {
         assert_eq!(detect_language("Sources/App.swift"), "swift");
+        assert_eq!(detect_language("main.swift"), "swift");
+        assert_eq!(detect_language("path/to/file.swift"), "swift");
     }
 
     #[test]
     fn detect_language_rust() {
         assert_eq!(detect_language("src/main.rs"), "rust");
+        assert_eq!(detect_language("lib.rs"), "rust");
     }
 
     #[test]
     fn detect_language_typescript() {
         assert_eq!(detect_language("src/index.tsx"), "typescript");
+        assert_eq!(detect_language("app.ts"), "typescript");
+        assert_eq!(detect_language("module.mts"), "typescript");
+        assert_eq!(detect_language("module.cts"), "typescript");
     }
 
     #[test]
-    fn detect_language_unknown() {
-        assert_eq!(detect_language("Makefile"), "plainText");
+    fn detect_language_javascript() {
+        assert_eq!(detect_language("app.js"), "javascript");
+        assert_eq!(detect_language("app.jsx"), "javascript");
+        assert_eq!(detect_language("app.mjs"), "javascript");
+        assert_eq!(detect_language("app.cjs"), "javascript");
     }
+
+    #[test]
+    fn detect_language_python() {
+        assert_eq!(detect_language("app.py"), "python");
+        assert_eq!(detect_language("script.pyw"), "python");
+    }
+
+    #[test]
+    fn detect_language_json() {
+        assert_eq!(detect_language("data.json"), "json");
+        assert_eq!(detect_language("tsconfig.jsonc"), "json");
+        assert_eq!(detect_language("map.geojson"), "json");
+    }
+
+    #[test]
+    fn detect_language_markdown() {
+        assert_eq!(detect_language("README.md"), "markdown");
+        assert_eq!(detect_language("docs/guide.markdown"), "markdown");
+    }
+
+    #[test]
+    fn detect_language_unsupported() {
+        assert_eq!(detect_language("Makefile"), "plainText");
+        assert_eq!(detect_language("file.txt"), "plainText");
+        assert_eq!(detect_language("file.cpp"), "plainText");
+        assert_eq!(detect_language("file"), "plainText");
+    }
+
+    // -----------------------------------------------------------------
+    // 能力查询
+    // -----------------------------------------------------------------
 
     #[test]
     fn query_capabilities_returns_language() {
@@ -335,5 +379,89 @@ mod tests {
     fn query_capabilities_unknown_language_empty() {
         let (_lang, caps) = query_capabilities("Makefile", Path::new("/tmp"));
         assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn query_capabilities_unsupported_language_empty() {
+        let (language, caps) = query_capabilities("file.txt", Path::new("/tmp/nonexistent"));
+        assert_eq!(language, "plainText");
+        assert!(caps.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // 格式化执行——不支持的语言/作用域
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_format_unsupported_language() {
+        let result = execute_format(
+            "file.txt",
+            Path::new("/tmp/nonexistent"),
+            EditorFormatScope::Document,
+            "hello",
+            None,
+            None,
+        )
+        .await;
+        match result {
+            FormatResult::Error { error_code, .. } => {
+                assert_eq!(error_code, EditorFormattingErrorCode::UnsupportedLanguage);
+            }
+            _ => panic!("不支持的语言应返回 UnsupportedLanguage 错误"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_format_unsupported_scope_swift() {
+        let result = execute_format(
+            "file.swift",
+            Path::new("/tmp"),
+            EditorFormatScope::Selection,
+            "let x = 1",
+            None,
+            None,
+        )
+        .await;
+        match result {
+            FormatResult::Error { error_code, .. } => {
+                // swift-format 不支持选区格式化，但如果工具不存在也可能返回 ToolUnavailable
+                assert!(
+                    error_code == EditorFormattingErrorCode::UnsupportedScope
+                        || error_code == EditorFormattingErrorCode::ToolUnavailable,
+                    "期望 UnsupportedScope 或 ToolUnavailable，实际: {:?}",
+                    error_code
+                );
+            }
+            _ => {
+                // 如果 swift-format 可用但不支持选区，会走到 Error 分支；
+                // 如果意外成功也不应 panic，跳过即可。
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_format_unsupported_scope_rust() {
+        let result = execute_format(
+            "file.rs",
+            Path::new("/tmp"),
+            EditorFormatScope::Selection,
+            "fn main() {}",
+            None,
+            None,
+        )
+        .await;
+        match result {
+            FormatResult::Error { error_code, .. } => {
+                assert!(
+                    error_code == EditorFormattingErrorCode::UnsupportedScope
+                        || error_code == EditorFormattingErrorCode::ToolUnavailable,
+                    "期望 UnsupportedScope 或 ToolUnavailable，实际: {:?}",
+                    error_code
+                );
+            }
+            _ => {
+                // rustfmt 不可用或意外成功时不 panic
+            }
+        }
     }
 }

@@ -63,6 +63,7 @@
 		EMMS0002 /* EditorMinimapSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMMS0001 /* EditorMinimapSemantics.swift */; };
 		GSEM0002 /* GlobalSearchSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = GSEM0001 /* GlobalSearchSemantics.swift */; };
 		EMMST002 /* EditorMinimapSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMMST001 /* EditorMinimapSemanticsTests.swift */; };
+		EFMTT002 /* EditorFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFMTT001 /* EditorFormattingTests.swift */; };
 		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
 		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
 		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
@@ -542,6 +543,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EMMS0001 /* EditorMinimapSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMinimapSemantics.swift; sourceTree = "<group>"; };
 		GSEM0001 /* GlobalSearchSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSearchSemantics.swift; sourceTree = "<group>"; };
 		EMMST001 /* EditorMinimapSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMinimapSemanticsTests.swift; sourceTree = "<group>"; };
+		EFMTT001 /* EditorFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFormattingTests.swift; sourceTree = "<group>"; };
 		ESHLT001 /* EditorSyntaxHighlighterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighterTests.swift; sourceTree = "<group>"; };
 		TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageVisibilitySemanticsTests.swift; sourceTree = "<group>"; };
 		TST10047 /* AIChatStageProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStageProjectionTests.swift; sourceTree = "<group>"; };
@@ -1011,6 +1013,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					MEST0001 /* MobileEditorSessionTests.swift */,
 					EACST001 /* EditorAutocompleteSemanticsTests.swift */,
 					EMMST001 /* EditorMinimapSemanticsTests.swift */,
+					EFMTT001 /* EditorFormattingTests.swift */,
 				ESHLT001 /* EditorSyntaxHighlighterTests.swift */,
 					TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */,
 					TST10047 /* AIChatStageProjectionTests.swift */,
@@ -1637,6 +1640,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				MEST0002 /* MobileEditorSessionTests.swift in Sources */,
 				EACST002 /* EditorAutocompleteSemanticsTests.swift in Sources */,
 				EMMST002 /* EditorMinimapSemanticsTests.swift in Sources */,
+				EFMTT002 /* EditorFormattingTests.swift in Sources */,
 				ESHLT002 /* EditorSyntaxHighlighterTests.swift in Sources */,
 				TST10044 /* AIChatMessageVisibilitySemanticsTests.swift in Sources */,
 				TST10046 /* AIChatStageProjectionTests.swift in Sources */,

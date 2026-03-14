@@ -137,3 +137,244 @@ pub struct EditorFormattingLanguageConfig {
     #[serde(default)]
     pub extra_args: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // EditorFormatScope 序列化/反序列化
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn format_scope_serialization() {
+        let doc = EditorFormatScope::Document;
+        let json = serde_json::to_string(&doc).unwrap();
+        assert_eq!(json, "\"document\"");
+
+        let sel = EditorFormatScope::Selection;
+        let json = serde_json::to_string(&sel).unwrap();
+        assert_eq!(json, "\"selection\"");
+    }
+
+    #[test]
+    fn format_scope_deserialization() {
+        let doc: EditorFormatScope = serde_json::from_str("\"document\"").unwrap();
+        assert_eq!(doc, EditorFormatScope::Document);
+
+        let sel: EditorFormatScope = serde_json::from_str("\"selection\"").unwrap();
+        assert_eq!(sel, EditorFormatScope::Selection);
+    }
+
+    // -----------------------------------------------------------------
+    // EditorFormattingErrorCode
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn error_code_serialization() {
+        let code = EditorFormattingErrorCode::ToolUnavailable;
+        let json = serde_json::to_string(&code).unwrap();
+        assert_eq!(json, "\"tool_unavailable\"");
+    }
+
+    #[test]
+    fn error_code_as_str() {
+        assert_eq!(
+            EditorFormattingErrorCode::UnsupportedLanguage.as_str(),
+            "unsupported_language"
+        );
+        assert_eq!(
+            EditorFormattingErrorCode::ToolUnavailable.as_str(),
+            "tool_unavailable"
+        );
+        assert_eq!(
+            EditorFormattingErrorCode::UnsupportedScope.as_str(),
+            "unsupported_scope"
+        );
+        assert_eq!(
+            EditorFormattingErrorCode::WorkspaceUnavailable.as_str(),
+            "workspace_unavailable"
+        );
+        assert_eq!(
+            EditorFormattingErrorCode::ExecutionFailed.as_str(),
+            "execution_failed"
+        );
+        assert_eq!(
+            EditorFormattingErrorCode::InvalidRequest.as_str(),
+            "invalid_request"
+        );
+    }
+
+    #[test]
+    fn error_code_display() {
+        let code = EditorFormattingErrorCode::ExecutionFailed;
+        assert_eq!(format!("{}", code), "execution_failed");
+    }
+
+    // -----------------------------------------------------------------
+    // EditorFormattingCapability 编解码
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn capability_serialization_roundtrip() {
+        let cap = EditorFormattingCapability {
+            formatter_id: "rustfmt".to_string(),
+            language: "rust".to_string(),
+            supported_scopes: vec![EditorFormatScope::Document],
+        };
+        let json = serde_json::to_string(&cap).unwrap();
+        let decoded: EditorFormattingCapability = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.formatter_id, "rustfmt");
+        assert_eq!(decoded.language, "rust");
+        assert_eq!(decoded.supported_scopes, vec![EditorFormatScope::Document]);
+    }
+
+    // -----------------------------------------------------------------
+    // FormatExecuteRequest 编解码
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn format_execute_request_roundtrip() {
+        let req = FormatExecuteRequest {
+            project: "proj".to_string(),
+            workspace: "ws".to_string(),
+            path: "main.rs".to_string(),
+            scope: EditorFormatScope::Document,
+            text: "fn main() {}".to_string(),
+            selection_start: None,
+            selection_end: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: FormatExecuteRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.project, "proj");
+        assert_eq!(decoded.scope, EditorFormatScope::Document);
+        assert!(decoded.selection_start.is_none());
+    }
+
+    #[test]
+    fn format_execute_request_with_selection() {
+        let req = FormatExecuteRequest {
+            project: "p".to_string(),
+            workspace: "w".to_string(),
+            path: "file.swift".to_string(),
+            scope: EditorFormatScope::Selection,
+            text: "let x = 1".to_string(),
+            selection_start: Some(4),
+            selection_end: Some(9),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: FormatExecuteRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.scope, EditorFormatScope::Selection);
+        assert_eq!(decoded.selection_start, Some(4));
+        assert_eq!(decoded.selection_end, Some(9));
+    }
+
+    // -----------------------------------------------------------------
+    // EditorFormattingLanguageConfig 编解码与默认值
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn language_config_serialization_roundtrip() {
+        let config = EditorFormattingLanguageConfig {
+            language: "swift".to_string(),
+            preferred_formatter_id: Some("swift-format".to_string()),
+            format_on_save: false,
+            allow_full_document_fallback: false,
+            extra_args: vec!["--indent-width".to_string(), "4".to_string()],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: EditorFormattingLanguageConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.language, "swift");
+        assert_eq!(
+            decoded.preferred_formatter_id,
+            Some("swift-format".to_string())
+        );
+        assert!(!decoded.format_on_save);
+        assert_eq!(decoded.extra_args.len(), 2);
+    }
+
+    #[test]
+    fn language_config_defaults() {
+        let json = r#"{"language": "rust"}"#;
+        let config: EditorFormattingLanguageConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.language, "rust");
+        assert_eq!(config.preferred_formatter_id, None);
+        assert!(!config.format_on_save);
+        assert!(!config.allow_full_document_fallback);
+        assert!(config.extra_args.is_empty());
+    }
+
+    #[test]
+    fn language_config_optional_fields_skip_none() {
+        let config = EditorFormattingLanguageConfig {
+            language: "rust".to_string(),
+            preferred_formatter_id: None,
+            format_on_save: false,
+            allow_full_document_fallback: false,
+            extra_args: vec![],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        // preferred_formatter_id 为 None 时应被 skip
+        assert!(!json.contains("preferred_formatter_id"));
+    }
+
+    // -----------------------------------------------------------------
+    // FormatCapabilitiesQueryResult 编解码
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn capabilities_result_roundtrip() {
+        let result = FormatCapabilitiesQueryResult {
+            project: "p".to_string(),
+            workspace: "w".to_string(),
+            path: "main.rs".to_string(),
+            language: "rust".to_string(),
+            capabilities: vec![EditorFormattingCapability {
+                formatter_id: "rustfmt".to_string(),
+                language: "rust".to_string(),
+                supported_scopes: vec![EditorFormatScope::Document],
+            }],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: FormatCapabilitiesQueryResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.language, "rust");
+        assert_eq!(decoded.capabilities.len(), 1);
+        assert_eq!(decoded.capabilities[0].formatter_id, "rustfmt");
+    }
+
+    // -----------------------------------------------------------------
+    // FormatExecuteResult / FormatExecuteError 编解码
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn format_execute_result_roundtrip() {
+        let result = FormatExecuteResult {
+            project: "p".to_string(),
+            workspace: "w".to_string(),
+            path: "main.rs".to_string(),
+            formatted_text: "fn main() {}\n".to_string(),
+            formatter_id: "rustfmt".to_string(),
+            scope: EditorFormatScope::Document,
+            changed: true,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: FormatExecuteResult = serde_json::from_str(&json).unwrap();
+        assert!(decoded.changed);
+        assert_eq!(decoded.formatted_text, "fn main() {}\n");
+    }
+
+    #[test]
+    fn format_execute_error_roundtrip() {
+        let err = FormatExecuteError {
+            project: "p".to_string(),
+            workspace: "w".to_string(),
+            path: "f.swift".to_string(),
+            error_code: EditorFormattingErrorCode::ToolUnavailable,
+            message: "swift-format not found".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let decoded: FormatExecuteError = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.error_code, EditorFormattingErrorCode::ToolUnavailable);
+        assert_eq!(decoded.message, "swift-format not found");
+    }
+}
