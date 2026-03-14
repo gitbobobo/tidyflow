@@ -253,7 +253,6 @@ extension AppState {
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
-            terminalStore.clearTerminalAIStatus(for: tabId)
         }
 
         if tab.kind == .editor {

@@ -165,6 +165,12 @@ struct MobileTerminalView: View {
         let displayInfo = appState.terminalSessionStore.displayInfo(for: terminal.termId)
         let title = displayInfo?.name ?? String(terminal.termId.prefix(8))
         let iconName = displayInfo?.icon ?? "terminal"
+        // 工作区级 AI 状态（同一工作区所有标签共享同一状态，由 Core 聚合下发）
+        let wsId = CoordinatorWorkspaceId(project: project, workspace: workspace)
+        let aiStatus = TerminalSessionSemantics.terminalAIStatus(
+            fromCache: appState.coordinatorStateCache,
+            workspaceId: wsId
+        )
 
         return Button {
             if !isSelected {
@@ -179,6 +185,13 @@ struct MobileTerminalView: View {
                 Text(title)
                     .font(.caption2)
                     .lineLimit(1)
+                // AI 六态指示器：非 idle 时显示，idle 时隐藏
+                if aiStatus.isVisible {
+                    Image(systemName: aiStatus.iconName)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(aiStatus.color)
+                        .accessibilityLabel(aiStatus.hint)
+                }
                 Button {
                     appState.closeTerminal(termId: terminal.termId)
                 } label: {

@@ -8,6 +8,11 @@ import TidyFlowShared
 // AI 会话状态到 TerminalAIStatus 的映射、终端展示信息恢复与同工作区排序规则。
 // macOS 与 iOS 通过此层共享规则，不再各自维护同义私有实现。
 // 所有键均显式带上 project/workspace/termId 边界，禁止将单项目假设编码进状态派生逻辑。
+//
+// ── AI 状态消费链路 ──
+// TerminalAIStatus 的展示输入统一来自工作区级 CoordinatorStateCache 的 ai.displayStatus，
+// 通过 terminalAIStatus(fromCoordinatorState:) 或 terminalAIStatus(fromCache:workspaceId:) 投影。
+// 客户端不再为标签栏自行从 AI 会话事件或 tab 级缓存聚合 AI 状态。
 
 // MARK: - 终端生命周期相位枚举
 //

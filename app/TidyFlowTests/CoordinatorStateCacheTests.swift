@@ -633,4 +633,59 @@ final class CoordinatorStateCacheTests: XCTestCase {
         XCTAssertEqual(state?.ai.activeToolName, "opencode", "active_tool_name 应完整保留在缓存中")
         XCTAssertEqual(state?.ai.displayStatus, .running)
     }
+
+    // MARK: - 种子恢复与增量更新工作区隔离（WI-004 补充）
+
+    func testSeedRecovery_differentProjectsSameWorkspaceName_isolated() {
+        // 不同项目相同 workspace 名称的种子恢复不应互相串状态
+        let cache = CoordinatorStateCache()
+        let idProjA = CoordinatorWorkspaceId(project: "proj-a", workspace: "default")
+        let idProjB = CoordinatorWorkspaceId(project: "proj-b", workspace: "default")
+
+        // 模拟 system_snapshot 种子恢复两个项目的同名工作区
+        let payloadA = CoordinatorWorkspaceSnapshotPayload(
+            project: "proj-a", workspace: "default",
+            ai: AiDomainState(displayStatus: .running, activeToolName: "codex"),
+            version: 100, generatedAt: ""
+        )
+        let payloadB = CoordinatorWorkspaceSnapshotPayload(
+            project: "proj-b", workspace: "default",
+            ai: AiDomainState(displayStatus: .failure, lastErrorMessage: "quota"),
+            version: 100, generatedAt: ""
+        )
+
+        CoordinatorSnapshotApplier.apply(payload: payloadA, cache: cache)
+        CoordinatorSnapshotApplier.apply(payload: payloadB, cache: cache)
+
+        XCTAssertEqual(cache.aiDisplayStatus(for: idProjA), .running, "proj-a/default 应为 running")
+        XCTAssertEqual(cache.aiDisplayStatus(for: idProjB), .failure, "proj-b/default 应为 failure，不受 proj-a 影响")
+        XCTAssertEqual(cache.state(for: idProjA)?.ai.activeToolName, "codex")
+        XCTAssertEqual(cache.state(for: idProjB)?.ai.lastErrorMessage, "quota")
+    }
+
+    func testIncrementalUpdate_differentProjectsSameWorkspaceName_isolated() {
+        // 增量更新不会串到其他项目的同名 workspace
+        let cache = CoordinatorStateCache()
+        let idProjA = CoordinatorWorkspaceId(project: "proj-a", workspace: "default")
+        let idProjB = CoordinatorWorkspaceId(project: "proj-b", workspace: "default")
+
+        // 先写入初始状态
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: idProjA, ai: AiDomainState(displayStatus: .idle), version: 1
+        )))
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: idProjB, ai: AiDomainState(displayStatus: .idle), version: 1
+        )))
+
+        // 仅更新 proj-a
+        let update = CoordinatorWorkspaceSnapshotPayload(
+            project: "proj-a", workspace: "default",
+            ai: AiDomainState(displayStatus: .success),
+            version: 2, generatedAt: ""
+        )
+        CoordinatorSnapshotApplier.apply(payload: update, cache: cache)
+
+        XCTAssertEqual(cache.aiDisplayStatus(for: idProjA), .success, "proj-a 应被更新为 success")
+        XCTAssertEqual(cache.aiDisplayStatus(for: idProjB), .idle, "proj-b 不应被 proj-a 的增量更新影响")
+    }
 }

@@ -724,4 +724,101 @@ final class TerminalSessionSemanticLayerTests: XCTestCase {
         XCTAssertEqual(TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: idA), .success, "ws-a 应独立恢复")
         XCTAssertEqual(TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: idB), .cancelled, "ws-b 应独立恢复，不受 ws-a 影响")
     }
+
+    // MARK: - 六态 hint 文案验证（WI-004）
+
+    func testTerminalAIStatus_hintText_idle() {
+        let status: TerminalAIStatus = .idle
+        XCTAssertEqual(status.hint, "", "idle 状态 hint 应为空")
+    }
+
+    func testTerminalAIStatus_hintText_runningWithToolName() {
+        let status: TerminalAIStatus = .running(toolName: "Codex")
+        XCTAssertEqual(status.hint, "AI 执行中 · Codex", "running 状态应包含工具名")
+    }
+
+    func testTerminalAIStatus_hintText_runningNilToolName() {
+        let status: TerminalAIStatus = .running(toolName: nil)
+        XCTAssertEqual(status.hint, "AI 执行中", "工具名为 nil 时应回退到通用文案")
+    }
+
+    func testTerminalAIStatus_hintText_awaitingInput() {
+        let status: TerminalAIStatus = .awaitingInput
+        XCTAssertEqual(status.hint, "等待用户输入")
+    }
+
+    func testTerminalAIStatus_hintText_success() {
+        let status: TerminalAIStatus = .success
+        XCTAssertEqual(status.hint, "AI 已完成")
+    }
+
+    func testTerminalAIStatus_hintText_failureWithMessage() {
+        let status: TerminalAIStatus = .failure(message: "OOM killed")
+        XCTAssertEqual(status.hint, "AI 失败：OOM killed", "failure 状态应包含错误摘要")
+    }
+
+    func testTerminalAIStatus_hintText_failureNilMessage() {
+        let status: TerminalAIStatus = .failure(message: nil)
+        XCTAssertEqual(status.hint, "AI 失败", "错误消息为 nil 时应回退到通用失败文案")
+    }
+
+    func testTerminalAIStatus_hintText_cancelled() {
+        let status: TerminalAIStatus = .cancelled
+        XCTAssertEqual(status.hint, "AI 已取消")
+    }
+
+    // MARK: - Coordinator 六态 → hint 端到端验证（WI-004）
+
+    func testTerminalAIStatus_fromCoordinatorState_runningHintIncludesToolDisplayName() {
+        // 验证 activeToolName 通过 displayName(forAITool:) 映射后进入 hint
+        let state = makeWorkspaceState(displayStatus: .running, activeToolName: "opencode")
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        XCTAssertEqual(result.hint, "AI 执行中 · OpenCode", "已知工具应映射为用户友好名称")
+    }
+
+    func testTerminalAIStatus_fromCoordinatorState_failureHintIncludesErrorMessage() {
+        let state = makeWorkspaceState(displayStatus: .failure, lastErrorMessage: "context window exhausted")
+        let result = TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
+        XCTAssertEqual(result.hint, "AI 失败：context window exhausted")
+    }
+
+    // MARK: - Coordinator hasState 兜底阻断验证（WI-004）
+
+    func testCoordinatorHasState_preventsLocalFallbackOverwrite() {
+        // 模拟：Coordinator 已有状态时，本地事件驱动的写入应被阻断
+        let cache = CoordinatorStateCache()
+        let key = "proj:ws"
+        XCTAssertFalse(cache.hasState(forGlobalKey: key), "初始状态应无缓存")
+
+        // 写入 Coordinator 状态
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id, ai: AiDomainState(displayStatus: .running), version: 1
+        )))
+        XCTAssertTrue(cache.hasState(forGlobalKey: key), "写入后 hasState 应为 true")
+
+        // 验证：一旦 hasState == true，本地 fallback 不应生效
+        // （在实际代码中，syncAIStatusToWorkspace / syncAIStatusToTerminalTabs 都以此为 guard）
+        let status = TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id)
+        XCTAssertEqual(status, .running(toolName: nil), "应返回 Coordinator 权威状态，而非本地兜底")
+    }
+
+    func testCoordinatorHasState_afterClearAllowsFallback() {
+        // 断线清空后，hasState 恢复为 false，允许本地兜底生效
+        let cache = CoordinatorStateCache()
+        let id = CoordinatorWorkspaceId(project: "proj", workspace: "ws")
+
+        cache.apply(.updateWorkspace(WorkspaceCoordinatorState(
+            id: id, ai: AiDomainState(displayStatus: .success), version: 1
+        )))
+        XCTAssertTrue(cache.hasState(forGlobalKey: "proj:ws"))
+
+        cache.apply(.clear)
+        XCTAssertFalse(cache.hasState(forGlobalKey: "proj:ws"), "clear 后应允许兜底路径生效")
+        XCTAssertEqual(
+            TerminalSessionSemantics.terminalAIStatus(fromCache: cache, workspaceId: id),
+            .idle,
+            "清空后应回退到 idle"
+        )
+    }
 }

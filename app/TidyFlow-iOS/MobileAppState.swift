@@ -384,8 +384,8 @@ final class MobileAppState: ObservableObject {
     @Published var currentTermId: String = ""
     @Published var terminalCols: Int = 80
     @Published var terminalRows: Int = 24
-    /// 每个工作区的终端 AI 状态（六态），key 为 "project:workspace"。
-    /// 与 macOS 共用 TerminalSessionSemantics 映射逻辑，保持双端语义一致。
+    /// 工作区终端 AI 状态的历史兜底缓存（非标签栏真源），key 为 "project:workspace"。
+    /// 仅在 Coordinator 状态尚未到达时提供临时占位，Core 状态到达后本地写入完全失效。
     @Published var terminalAIStatusByWorkspaceKey: [String: TerminalAIStatus] = [:]
     /// 待创建终端的项目/工作空间（等终端视图 ready 后再真正创建）
     private var pendingTermProject: String = ""
@@ -4108,23 +4108,30 @@ final class MobileAppState: ObservableObject {
         aiSessionStatusesByTool[aiTool] = dict
     }
 
-    // MARK: - 终端 AI 状态（WI-002 iOS 端同步链路）
+    // MARK: - 终端 AI 状态（历史兜底链路，非标签栏真源）
+    //
+    // ── 职责边界 ──
+    // 终端标签栏 AI 状态的唯一权威源是 CoordinatorStateCache + TerminalSessionSemantics。
+    // 所有 iOS 视图（标签条、导航栏、工作区终端列表）都直接从 coordinatorStateCache 读取。
+    // terminalAIStatusByWorkspaceKey 仅作为 Coordinator 状态到达前的短期兜底占位，
+    // 一旦 coordinatorStateCache.hasState(forGlobalKey:) == true，本地写入完全失效。
+    // 不允许新增从本地 AI 会话快照再聚合出标签状态的逻辑。
 
     /// 查询指定工作区的终端 AI 状态（六态）。
-    /// iOS 端以工作区粒度（非 tab 粒度）存储，与 macOS 共享同一语义枚举。
-    /// WI-002：优先从 CoordinatorStateCache 读取 Core 权威状态，本地缓存仅作兜底。
+    /// 优先从 CoordinatorStateCache 读取 Core 权威状态，本地缓存仅作 Coordinator 到达前的临时兜底。
+    /// 注意：iOS 视图层已全部直接走 `TerminalSessionSemantics.terminalAIStatus(fromCache:workspaceId:)`，
+    /// 此方法当前无外部调用者，保留仅为断连初始帧兼容。
     func terminalAIStatus(projectName: String, workspaceName: String) -> TerminalAIStatus {
         let key = "\(projectName):\(workspaceName)"
-        // 若 Coordinator 已有该工作区的 Core 权威状态，优先使用
         if let state = coordinatorStateCache.state(forGlobalKey: key) {
             return TerminalSessionSemantics.terminalAIStatus(fromCoordinatorState: state)
         }
         return terminalAIStatusByWorkspaceKey[key] ?? .idle
     }
 
-    /// 将 AI 会话状态更新到对应工作区的终端 AI 状态存储。
-    /// 使用共享语义层 TerminalSessionSemantics 映射，保证 macOS 与 iOS 语义一致。
-    /// WI-002：若 Coordinator 已有该工作区状态，降级为兜底，不覆盖 Core 权威状态。
+    /// 将 AI 会话状态更新到对应工作区的终端 AI 状态本地兜底缓存。
+    /// 仅在 Coordinator 状态缺失时生效——一旦 CoordinatorStateCache 已有该工作区状态，
+    /// 写入被跳过，防止本地事件覆盖 Core 权威状态。
     private func syncAIStatusToWorkspace(
         projectName: String,
         workspaceName: String,
@@ -4134,7 +4141,7 @@ final class MobileAppState: ObservableObject {
         toolName: String?
     ) {
         let key = "\(projectName):\(workspaceName)"
-        // 若 CoordinatorStateCache 已有该工作区的 Core 权威状态，跳过本地同步
+        // Core 权威状态到达后，本地兜底完全失效
         guard !coordinatorStateCache.hasState(forGlobalKey: key) else { return }
         let mapped = TerminalSessionSemantics.terminalAIStatus(
             from: status,

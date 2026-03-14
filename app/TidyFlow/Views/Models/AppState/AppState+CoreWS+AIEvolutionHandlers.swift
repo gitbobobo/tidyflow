@@ -389,15 +389,6 @@ extension AppState {
                 status: ev.status.status
             )
         }
-        // WI-002：result 事件同样需要落到终端标签状态，避免初始快照不触发 update 时标签长期空白
-        syncAIStatusToTerminalTabs(
-            projectName: ev.projectName,
-            workspaceName: ev.workspaceName,
-            aiTool: ev.aiTool,
-            status: ev.status.status,
-            errorMessage: ev.status.errorMessage,
-            toolName: ev.status.toolName
-        )
     }
 
     func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
@@ -420,48 +411,6 @@ extension AppState {
                 sessionId: ev.sessionId,
                 status: ev.status.status
             )
-        }
-        // 将 AI 会话状态同步到所属工作空间的所有终端 tab
-        syncAIStatusToTerminalTabs(
-            projectName: ev.projectName,
-            workspaceName: ev.workspaceName,
-            aiTool: ev.aiTool,
-            status: ev.status.status,
-            errorMessage: ev.status.errorMessage,
-            toolName: ev.status.toolName
-        )
-    }
-
-    /// 将 AI 会话状态映射为 TerminalAIStatus 并更新该工作空间下所有终端 tab。
-    /// 状态映射规则由共享语义层 TerminalSessionSemantics 提供，双端保持一致。
-    private func syncAIStatusToTerminalTabs(
-        projectName: String,
-        workspaceName: String,
-        aiTool: AIChatTool,
-        status: String,
-        errorMessage: String?,
-        toolName: String?
-    ) {
-        let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
-
-        // WI-002：若 CoordinatorStateCache 已有该工作区的 Core 权威状态，
-        // 本地事件驱动的同步降级为兜底，不得覆盖 Coordinator 状态。
-        // 仅在首帧/重连期间（缓存尚无数据时）允许本地同步作为占位。
-        guard !coordinatorStateCache.hasState(forGlobalKey: globalKey) else { return }
-
-        let tabs = workspaceTabs[globalKey] ?? []
-        guard !tabs.isEmpty else { return }
-
-        // 通过共享语义层映射 AI 状态，不再维护本地 switch/case
-        let terminalStatus = TerminalSessionSemantics.terminalAIStatus(
-            from: status,
-            errorMessage: errorMessage,
-            toolName: toolName,
-            aiToolDisplayName: aiTool.displayName
-        )
-
-        for tab in tabs where tab.kind == .terminal {
-            terminalStore.updateTerminalAIStatus(tabId: tab.id, status: terminalStatus)
         }
     }
 
@@ -512,15 +461,6 @@ extension AppState {
                 status: fallbackStatus
             )
         }
-        // WI-002：done 兜底收敛同样要落到终端标签，不受当前选中工作区限制
-        syncAIStatusToTerminalTabs(
-            projectName: ev.projectName,
-            workspaceName: ev.workspaceName,
-            aiTool: ev.aiTool,
-            status: fallbackStatus,
-            errorMessage: nil,
-            toolName: nil
-        )
 
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -588,15 +528,6 @@ extension AppState {
                 status: "failure"
             )
         }
-        // WI-002：error 兜底收敛同样要落到终端标签，不受当前选中工作区限制
-        syncAIStatusToTerminalTabs(
-            projectName: ev.projectName,
-            workspaceName: ev.workspaceName,
-            aiTool: ev.aiTool,
-            status: "failure",
-            errorMessage: ev.error,
-            toolName: nil
-        )
 
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }

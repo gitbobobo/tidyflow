@@ -5,6 +5,12 @@
 // 共享层只管理"选中哪个终端、下一步要发什么请求"，
 // 不直接依赖 SwiftUI/AppKit/UIKit/WSClient，平台层仅把 effect descriptor 翻译为具体网络请求。
 // 终端展示信息、AI 状态、置顶、recoveryPhase 仍由 TerminalSessionStore 和 TerminalSessionSemantics 负责。
+//
+// ── 职责边界 ──
+// 本驱动只负责终端 create/attach/select/close/disconnect/reconcile 语义，
+// 不持有、不聚合、不查询任何 AI 运行状态字段。
+// 工作区级 AI 展示状态的唯一查询入口是 CoordinatorStateCache，
+// 映射为 TerminalAIStatus 的唯一路径是 TerminalSessionSemantics。
 
 import Foundation
 

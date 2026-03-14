@@ -40,8 +40,9 @@ extension WSClient {
                 if !recoverySummaries.isEmpty {
                     onWorkspaceRecoverySummaries?(recoverySummaries)
                 }
-                // v1.46/v1.47: 从 workspace_items 提取 coordinator 三域种子，按工作区分发
-                // v1.47 新增 terminal/file 域；v1.46 兼容（coordinator_ai 有值即构建 payload）
+                // v1.46/v1.47: 从 workspace_items 提取 coordinator 三域种子，按工作区分发。
+                // Core 是 AI 展示状态唯一权威源；此处仅做协议解析，不在客户端侧聚合或推导。
+                // v1.47 新增 terminal/file 域；v1.46 兼容（coordinator_ai 有值即构建 payload）。
                 for item in workspaceItems {
                     guard let project = item["project"] as? String,
                           let workspace = item["workspace"] as? String else { continue }

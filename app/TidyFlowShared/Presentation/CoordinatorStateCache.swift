@@ -10,6 +10,13 @@ import Foundation
 // - 状态映射不持有任何平台类型
 // - 多工作区通过 globalKey ("project:workspace") 隔离
 // - Core 是状态权威源，客户端只做投影和缓存
+//
+// ── 职责边界 ──
+// CoordinatorStateCache 是双端唯一的工作区级 AI 展示状态查询入口。
+// 所有 View、ProjectionStore、AppState 扩展都必须通过本缓存读取六态，
+// 不允许从本地 AI 会话快照或 tab 级字典再聚合出标签栏状态。
+// system_snapshot 种子恢复与 coordinator_snapshot 增量更新均由 Core 聚合后下发，
+// 客户端侧不自行推导 AI 展示状态。
 
 /// 协调层状态缓存——跨平台共享的协调状态管理入口。
 ///
