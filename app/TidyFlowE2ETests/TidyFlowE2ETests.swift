@@ -96,6 +96,67 @@ private enum PerfEvidenceContract {
             "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel_multi_workspace bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)"
         ].joined(separator: "\n")
     }
+
+    static let terminalWorkspaceContext =
+        "AC-TERMINAL-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:term_id=fixture-term-0"
+    static let terminalMultiWorkspaceContext =
+        "AC-TERMINAL-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:term_id=fixture-term-mw-0"
+    static let gitWorkspaceContext =
+        "AC-GIT-PANEL-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace"
+    static let gitMultiWorkspaceContext =
+        "AC-GIT-PANEL-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace"
+
+    static func terminalFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=terminal_output bytes=115343360 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext)",
+            "perf terminal_flush_event=terminal_output_flush scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf terminalOutputFlush scenario=terminal_output sample_index=1 duration_ms=0.62 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf terminalOutputFlush scenario=terminal_output sample_index=2 duration_ms=0.74 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf terminalOutputFlush scenario=terminal_output sample_index=3 duration_ms=0.88 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf terminalOutputFlush scenario=terminal_output sample_index=4 duration_ms=0.95 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf terminalOutputFlush scenario=terminal_output sample_index=5 duration_ms=1.01 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=terminal_output bytes=119537664 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
+
+    static func terminalMultiWorkspaceFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=terminal_output_multi_workspace bytes=115343360 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext)",
+            "perf terminal_flush_event=terminal_output_flush scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
+            "perf terminalOutputFlush scenario=terminal_output_multi_workspace sample_index=1 duration_ms=0.62 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
+            "perf multi_workspace_event=terminal_multi_workspace_sample scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
+            "perf terminalOutputFlush sample_index=1 duration_ms=0.71 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-0 surface=terminal_output workspace_context=derived-ws-0 term_id=fixture-term-ws-0",
+            "perf terminalOutputFlush sample_index=2 duration_ms=0.82 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-1 surface=terminal_output workspace_context=derived-ws-1 term_id=fixture-term-ws-1",
+            "perf terminalOutputFlush sample_index=3 duration_ms=0.93 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-2 surface=terminal_output workspace_context=derived-ws-2 term_id=fixture-term-ws-2",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=terminal_output_multi_workspace bytes=119537664 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
+
+    static func gitFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=git_panel bytes=120586240 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)",
+            "perf git_panel_projection_event=git_panel_projection scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)",
+            "perf gitPanelProjection scenario=git_panel sample_index=1 duration_ms=1.20 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf gitPanelProjection scenario=git_panel sample_index=2 duration_ms=1.45 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf gitPanelProjection scenario=git_panel sample_index=3 duration_ms=1.63 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf gitPanelProjection scenario=git_panel sample_index=4 duration_ms=1.82 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf gitPanelProjection scenario=git_panel sample_index=5 duration_ms=2.01 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=git_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
+
+    static func gitMultiWorkspaceFixtureLines() -> String {
+        [
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=git_panel_multi_workspace bytes=120586240 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
+            "perf git_panel_projection_event=git_panel_projection scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
+            "perf multi_workspace_event=git_panel_multi_workspace_sample scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
+            "perf gitPanelProjection scenario=git_panel_multi_workspace sample_index=1 duration_ms=1.20 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
+            "perf gitPanelProjection sample_index=1 duration_ms=1.30 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-0 surface=git_panel workspace_context=derived-ws-0 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
+            "perf gitPanelProjection sample_index=2 duration_ms=1.52 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-1 surface=git_panel workspace_context=derived-ws-1 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
+            "perf gitPanelProjection sample_index=3 duration_ms=1.74 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-2 surface=git_panel workspace_context=derived-ws-2 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
+            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=git_panel_multi_workspace bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)"
+        ].joined(separator: "\n")
+    }
 }
 
 final class TidyFlowE2ETests: XCTestCase {
@@ -1118,6 +1179,230 @@ final class TidyFlowE2ETests: XCTestCase {
         XCTAssertTrue(statusVisible, "evolution_panel_multi_workspace perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "evolution_panel_multi_workspace perf fixture 未进入 running 状态")
         XCTAssertTrue(fixtureCompleted, "evolution_panel_multi_workspace perf fixture 未完成 90 轮重算")
+    }
+
+    func testAC_TERMINAL_OUTPUT_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "terminal_output"
+        app.launch()
+
+        let scenario = "AC-TERMINAL-OUTPUT-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+
+        let terminal = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.terminal.container").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.terminal.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.terminal.completed").firstMatch
+
+        let terminalVisible = terminal.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 10)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 终端输出 perf fixture 初始状态",
+            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=terminal_output 启动 iPhone 应用；关键观察：终端容器与 fixture 状态条可见；证据用途：验证 terminal_output 场景入口与完成标记。",
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: PerfEvidenceContract.terminalWorkspaceContext
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 终端输出 perf fixture 断言结果",
+            description: "UI_TEST_MODE + TF_PERF_SCENARIO=terminal_output 下应用直接进入终端场景；fixture 状态条进入 completed；日志抓取脚本据此校验 terminal_output 证据字段。",
+            body: """
+            scenario=terminal_output
+            terminal.visible=\(terminalVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            \(PerfEvidenceContract.terminalFixtureLines())
+            """,
+            workspaceContext: PerfEvidenceContract.terminalWorkspaceContext
+        )
+
+        XCTAssertTrue(terminalVisible, "terminal_output perf fixture 场景未进入终端容器")
+        XCTAssertTrue(statusVisible, "terminal_output perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "terminal_output perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "terminal_output perf fixture 未完成")
+    }
+
+    func testAC_TERMINAL_MULTI_WS_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "terminal_output_multi_workspace"
+        app.launch()
+
+        let scenario = "AC-TERMINAL-MULTI-WS-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+
+        let terminal = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.terminal.container").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.terminal.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.terminal.completed").firstMatch
+
+        let terminalVisible = terminal.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 10)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 终端多工作区 perf fixture 初始状态",
+            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=terminal_output_multi_workspace 启动 iPhone 应用；关键观察：终端容器与 fixture 状态条可见；证据用途：验证 terminal_output_multi_workspace 场景入口与完成标记。",
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: PerfEvidenceContract.terminalMultiWorkspaceContext
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone 终端多工作区 perf fixture 断言结果",
+            description: "UI_TEST_MODE + TF_PERF_SCENARIO=terminal_output_multi_workspace 下应用直接进入终端场景；fixture 状态条进入 completed；日志抓取脚本据此校验多工作区终端证据字段。",
+            body: """
+            scenario=terminal_output_multi_workspace
+            terminal.visible=\(terminalVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            \(PerfEvidenceContract.terminalMultiWorkspaceFixtureLines())
+            """,
+            workspaceContext: PerfEvidenceContract.terminalMultiWorkspaceContext
+        )
+
+        XCTAssertTrue(terminalVisible, "terminal_output_multi_workspace perf fixture 场景未进入终端容器")
+        XCTAssertTrue(statusVisible, "terminal_output_multi_workspace perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "terminal_output_multi_workspace perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "terminal_output_multi_workspace perf fixture 未完成")
+    }
+
+    func testAC_GIT_PANEL_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "git_panel"
+        app.launch()
+
+        let scenario = "AC-GIT-PANEL-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+
+        let panel = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.git.panel").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.git.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.git.completed").firstMatch
+
+        let panelVisible = panel.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 10)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Git 面板 perf fixture 初始状态",
+            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=git_panel 启动 iPhone 应用；关键观察：Git 面板与 fixture 状态条可见；证据用途：验证 git_panel 场景入口与完成标记。",
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: PerfEvidenceContract.gitWorkspaceContext
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Git 面板 perf fixture 断言结果",
+            description: "UI_TEST_MODE + TF_PERF_SCENARIO=git_panel 下应用直接进入 Git 面板；fixture 状态条进入 completed；日志抓取脚本据此校验 git_panel 证据字段。",
+            body: """
+            scenario=git_panel
+            git_panel.visible=\(panelVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            \(PerfEvidenceContract.gitFixtureLines())
+            """,
+            workspaceContext: PerfEvidenceContract.gitWorkspaceContext
+        )
+
+        XCTAssertTrue(panelVisible, "git_panel perf fixture 场景未进入 Git 面板")
+        XCTAssertTrue(statusVisible, "git_panel perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "git_panel perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "git_panel perf fixture 未完成")
+    }
+
+    func testAC_GIT_PANEL_MULTI_WS_PERF_FIXTURE_IPHONE() throws {
+        try skipUnlessMobile()
+        app.launchEnvironment["TF_PERF_SCENARIO"] = "git_panel_multi_workspace"
+        app.launch()
+
+        let scenario = "AC-GIT-PANEL-MULTI-WS-PERF-FIXTURE"
+        let subsystem = mobileSubsystem()
+
+        let panel = app.descendants(matching: .any)
+            .matching(identifier: "tf.ios.git.panel").firstMatch
+        let fixtureStatus = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.git.status").firstMatch
+        let fixtureCompletedMarker = app.descendants(matching: .any)
+            .matching(identifier: "tf.perf.git.completed").firstMatch
+
+        let panelVisible = panel.waitForExistence(timeout: 20)
+        let statusVisible = fixtureStatus.waitForExistence(timeout: 10)
+        let fixtureCompleted = waitUntilExists(fixtureCompletedMarker, timeout: 10)
+        let fixtureStarted =
+            waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
+            || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
+
+        try recorder.recordScreenshot(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Git 多工作区 perf fixture 初始状态",
+            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=git_panel_multi_workspace 启动 iPhone 应用；关键观察：Git 面板与 fixture 状态条可见；证据用途：验证 git_panel_multi_workspace 场景入口与完成标记。",
+            screenshot: XCUIScreen.main.screenshot(),
+            workspaceContext: PerfEvidenceContract.gitMultiWorkspaceContext
+        )
+        try recorder.recordLog(
+            scenario: scenario,
+            subsystem: subsystem,
+            title: "iPhone Git 多工作区 perf fixture 断言结果",
+            description: "UI_TEST_MODE + TF_PERF_SCENARIO=git_panel_multi_workspace 下应用直接进入 Git 面板；fixture 状态条进入 completed；日志抓取脚本据此校验多工作区 Git 证据字段。",
+            body: """
+            scenario=git_panel_multi_workspace
+            git_panel.visible=\(panelVisible)
+            fixture_status.visible=\(statusVisible)
+            fixture_status.label=\(fixtureStatus.label)
+            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
+            fixture_started=\(fixtureStarted)
+            fixture_completed=\(fixtureCompleted)
+            run_id=\(recorder.runID)
+            device_type=\(recorder.deviceType)
+            \(PerfEvidenceContract.gitMultiWorkspaceFixtureLines())
+            """,
+            workspaceContext: PerfEvidenceContract.gitMultiWorkspaceContext
+        )
+
+        XCTAssertTrue(panelVisible, "git_panel_multi_workspace perf fixture 场景未进入 Git 面板")
+        XCTAssertTrue(statusVisible, "git_panel_multi_workspace perf fixture 场景未暴露状态条")
+        XCTAssertTrue(fixtureStarted, "git_panel_multi_workspace perf fixture 未进入 running 状态")
+        XCTAssertTrue(fixtureCompleted, "git_panel_multi_workspace perf fixture 未完成")
     }
 }
 

@@ -650,6 +650,180 @@ def run_self_test() -> int:
     expect("WS_SWITCH_MISSING_FIELDS: has missing_event_fields reason",
            str("missing_event_fields" in result_ws_missing_fields["reason_codes"]), "True")
 
+    # --- 样例 14: terminal_output PASS ---
+    print("自测样例 14: terminal_output PASS")
+    terminal_scenario_def = {
+        "scenario_id": "terminal_output",
+        "surface_id": "terminal_output",
+        "required_evidence_keys": [
+            "terminal_flush_event=terminal_output_flush",
+            "memory_snapshot_key=memory_snapshot",
+        ],
+        "required_event_fields": [{
+            "event_key": "terminal_flush_event=terminal_output_flush",
+            "fields": ["project", "workspace", "scenario", "surface", "workspace_context", "term_id"],
+        }],
+        "metrics": [{
+            "metric_id": "terminalOutputFlush_p95_ms",
+            "log_pattern": "perf terminalOutputFlush",
+            "value_key": "duration_ms",
+            "warn_limit": 50.0,
+            "fail_limit": 200.0,
+        }],
+    }
+    terminal_pass_log = "\n".join([
+        "terminal_flush_event=terminal_output_flush scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=AC-TERMINAL-PERF-FIXTURE term_id=fixture-term-001",
+        "memory_snapshot_key=memory_snapshot",
+    ] + [
+        f"perf terminalOutputFlush duration_ms={1.0 + i * 0.05:.3f} scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-TERMINAL-PERF-FIXTURE term_id=fixture-term-001"
+        for i in range(20)
+    ])
+    result_terminal_pass = decide_scenario(terminal_scenario_def, terminal_pass_log, evidence_file_exists=True)
+    expect("TERMINAL_PASS: overall", result_terminal_pass["overall"], "pass")
+
+    # --- 样例 15: terminal_output FAIL（missing term_id） ---
+    print("自测样例 15: terminal_output FAIL (missing term_id)")
+    terminal_missing_term_log = "\n".join([
+        "terminal_flush_event=terminal_output_flush scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=AC-TERMINAL-PERF-FIXTURE",
+        "memory_snapshot_key=memory_snapshot",
+        "perf terminalOutputFlush duration_ms=1.00 scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-TERMINAL-PERF-FIXTURE",
+    ])
+    result_terminal_missing_term = decide_scenario(terminal_scenario_def, terminal_missing_term_log, evidence_file_exists=True)
+    expect("TERMINAL_MISSING_TERM: overall", result_terminal_missing_term["overall"], "fail")
+    expect("TERMINAL_MISSING_TERM: has missing_event_fields reason",
+           str("missing_event_fields" in result_terminal_missing_term["reason_codes"]), "True")
+
+    # --- 样例 16: git_panel PASS ---
+    print("自测样例 16: git_panel PASS")
+    git_scenario_def = {
+        "scenario_id": "git_panel",
+        "surface_id": "git_panel",
+        "required_evidence_keys": [
+            "git_panel_projection_event=git_panel_projection",
+            "memory_snapshot_key=memory_snapshot",
+        ],
+        "required_event_fields": [
+            {
+                "event_key": "git_panel_projection_event=git_panel_projection",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context"],
+            },
+            {
+                "event_key": "perf gitPanelProjection",
+                "fields": ["project", "workspace", "scenario", "workspace_context", "staged_count", "unstaged_count", "untracked_count", "item_count"],
+            },
+        ],
+        "metrics": [{
+            "metric_id": "gitPanelProjection_p95_ms",
+            "log_pattern": "perf gitPanelProjection",
+            "value_key": "duration_ms",
+            "warn_limit": 50.0,
+            "fail_limit": 200.0,
+        }],
+    }
+    git_pass_log = "\n".join([
+        "git_panel_projection_event=git_panel_projection scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=AC-GIT-PANEL-PERF-FIXTURE",
+        "memory_snapshot_key=memory_snapshot",
+    ] + [
+        f"perf gitPanelProjection duration_ms={1.5 + i * 0.08:.3f} scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-GIT-PANEL-PERF-FIXTURE staged_count=3 unstaged_count=5 untracked_count=0 item_count=8"
+        for i in range(20)
+    ])
+    result_git_pass = decide_scenario(git_scenario_def, git_pass_log, evidence_file_exists=True)
+    expect("GIT_PANEL_PASS: overall", result_git_pass["overall"], "pass")
+
+    # --- 样例 17: git_panel FAIL（missing untracked_count） ---
+    print("自测样例 17: git_panel FAIL (missing untracked_count)")
+    git_missing_field_log = "\n".join([
+        "git_panel_projection_event=git_panel_projection scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=AC-GIT-PANEL-PERF-FIXTURE",
+        "memory_snapshot_key=memory_snapshot",
+        "perf gitPanelProjection duration_ms=1.50 scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-GIT-PANEL-PERF-FIXTURE staged_count=3 unstaged_count=5 item_count=8",
+    ])
+    result_git_missing_field = decide_scenario(git_scenario_def, git_missing_field_log, evidence_file_exists=True)
+    expect("GIT_PANEL_MISSING_FIELD: overall", result_git_missing_field["overall"], "fail")
+    expect("GIT_PANEL_MISSING_FIELD: has missing_event_fields reason",
+           str("missing_event_fields" in result_git_missing_field["reason_codes"]), "True")
+
+    # --- 样例 18: terminal_output_multi_workspace PASS ---
+    print("自测样例 18: terminal_output_multi_workspace PASS")
+    terminal_mw_scenario_def = {
+        "scenario_id": "terminal_output_multi_workspace",
+        "surface_id": "terminal_output",
+        "required_evidence_keys": [
+            "terminal_flush_event=terminal_output_flush",
+            "memory_snapshot_key=memory_snapshot",
+            "multi_workspace_event=terminal_multi_workspace_sample",
+        ],
+        "required_event_fields": [
+            {
+                "event_key": "terminal_flush_event=terminal_output_flush",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context", "term_id"],
+            },
+            {
+                "event_key": "multi_workspace_event=terminal_multi_workspace_sample",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context", "term_id"],
+            }
+        ],
+        "metrics": [{
+            "metric_id": "terminalOutputFlush_p95_ms",
+            "log_pattern": "perf terminalOutputFlush",
+            "value_key": "duration_ms",
+            "warn_limit": 60.0,
+            "fail_limit": 250.0,
+        }],
+    }
+    terminal_mw_pass_log = "\n".join([
+        "terminal_flush_event=terminal_output_flush scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=AC-TERMINAL-MULTI-WS term_id=fixture-term-mw-0",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=terminal_multi_workspace_sample scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=AC-TERMINAL-MULTI-WS term_id=fixture-term-mw-0",
+    ] + [
+        f"perf terminalOutputFlush duration_ms={1.0 + i * 0.05:.3f} scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-TERMINAL-MULTI-WS term_id=fixture-term-mw-0"
+        for i in range(20)
+    ])
+    result_terminal_mw = decide_scenario(terminal_mw_scenario_def, terminal_mw_pass_log, evidence_file_exists=True)
+    expect("TERMINAL_MW_PASS: overall", result_terminal_mw["overall"], "pass")
+
+    # --- 样例 19: git_panel_multi_workspace PASS ---
+    print("自测样例 19: git_panel_multi_workspace PASS")
+    git_mw_scenario_def = {
+        "scenario_id": "git_panel_multi_workspace",
+        "surface_id": "git_panel",
+        "required_evidence_keys": [
+            "git_panel_projection_event=git_panel_projection",
+            "memory_snapshot_key=memory_snapshot",
+            "multi_workspace_event=git_panel_multi_workspace_sample",
+        ],
+        "required_event_fields": [
+            {
+                "event_key": "git_panel_projection_event=git_panel_projection",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context"],
+            },
+            {
+                "event_key": "multi_workspace_event=git_panel_multi_workspace_sample",
+                "fields": ["project", "workspace", "scenario", "surface", "workspace_context"],
+            },
+            {
+                "event_key": "perf gitPanelProjection",
+                "fields": ["project", "workspace", "scenario", "workspace_context", "staged_count", "unstaged_count", "untracked_count", "item_count"],
+            }
+        ],
+        "metrics": [{
+            "metric_id": "gitPanelProjection_p95_ms",
+            "log_pattern": "perf gitPanelProjection",
+            "value_key": "duration_ms",
+            "warn_limit": 60.0,
+            "fail_limit": 250.0,
+        }],
+    }
+    git_mw_pass_log = "\n".join([
+        "git_panel_projection_event=git_panel_projection scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=AC-GIT-PANEL-MULTI-WS",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=git_panel_multi_workspace_sample scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=AC-GIT-PANEL-MULTI-WS",
+    ] + [
+        f"perf gitPanelProjection duration_ms={1.5 + i * 0.08:.3f} scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace workspace_context=AC-GIT-PANEL-MULTI-WS staged_count=3 unstaged_count=5 untracked_count=0 item_count=8"
+        for i in range(20)
+    ])
+    result_git_mw = decide_scenario(git_mw_scenario_def, git_mw_pass_log, evidence_file_exists=True)
+    expect("GIT_MW_PASS: overall", result_git_mw["overall"], "pass")
+
     if failures:
         print("\n自测失败:")
         for f in failures:

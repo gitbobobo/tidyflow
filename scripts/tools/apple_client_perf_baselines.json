@@ -125,6 +125,185 @@
           "unit": "ms"
         }
       ]
+    },
+    {
+      "scenario_id": "terminal_output",
+      "description": "终端输出刷新性能（100 次 flush），由真实终端 fixture 产出独立证据",
+      "surface_id": "terminal_output",
+      "required_evidence_keys": [
+        "terminal_flush_event=terminal_output_flush",
+        "memory_snapshot_key=memory_snapshot"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "terminal_flush_event=terminal_output_flush",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context",
+            "term_id"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "metric_id": "terminalOutputFlush_p95_ms",
+          "description": "终端输出刷新 P95 耗时（毫秒），从 terminalOutputFlush 日志中提取 duration_ms",
+          "log_pattern": "perf terminalOutputFlush",
+          "value_key": "duration_ms",
+          "warn_limit": 50.0,
+          "fail_limit": 200.0,
+          "unit": "ms"
+        }
+      ]
+    },
+    {
+      "scenario_id": "terminal_output_multi_workspace",
+      "description": "终端输出刷新多工作区场景（3 个工作区，各 30 轮 flush），必须由真实 fixture 产出独立证据",
+      "surface_id": "terminal_output",
+      "required_evidence_keys": [
+        "terminal_flush_event=terminal_output_flush",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=terminal_multi_workspace_sample"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "terminal_flush_event=terminal_output_flush",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context",
+            "term_id"
+          ]
+        },
+        {
+          "event_key": "multi_workspace_event=terminal_multi_workspace_sample",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context",
+            "term_id"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "metric_id": "terminalOutputFlush_p95_ms",
+          "description": "终端输出刷新 P95 耗时，多工作区场景",
+          "log_pattern": "perf terminalOutputFlush",
+          "value_key": "duration_ms",
+          "warn_limit": 60.0,
+          "fail_limit": 250.0,
+          "unit": "ms"
+        }
+      ]
+    },
+    {
+      "scenario_id": "git_panel",
+      "description": "Git 面板投影重算性能（50 轮重算），由真实 Git 面板 fixture 产出独立证据",
+      "surface_id": "git_panel",
+      "required_evidence_keys": [
+        "git_panel_projection_event=git_panel_projection",
+        "memory_snapshot_key=memory_snapshot"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "git_panel_projection_event=git_panel_projection",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context"
+          ]
+        },
+        {
+          "event_key": "perf gitPanelProjection",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "workspace_context",
+            "staged_count",
+            "unstaged_count",
+            "untracked_count",
+            "item_count"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "metric_id": "gitPanelProjection_p95_ms",
+          "description": "Git 面板投影重算 P95 耗时（毫秒），从 gitPanelProjection 日志中提取 duration_ms",
+          "log_pattern": "perf gitPanelProjection",
+          "value_key": "duration_ms",
+          "warn_limit": 50.0,
+          "fail_limit": 200.0,
+          "unit": "ms"
+        }
+      ]
+    },
+    {
+      "scenario_id": "git_panel_multi_workspace",
+      "description": "Git 面板投影重算多工作区场景（3 个工作区，各 30 轮重算），必须由真实 fixture 产出独立证据",
+      "surface_id": "git_panel",
+      "required_evidence_keys": [
+        "git_panel_projection_event=git_panel_projection",
+        "memory_snapshot_key=memory_snapshot",
+        "multi_workspace_event=git_panel_multi_workspace_sample"
+      ],
+      "required_event_fields": [
+        {
+          "event_key": "git_panel_projection_event=git_panel_projection",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context"
+          ]
+        },
+        {
+          "event_key": "multi_workspace_event=git_panel_multi_workspace_sample",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "surface",
+            "workspace_context"
+          ]
+        },
+        {
+          "event_key": "perf gitPanelProjection",
+          "fields": [
+            "project",
+            "workspace",
+            "scenario",
+            "workspace_context",
+            "staged_count",
+            "unstaged_count",
+            "untracked_count",
+            "item_count"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "metric_id": "gitPanelProjection_p95_ms",
+          "description": "Git 面板投影重算 P95 耗时，多工作区场景",
+          "log_pattern": "perf gitPanelProjection",
+          "value_key": "duration_ms",
+          "warn_limit": 60.0,
+          "fail_limit": 250.0,
+          "unit": "ms"
+        }
+      ]
     }
   ]
 }
