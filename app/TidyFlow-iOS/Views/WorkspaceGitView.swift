@@ -7,6 +7,7 @@ struct WorkspaceGitView: View {
     let workspace: String
 
     @State private var projectionStore = GitWorkspaceProjectionStore()
+    @StateObject private var perfFixtureRunner = GitPanelPerfFixtureRunner()
     @State private var commitMessage: String = ""
     @State private var showBranchList: Bool = false
     @State private var showDiscardAllConfirm: Bool = false
@@ -33,6 +34,10 @@ struct WorkspaceGitView: View {
             isStageAllInFlight: false,
             hasResolvedStatus: true
         )
+    }
+
+    private var perfFixtureScenario: GitPanelPerfFixtureScenario? {
+        GitPanelPerfFixtureScenario.current()
     }
 
     /// 检测当前工作区或集成工作树是否有未解决冲突
@@ -143,8 +148,35 @@ struct WorkspaceGitView: View {
             projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
         }
+        .onDisappear {
+            perfFixtureRunner.cancel()
+        }
         .refreshable {
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
+        }
+        .accessibilityIdentifier("tf.ios.git.panel")
+        .overlay(alignment: .topLeading) {
+            if perfFixtureScenario != nil {
+                ZStack(alignment: .topLeading) {
+                    Text("fixture \(perfFixtureRunner.statusText)")
+                        .font(.caption2.monospaced())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityIdentifier("tf.perf.git.status")
+                    if perfFixtureRunner.isCompleted {
+                        Text("fixture completed")
+                            .font(.caption2)
+                            .opacity(0.01)
+                            .accessibilityIdentifier("tf.perf.git.completed")
+                    }
+                }
+                .padding(12)
+            }
+        }
+        .task(id: perfFixtureScenario?.id) {
+            guard perfFixtureScenario != nil else { return }
+            perfFixtureRunner.run(perfReporter: appState.perfReporter)
         }
     }
 

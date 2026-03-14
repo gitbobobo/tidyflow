@@ -556,7 +556,7 @@ final class MobileAppState: ObservableObject {
         if Self.uiTestModeEnabled {
             ConnectionStorage.clear()
             hasSavedConnection = false
-            if EvolutionPerfFixtureScenario.current() != nil || AIChatPerfFixtureScenario.current() != nil {
+            if EvolutionPerfFixtureScenario.current() != nil || AIChatPerfFixtureScenario.current() != nil || TerminalPerfFixtureScenario.current() != nil || GitPanelPerfFixtureScenario.current() != nil {
                 connectionPhase = .connected
                 connectionMessage = "ui_test_perf_fixture"
             }
@@ -5070,7 +5070,14 @@ final class MobileAppState: ObservableObject {
 
         guard shouldRender else { return }
         if let sink = terminalSink {
+            let startedAt = Date()
             sink.writeOutput(bytes)
+            recordTerminalOutputFlush(
+                termId: termId,
+                byteCount: bytes.count,
+                pendingChunkCount: pendingOutputChunks.count,
+                startedAt: startedAt
+            )
             return
         }
 
@@ -5087,9 +5094,46 @@ final class MobileAppState: ObservableObject {
 
         let chunks = pendingOutputChunks
         pendingOutputChunks.removeAll()
+        let startedAt = Date()
+        var totalBytes = 0
         for chunk in chunks {
+            totalBytes += chunk.count
             sink.writeOutput(chunk)
         }
+        recordTerminalOutputFlush(
+            termId: currentTermId,
+            byteCount: totalBytes,
+            pendingChunkCount: 0,
+            startedAt: startedAt
+        )
+    }
+
+    private func recordTerminalOutputFlush(
+        termId: String,
+        byteCount: Int,
+        pendingChunkCount: Int,
+        startedAt: Date
+    ) {
+        guard !termId.isEmpty else { return }
+        let costMs = Date().timeIntervalSince(startedAt) * 1000
+        let info = terminalSessionStore.displayInfo(for: termId)
+        let project = info?.project ?? selectedProjectName
+        let workspace = info?.workspace ?? selectedWorkspaceName
+        TFLog.logPerfSample(
+            event: TFPerformanceEvent.terminalOutputFlush.rawValue,
+            durationMs: costMs,
+            project: project,
+            workspace: workspace,
+            surface: "terminal_output",
+            scenario: "terminal_output",
+            extra: [
+                "bytes": "\(byteCount)",
+                "pending_chunks": "\(pendingChunkCount)",
+                "term_id": termId,
+                "workspace_context": "terminal_output:project=\(project):workspace=\(workspace):term_id=\(termId)"
+            ]
+        )
+        perfReporter.record(event: .terminalOutputFlush, durationMs: costMs)
     }
 
     private func consumeCtrlIfNeeded(for data: String) -> String {

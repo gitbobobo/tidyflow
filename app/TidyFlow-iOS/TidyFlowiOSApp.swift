@@ -39,9 +39,17 @@ struct TidyFlowiOSApp: App {
     private enum PerfFixtureLaunchDestination {
         case aiChat(AIChatPerfFixtureScenario)
         case evolution(EvolutionPerfFixtureScenario)
+        case terminal(TerminalPerfFixtureScenario)
+        case gitPanel(GitPanelPerfFixtureScenario)
     }
 
     private var perfFixtureLaunchDestination: PerfFixtureLaunchDestination? {
+        if let terminalScenario = TerminalPerfFixtureScenario.current() {
+            return .terminal(terminalScenario)
+        }
+        if let gitScenario = GitPanelPerfFixtureScenario.current() {
+            return .gitPanel(gitScenario)
+        }
         if let evolutionPerfFixtureScenario {
             return .evolution(evolutionPerfFixtureScenario)
         }
@@ -137,6 +145,21 @@ struct TidyFlowiOSApp: App {
     private var rootView: some View {
         if let destination = perfFixtureLaunchDestination {
             switch destination {
+            case .terminal(let terminalScenario):
+                // 终端输出性能 fixture：直接进入终端页，绕过连接页。
+                MobileTerminalView(
+                    project: terminalScenario.project,
+                    workspace: terminalScenario.workspace,
+                    termId: terminalScenario.termId
+                )
+                .environmentObject(appState)
+            case .gitPanel(let gitScenario):
+                // Git 面板性能 fixture：直接进入 Git 面板，绕过连接页。
+                WorkspaceGitView(
+                    project: gitScenario.project,
+                    workspace: gitScenario.workspace
+                )
+                .environmentObject(appState)
             case .evolution(let evolutionScenario):
                 // Evolution 面板性能 fixture：直接进入 MobileEvolutionView，绕过连接页。
                 // 支持基础场景 evolution_panel 与多工作区场景 evolution_panel_multi_workspace。

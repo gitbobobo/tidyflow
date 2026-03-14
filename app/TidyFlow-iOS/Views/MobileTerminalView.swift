@@ -13,6 +13,11 @@ struct MobileTerminalView: View {
     var commandIcon: String? = nil
     /// 命令名称（用于终端列表展示）
     var commandName: String? = nil
+    @StateObject private var perfFixtureRunner = TerminalPerfFixtureRunner()
+
+    private var perfFixtureScenario: TerminalPerfFixtureScenario? {
+        TerminalPerfFixtureScenario.current()
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -71,8 +76,32 @@ struct MobileTerminalView: View {
             }
         }
         .onDisappear {
+            perfFixtureRunner.cancel()
             appState.detachTerminal()
         }
         .accessibilityIdentifier("tf.ios.terminal.container")
+        .overlay(alignment: .topLeading) {
+            if perfFixtureScenario != nil {
+                ZStack(alignment: .topLeading) {
+                    Text("fixture \(perfFixtureRunner.statusText)")
+                        .font(.caption2.monospaced())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityIdentifier("tf.perf.terminal.status")
+                    if perfFixtureRunner.isCompleted {
+                        Text("fixture completed")
+                            .font(.caption2)
+                            .opacity(0.01)
+                            .accessibilityIdentifier("tf.perf.terminal.completed")
+                    }
+                }
+                .padding(12)
+            }
+        }
+        .task(id: perfFixtureScenario?.id) {
+            guard perfFixtureScenario != nil else { return }
+            perfFixtureRunner.run(perfReporter: appState.perfReporter)
+        }
     }
 }
