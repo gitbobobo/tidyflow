@@ -306,7 +306,7 @@ final class MobileAppState: ObservableObject {
     private var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
-    @Published var evolutionPendingActionByWorkspace: [String: String] = [:]
+    @Published var evolutionPendingActionByWorkspace: [String: EvolutionPendingActionState] = [:]
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     var evidenceReadRequestByWorkspace: [String: MobileEvidenceReadRequestState] = [:]
 
@@ -497,7 +497,21 @@ final class MobileAppState: ObservableObject {
     /// 设置当前工作区上下文（从 WorkspaceDetailView / 终端页进入时调用）。
     /// 集中管理选中态更新，同步驱动共享状态机，避免在视图层各自反推。
     func selectWorkspaceContext(project: String, workspace: String) {
-        let isSwitch = selectedProjectName != project || selectedWorkspaceName != workspace
+        let previousContext: SharedWorkspaceContext? = {
+            guard !selectedProjectName.isEmpty, !selectedWorkspaceName.isEmpty else { return nil }
+            return SharedWorkspaceContext(
+                projectName: selectedProjectName,
+                workspaceName: selectedWorkspaceName,
+                globalKey: globalWorkspaceKey(project: selectedProjectName, workspace: selectedWorkspaceName)
+            )
+        }()
+        let newContext = SharedWorkspaceContext(
+            projectName: project,
+            workspaceName: workspace,
+            globalKey: globalWorkspaceKey(project: project, workspace: workspace)
+        )
+        let transition = SharedWorkspaceStateDriver.computeTransition(from: previousContext, to: newContext)
+
         selectedProjectName = project
         selectedWorkspaceName = workspace
         workspaceViewStateMachine.apply(.select(
@@ -505,12 +519,13 @@ final class MobileAppState: ObservableObject {
             workspaceName: workspace,
             projectId: nil  // iOS 不携带 UUID
         ))
-        // 工作区切换时强制重置 AI 聊天舞台，防止旧工作区的 active/resuming 投影到新上下文
-        if isSwitch {
-            forceResetAIChatStage()
-            // 工作区切换时清理旧终端生命周期投影，防止旧终端事件污染新上下文
-            terminalSessionStore.forceResetAllLifecycles()
-            // 清理旧工作区的 AI 上下文投影残留
+        if transition.isContextChanged {
+            if transition.shouldResetAIChatStage {
+                forceResetAIChatStage()
+            }
+            if transition.shouldResetTerminalLifecycle {
+                terminalSessionStore.forceResetAllLifecycles()
+            }
             cleanupOldAIContextProjection()
         }
     }
@@ -1022,16 +1037,25 @@ final class MobileAppState: ObservableObject {
     }
 
     func requestEvolutionPlanDocument(project: String, workspace: String, cycleID: String) {
-        guard isConnected else {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let context = SharedWorkspaceContext(
+            projectName: project,
+            workspaceName: normalizedWorkspace,
+            globalKey: globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        )
+        guard let descriptor = SharedWorkspaceStateDriver.makeEvolutionPlanDocumentRequest(
+            context: context,
+            isConnectionReady: isConnected,
+            cycleID: cycleID
+        ) else {
             evolutionPlanDocumentError = "连接已断开"
             return
         }
-        let path = ".tidyflow/evolution/\(cycleID)/plan.md"
         evolutionPlanDocumentContent = nil
         evolutionPlanDocumentLoading = true
         evolutionPlanDocumentError = nil
-        pendingPlanDocumentReadPath = path
-        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+        pendingPlanDocumentReadPath = descriptor.path
+        wsClient.requestFileRead(project: descriptor.projectName, workspace: descriptor.workspaceName, path: descriptor.path)
     }
 
     func requestEvolutionCycleHistory(project: String, workspace: String) {
@@ -1599,7 +1623,10 @@ final class MobileAppState: ObservableObject {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        evolutionPendingActionByWorkspace[key] = "start"
+        evolutionPendingActionByWorkspace[key] = EvolutionPendingActionState(
+            action: .start,
+            requestedLoopRoundLimit: loopRoundLimit
+        )
         let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
         wsClient.requestEvoStartWorkspace(
             project: project,
@@ -1727,7 +1754,7 @@ final class MobileAppState: ObservableObject {
     func resumeEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        evolutionPendingActionByWorkspace[key] = "resume"
+        evolutionPendingActionByWorkspace[key] = EvolutionPendingActionState(action: .resume)
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
@@ -1791,77 +1818,17 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    func evolutionControlState(project: String, workspace: String) -> (
-        canStart: Bool,
-        canStop: Bool,
-        canResume: Bool,
-        isStartPending: Bool,
-        isStopPending: Bool,
-        isResumePending: Bool
-    ) {
+    /// 统一的 Evolution 控制能力推导，替代旧版元组 `evolutionControlState`。
+    /// 与 macOS `AppState.evolutionControlCapability` 使用同一套共享规则。
+    func evolutionControlCapability(project: String, workspace: String) -> EvolutionControlCapability {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        if let pendingAction = evolutionPendingActionByWorkspace[key] {
-            return (
-                canStart: false,
-                canStop: false,
-                canResume: false,
-                isStartPending: pendingAction == "start",
-                isStopPending: pendingAction == "stop",
-                isResumePending: pendingAction == "resume"
-            )
-        }
-
-        let status = Self.normalizedEvolutionControlStatus(
-            evolutionItem(project: project, workspace: normalizedWorkspace)?.status
+        let currentStatus = evolutionItem(project: project, workspace: normalizedWorkspace)?.status
+        return EvolutionControlCapability.evaluate(
+            workspaceReady: true,
+            currentStatus: currentStatus,
+            pendingAction: evolutionPendingActionByWorkspace[key]
         )
-        switch status {
-        case nil:
-            return (
-                canStart: true,
-                canStop: false,
-                canResume: false,
-                isStartPending: false,
-                isStopPending: false,
-                isResumePending: false
-            )
-        case "queued", "running":
-            return (
-                canStart: false,
-                canStop: true,
-                canResume: false,
-                isStartPending: false,
-                isStopPending: false,
-                isResumePending: false
-            )
-        case "interrupted", "stopped":
-            return (
-                canStart: false,
-                canStop: false,
-                canResume: true,
-                isStartPending: false,
-                isStopPending: false,
-                isResumePending: false
-            )
-        case "completed", "failed_exhausted", "failed_system":
-            return (
-                canStart: true,
-                canStop: false,
-                canResume: false,
-                isStartPending: false,
-                isStopPending: false,
-                isResumePending: false
-            )
-        default:
-            return (
-                canStart: false,
-                canStop: false,
-                canResume: false,
-                isStartPending: false,
-                isStopPending: false,
-                isResumePending: false
-            )
-        }
     }
 
     func requestEvidenceSnapshot(project: String, workspace: String) {
@@ -4649,10 +4616,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onCoordinatorSnapshot = { [weak self] payload in
             DispatchQueue.main.async {
                 guard let self else { return }
-                let id = payload.workspaceId
-                let existing = self.coordinatorStateCache.state(for: id)
-                let updated = payload.toWorkspaceCoordinatorState(existing: existing)
-                self.coordinatorStateCache.apply(.updateWorkspace(updated))
+                CoordinatorSnapshotApplier.apply(payload: payload, cache: self.coordinatorStateCache)
             }
         }
     }

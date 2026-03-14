@@ -25,6 +25,10 @@
 		SHR02010 /* CoordinatorProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01012 /* CoordinatorProtocolModels.swift */; };
 		SHR02014 /* EvolutionPerformanceProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01014 /* EvolutionPerformanceProjection.swift */; };
 		SHR02011 /* CoordinatorStateCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01013 /* CoordinatorStateCache.swift */; };
+		SHR02015 /* SharedWorkspaceStateDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01015 /* SharedWorkspaceStateDriver.swift */; };
+		SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01016 /* CoordinatorSnapshotApplier.swift */; };
+		SHR02017 /* EvolutionControlSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01017 /* EvolutionControlSemantics.swift */; };
+		CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */; };
 		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
 		CCST0001 /* CoordinatorStateCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCST0011 /* CoordinatorStateCacheTests.swift */; };
 		WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WPBT0011 /* WorkspaceProjectionBridgeTests.swift */; };
@@ -357,6 +361,10 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01012 /* CoordinatorProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorProtocolModels.swift; sourceTree = "<group>"; };
 		SHR01014 /* EvolutionPerformanceProjection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionPerformanceProjection.swift; sourceTree = "<group>"; };
 		SHR01013 /* CoordinatorStateCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCache.swift; sourceTree = "<group>"; };
+		SHR01015 /* SharedWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedWorkspaceStateDriver.swift; sourceTree = "<group>"; };
+		SHR01016 /* CoordinatorSnapshotApplier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorSnapshotApplier.swift; sourceTree = "<group>"; };
+		SHR01017 /* EvolutionControlSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionControlSemantics.swift; sourceTree = "<group>"; };
+		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
 		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
 		CCST0011 /* CoordinatorStateCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCacheTests.swift; sourceTree = "<group>"; };
 		WPBT0011 /* WorkspaceProjectionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceProjectionBridgeTests.swift; sourceTree = "<group>"; };
@@ -668,6 +676,9 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01010 /* WorkspaceOverviewProjection.swift */,
 				SHR01013 /* CoordinatorStateCache.swift */,
 				PDMS0001 /* PerformanceDashboardModels.swift */,
+				SHR01015 /* SharedWorkspaceStateDriver.swift */,
+				SHR01016 /* CoordinatorSnapshotApplier.swift */,
+				SHR01017 /* EvolutionControlSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -921,6 +932,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				SHR0100B /* SharedNetworkAbstractionTests.swift */,
 				WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */,
 				CCST0011 /* CoordinatorStateCacheTests.swift */,
+				CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */,
 				WPBT0011 /* WorkspaceProjectionBridgeTests.swift */,
 				TSAC0011 /* AIChatStreamCoalescerTests.swift */,
 				TSMS0011 /* StreamingMarkdownRenderSchedulerTests.swift */,
@@ -1516,6 +1528,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */,
 				WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */,
 				CCST0001 /* CoordinatorStateCacheTests.swift in Sources */,
+				CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */,
 				WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */,
 				TSAC0001 /* AIChatStreamCoalescerTests.swift in Sources */,
 				TSMS0001 /* StreamingMarkdownRenderSchedulerTests.swift in Sources */,
@@ -1557,6 +1570,9 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02014 /* EvolutionPerformanceProjection.swift in Sources */,
 				PDMS0002 /* PerformanceDashboardModels.swift in Sources */,
 				SHR02011 /* CoordinatorStateCache.swift in Sources */,
+				SHR02015 /* SharedWorkspaceStateDriver.swift in Sources */,
+				SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */,
+				SHR02017 /* EvolutionControlSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

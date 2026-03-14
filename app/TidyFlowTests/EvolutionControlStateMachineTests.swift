@@ -1,5 +1,5 @@
 import XCTest
-@testable import TidyFlow
+@testable import TidyFlowShared
 
 final class EvolutionControlStateMachineTests: XCTestCase {
     func testNoCurrentItemOnlyCanStart() {
@@ -110,5 +110,62 @@ final class EvolutionControlStateMachineTests: XCTestCase {
                 currentStatus: "running"
             )
         )
+    }
+
+    // MARK: - pending 超时行为
+
+    func testPendingActionBlocksWithin30Seconds() {
+        let pending = EvolutionPendingActionState(action: .start, requestedAt: Date())
+        let capability = EvolutionControlCapability.evaluate(
+            workspaceReady: true,
+            currentStatus: "completed",
+            pendingAction: pending
+        )
+        XCTAssertFalse(capability.canStart)
+        XCTAssertTrue(capability.isStartPending)
+    }
+
+    func testPendingActionExpiredAfter30Seconds() {
+        let expiredDate = Date().addingTimeInterval(-31)
+        let pending = EvolutionPendingActionState(action: .start, requestedAt: expiredDate)
+        let capability = EvolutionControlCapability.evaluate(
+            workspaceReady: true,
+            currentStatus: "completed",
+            pendingAction: pending
+        )
+        // 超时后跌回正常状态求值：completed → canStart
+        XCTAssertTrue(capability.canStart)
+        XCTAssertFalse(capability.isStartPending)
+    }
+
+    func testShouldClearPendingActionOnTimeout() {
+        let expiredDate = Date().addingTimeInterval(-31)
+        let pending = EvolutionPendingActionState(action: .stop, requestedAt: expiredDate)
+        XCTAssertTrue(
+            EvolutionControlCapability.shouldClearPendingAction(pending, currentStatus: "running")
+        )
+    }
+
+    // MARK: - 工作区未就绪
+
+    func testWorkspaceNotReadyDisablesAll() {
+        let capability = EvolutionControlCapability.evaluate(
+            workspaceReady: false,
+            currentStatus: "running",
+            pendingAction: nil
+        )
+        XCTAssertFalse(capability.canStart)
+        XCTAssertFalse(capability.canStop)
+        XCTAssertFalse(capability.canResume)
+        XCTAssertNotNil(capability.startReason)
+    }
+
+    // MARK: - normalizedStatus
+
+    func testNormalizedStatusTrimsAndLowercases() {
+        XCTAssertEqual(EvolutionControlCapability.normalizedStatus("  RUNNING  "), "running")
+        XCTAssertNil(EvolutionControlCapability.normalizedStatus(nil))
+        XCTAssertNil(EvolutionControlCapability.normalizedStatus(""))
+        XCTAssertNil(EvolutionControlCapability.normalizedStatus("   "))
     }
 }

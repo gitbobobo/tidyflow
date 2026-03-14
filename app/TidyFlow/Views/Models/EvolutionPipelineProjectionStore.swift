@@ -195,7 +195,6 @@ struct EvolutionControlProjection: Equatable {
         resumeReason: nil
     )
 
-#if os(macOS)
     init(_ capability: EvolutionControlCapability) {
         canStart = capability.canStart
         canStop = capability.canStop
@@ -207,7 +206,6 @@ struct EvolutionControlProjection: Equatable {
         stopReason = capability.stopReason
         resumeReason = capability.resumeReason
     }
-#endif
 
     init(
         canStart: Bool,
@@ -480,7 +478,7 @@ enum EvolutionPipelineProjectionSemantics {
     ) -> EvolutionPipelineProjection {
         let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace)
         let workspaceKey = appState.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
-        let controlState = appState.evolutionControlState(project: project, workspace: workspace)
+        let controlCapability = appState.evolutionControlCapability(project: project, workspace: workspace)
         let currentItem = appState.evolutionItem(project: project, workspace: workspace)
         let hotData = precomputeHotData(currentItem: currentItem)
 
@@ -490,14 +488,7 @@ enum EvolutionPipelineProjectionSemantics {
             workspaceReady: true,
             workspaceContextKey: "\(project)/\(normalizedWorkspace)",
             scheduler: appState.evolutionScheduler,
-            control: EvolutionControlProjection(
-                canStart: controlState.canStart,
-                canStop: controlState.canStop,
-                canResume: controlState.canResume,
-                isStartPending: controlState.isStartPending,
-                isStopPending: controlState.isStopPending,
-                isResumePending: controlState.isResumePending
-            ),
+            control: EvolutionControlProjection(controlCapability),
             currentItem: currentItem,
             blockingRequest: activeBlockingRequest(
                 blocking: appState.evolutionBlockingRequired,
@@ -1153,19 +1144,12 @@ final class EvolutionPipelineProjectionStore {
         project: String,
         workspace: String
     ) -> SourceSnapshot {
-        let controlState = appState.evolutionControlState(project: project, workspace: workspace)
+        let controlCapability = appState.evolutionControlCapability(project: project, workspace: workspace)
         return SourceSnapshot(
             project: project,
             workspace: workspace,
             scheduler: appState.evolutionScheduler,
-            control: EvolutionControlProjection(
-                canStart: controlState.canStart,
-                canStop: controlState.canStop,
-                canResume: controlState.canResume,
-                isStartPending: controlState.isStartPending,
-                isStopPending: controlState.isStopPending,
-                isResumePending: controlState.isResumePending
-            ),
+            control: EvolutionControlProjection(controlCapability),
             currentItemSignature: appState.evolutionItem(project: project, workspace: workspace)?.projectionSignature,
             blockingSignature: blockingSignature(
                 EvolutionPipelineProjectionSemantics.activeBlockingRequest(

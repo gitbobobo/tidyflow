@@ -508,9 +508,12 @@ extension MobileAppState {
         if evolutionWorkspaceItems != items {
             evolutionWorkspaceItems = items
         }
-        for item in items where item.status != "interrupted" {
+        for item in items {
             let key = globalWorkspaceKey(project: item.project, workspace: normalizeEvolutionWorkspaceName(item.workspace))
-            evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            if let pendingAction = evolutionPendingActionByWorkspace[key],
+               EvolutionControlCapability.shouldClearPendingAction(pendingAction, currentStatus: item.status) {
+                evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            }
         }
     }
 
@@ -557,7 +560,8 @@ extension MobileAppState {
         if evolutionWorkspaceItems[existingIndex] != updated {
             evolutionWorkspaceItems[existingIndex] = updated
         }
-        if ev.status != "interrupted" {
+        if let pendingAction = evolutionPendingActionByWorkspace[key],
+           EvolutionControlCapability.shouldClearPendingAction(pendingAction, currentStatus: ev.status) {
             evolutionPendingActionByWorkspace.removeValue(forKey: key)
         }
     }
@@ -588,8 +592,15 @@ extension MobileAppState {
         if evolutionWorkspaceItems != items {
             evolutionWorkspaceItems = items
         }
-        for item in items where item.status != "interrupted" {
-            evolutionPendingActionByWorkspace.removeValue(forKey: item.workspaceKey)
+        for item in items {
+            let key = item.workspaceKey
+            if let pendingAction = evolutionPendingActionByWorkspace[key],
+               EvolutionControlCapability.shouldClearPendingAction(
+                pendingAction,
+                currentStatus: item.status
+            ) {
+                evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            }
         }
     }
 
@@ -654,11 +665,10 @@ extension MobileAppState {
         guard let pendingAction = evolutionPendingActionByWorkspace.removeValue(forKey: key) else {
             return
         }
-        if pendingAction == "start" {
+        if pendingAction.action == .start {
             let profiles = evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
-            let loopRoundLimit = max(
-                1,
-                evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
+            let loopRoundLimit = pendingAction.resolvedLoopRoundLimit(
+                fallback: evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
             )
             startEvolution(
                 project: ev.project,
@@ -668,7 +678,7 @@ extension MobileAppState {
             )
             return
         }
-        if pendingAction == "resume" {
+        if pendingAction.action == .resume {
             resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
         }
     }

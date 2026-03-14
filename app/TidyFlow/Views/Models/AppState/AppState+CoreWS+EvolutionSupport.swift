@@ -114,16 +114,24 @@ extension AppState {
 
     func requestEvolutionPlanDocument(project: String, workspace: String, cycleID: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        guard connectionState == .connected else {
+        let context = SharedWorkspaceContext(
+            projectName: project,
+            workspaceName: normalizedWorkspace,
+            globalKey: globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        )
+        guard let descriptor = SharedWorkspaceStateDriver.makeEvolutionPlanDocumentRequest(
+            context: context,
+            isConnectionReady: connectionState == .connected,
+            cycleID: cycleID
+        ) else {
             evolutionPlanDocumentError = "连接已断开"
             return
         }
-        let path = ".tidyflow/evolution/\(cycleID)/plan.md"
         evolutionPlanDocumentContent = nil
         evolutionPlanDocumentLoading = true
         evolutionPlanDocumentError = nil
-        pendingEvolutionPlanDocumentReadPath = path
-        wsClient.requestFileRead(project: project, workspace: normalizedWorkspace, path: path)
+        pendingEvolutionPlanDocumentReadPath = descriptor.path
+        wsClient.requestFileRead(project: descriptor.projectName, workspace: descriptor.workspaceName, path: descriptor.path)
     }
 
     // MARK: - Evidence
