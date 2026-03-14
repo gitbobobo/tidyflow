@@ -704,7 +704,7 @@ final class EditorStoreTests: XCTestCase {
         )
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.text, "let guard = 1")
-        XCTAssertEqual(result?.selection.location, 9) // "let guard".count
+        XCTAssertEqual(result?.selections.primarySnapshot.location, 9) // "let guard".count
     }
 
     func testMigrateDocumentRuntimeStateClearsAutocomplete() {
@@ -791,7 +791,7 @@ final class EditorStoreTests: XCTestCase {
         )
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.text, "let myVar = 1\nguard", "零长度范围应为纯插入")
-        XCTAssertEqual(result?.selection.location, 19) // 14 + "guard".count
+        XCTAssertEqual(result?.selections.primarySnapshot.location, 19) // 14 + "guard".count
     }
 }
 #endif
