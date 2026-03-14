@@ -296,7 +296,9 @@ final class PerformanceObservabilitySemanticsTests: XCTestCase {
             fileTreeExpandP95: 300,
             aiSessionListP95: 400,
             messageFlushP95: 500,
-            evidencePageAppendP95: 600
+            evidencePageAppendP95: 600,
+            terminalOutputFlushP95: 700,
+            gitPanelProjectionP95: 800
         )
         let r = try JSONDecoder().decode(ClientPerformanceReport.self, from: json)
         XCTAssertEqual(r.workspaceSwitch.p95Ms, 100, "workspace_switch → workspaceSwitch")
@@ -305,6 +307,45 @@ final class PerformanceObservabilitySemanticsTests: XCTestCase {
         XCTAssertEqual(r.aiSessionListRequest.p95Ms, 400, "ai_session_list_request → aiSessionListRequest")
         XCTAssertEqual(r.aiMessageTailFlush.p95Ms, 500, "ai_message_tail_flush → aiMessageTailFlush")
         XCTAssertEqual(r.evidencePageAppend.p95Ms, 600, "evidence_page_append → evidencePageAppend")
+        XCTAssertEqual(r.terminalOutputFlush.p95Ms, 700, "terminal_output_flush → terminalOutputFlush")
+        XCTAssertEqual(r.gitPanelProjection.p95Ms, 800, "git_panel_projection → gitPanelProjection")
+    }
+
+    func testClientPerformanceReport_decodesTerminalAndGitFields() throws {
+        let json = makeClientReportJSON(
+            clientInstanceId: "inst-tg-001",
+            platform: "macos",
+            project: "proj_tg",
+            workspace: "ws_tg",
+            terminalOutputFlushP95: 120,
+            gitPanelProjectionP95: 180
+        )
+        let report = try JSONDecoder().decode(ClientPerformanceReport.self, from: json)
+        XCTAssertEqual(report.terminalOutputFlush.p95Ms, 120, "terminal_output_flush.p95_ms 映射")
+        XCTAssertEqual(report.gitPanelProjection.p95Ms, 180, "git_panel_projection.p95_ms 映射")
+    }
+
+    func testClientPerformanceReport_decodesWithMissingTerminalAndGitFields() throws {
+        // 旧客户端不发送 terminal_output_flush / git_panel_projection 时应默认为零值
+        let str = """
+        {
+            "client_instance_id": "inst-old",
+            "platform": "macos",
+            "project": "p",
+            "workspace": "w",
+            "memory": {"current_bytes":0,"peak_bytes":0,"delta_from_baseline_bytes":0,"sample_count":0},
+            "workspace_switch": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "file_tree_request": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "file_tree_expand": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "ai_session_list_request": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "ai_message_tail_flush": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "evidence_page_append": {"last_ms":0,"avg_ms":0,"p95_ms":0,"max_ms":0,"sample_count":0,"window_size":128},
+            "reported_at": 0
+        }
+        """
+        let report = try JSONDecoder().decode(ClientPerformanceReport.self, from: str.utf8Data)
+        XCTAssertEqual(report.terminalOutputFlush.p95Ms, 0, "缺失 terminal_output_flush 时默认 p95=0")
+        XCTAssertEqual(report.gitPanelProjection.p95Ms, 0, "缺失 git_panel_projection 时默认 p95=0")
     }
 
     // MARK: - 私有辅助方法
@@ -319,7 +360,9 @@ final class PerformanceObservabilitySemanticsTests: XCTestCase {
         fileTreeExpandP95: UInt64 = 0,
         aiSessionListP95: UInt64 = 0,
         messageFlushP95: UInt64 = 0,
-        evidencePageAppendP95: UInt64 = 0
+        evidencePageAppendP95: UInt64 = 0,
+        terminalOutputFlushP95: UInt64 = 0,
+        gitPanelProjectionP95: UInt64 = 0
     ) -> Data {
         let latency = { (p95: UInt64) -> String in
             """
@@ -339,6 +382,8 @@ final class PerformanceObservabilitySemanticsTests: XCTestCase {
             "ai_session_list_request": \(latency(aiSessionListP95)),
             "ai_message_tail_flush": \(latency(messageFlushP95)),
             "evidence_page_append": \(latency(evidencePageAppendP95)),
+            "terminal_output_flush": \(latency(terminalOutputFlushP95)),
+            "git_panel_projection": \(latency(gitPanelProjectionP95)),
             "reported_at": 0
         }
         """

@@ -27,6 +27,8 @@ final class SystemHealthSemanticsTests: XCTestCase {
             (.memoryGrowthUnbounded, "memory_growth_unbounded"),
             (.queueBackpressureHigh, "queue_backpressure_high"),
             (.crossLayerLatencyMismatch, "cross_layer_latency_mismatch"),
+            (.terminalOutputFlushLatencyHigh, "terminal_output_flush_latency_high"),
+            (.gitPanelProjectionLatencyHigh, "git_panel_projection_latency_high"),
         ]
         for (reason, raw) in cases {
             XCTAssertEqual(reason.rawValue, raw, "\(reason) 的 rawValue 应为 \(raw)")
@@ -34,9 +36,9 @@ final class SystemHealthSemanticsTests: XCTestCase {
     }
 
     func testPerformanceDiagnosisReason_allCases_count() {
-        // 协议定义了 10 个原因码，枚举应完整
-        XCTAssertEqual(PerformanceDiagnosisReason.allCases.count, 10,
-                       "PerformanceDiagnosisReason 应包含 10 个 case")
+        // 协议定义了 12 个原因码，枚举应完整（含终端/Git 面板热点）
+        XCTAssertEqual(PerformanceDiagnosisReason.allCases.count, 12,
+                       "PerformanceDiagnosisReason 应包含 12 个 case")
     }
 
     func testPerformanceDiagnosisReason_decodesFromSnakeCaseJSON() throws {
@@ -49,6 +51,18 @@ final class SystemHealthSemanticsTests: XCTestCase {
         let json = "\"cross_layer_latency_mismatch\"".utf8Data
         let reason = try JSONDecoder().decode(PerformanceDiagnosisReason.self, from: json)
         XCTAssertEqual(reason, .crossLayerLatencyMismatch)
+    }
+
+    func testPerformanceDiagnosisReason_terminalOutputFlushLatencyHigh_decodes() throws {
+        let json = "\"terminal_output_flush_latency_high\"".utf8Data
+        let reason = try JSONDecoder().decode(PerformanceDiagnosisReason.self, from: json)
+        XCTAssertEqual(reason, .terminalOutputFlushLatencyHigh)
+    }
+
+    func testPerformanceDiagnosisReason_gitPanelProjectionLatencyHigh_decodes() throws {
+        let json = "\"git_panel_projection_latency_high\"".utf8Data
+        let reason = try JSONDecoder().decode(PerformanceDiagnosisReason.self, from: json)
+        XCTAssertEqual(reason, .gitPanelProjectionLatencyHigh)
     }
 
     // MARK: - PerformanceDiagnosisSeverity 严重度排序

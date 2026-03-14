@@ -139,6 +139,7 @@ final class EvolutionPerformanceOnlyUpdateTests: XCTestCase {
 // MARK: - 定向 Snapshot 语义
 
 /// 验证 requestEvolutionSnapshot 接收 project/workspace 参数后正确发送过滤请求
+#if os(macOS)
 final class EvolutionDirectedSnapshotSemanticsTests: XCTestCase {
     func testDirectedSnapshot_sendsProjectAndWorkspaceParams() {
         let appState = AppState()
@@ -181,6 +182,7 @@ final class EvolutionDirectedSnapshotSemanticsTests: XCTestCase {
         appState.requestEvolutionSnapshot(project: "proj-2", workspace: "ws-2")
     }
 }
+#endif
 
 // MARK: - 多工作区隔离
 
@@ -292,6 +294,7 @@ final class EvolutionMultiWorkspaceIsolationTests: XCTestCase {
     }
 
     /// 监控 key 应在切换工作区时更新
+#if os(macOS)
     func testMonitorKeyIsolation_stopOldBeforeStartNew() {
         let appState = AppState()
         defer {
@@ -325,6 +328,7 @@ final class EvolutionMultiWorkspaceIsolationTests: XCTestCase {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { exp.fulfill() }
         wait(for: [exp], timeout: 1.0)
     }
+#endif
 
     // MARK: - 辅助
 
