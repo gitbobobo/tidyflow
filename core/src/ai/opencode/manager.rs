@@ -7,8 +7,11 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 
 const HEALTH_CHECK_INTERVAL_MS: u64 = 100;
-const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 100;
-const HEALTH_CHECK_TIMEOUT_MS: u64 = HEALTH_CHECK_INTERVAL_MS * MAX_HEALTH_CHECK_ATTEMPTS as u64;
+const HEALTH_CHECK_REQUEST_TIMEOUT_MS: u64 = 100;
+const MAX_HEALTH_CHECK_ATTEMPTS: u32 = 30;
+const HEALTH_CHECK_TIMEOUT_MS: u64 =
+    (HEALTH_CHECK_REQUEST_TIMEOUT_MS * 2 * MAX_HEALTH_CHECK_ATTEMPTS as u64)
+        + (HEALTH_CHECK_INTERVAL_MS * (MAX_HEALTH_CHECK_ATTEMPTS.saturating_sub(1) as u64));
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS: u64 = 5000;
 const HEALTH_CHECK_SUCCESS_CACHE_MS: u64 = 1000;
 
@@ -171,18 +174,21 @@ impl OpenCodeManager {
             format!("{}/health", self.base_url),
         ];
         let client = reqwest::Client::new();
+        let should_retry = self.is_running().await;
+        let max_attempts = if should_retry {
+            MAX_HEALTH_CHECK_ATTEMPTS
+        } else {
+            1
+        };
 
-        for attempt in 1..=MAX_HEALTH_CHECK_ATTEMPTS {
-            debug!(
-                "Health check attempt {}/{}",
-                attempt, MAX_HEALTH_CHECK_ATTEMPTS
-            );
+        for attempt in 1..=max_attempts {
+            debug!("Health check attempt {}/{}", attempt, max_attempts);
 
             let mut ok = false;
             for url in health_urls.iter() {
                 match client
                     .get(url)
-                    .timeout(Duration::from_millis(500))
+                    .timeout(Duration::from_millis(HEALTH_CHECK_REQUEST_TIMEOUT_MS))
                     .send()
                     .await
                 {
@@ -223,18 +229,19 @@ impl OpenCodeManager {
                 }
             }
 
-            if attempt < MAX_HEALTH_CHECK_ATTEMPTS {
+            if attempt < max_attempts {
                 tokio::time::sleep(Duration::from_millis(HEALTH_CHECK_INTERVAL_MS)).await;
             }
         }
 
-        error!(
-            "Health check failed after {} attempts",
-            MAX_HEALTH_CHECK_ATTEMPTS
-        );
+        error!("Health check failed after {} attempts", max_attempts);
         Err(format!(
             "Health check timed out after {}ms",
-            HEALTH_CHECK_TIMEOUT_MS
+            if should_retry {
+                HEALTH_CHECK_TIMEOUT_MS
+            } else {
+                HEALTH_CHECK_REQUEST_TIMEOUT_MS * health_urls.len() as u64
+            }
         ))
     }
 
