@@ -111,6 +111,15 @@ final class AppStateFileMessageHandlerAdapter: WeakTargetMessageAdapter<AppState
             appState.notifyEditorFileChanged(notification: notification)
         }
     }
+    func handleFileFormatCapabilitiesResult(_ result: FileFormatCapabilitiesResult) {
+        dispatchToTarget { $0.handleFormatCapabilitiesResult(result) }
+    }
+    func handleFileFormatResult(_ result: FileFormatResult) {
+        dispatchToTarget { $0.handleFormatResult(result) }
+    }
+    func handleFileFormatError(_ result: FileFormatErrorResult) {
+        dispatchToTarget { $0.handleFormatError(result) }
+    }
     func handleWatchSubscribed(_ result: WatchSubscribedResult) {
         dispatchToTarget { appState in
             let globalKey = appState.globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)

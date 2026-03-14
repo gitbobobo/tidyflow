@@ -524,3 +524,14 @@
 "evolution.page.pipeline.healthScore" = "健康分";
 "evolution.page.pipeline.riskScore" = "风险分";
 "evolution.page.pipeline.noDecisionSummary" = "决策引擎暂无摘要";
+
+/* 格式化 */
+"command.formatDocument" = "格式化文档";
+"settings.formatting" = "格式化";
+"settings.formatting.language" = "语言";
+"settings.formatting.formatter" = "格式化器";
+"settings.formatting.formatOnSave" = "保存时格式化";
+"settings.formatting.noConfig" = "尚未配置格式化规则";
+"editor.formatting" = "正在格式化…";
+"editor.formatted" = "已格式化";
+"editor.formatFailed" = "格式化失败";

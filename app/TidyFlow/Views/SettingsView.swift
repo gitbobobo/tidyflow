@@ -62,6 +62,12 @@ struct SettingsContentView: View {
                 }
                 .tag("templates")
                 .environmentObject(appState)
+
+            FormattingSettingsSection()
+                .tabItem {
+                    Label("settings.formatting".localized, systemImage: "textformat")
+                }
+                .environmentObject(appState)
         }
         .frame(width: 580, height: 580)
     }
@@ -1066,5 +1072,52 @@ private final class EditableTemplateCommand: ObservableObject, Identifiable {
         command = info.command
         blocking = info.blocking
         interactive = info.interactive
+    }
+}
+
+// MARK: - 格式化设置部分
+
+struct FormattingSettingsSection: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Form {
+            if appState.clientSettings.editorFormattingConfigs.isEmpty {
+                Text("settings.formatting.noConfig".localized)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding()
+            } else {
+                ForEach(appState.clientSettings.editorFormattingConfigs.indices, id: \.self) { index in
+                    FormattingLanguageRow(
+                        config: $appState.clientSettings.editorFormattingConfigs[index]
+                    )
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .settingsPageTopInset()
+    }
+}
+
+private struct FormattingLanguageRow: View {
+    @Binding var config: EditorFormattingLanguageConfig
+
+    var body: some View {
+        Section {
+            LabeledContent("settings.formatting.language".localized) {
+                Text(config.language)
+                    .foregroundColor(.primary)
+            }
+
+            if let formatterId = config.preferredFormatterId, !formatterId.isEmpty {
+                LabeledContent("settings.formatting.formatter".localized) {
+                    Text(formatterId)
+                        .foregroundColor(.primary)
+                }
+            }
+
+            Toggle("settings.formatting.formatOnSave".localized, isOn: $config.formatOnSave)
+        }
     }
 }

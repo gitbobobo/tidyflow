@@ -360,6 +360,9 @@ extension AppState {
                     app.presentFindReplaceForActiveDocument()
                 }
             },
+            Command(id: "workspace.formatDocument", title: NSLocalizedString("command.formatDocument", comment: ""), subtitle: nil, scope: .workspace, keyHint: "⌘⇧I") { app in
+                app.formatCurrentDocument()
+            },
             // UX-3a: Git rebase commands
             Command(id: "git.fetch", title: "Git: Fetch", subtitle: "Fetch from remote", scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.selectedWorkspaceKey else { return }

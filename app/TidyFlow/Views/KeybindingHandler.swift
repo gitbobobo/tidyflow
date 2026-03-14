@@ -32,6 +32,9 @@ struct GlobalKeybindingHandler: ViewModifier {
                     Button("Find") { runCommand("workspace.find") }
                         .keyboardShortcutIfPresent(shortcut(for: "workspace.find"))
 
+                    Button("Format Document") { runCommand("workspace.formatDocument") }
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.formatDocument"))
+
                     // 不可配置的固定快捷键
                     Button("Undo") { runCommand("workspace.undo") }
                         .keyboardShortcut("z", modifiers: .command)

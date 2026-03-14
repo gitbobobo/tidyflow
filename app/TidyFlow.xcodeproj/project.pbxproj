@@ -228,6 +228,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		MDL000317 /* AppState+CoreWS+AIEvolutionHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000117 /* AppState+CoreWS+AIEvolutionHandlers.swift */; };
 		MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000118 /* AppState+CoreWS+WSClientBinder.swift */; };
 		MDL00031C /* AppState+EvolutionPerformanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011C /* AppState+EvolutionPerformanceMonitor.swift */; };
+		MDL00031D /* AppState+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011D /* AppState+Formatting.swift */; };
 		MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */; };
 		MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011A /* AppState+CoreWS+AIReconnect.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
@@ -606,6 +607,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		MDL000117 /* AppState+CoreWS+AIEvolutionHandlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIEvolutionHandlers.swift"; sourceTree = "<group>"; };
 		MDL000118 /* AppState+CoreWS+WSClientBinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+WSClientBinder.swift"; sourceTree = "<group>"; };
 		MDL00011C /* AppState+EvolutionPerformanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EvolutionPerformanceMonitor.swift"; sourceTree = "<group>"; };
+		MDL00011D /* AppState+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Formatting.swift"; sourceTree = "<group>"; };
 		MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+EvolutionSupport.swift"; sourceTree = "<group>"; };
 		MDL00011A /* AppState+CoreWS+AIReconnect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIReconnect.swift"; sourceTree = "<group>"; };
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
@@ -1182,6 +1184,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				TMS00002 /* TerminalStore.swift */,
 				EDS00002 /* EditorStore.swift */,
 				MDL00010C /* AppState+FileOps.swift */,
+				MDL00011D /* AppState+Formatting.swift */,
 				MDL0001S1 /* AppState+Search.swift */,
 				MDL00010D /* AppState+Projects.swift */,
 				RMT00012 /* AppState+RemoteTerminals.swift */,
@@ -1445,6 +1448,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */,
 				MDL00031B /* WorkspaceKeySemantics.swift in Sources */,
 				MDL00030C /* AppState+FileOps.swift in Sources */,
+				MDL00031D /* AppState+Formatting.swift in Sources */,
 				MDL0003S1 /* AppState+Search.swift in Sources */,
 				MDL00030D /* AppState+Projects.swift in Sources */,
 				MDL00030E /* AppState+Tabs.swift in Sources */,
@@ -1933,6 +1937,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"AppState+CoreWS+AIReconnect.swift",
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
+					"AppState+Formatting.swift",
 					"AppState+Search.swift",
 					"AppState+Projects.swift",
 					"AppState+RemoteTerminals.swift",
@@ -2072,6 +2077,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"AppState+CoreWS+AIReconnect.swift",
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
+					"AppState+Formatting.swift",
 					"AppState+Projects.swift",
 					"AppState+RemoteTerminals.swift",
 					"AppState+Settings.swift",

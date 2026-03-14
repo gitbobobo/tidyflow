@@ -522,3 +522,14 @@
 "evolution.page.pipeline.healthScore" = "Health";
 "evolution.page.pipeline.riskScore" = "Risk";
 "evolution.page.pipeline.noDecisionSummary" = "No decision summary yet";
+
+/* Formatting */
+"command.formatDocument" = "Format Document";
+"settings.formatting" = "Formatting";
+"settings.formatting.language" = "Language";
+"settings.formatting.formatter" = "Formatter";
+"settings.formatting.formatOnSave" = "Format on Save";
+"settings.formatting.noConfig" = "No formatting rules configured";
+"editor.formatting" = "Formatting…";
+"editor.formatted" = "Formatted";
+"editor.formatFailed" = "Format failed";
