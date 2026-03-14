@@ -654,8 +654,7 @@ struct NativeEditorContentView: View {
     }
 
     private var matchStatusText: String {
-        guard !matchRanges.isEmpty, currentMatchIndex >= 0 else { return "0/0" }
-        return "\(currentMatchIndex + 1)/\(matchRanges.count)"
+        EditorFindReplaceEngine.matchStatusText(currentIndex: currentMatchIndex, matchCount: matchRanges.count)
     }
 
     private func editorBinding(globalKey: String) -> Binding<String> {
@@ -670,19 +669,17 @@ struct NativeEditorContentView: View {
         return appState.getEditorDocument(globalWorkspaceKey: globalKey, path: path)?.content ?? ""
     }
 
-    private func refreshMatches(for text: String, keepSelection: Bool) {
-        let ranges = findRanges(in: text)
-        matchRanges = ranges
-        guard !ranges.isEmpty else {
-            currentMatchIndex = -1
-            return
-        }
+    // MARK: - 查找替换（消费共享引擎 EditorFindReplaceEngine）
 
-        if keepSelection, currentMatchIndex >= 0 {
-            currentMatchIndex = min(currentMatchIndex, ranges.count - 1)
-        } else {
-            currentMatchIndex = 0
-        }
+    private func refreshMatches(for text: String, keepSelection: Bool) {
+        let result = EditorFindReplaceEngine.findMatches(in: text, state: findState)
+        matchRanges = result.ranges
+        regexError = result.regexError
+        currentMatchIndex = EditorFindReplaceEngine.clampMatchIndex(
+            currentIndex: currentMatchIndex,
+            matchCount: result.ranges.count,
+            keepSelection: keepSelection
+        )
         revealCurrentMatch(in: text)
     }
 
@@ -692,7 +689,9 @@ struct NativeEditorContentView: View {
             refreshMatches(for: text, keepSelection: false)
             return
         }
-        currentMatchIndex = currentMatchIndex < 0 ? 0 : (currentMatchIndex + 1) % matchRanges.count
+        currentMatchIndex = EditorFindReplaceEngine.nextMatchIndex(
+            currentIndex: currentMatchIndex, matchCount: matchRanges.count
+        )
         revealCurrentMatch(in: text)
     }
 
@@ -702,76 +701,43 @@ struct NativeEditorContentView: View {
             refreshMatches(for: text, keepSelection: false)
             return
         }
-        if currentMatchIndex < 0 {
-            currentMatchIndex = 0
-        } else {
-            currentMatchIndex = (currentMatchIndex - 1 + matchRanges.count) % matchRanges.count
-        }
+        currentMatchIndex = EditorFindReplaceEngine.previousMatchIndex(
+            currentIndex: currentMatchIndex, matchCount: matchRanges.count
+        )
         revealCurrentMatch(in: text)
     }
 
     private func replaceCurrent(in textBinding: Binding<String>) {
-        guard currentMatchIndex >= 0, currentMatchIndex < matchRanges.count, regexError == nil else { return }
-        var text = textBinding.wrappedValue
-        let range = matchRanges[currentMatchIndex]
-        text.replaceSubrange(range, with: findState.replaceText)
-        textBinding.wrappedValue = text
-        refreshMatches(for: text, keepSelection: true)
+        guard let result = EditorFindReplaceEngine.replaceCurrent(
+            in: textBinding.wrappedValue,
+            matchRanges: matchRanges,
+            currentIndex: currentMatchIndex,
+            replaceText: findState.replaceText,
+            state: findState
+        ) else { return }
+        textBinding.wrappedValue = result.text
+        matchRanges = result.newRanges
+        currentMatchIndex = result.currentMatchIndex
+        revealCurrentMatch(in: result.text)
     }
 
     private func replaceAll(in textBinding: Binding<String>) {
-        guard !matchRanges.isEmpty, regexError == nil else { return }
-        var text = textBinding.wrappedValue
-        for range in matchRanges.reversed() {
-            text.replaceSubrange(range, with: findState.replaceText)
-        }
-        textBinding.wrappedValue = text
-        refreshMatches(for: text, keepSelection: false)
+        guard let result = EditorFindReplaceEngine.replaceAll(
+            in: textBinding.wrappedValue,
+            matchRanges: matchRanges,
+            replaceText: findState.replaceText,
+            state: findState
+        ) else { return }
+        textBinding.wrappedValue = result.text
+        matchRanges = result.newRanges
+        currentMatchIndex = result.currentMatchIndex
+        revealCurrentMatch(in: result.text)
     }
 
     private func revealCurrentMatch(in text: String) {
-        guard currentMatchIndex >= 0, currentMatchIndex < matchRanges.count else { return }
-        let range = matchRanges[currentMatchIndex]
-        let line = 1 + text[..<range.lowerBound].reduce(into: 0) { partial, char in
-            if char == "\n" { partial += 1 }
-        }
-        highlightedLine = line
-    }
-
-    private func findRanges(in text: String) -> [Range<String.Index>] {
-        let searchText = findState.findText
-        guard !searchText.isEmpty else {
-            regexError = nil
-            return []
-        }
-
-        if findState.useRegex {
-            do {
-                let regex = try NSRegularExpression(
-                    pattern: searchText,
-                    options: findState.isCaseSensitive ? [] : [.caseInsensitive]
-                )
-                regexError = nil
-                let nsText = text as NSString
-                return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
-                    Range($0.range, in: text)
-                }
-            } catch {
-                regexError = "editor.find.invalidRegex".localized
-                return []
-            }
-        }
-
-        regexError = nil
-        var ranges: [Range<String.Index>] = []
-        var searchRange = text.startIndex..<text.endIndex
-        let options: String.CompareOptions = findState.isCaseSensitive ? [] : [.caseInsensitive]
-        while let range = text.range(of: searchText, options: options, range: searchRange) {
-            ranges.append(range)
-            if range.upperBound == text.endIndex { break }
-            searchRange = range.upperBound..<text.endIndex
-        }
-        return ranges
+        highlightedLine = EditorFindReplaceEngine.targetLineForCurrentMatch(
+            in: text, matchRanges: matchRanges, currentIndex: currentMatchIndex
+        )
     }
 
     private func openDocumentIfNeeded(force: Bool) {

@@ -136,9 +136,7 @@ extension AppState {
     func updateEditorDocumentContent(globalWorkspaceKey: String, path: String, content: String) {
         guard var workspaceDocs = editorDocumentsByWorkspace[globalWorkspaceKey],
               var doc = workspaceDocs[path] else { return }
-        doc.content = content
-        doc.isDirty = contentHash(content) != doc.baselineContentHash
-        doc.conflictState = .none
+        doc.applyContentEdit(content)
         workspaceDocs[path] = doc
         editorDocumentsByWorkspace[globalWorkspaceKey] = workspaceDocs
         updateEditorDirtyState(path: path, isDirty: doc.isDirty)
@@ -207,15 +205,9 @@ extension AppState {
         let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
         let docKey = EditorDocumentKey(project: result.project, workspace: result.workspace, path: result.path)
         var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
-        workspaceDocs[result.path] = EditorDocumentSession(
-            key: docKey,
-            content: content,
-            baselineContentHash: contentHash(content),
-            isDirty: false,
-            lastLoadedAt: Date(),
-            loadStatus: .ready,
-            conflictState: .none
-        )
+        var session = EditorDocumentSession(key: docKey)
+        session.applyLoadSuccess(content: content)
+        workspaceDocs[result.path] = session
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
         updateEditorDirtyState(path: result.path, isDirty: false)
     }
@@ -225,14 +217,14 @@ extension AppState {
               var doc = workspaceDocs[path] else { return }
 
         if kind == "delete" {
-            doc.conflictState = .deletedOnDisk
+            doc.applyDiskChange(kind: .deletedOnDisk)
             workspaceDocs[path] = doc
             editorDocumentsByWorkspace[workspaceKey] = workspaceDocs
             return
         }
 
         if isDirty {
-            doc.conflictState = .changedOnDisk
+            doc.applyDiskChange(kind: .changedOnDisk)
             workspaceDocs[path] = doc
             editorDocumentsByWorkspace[workspaceKey] = workspaceDocs
             return
@@ -509,11 +501,7 @@ extension AppState {
         if result.success {
             if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
                var doc = workspaceDocs[result.path] {
-                doc.baselineContentHash = contentHash(doc.content)
-                doc.isDirty = false
-                doc.lastLoadedAt = Date()
-                doc.loadStatus = .ready
-                doc.conflictState = .none
+                doc.applySaveSuccess()
                 workspaceDocs[result.path] = doc
                 editorDocumentsByWorkspace[globalKey] = workspaceDocs
             }

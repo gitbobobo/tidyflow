@@ -2,12 +2,6 @@ import Foundation
 import Combine
 import TidyFlowShared
 
-struct EditorRequestKey: Hashable {
-    let project: String
-    let workspace: String
-    let path: String
-}
-
 struct DiffNavigationContext: Equatable {
     let workspaceKey: String
     let path: String
