@@ -999,7 +999,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
         let textView = UndoTrackingTextView()
         textView.isEditable = true
         textView.isSelectable = true
-        textView.allowsUndo = true
+        // 禁用原生文本编辑 undo 注册——编辑历史由共享语义层驱动
+        textView.allowsUndo = false
         textView.isRichText = false
         textView.usesFontPanel = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -1014,10 +1015,35 @@ struct NativeCodeEditorView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.delegate = context.coordinator
 
-        // 配置撤销/重做状态观察
-        textView.onUndoRedoStateDidChange = { [weak editorStore] canUndo, canRedo in
-            guard let docKey = context.coordinator.parent.documentKey else { return }
-            editorStore?.updateUndoRedoState(canUndo: canUndo, canRedo: canRedo, documentKey: docKey)
+        // 撤销/重做状态由共享历史语义层驱动（不再依赖 NSUndoManager 通知）
+        textView.onUndoRedoStateDidChange = nil
+
+        // 注册共享历史撤销/重做回调
+        editorStore.onEditorUndo = { [weak textView, weak editorStore] docKey in
+            guard let textView = textView, let editorStore = editorStore else { return }
+            guard docKey == context.coordinator.parent.documentKey else { return }
+            guard let result = editorStore.undoEdit(documentKey: docKey, currentText: textView.string) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.string = result.text
+            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.parent.text = result.text
+            context.coordinator.applySyntaxHighlighting(to: textView)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
+        }
+        editorStore.onEditorRedo = { [weak textView, weak editorStore] docKey in
+            guard let textView = textView, let editorStore = editorStore else { return }
+            guard docKey == context.coordinator.parent.documentKey else { return }
+            guard let result = editorStore.redoEdit(documentKey: docKey, currentText: textView.string) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.string = result.text
+            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.parent.text = result.text
+            context.coordinator.applySyntaxHighlighting(to: textView)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
 
         // 配置折叠 overlay
@@ -1057,8 +1083,6 @@ struct NativeCodeEditorView: NSViewRepresentable {
         // 首次加载后自动聚焦并应用高亮
         DispatchQueue.main.async {
             scrollView.window?.makeFirstResponder(textView)
-            textView.startObservingUndoManager()
-            textView.reportUndoRedoState()
             context.coordinator.applySyntaxHighlighting(to: textView)
             context.coordinator.applyFoldingProjection(to: textView)
         }
@@ -1073,9 +1097,10 @@ struct NativeCodeEditorView: NSViewRepresentable {
         // 同步文本内容（避免循环更新）
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
+            context.coordinator.isProgrammaticTextUpdate = true
             textView.string = text
             textView.selectedRanges = selectedRanges
-            textView.reportUndoRedoState()
+            context.coordinator.isProgrammaticTextUpdate = false
             // 文本变化时重新应用高亮和折叠
             context.coordinator.applySyntaxHighlighting(to: textView)
             context.coordinator.applyFoldingProjection(to: textView)
@@ -1133,6 +1158,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
         private var lastAppliedTheme: EditorSyntaxTheme?
         /// 标记当前是否正在程序性地更新属性（防止触发 textDidChange）
         private var isApplyingHighlight = false
+        /// 标记当前是否正在程序性地回放共享历史（防止再次入栈）
+        var isProgrammaticTextUpdate = false
         /// 最近一次结构分析快照（供行跳转时展开折叠区域用）
         var lastStructureSnapshot: EditorStructureSnapshot?
         /// 上次应用的折叠投影指纹（用于跳过重复应用）
@@ -1152,11 +1179,79 @@ struct NativeCodeEditorView: NSViewRepresentable {
             self.parent = parent
         }
 
+        // MARK: - 共享历史桥接
+
+        /// 拦截文本变更前记录共享编辑命令。
+        /// 用户编辑走此路径入栈；程序化回放（undo/redo 写回）由 isProgrammaticTextUpdate 旗标跳过。
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !isProgrammaticTextUpdate, !isApplyingHighlight else { return true }
+            guard let docKey = parent.documentKey,
+                  let replacement = replacementString else { return true }
+
+            let currentText = textView.string
+            let selectedRange = textView.selectedRange()
+            let replacedText = (currentText as NSString).substring(with: affectedCharRange)
+
+            let command = EditorEditCommand(
+                mutation: EditorTextMutation(
+                    rangeLocation: affectedCharRange.location,
+                    rangeLength: affectedCharRange.length,
+                    replacementText: replacement
+                ),
+                beforeSelection: EditorSelectionSnapshot(
+                    location: selectedRange.location,
+                    length: selectedRange.length
+                ),
+                afterSelection: EditorSelectionSnapshot(
+                    location: affectedCharRange.location + (replacement as NSString).length,
+                    length: 0
+                ),
+                timestamp: Date(),
+                replacedText: replacedText
+            )
+
+            let result = parent.editorStore.recordEdit(
+                currentText: currentText,
+                command: command,
+                documentKey: docKey
+            )
+
+            // 程序化写回新文本和选区
+            isProgrammaticTextUpdate = true
+            textView.string = result.text
+            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            isProgrammaticTextUpdate = false
+
+            // 更新 binding 和状态
+            parent.text = result.text
+
+            // 编辑时自动展开包含光标位置的已折叠区域
+            if let snapshot = lastStructureSnapshot {
+                let cursorLine = lineNumber(for: result.selection.location, in: result.text)
+                var foldState = parent.editorStore.foldingState(for: docKey)
+                let beforeCount = foldState.collapsedRegionIDs.count
+                foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                if foldState.collapsedRegionIDs.count != beforeCount {
+                    parent.editorStore.updateFoldingState(foldState, for: docKey)
+                }
+                parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
+            }
+
+            // 重新应用高亮和折叠
+            applySyntaxHighlighting(to: textView as! UndoTrackingTextView)
+            applyFoldingProjection(to: textView as! UndoTrackingTextView)
+            refreshPairMatchOverlay(textView: textView as! UndoTrackingTextView)
+
+            // 已自行处理文本变更，阻止 NSTextView 再次应用
+            return false
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? UndoTrackingTextView else { return }
-            guard !isApplyingHighlight else { return }
+            guard !isApplyingHighlight, !isProgrammaticTextUpdate else { return }
+            // 程序化回放或 shouldChangeTextIn 已处理的用户编辑不会到这里记录。
+            // 此回调仅处理未被 shouldChangeTextIn 拦截的情况（如外部程序化写入 textView.string = ...）。
             parent.text = textView.string
-            textView.reportUndoRedoState()
 
             // 编辑时自动展开包含光标位置的已折叠区域
             if let docKey = parent.documentKey, let snapshot = lastStructureSnapshot {

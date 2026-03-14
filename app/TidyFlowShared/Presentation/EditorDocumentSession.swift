@@ -7,7 +7,8 @@ import Foundation
 //
 // 设计约束：
 // - 每个文档会话以 (project, workspace, path) 三元组精确定位，禁止仅按 path 聚合。
-// - 撤销/重做状态来自文本编辑器回调，由 EditorStore 记录但不持久化。
+// - 撤销/重做能力来自共享编辑历史语义层（EditorUndoRedoSemantics），
+//   由平台状态容器按 EditorDocumentKey 维护历史状态并投影 canUndo/canRedo。
 // - dirty 状态是文档内容与磁盘基线的偏差，不依赖外部推导。
 // - conflictState 来自 Core 磁盘变化通知，只消费不本地推导。
 
@@ -63,7 +64,7 @@ public enum EditorConflictState: Equatable, Sendable {
 ///
 /// 这是文档状态的唯一真相来源：
 /// - `isDirty`：文档内容与磁盘基线的偏差标记，由保存/加载事件重置。
-/// - `canUndo/canRedo`：来自文本编辑器回调，只记录当前值，不维护历史栈。
+/// - `canUndo/canRedo`：来自共享编辑历史语义层的当前能力投影。
 /// - `conflictState`：来自 Core 磁盘变化通知。
 /// - `loadStatus`：文档与 Core 通信的生命周期状态。
 ///
@@ -77,9 +78,9 @@ public struct EditorDocumentSession: Equatable, Sendable {
     public var baselineContentHash: Int
     /// 文档是否有未保存的修改
     public var isDirty: Bool
-    /// 当前编辑器是否可撤销（来自文本编辑器回调）
+    /// 当前编辑器是否可撤销（来自共享编辑历史语义层）
     public var canUndo: Bool
-    /// 当前编辑器是否可重做（来自文本编辑器回调）
+    /// 当前编辑器是否可重做（来自共享编辑历史语义层）
     public var canRedo: Bool
     /// 上次成功加载的时间
     public var lastLoadedAt: Date
@@ -276,6 +277,43 @@ extension EditorDocumentSession {
     /// 只更新 conflictState，不自行推导额外状态。
     public mutating func applyDiskChange(kind: EditorConflictState) {
         self.conflictState = kind
+    }
+}
+
+// MARK: - 编辑历史生命周期辅助
+
+extension EditorDocumentSession {
+
+    /// 加载成功后重置关联历史。
+    /// 调用方应在 applyLoadSuccess 后调用此方法获取清空的历史状态。
+    public static func historyAfterLoad() -> EditorUndoHistoryState {
+        return EditorUndoHistorySemantics.reset(history: .empty)
+    }
+
+    /// 磁盘重载后重置关联历史。
+    /// 语义与 historyAfterLoad 一致——重载等价于重新加载。
+    public static func historyAfterReload() -> EditorUndoHistoryState {
+        return EditorUndoHistorySemantics.reset(history: .empty)
+    }
+
+    /// 另存为后迁移历史。
+    /// 历史内容不变，调用方负责在状态容器中将旧 key 移到新 key。
+    public static func historyAfterSaveAs(
+        history: EditorUndoHistoryState,
+        from oldKey: EditorDocumentKey,
+        to newKey: EditorDocumentKey
+    ) -> EditorUndoHistoryState {
+        return EditorUndoHistorySemantics.migrate(history: history, from: oldKey, to: newKey)
+    }
+
+    /// 文件重命名后迁移历史。
+    /// 与另存为语义一致。
+    public static func historyAfterRename(
+        history: EditorUndoHistoryState,
+        from oldKey: EditorDocumentKey,
+        to newKey: EditorDocumentKey
+    ) -> EditorUndoHistoryState {
+        return EditorUndoHistorySemantics.migrate(history: history, from: oldKey, to: newKey)
     }
 }
 

@@ -409,3 +409,186 @@ final class MobileEditorSessionTests: XCTestCase {
         XCTAssertEqual(line4Item?.hasBreakpoint, true)
     }
 }
+
+// MARK: - iOS 共享编辑历史语义测试
+
+/// 验证共享历史语义在 iOS 编辑器场景下的行为正确性：
+/// 覆盖辅助栏状态刷新、跨文档隔离、外部命令转发、重载清栈和另存为迁移。
+final class MobileEditorHistoryTests: XCTestCase {
+
+    // MARK: - 基础记录与撤销/重做
+
+    func testRecordAndUndoRedo() {
+        let history = EditorUndoHistoryState()
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "Hello"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 5, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+        XCTAssertEqual(result.text, "Hello")
+        XCTAssertTrue(result.canUndo)
+        XCTAssertFalse(result.canRedo)
+
+        // 撤销
+        let undoResult = EditorUndoHistorySemantics.undo(currentText: "Hello", history: result.history)
+        XCTAssertNotNil(undoResult)
+        XCTAssertEqual(undoResult?.text, "")
+        XCTAssertFalse(undoResult!.canUndo)
+        XCTAssertTrue(undoResult!.canRedo)
+
+        // 重做
+        let redoResult = EditorUndoHistorySemantics.redo(currentText: "", history: undoResult!.history)
+        XCTAssertNotNil(redoResult)
+        XCTAssertEqual(redoResult?.text, "Hello")
+        XCTAssertTrue(redoResult!.canUndo)
+        XCTAssertFalse(redoResult!.canRedo)
+    }
+
+    // MARK: - 辅助栏状态刷新
+
+    func testAccessoryBarStateReflectsHistory() {
+        let history = EditorUndoHistoryState()
+
+        // 初始状态：无法撤销也无法重做
+        XCTAssertTrue(history.undoStack.isEmpty)
+        XCTAssertTrue(history.redoStack.isEmpty)
+
+        // 录入一条编辑后：可撤销，不可重做
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "A"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 1, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let r1 = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+        XCTAssertTrue(r1.canUndo)
+        XCTAssertFalse(r1.canRedo)
+
+        // 撤销后：不可撤销，可重做
+        let r2 = EditorUndoHistorySemantics.undo(currentText: r1.text, history: r1.history)
+        XCTAssertFalse(r2!.canUndo)
+        XCTAssertTrue(r2!.canRedo)
+    }
+
+    // MARK: - 跨文档隔离
+
+    func testCrossDocumentHistoryIsolation() {
+        let historyA = EditorUndoHistoryState()
+        let historyB = EditorUndoHistoryState()
+
+        let cmdA = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "AAA"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 3, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let resultA = EditorUndoHistorySemantics.recordEdit(currentText: "", history: historyA, command: cmdA)
+
+        // 文档 B 没有历史
+        XCTAssertTrue(resultA.canUndo)
+        XCTAssertTrue(historyB.undoStack.isEmpty)
+
+        let cmdB = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "BBB"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 3, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let resultB = EditorUndoHistorySemantics.recordEdit(currentText: "", history: historyB, command: cmdB)
+
+        // 撤销 A 不影响 B
+        let undoA = EditorUndoHistorySemantics.undo(currentText: "AAA", history: resultA.history)
+        XCTAssertFalse(undoA!.canUndo)
+        XCTAssertTrue(resultB.canUndo)
+    }
+
+    // MARK: - 外部命令转发
+
+    func testExternalUndoRedoForwarding() {
+        let history = EditorUndoHistoryState()
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "X"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 1, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+
+        // 模拟外部 requestUndo
+        let undoResult = EditorUndoHistorySemantics.undo(currentText: "X", history: result.history)
+        XCTAssertEqual(undoResult?.text, "")
+
+        // 模拟外部 requestRedo
+        let redoResult = EditorUndoHistorySemantics.redo(currentText: "", history: undoResult!.history)
+        XCTAssertEqual(redoResult?.text, "X")
+    }
+
+    // MARK: - 重载清栈
+
+    func testReloadClearsHistoryStack() {
+        let history = EditorUndoHistoryState()
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "data"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 4, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+        XCTAssertTrue(result.canUndo)
+
+        // 模拟重载后重置
+        let reloadedHistory = EditorDocumentSession.historyAfterReload()
+        XCTAssertTrue(reloadedHistory.undoStack.isEmpty)
+        XCTAssertTrue(reloadedHistory.redoStack.isEmpty)
+    }
+
+    // MARK: - 另存为迁移
+
+    func testSaveAsMigratesHistory() {
+        let history = EditorUndoHistoryState()
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "code"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 4, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+        XCTAssertTrue(result.canUndo)
+
+        // 另存为迁移：历史应保留
+        let oldKey = EditorDocumentKey(project: "app", workspace: "ws", path: "old.swift")
+        let newKey = EditorDocumentKey(project: "app", workspace: "ws", path: "new.swift")
+        let migratedHistory = EditorDocumentSession.historyAfterSaveAs(history: result.history, from: oldKey, to: newKey)
+        XCTAssertFalse(migratedHistory.undoStack.isEmpty)
+        XCTAssertEqual(migratedHistory.undoStack.count, result.history.undoStack.count)
+    }
+
+    // MARK: - 重命名迁移
+
+    func testRenameMigratesHistory() {
+        let history = EditorUndoHistoryState()
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "fn"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 2, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = EditorUndoHistorySemantics.recordEdit(currentText: "", history: history, command: cmd)
+
+        let oldKey = EditorDocumentKey(project: "app", workspace: "ws", path: "old.swift")
+        let newKey = EditorDocumentKey(project: "app", workspace: "ws", path: "renamed.swift")
+        let migratedHistory = EditorDocumentSession.historyAfterRename(history: result.history, from: oldKey, to: newKey)
+        XCTAssertFalse(migratedHistory.undoStack.isEmpty)
+        XCTAssertEqual(migratedHistory.undoStack.count, 1)
+    }
+}

@@ -192,6 +192,7 @@ extension AppState {
               var workspaceDocs = editorDocumentsByWorkspace[globalKey],
               let oldDoc = workspaceDocs[oldPath] else { return }
 
+        let oldDocKey = oldDoc.key
         let docKey = EditorDocumentKey(globalWorkspaceKey: globalKey, path: newPath)
         let newDoc = EditorDocumentSession(
             key: docKey ?? EditorDocumentKey(project: selectedProjectName, workspace: selectedWorkspaceKey ?? "", path: newPath),
@@ -205,6 +206,11 @@ extension AppState {
         workspaceDocs.removeValue(forKey: oldPath)
         workspaceDocs[newPath] = newDoc
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        // 迁移运行时状态（历史、查找替换、折叠、gutter）
+        if let newDocKey = docKey ?? EditorDocumentKey(globalWorkspaceKey: globalKey, path: newPath) {
+            editorStore.migrateDocumentRuntimeState(from: oldDocKey, to: newDocKey)
+        }
 
         // 更新 Tab 标题和 payload
         if var tabs = workspaceTabs[globalKey],

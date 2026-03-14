@@ -387,5 +387,189 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertFalse(store.gutterState(for: docC).breakpoints.isEmpty,
                        "不同工作区的 gutter 状态不受影响")
     }
+
+    // MARK: - 共享编辑历史
+
+    func testRecordEditCreatesHistoryAndUpdatesUndoRedoState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = ["f.txt": makeSession(path: "f.txt")]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "Hi"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 2, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        let result = store.recordEdit(currentText: "", command: cmd, documentKey: docKey)
+        XCTAssertEqual(result.text, "Hi")
+        XCTAssertTrue(store.canUndo(documentKey: docKey))
+        XCTAssertFalse(store.canRedo(documentKey: docKey))
+    }
+
+    func testUndoEditRestoresTextAndState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = ["f.txt": makeSession(path: "f.txt")]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "Hi"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 2, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmd, documentKey: docKey)
+
+        let undoResult = store.undoEdit(documentKey: docKey, currentText: "Hi")
+        XCTAssertNotNil(undoResult)
+        XCTAssertEqual(undoResult?.text, "")
+        XCTAssertFalse(store.canUndo(documentKey: docKey))
+        XCTAssertTrue(store.canRedo(documentKey: docKey))
+    }
+
+    func testRedoEditRestoresTextAndState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = ["f.txt": makeSession(path: "f.txt")]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "Hi"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 2, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmd, documentKey: docKey)
+        _ = store.undoEdit(documentKey: docKey, currentText: "Hi")
+
+        let redoResult = store.redoEdit(documentKey: docKey, currentText: "")
+        XCTAssertNotNil(redoResult)
+        XCTAssertEqual(redoResult?.text, "Hi")
+        XCTAssertTrue(store.canUndo(documentKey: docKey))
+        XCTAssertFalse(store.canRedo(documentKey: docKey))
+    }
+
+    func testResetHistoryClearsUndoRedoState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = ["f.txt": makeSession(path: "f.txt")]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "Hi"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 2, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmd, documentKey: docKey)
+        XCTAssertTrue(store.canUndo(documentKey: docKey))
+
+        store.resetHistory(documentKey: docKey)
+        XCTAssertFalse(store.canUndo(documentKey: docKey))
+        XCTAssertFalse(store.canRedo(documentKey: docKey))
+    }
+
+    func testMigrateDocumentRuntimeStateMovesHistory() {
+        let store = makeStore()
+        let oldKey = EditorDocumentKey(project: "proj", workspace: "main", path: "old.txt")
+        let newKey = EditorDocumentKey(project: "proj", workspace: "main", path: "new.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = [
+            "old.txt": makeSession(path: "old.txt"),
+            "new.txt": makeSession(path: "new.txt"),
+        ]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "X"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 1, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmd, documentKey: oldKey)
+
+        // 添加查找替换状态验证迁移
+        store.findReplaceStateByDocument[oldKey] = EditorFindReplaceState(findText: "test")
+
+        store.migrateDocumentRuntimeState(from: oldKey, to: newKey)
+
+        // 旧 key 上的历史应被移除
+        XCTAssertNil(store.historyStateByDocument[oldKey])
+        // 新 key 上应有历史
+        XCTAssertNotNil(store.historyStateByDocument[newKey])
+        XCTAssertEqual(store.historyStateByDocument[newKey]?.undoStack.count, 1)
+        // 查找替换状态也应迁移
+        XCTAssertNil(store.findReplaceStateByDocument[oldKey])
+        XCTAssertNotNil(store.findReplaceStateByDocument[newKey])
+    }
+
+    func testMultiWorkspaceHistoryIsolation() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "projA", workspace: "ws1", path: "a.txt")
+        let docB = EditorDocumentKey(project: "projB", workspace: "ws2", path: "b.txt")
+        store.editorDocumentsByWorkspace["projA:ws1"] = ["a.txt": makeSession(project: "projA", workspace: "ws1", path: "a.txt")]
+        store.editorDocumentsByWorkspace["projB:ws2"] = ["b.txt": makeSession(project: "projB", workspace: "ws2", path: "b.txt")]
+
+        let cmdA = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "A"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 1, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmdA, documentKey: docA)
+
+        // A 有历史，B 没有
+        XCTAssertTrue(store.canUndo(documentKey: docA))
+        XCTAssertFalse(store.canUndo(documentKey: docB))
+
+        // 撤销 A 不影响 B
+        _ = store.undoEdit(documentKey: docA, currentText: "A")
+        XCTAssertFalse(store.canUndo(documentKey: docA))
+        XCTAssertFalse(store.canUndo(documentKey: docB))
+    }
+
+    func testReleaseDocumentSessionClearsHistoryState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = ["f.txt": makeSession(path: "f.txt")]
+
+        let cmd = EditorEditCommand(
+            mutation: EditorTextMutation(rangeLocation: 0, rangeLength: 0, replacementText: "X"),
+            beforeSelection: EditorSelectionSnapshot(location: 0, length: 0),
+            afterSelection: EditorSelectionSnapshot(location: 1, length: 0),
+            timestamp: Date(),
+            replacedText: ""
+        )
+        _ = store.recordEdit(currentText: "", command: cmd, documentKey: docKey)
+        XCTAssertNotNil(store.historyStateByDocument[docKey])
+
+        store.releaseDocumentSession(workspaceKey: wsKey, path: "f.txt")
+        XCTAssertNil(store.historyStateByDocument[docKey])
+    }
+
+    func testReleaseAllDocumentSessionsClearsWorkspaceHistoryState() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.txt")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.txt")
+        let docC = EditorDocumentKey(project: "proj", workspace: "dev", path: "c.txt")
+
+        store.historyStateByDocument[docA] = EditorUndoHistoryState(undoStack: [], redoStack: [])
+        store.historyStateByDocument[docB] = EditorUndoHistoryState(undoStack: [], redoStack: [])
+        store.historyStateByDocument[docC] = EditorUndoHistoryState(undoStack: [], redoStack: [])
+
+        store.releaseAllDocumentSessions(workspaceKey: "proj:main")
+
+        XCTAssertNil(store.historyStateByDocument[docA])
+        XCTAssertNil(store.historyStateByDocument[docB])
+        XCTAssertNotNil(store.historyStateByDocument[docC], "不同工作区的历史不受影响")
+    }
 }
 #endif

@@ -210,6 +210,8 @@ extension AppState {
         workspaceDocs[result.path] = session
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
         updateEditorDirtyState(path: result.path, isDirty: false)
+        // 加载/重载成功后重置共享编辑历史
+        editorStore.resetHistory(documentKey: docKey)
     }
 
     private func updateEditorConflictState(workspaceKey: String, path: String, kind: String, isDirty: Bool) {
@@ -523,6 +525,33 @@ extension AppState {
             let newFileName = String(newPath.split(separator: "/").last ?? Substring(newPath))
             tabs[index].title = newFileName
             workspaceTabs[globalKey] = tabs
+
+            // 迁移文档会话到新路径
+            if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+               let oldDoc = workspaceDocs[oldPath] {
+                let oldDocKey = oldDoc.key
+                let newDocKey = EditorDocumentKey(globalWorkspaceKey: globalKey, path: newPath)
+                // 更新文档缓存
+                var newDoc = oldDoc
+                if let resolvedNewKey = newDocKey {
+                    newDoc = EditorDocumentSession(
+                        key: resolvedNewKey,
+                        content: oldDoc.content,
+                        baselineContentHash: oldDoc.baselineContentHash,
+                        isDirty: oldDoc.isDirty,
+                        canUndo: oldDoc.canUndo,
+                        canRedo: oldDoc.canRedo,
+                        lastLoadedAt: oldDoc.lastLoadedAt,
+                        loadStatus: oldDoc.loadStatus,
+                        conflictState: oldDoc.conflictState
+                    )
+                    // 迁移运行时状态（历史、查找替换、折叠、gutter）
+                    editorStore.migrateDocumentRuntimeState(from: oldDocKey, to: resolvedNewKey)
+                }
+                workspaceDocs.removeValue(forKey: oldPath)
+                workspaceDocs[newPath] = newDoc
+                editorDocumentsByWorkspace[globalKey] = workspaceDocs
+            }
         }
     }
 

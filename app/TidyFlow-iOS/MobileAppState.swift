@@ -4849,6 +4849,12 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的查找替换状态
     @Published var editorFindReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
 
+    /// 按文档记录的编辑历史状态（运行时状态，不持久化）
+    var editorHistoryStateByDocument: [EditorDocumentKey: EditorUndoHistoryState] = [:]
+
+    /// 共享编辑历史配置（集中管理，与 macOS 保持一致）
+    let editorHistoryConfiguration = EditorUndoHistoryConfiguration.default
+
     /// 按文档记录的代码折叠状态（运行时展示层状态，不持久化）
     @Published var editorFoldingStateByDocument: [EditorDocumentKey: EditorCodeFoldingState] = [:]
 
@@ -4932,6 +4938,91 @@ final class MobileAppState: ObservableObject {
     /// 请求指定文档重做（转发到编辑器视图注册的回调）
     func requestRedo(documentKey: EditorDocumentKey) {
         onEditorRedo?(documentKey)
+    }
+
+    // MARK: - 共享编辑历史方法
+
+    /// 记录一次编辑命令到指定文档的共享历史栈
+    func recordEditorEdit(
+        currentText: String,
+        command: EditorEditCommand,
+        documentKey: EditorDocumentKey
+    ) -> EditorHistoryApplyResult {
+        let history = editorHistoryStateByDocument[documentKey] ?? .empty
+        let result = EditorUndoHistorySemantics.recordEdit(
+            currentText: currentText,
+            history: history,
+            command: command,
+            configuration: editorHistoryConfiguration
+        )
+        editorHistoryStateByDocument[documentKey] = result.history
+        updateEditorUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 执行指定文档的撤销操作
+    func undoEditorEdit(documentKey: EditorDocumentKey, currentText: String) -> EditorHistoryApplyResult? {
+        let history = editorHistoryStateByDocument[documentKey] ?? .empty
+        guard let result = EditorUndoHistorySemantics.undo(currentText: currentText, history: history) else { return nil }
+        editorHistoryStateByDocument[documentKey] = result.history
+        updateEditorUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 执行指定文档的重做操作
+    func redoEditorEdit(documentKey: EditorDocumentKey, currentText: String) -> EditorHistoryApplyResult? {
+        let history = editorHistoryStateByDocument[documentKey] ?? .empty
+        guard let result = EditorUndoHistorySemantics.redo(currentText: currentText, history: history) else { return nil }
+        editorHistoryStateByDocument[documentKey] = result.history
+        updateEditorUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 重置指定文档的编辑历史
+    func resetEditorHistory(documentKey: EditorDocumentKey) {
+        editorHistoryStateByDocument[documentKey] = EditorDocumentSession.historyAfterLoad()
+        updateEditorUndoRedoState(canUndo: false, canRedo: false, documentKey: documentKey)
+    }
+
+    /// 迁移文档运行时状态（另存为/重命名时将旧 key 状态移到新 key）
+    func migrateEditorDocumentRuntimeState(from oldKey: EditorDocumentKey, to newKey: EditorDocumentKey) {
+        if let oldHistory = editorHistoryStateByDocument.removeValue(forKey: oldKey) {
+            editorHistoryStateByDocument[newKey] = EditorDocumentSession.historyAfterSaveAs(
+                history: oldHistory, from: oldKey, to: newKey
+            )
+        }
+        if let fr = editorFindReplaceStateByDocument.removeValue(forKey: oldKey) {
+            editorFindReplaceStateByDocument[newKey] = fr
+        }
+        if let fs = editorFoldingStateByDocument.removeValue(forKey: oldKey) {
+            editorFoldingStateByDocument[newKey] = fs
+        }
+        if let gs = editorGutterStateByDocument.removeValue(forKey: oldKey) {
+            editorGutterStateByDocument[newKey] = gs
+        }
+    }
+
+    /// 更新指定文档的撤销/重做能力状态
+    private func updateEditorUndoRedoState(canUndo: Bool, canRedo: Bool, documentKey: EditorDocumentKey) {
+        let wsKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
+        guard var workspaceDocs = editorDocumentsByWorkspace[wsKey],
+              var session = workspaceDocs[documentKey.path] else { return }
+        session.canUndo = canUndo
+        session.canRedo = canRedo
+        workspaceDocs[documentKey.path] = session
+        editorDocumentsByWorkspace[wsKey] = workspaceDocs
+    }
+
+    /// 查询指定文档的 canUndo 状态
+    func editorCanUndo(documentKey: EditorDocumentKey) -> Bool {
+        let wsKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
+        return editorDocumentsByWorkspace[wsKey]?[documentKey.path]?.canUndo ?? false
+    }
+
+    /// 查询指定文档的 canRedo 状态
+    func editorCanRedo(documentKey: EditorDocumentKey) -> Bool {
+        let wsKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
+        return editorDocumentsByWorkspace[wsKey]?[documentKey.path]?.canRedo ?? false
     }
 
     /// 展示指定文档的查找替换面板
@@ -5027,6 +5118,7 @@ final class MobileAppState: ObservableObject {
             editorFindReplaceStateByDocument.removeValue(forKey: docKey)
             editorFoldingStateByDocument.removeValue(forKey: docKey)
             editorGutterStateByDocument.removeValue(forKey: docKey)
+            editorHistoryStateByDocument.removeValue(forKey: docKey)
         }
         editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }
@@ -5047,6 +5139,8 @@ final class MobileAppState: ObservableObject {
         session.applyLoadSuccess(content: content)
         workspaceDocs[result.path] = session
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
+        // 加载/重载成功后重置共享编辑历史
+        resetEditorHistory(documentKey: docKey)
     }
 
     /// 处理编辑器文件保存结果

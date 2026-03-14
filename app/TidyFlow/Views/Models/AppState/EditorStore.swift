@@ -50,6 +50,15 @@ class EditorStore: ObservableObject {
     /// 切换标签时保留各自查找条件；面板可见性也按文档记录。
     @Published var findReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
 
+    // MARK: - 按文档记录的编辑历史状态
+
+    /// 每个文档独立的编辑历史状态，按文档键索引。
+    /// 历史状态是运行时状态，不持久化。
+    var historyStateByDocument: [EditorDocumentKey: EditorUndoHistoryState] = [:]
+
+    /// 共享编辑历史配置（集中管理，不在各端分叉）
+    let historyConfiguration = EditorUndoHistoryConfiguration.default
+
     // MARK: - 按文档记录的折叠状态
 
     /// 每个文档独立的代码折叠状态，按文档键索引。
@@ -119,19 +128,86 @@ class EditorStore: ObservableObject {
         editorStatusIsError = false
     }
 
-    // MARK: - 撤销/重做方法
+    // MARK: - 撤销/重做方法（共享历史语义层驱动）
 
-    /// 请求指定文档的撤销操作
+    /// 记录一次编辑命令到指定文档的共享历史栈。
+    /// 返回记录后的结果（含新文本和选区），调用方负责回写到视图。
+    func recordEdit(
+        currentText: String,
+        command: EditorEditCommand,
+        documentKey: EditorDocumentKey
+    ) -> EditorHistoryApplyResult {
+        let history = historyStateByDocument[documentKey] ?? .empty
+        let result = EditorUndoHistorySemantics.recordEdit(
+            currentText: currentText,
+            history: history,
+            command: command,
+            configuration: historyConfiguration
+        )
+        historyStateByDocument[documentKey] = result.history
+        updateUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 执行指定文档的撤销操作。
+    /// 返回撤销结果（含恢复的文本和选区），调用方负责回写到视图。
+    func undoEdit(documentKey: EditorDocumentKey, currentText: String) -> EditorHistoryApplyResult? {
+        let history = historyStateByDocument[documentKey] ?? .empty
+        guard let result = EditorUndoHistorySemantics.undo(currentText: currentText, history: history) else { return nil }
+        historyStateByDocument[documentKey] = result.history
+        updateUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 执行指定文档的重做操作。
+    /// 返回重做结果（含新文本和选区），调用方负责回写到视图。
+    func redoEdit(documentKey: EditorDocumentKey, currentText: String) -> EditorHistoryApplyResult? {
+        let history = historyStateByDocument[documentKey] ?? .empty
+        guard let result = EditorUndoHistorySemantics.redo(currentText: currentText, history: history) else { return nil }
+        historyStateByDocument[documentKey] = result.history
+        updateUndoRedoState(canUndo: result.canUndo, canRedo: result.canRedo, documentKey: documentKey)
+        return result
+    }
+
+    /// 重置指定文档的编辑历史（加载/重载后调用）
+    func resetHistory(documentKey: EditorDocumentKey) {
+        historyStateByDocument[documentKey] = EditorDocumentSession.historyAfterLoad()
+        updateUndoRedoState(canUndo: false, canRedo: false, documentKey: documentKey)
+    }
+
+    /// 迁移文档运行时状态（另存为/重命名时将旧 key 状态移到新 key）
+    func migrateDocumentRuntimeState(from oldKey: EditorDocumentKey, to newKey: EditorDocumentKey) {
+        // 迁移历史
+        if let oldHistory = historyStateByDocument.removeValue(forKey: oldKey) {
+            historyStateByDocument[newKey] = EditorDocumentSession.historyAfterSaveAs(
+                history: oldHistory, from: oldKey, to: newKey
+            )
+        }
+        // 迁移查找替换状态
+        if let fr = findReplaceStateByDocument.removeValue(forKey: oldKey) {
+            findReplaceStateByDocument[newKey] = fr
+        }
+        // 迁移折叠状态
+        if let fs = foldingStateByDocument.removeValue(forKey: oldKey) {
+            foldingStateByDocument[newKey] = fs
+        }
+        // 迁移 gutter 状态
+        if let gs = gutterStateByDocument.removeValue(forKey: oldKey) {
+            gutterStateByDocument[newKey] = gs
+        }
+    }
+
+    /// 请求指定文档的撤销操作（回调到编辑器视图执行实际回放）
     func requestUndo(documentKey: EditorDocumentKey) {
         onEditorUndo?(documentKey)
     }
 
-    /// 请求指定文档的重做操作
+    /// 请求指定文档的重做操作（回调到编辑器视图执行实际回放）
     func requestRedo(documentKey: EditorDocumentKey) {
         onEditorRedo?(documentKey)
     }
 
-    /// 更新指定文档的撤销/重做状态（由编辑器视图回调）
+    /// 更新指定文档的撤销/重做状态（由共享历史操作或编辑器视图回调触发）
     func updateUndoRedoState(canUndo: Bool, canRedo: Bool, documentKey: EditorDocumentKey) {
         let wsKey = "\(documentKey.project):\(documentKey.workspace)"
         guard var workspaceDocs = editorDocumentsByWorkspace[wsKey],
@@ -170,6 +246,7 @@ class EditorStore: ObservableObject {
             findReplaceStateByDocument.removeValue(forKey: docKey)
             foldingStateByDocument.removeValue(forKey: docKey)
             gutterStateByDocument.removeValue(forKey: docKey)
+            historyStateByDocument.removeValue(forKey: docKey)
         }
     }
 
@@ -192,6 +269,12 @@ class EditorStore: ObservableObject {
         }
         for key in gutterKeysToRemove {
             gutterStateByDocument.removeValue(forKey: key)
+        }
+        let historyKeysToRemove = historyStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in historyKeysToRemove {
+            historyStateByDocument.removeValue(forKey: key)
         }
     }
 

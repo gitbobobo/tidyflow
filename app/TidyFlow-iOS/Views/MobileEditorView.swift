@@ -619,11 +619,45 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 self.appState.saveDocument(documentKey: self.documentKey)
             }
         }
-        accessory.onUndo = { [weak textView] in
-            textView?.undoManager?.undo()
+        accessory.onUndo = { [weak textView, weak appState] in
+            guard let textView = textView, let appState = appState else { return }
+            guard let result = appState.undoEditorEdit(
+                documentKey: self.documentKey,
+                currentText: textView.text ?? ""
+            ) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: min(result.selection.length, max(0, maxLen - result.selection.location))
+            )
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.accessoryView?.canUndo = result.canUndo
+            context.coordinator.accessoryView?.canRedo = result.canRedo
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: self.path)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
-        accessory.onRedo = { [weak textView] in
-            textView?.undoManager?.redo()
+        accessory.onRedo = { [weak textView, weak appState] in
+            guard let textView = textView, let appState = appState else { return }
+            guard let result = appState.redoEditorEdit(
+                documentKey: self.documentKey,
+                currentText: textView.text ?? ""
+            ) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: min(result.selection.length, max(0, maxLen - result.selection.location))
+            )
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.accessoryView?.canUndo = result.canUndo
+            context.coordinator.accessoryView?.canRedo = result.canRedo
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: self.path)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
         accessory.onToggleFind = {
             DispatchQueue.main.async {
@@ -670,6 +704,50 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         // 左侧留出 gutter 空间（初始值，后续由 gutter 投影动态更新）
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 48, bottom: 8, right: 8)
 
+        // 注册外部撤销/重做回调（用于 requestUndo/requestRedo 命令入口）
+        appState.onEditorUndo = { [weak textView, weak appState] docKey in
+            guard let textView = textView, let appState = appState else { return }
+            guard docKey == self.documentKey else { return }
+            guard let result = appState.undoEditorEdit(
+                documentKey: docKey,
+                currentText: textView.text ?? ""
+            ) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: 0
+            )
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.accessoryView?.canUndo = result.canUndo
+            context.coordinator.accessoryView?.canRedo = result.canRedo
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: self.path)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
+        }
+        appState.onEditorRedo = { [weak textView, weak appState] docKey in
+            guard let textView = textView, let appState = appState else { return }
+            guard docKey == self.documentKey else { return }
+            guard let result = appState.redoEditorEdit(
+                documentKey: docKey,
+                currentText: textView.text ?? ""
+            ) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: 0
+            )
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.accessoryView?.canUndo = result.canUndo
+            context.coordinator.accessoryView?.canRedo = result.canRedo
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: self.path)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
+        }
+
         return textView
     }
 
@@ -702,9 +780,9 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
 
-        // 更新辅助栏的撤销/重做状态
-        context.coordinator.accessoryView?.canUndo = textView.undoManager?.canUndo ?? false
-        context.coordinator.accessoryView?.canRedo = textView.undoManager?.canRedo ?? false
+        // 更新辅助栏的撤销/重做状态（来自共享历史能力）
+        context.coordinator.accessoryView?.canUndo = appState.editorCanUndo(documentKey: documentKey)
+        context.coordinator.accessoryView?.canRedo = appState.editorCanRedo(documentKey: documentKey)
     }
 
     class Coordinator: NSObject, UITextViewDelegate {
@@ -719,6 +797,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         private var lastAppliedTheme: EditorSyntaxTheme?
         /// 标记当前是否正在程序性地更新属性（防止循环写回）
         var isApplyingHighlight = false
+        /// 标记当前是否正在程序性地回放共享历史（防止再次入栈）
+        var isProgrammaticTextUpdate = false
         /// 最近一次结构分析快照
         var lastStructureSnapshot: EditorStructureSnapshot?
         /// 上次应用的折叠指纹
@@ -738,8 +818,84 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             self.parent = parent
         }
 
+        // MARK: - 共享历史桥接
+
+        /// 拦截文本变更前记录共享编辑命令
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard !isProgrammaticTextUpdate, !isApplyingHighlight else { return true }
+
+            let currentText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            let replacedText = (currentText as NSString).substring(with: range)
+
+            let command = EditorEditCommand(
+                mutation: EditorTextMutation(
+                    rangeLocation: range.location,
+                    rangeLength: range.length,
+                    replacementText: text
+                ),
+                beforeSelection: EditorSelectionSnapshot(
+                    location: selectedRange.location,
+                    length: selectedRange.length
+                ),
+                afterSelection: EditorSelectionSnapshot(
+                    location: range.location + (text as NSString).length,
+                    length: 0
+                ),
+                timestamp: Date(),
+                replacedText: replacedText
+            )
+
+            let result = parent.appState.recordEditorEdit(
+                currentText: currentText,
+                command: command,
+                documentKey: parent.documentKey
+            )
+
+            // 程序化写回新文本和选区
+            isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: 0
+            )
+            isProgrammaticTextUpdate = false
+
+            // 更新状态
+            parent.appState.updateEditorDocumentContent(
+                globalWorkspaceKey: parent.globalWorkspaceKey,
+                path: parent.path,
+                content: result.text
+            )
+
+            // 更新辅助栏状态
+            accessoryView?.canUndo = result.canUndo
+            accessoryView?.canRedo = result.canRedo
+
+            // 编辑时自动展开包含光标位置的已折叠区域
+            if let snapshot = lastStructureSnapshot {
+                let cursorLine = lineNumber(for: result.selection.location, in: result.text)
+                var foldState = parent.appState.foldingState(for: parent.documentKey)
+                let beforeCount = foldState.collapsedRegionIDs.count
+                foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                if foldState.collapsedRegionIDs.count != beforeCount {
+                    parent.appState.updateFoldingState(foldState, for: parent.documentKey)
+                }
+                parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
+            }
+
+            // 重新应用高亮和折叠
+            applySyntaxHighlighting(to: textView, filePath: parent.path)
+            applyFoldingProjection(to: textView)
+            refreshPairMatchOverlay(textView: textView)
+
+            return false
+        }
+
         func textViewDidChange(_ textView: UITextView) {
-            guard !isApplyingHighlight else { return }
+            guard !isApplyingHighlight, !isProgrammaticTextUpdate else { return }
+            // shouldChangeTextIn 已处理用户编辑并入栈；此回调仅处理未被拦截的情况
             parent.appState.updateEditorDocumentContent(
                 globalWorkspaceKey: parent.globalWorkspaceKey,
                 path: parent.path,
@@ -755,13 +911,12 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 if foldState.collapsedRegionIDs.count != beforeCount {
                     parent.appState.updateFoldingState(foldState, for: parent.documentKey)
                 }
-                // 更新当前行
                 parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
             }
 
-            // 更新辅助栏撤销/重做状态
-            accessoryView?.canUndo = textView.undoManager?.canUndo ?? false
-            accessoryView?.canRedo = textView.undoManager?.canRedo ?? false
+            // 更新辅助栏撤销/重做状态（来自共享历史）
+            accessoryView?.canUndo = parent.appState.editorCanUndo(documentKey: parent.documentKey)
+            accessoryView?.canRedo = parent.appState.editorCanRedo(documentKey: parent.documentKey)
 
             // 用户输入后重新应用高亮和折叠
             applySyntaxHighlighting(to: textView, filePath: parent.path)
