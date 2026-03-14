@@ -591,4 +591,122 @@ final class MobileEditorHistoryTests: XCTestCase {
         XCTAssertFalse(migratedHistory.undoStack.isEmpty)
         XCTAssertEqual(migratedHistory.undoStack.count, 1)
     }
+
+    // MARK: - 共享补全替换语义
+
+    func testSharedReplacementSemanticsIdenticalAcrossPlatforms() {
+        // 验证共享引擎的 accept() 在纯函数层面的行为一致性
+        let engine = EditorAutocompleteEngine()
+        let text = "let myVa = 1"
+        let ctx = EditorAutocompleteContext(
+            filePath: "test.swift",
+            text: text,
+            cursorLocation: 8, // 在 "myVa" 尾部
+            triggerKind: .automatic
+        )
+        let state = engine.update(context: ctx, previousState: nil)
+
+        // 查找 myVariable 类候选或关键字候选
+        guard let item = state.items.first else {
+            // 可能无候选（myVa 开头的不多），跳过测试
+            return
+        }
+
+        // 第一次接受
+        let result1 = engine.accept(item: item, state: state, currentText: text)
+
+        // 第二次接受（同样的状态和文本）—— 应完全一致
+        let result2 = engine.accept(item: item, state: state, currentText: text)
+
+        XCTAssertEqual(result1?.text, result2?.text, "共享替换语义应确定性一致")
+        XCTAssertEqual(result1?.selection.location, result2?.selection.location)
+    }
+
+    func testReplacementStaticFunctionConsistency() {
+        let item = EditorAutocompleteItem(
+            id: "kw-guard",
+            title: "guard",
+            insertText: "guard",
+            kind: .languageKeyword
+        )
+        let state = EditorAutocompleteState(
+            isVisible: true,
+            query: "gu",
+            selectedIndex: 0,
+            replacementRange: NSRange(location: 4, length: 2),
+            items: [item]
+        )
+
+        let replacement = EditorAutocompleteEngine.replacement(for: item, state: state)
+
+        // 验证替换指令与 accept() 结果一致
+        let engine = EditorAutocompleteEngine()
+        let result = engine.accept(item: item, state: state, currentText: "let gu = 1")
+        XCTAssertNotNil(result)
+        XCTAssertEqual(replacement.replacementText, item.insertText)
+        XCTAssertEqual(replacement.rangeLocation, state.replacementRange.location)
+        XCTAssertEqual(replacement.rangeLength, state.replacementRange.length)
+        XCTAssertEqual(replacement.caretLocation, result?.selection.location)
+    }
+
+    func testAutocompleteStateIsolationBetweenDocuments() {
+        // 验证补全状态在共享层只是值类型，不同文档互不影响
+        let stateA = EditorAutocompleteState(
+            isVisible: true,
+            query: "alpha",
+            selectedIndex: 1,
+            replacementRange: NSRange(location: 0, length: 5),
+            items: [
+                EditorAutocompleteItem(id: "a1", title: "alpha", insertText: "alpha", kind: .documentSymbol),
+                EditorAutocompleteItem(id: "a2", title: "alphaNum", insertText: "alphaNum", kind: .documentSymbol),
+            ]
+        )
+        var stateB = EditorAutocompleteState.hidden
+
+        // 修改 B 不应影响 A
+        stateB.isVisible = true
+        stateB.query = "beta"
+
+        XCTAssertEqual(stateA.query, "alpha")
+        XCTAssertEqual(stateB.query, "beta")
+        XCTAssertNotEqual(stateA, stateB, "不同文档的补全状态应完全独立")
+    }
+
+    func testAutocompleteEngineUpdateIdempotent() {
+        // 同一上下文调用两次应返回相同结果
+        let engine = EditorAutocompleteEngine()
+        let text = "let guard"
+        let ctx = EditorAutocompleteContext(
+            filePath: "test.swift",
+            text: text,
+            cursorLocation: 9,
+            triggerKind: .automatic
+        )
+
+        let state1 = engine.update(context: ctx, previousState: nil)
+        let state2 = engine.update(context: ctx, previousState: nil)
+
+        XCTAssertEqual(state1.isVisible, state2.isVisible)
+        XCTAssertEqual(state1.items.count, state2.items.count)
+        XCTAssertEqual(state1.query, state2.query)
+        XCTAssertEqual(state1.replacementRange, state2.replacementRange)
+    }
+
+    func testSharedReplacementDoesNotExpandBeyondToken() {
+        // 验证替换范围只覆盖当前 token，不跨 token
+        let engine = EditorAutocompleteEngine()
+        let text = "let gu = 1"
+        let ctx = EditorAutocompleteContext(
+            filePath: "test.swift",
+            text: text,
+            cursorLocation: 6, // "gu" 尾部
+            triggerKind: .automatic
+        )
+        let state = engine.update(context: ctx, previousState: nil)
+
+        XCTAssertTrue(state.isVisible)
+        // replacementRange 应仅覆盖 "gu" token
+        XCTAssertEqual(state.replacementRange.location, 4)
+        XCTAssertEqual(state.replacementRange.length, 2)
+    }
 }

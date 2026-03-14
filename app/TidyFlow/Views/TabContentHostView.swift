@@ -1016,6 +1016,41 @@ struct NativeCodeEditorView: NSViewRepresentable {
         // 撤销/重做状态由共享历史语义层驱动（不再依赖 NSUndoManager 通知）
         textView.onUndoRedoStateDidChange = nil
 
+        // 注册补全键盘事件处理
+        textView.onAutocompleteKeyDown = { [weak textView] event in
+            guard let textView = textView else { return false }
+            let coordinator = context.coordinator
+
+            // Ctrl-Space 手动触发
+            if event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == " " {
+                coordinator.triggerManualAutocomplete(textView: textView)
+                return true
+            }
+
+            // 以下按键仅在补全面板可见时拦截
+            guard coordinator.isAutocompleteVisible else { return false }
+
+            switch event.keyCode {
+            case 126: // Up
+                coordinator.moveAutocompleteSelectionUp()
+                return true
+            case 125: // Down
+                coordinator.moveAutocompleteSelectionDown()
+                return true
+            case 48: // Tab
+                coordinator.acceptSelectedAutocomplete(textView: textView)
+                return true
+            case 36: // Return/Enter
+                coordinator.acceptSelectedAutocomplete(textView: textView)
+                return true
+            case 53: // Esc
+                coordinator.dismissAutocompletePopup()
+                return true
+            default:
+                return false
+            }
+        }
+
         // 注册共享历史撤销/重做回调
         editorStore.onEditorUndo = { [weak textView, weak editorStore] docKey in
             guard let textView = textView, let editorStore = editorStore else { return }
@@ -1099,6 +1134,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selectedRanges
             context.coordinator.isProgrammaticTextUpdate = false
+            // 外部文本变化时关闭补全弹层
+            context.coordinator.dismissAutocompletePopup()
             // 文本变化时重新应用高亮和折叠
             context.coordinator.applySyntaxHighlighting(to: textView)
             context.coordinator.applyFoldingProjection(to: textView)
@@ -1150,6 +1187,10 @@ struct NativeCodeEditorView: NSViewRepresentable {
         weak var foldOverlay: EditorFoldOverlayView?
         private let highlighter = EditorSyntaxHighlighter()
         private let structureAnalyzer = EditorStructureAnalyzer()
+        /// 补全引擎（共享语义层）
+        private let autocompleteEngine = EditorAutocompleteEngine()
+        /// 补全候选弹层（macOS NSPanel/子视图）
+        private var autocompletePopupView: EditorAutocompletePopupView?
         /// 上次应用的高亮快照指纹，用于跳过重复应用
         private var lastAppliedFingerprint: Int?
         /// 上次应用的主题
@@ -1240,6 +1281,9 @@ struct NativeCodeEditorView: NSViewRepresentable {
             applyFoldingProjection(to: textView as! UndoTrackingTextView)
             refreshPairMatchOverlay(textView: textView as! UndoTrackingTextView)
 
+            // 刷新补全状态
+            refreshAutocompleteState(textView: textView as! UndoTrackingTextView, triggerKind: .automatic)
+
             // 已自行处理文本变更，阻止 NSTextView 再次应用
             return false
         }
@@ -1268,6 +1312,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
             applySyntaxHighlighting(to: textView)
             applyFoldingProjection(to: textView)
             refreshPairMatchOverlay(textView: textView)
+            // 刷新补全状态
+            refreshAutocompleteState(textView: textView, triggerKind: .automatic)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -1284,6 +1330,10 @@ struct NativeCodeEditorView: NSViewRepresentable {
             }
             // 选区变化时刷新括号/引号匹配覆盖层
             refreshPairMatchOverlay(textView: textView)
+            // 选区变化时关闭补全（如果选区有长度，即有选中文本）
+            if textView.selectedRange().length > 0 {
+                dismissAutocompletePopup()
+            }
         }
 
         /// 计算字符偏移对应的行号（0-based）
@@ -1612,6 +1662,195 @@ struct NativeCodeEditorView: NSViewRepresentable {
             pairMatchOverlays.removeAll()
             lastPairMatchCacheKey = nil
         }
+
+        // MARK: - 自动补全
+
+        /// 刷新补全状态（由文本变更或选区变更驱动）
+        func refreshAutocompleteState(textView: UndoTrackingTextView, triggerKind: EditorAutocompleteTriggerKind) {
+            guard let docKey = parent.documentKey,
+                  let filePath = parent.filePath else {
+                dismissAutocompletePopup()
+                return
+            }
+
+            // 检查文档加载状态
+            let wsKey = "\(docKey.project):\(docKey.workspace)"
+            if let session = parent.editorStore.editorDocumentsByWorkspace[wsKey]?[docKey.path],
+               session.loadStatus != .ready {
+                dismissAutocompletePopup()
+                return
+            }
+
+            let text = textView.string
+            let cursorLocation = textView.selectedRange().location
+
+            let context = EditorAutocompleteContext(
+                filePath: filePath,
+                text: text,
+                cursorLocation: cursorLocation,
+                triggerKind: triggerKind
+            )
+
+            let previousState = parent.editorStore.autocompleteState(for: docKey)
+            let newState = autocompleteEngine.update(context: context, previousState: previousState)
+            parent.editorStore.updateAutocompleteState(newState, for: docKey)
+
+            if newState.isVisible && !newState.items.isEmpty {
+                showAutocompletePopup(textView: textView, state: newState)
+            } else {
+                dismissAutocompletePopup()
+            }
+        }
+
+        /// 手动触发补全（Ctrl-Space）
+        func triggerManualAutocomplete(textView: UndoTrackingTextView) {
+            refreshAutocompleteState(textView: textView, triggerKind: .manual)
+        }
+
+        /// 接受当前选中的候选
+        func acceptSelectedAutocomplete(textView: UndoTrackingTextView) {
+            guard let docKey = parent.documentKey else { return }
+            let state = parent.editorStore.autocompleteState(for: docKey)
+            guard state.isVisible, state.selectedIndex < state.items.count else { return }
+
+            let selectedItem = state.items[state.selectedIndex]
+            guard let result = parent.editorStore.applyAcceptedAutocomplete(
+                selectedItem,
+                for: docKey,
+                currentText: textView.string
+            ) else { return }
+
+            // 作为编辑命令记录到共享历史
+            let currentText = textView.string
+            let command = EditorEditCommand(
+                mutation: EditorTextMutation(
+                    rangeLocation: state.replacementRange.location,
+                    rangeLength: state.replacementRange.length,
+                    replacementText: selectedItem.insertText
+                ),
+                beforeSelection: EditorSelectionSnapshot(
+                    location: textView.selectedRange().location,
+                    length: textView.selectedRange().length
+                ),
+                afterSelection: result.selection,
+                timestamp: Date(),
+                replacedText: (currentText as NSString).substring(with: state.replacementRange)
+            )
+            _ = parent.editorStore.recordEdit(
+                currentText: currentText,
+                command: command,
+                documentKey: docKey
+            )
+
+            // 写回文本和选区
+            isProgrammaticTextUpdate = true
+            textView.string = result.text
+            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            isProgrammaticTextUpdate = false
+
+            parent.text = result.text
+
+            // 关闭补全弹层
+            dismissAutocompletePopup()
+
+            // 刷新高亮、折叠、括号匹配、gutter
+            applySyntaxHighlighting(to: textView)
+            applyFoldingProjection(to: textView)
+            refreshPairMatchOverlay(textView: textView)
+        }
+
+        /// 候选导航：上移
+        func moveAutocompleteSelectionUp() {
+            guard let docKey = parent.documentKey else { return }
+            var state = parent.editorStore.autocompleteState(for: docKey)
+            guard state.isVisible, !state.items.isEmpty else { return }
+            state.selectedIndex = (state.selectedIndex - 1 + state.items.count) % state.items.count
+            parent.editorStore.updateAutocompleteState(state, for: docKey)
+            autocompletePopupView?.updateSelection(state.selectedIndex)
+        }
+
+        /// 候选导航：下移
+        func moveAutocompleteSelectionDown() {
+            guard let docKey = parent.documentKey else { return }
+            var state = parent.editorStore.autocompleteState(for: docKey)
+            guard state.isVisible, !state.items.isEmpty else { return }
+            state.selectedIndex = (state.selectedIndex + 1) % state.items.count
+            parent.editorStore.updateAutocompleteState(state, for: docKey)
+            autocompletePopupView?.updateSelection(state.selectedIndex)
+        }
+
+        /// 显示补全弹层
+        private func showAutocompletePopup(textView: UndoTrackingTextView, state: EditorAutocompleteState) {
+            if autocompletePopupView == nil {
+                let popup = EditorAutocompletePopupView()
+                popup.onAccept = { [weak self] index in
+                    guard let self = self, let textView = self.textView else { return }
+                    guard let docKey = self.parent.documentKey else { return }
+                    var s = self.parent.editorStore.autocompleteState(for: docKey)
+                    s.selectedIndex = index
+                    self.parent.editorStore.updateAutocompleteState(s, for: docKey)
+                    self.acceptSelectedAutocomplete(textView: textView)
+                }
+                textView.addSubview(popup)
+                autocompletePopupView = popup
+            }
+
+            guard let popup = autocompletePopupView else { return }
+            popup.update(items: state.items, selectedIndex: state.selectedIndex)
+
+            // 定位到 caret rect
+            let caretRect = caretRectInTextView(textView: textView, at: state.replacementRange.location)
+            let popupSize = popup.fittingPopupSize
+            var origin = NSPoint(
+                x: caretRect.origin.x,
+                y: caretRect.maxY + 2
+            )
+
+            // 检查是否需要翻转到上方
+            if let scrollView = textView.enclosingScrollView {
+                let visibleRect = scrollView.documentVisibleRect
+                if origin.y + popupSize.height > visibleRect.maxY {
+                    origin.y = caretRect.origin.y - popupSize.height - 2
+                }
+            }
+
+            popup.frame = NSRect(origin: origin, size: popupSize)
+            popup.isHidden = false
+        }
+
+        /// 关闭补全弹层
+        func dismissAutocompletePopup() {
+            autocompletePopupView?.isHidden = true
+            if let docKey = parent.documentKey {
+                parent.editorStore.resetAutocompleteState(for: docKey)
+            }
+        }
+
+        /// 补全面板是否可见
+        var isAutocompleteVisible: Bool {
+            guard let docKey = parent.documentKey else { return false }
+            return parent.editorStore.autocompleteState(for: docKey).isVisible
+        }
+
+        /// 计算 textView 中指定字符偏移处的 caret rect
+        private func caretRectInTextView(textView: UndoTrackingTextView, at charOffset: Int) -> NSRect {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return .zero
+            }
+            let safeOffset = min(charOffset, (textView.string as NSString).length)
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: max(safeOffset, 0))
+            let rect = layoutManager.boundingRect(
+                forGlyphRange: NSRange(location: glyphIndex, length: 0),
+                in: textContainer
+            )
+            return NSRect(
+                x: rect.origin.x + textView.textContainerInset.width + textView.textContainerOrigin.x,
+                y: rect.origin.y + textView.textContainerInset.height,
+                width: 1,
+                height: rect.height
+            )
+        }
     }
 }
 
@@ -1619,7 +1858,27 @@ struct NativeCodeEditorView: NSViewRepresentable {
 /// 通过 NSUndoManager 通知监听撤销/重做状态变化并回调外部。
 class UndoTrackingTextView: NSTextView {
     var onUndoRedoStateDidChange: ((Bool, Bool) -> Void)?
+    /// 补全键盘事件转发（由 Coordinator 设置）
+    var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
     private var undoObservers: [NSObjectProtocol] = []
+
+    override func keyDown(with event: NSEvent) {
+        // 先尝试补全键盘处理
+        if let handler = onAutocompleteKeyDown, handler(event) {
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Ctrl-Space 手动触发补全
+        if event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == " " {
+            if let handler = onAutocompleteKeyDown, handler(event) {
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     func reportUndoRedoState() {
         let canUndo = undoManager?.canUndo ?? false
@@ -1652,6 +1911,150 @@ class UndoTrackingTextView: NSTextView {
 
     deinit {
         stopObservingUndoManager()
+    }
+}
+
+// MARK: - 编辑器补全候选弹层（macOS）
+
+/// 补全候选弹层视图（NSView 子类，作为 textView 的子视图显示）。
+/// 纯展示层，不持有聊天输入或 AI 补全的状态模型。
+class EditorAutocompletePopupView: NSView {
+    var onAccept: ((Int) -> Void)?
+    private var items: [EditorAutocompleteItem] = []
+    private var selectedIndex: Int = 0
+    private var rowViews: [NSView] = []
+
+    private let rowHeight: CGFloat = 24
+    private let maxVisibleRows = 8
+    private let popupWidth: CGFloat = 280
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 6
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.2
+        layer?.shadowRadius = 8
+        layer?.shadowOffset = CGSize(width: 0, height: -2)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var fittingPopupSize: NSSize {
+        let rows = min(items.count, maxVisibleRows)
+        return NSSize(width: popupWidth, height: CGFloat(rows) * rowHeight + 4)
+    }
+
+    func update(items: [EditorAutocompleteItem], selectedIndex: Int) {
+        self.items = items
+        self.selectedIndex = selectedIndex
+        rebuildRows()
+    }
+
+    func updateSelection(_ index: Int) {
+        let oldIndex = selectedIndex
+        selectedIndex = index
+        if oldIndex < rowViews.count {
+            updateRowAppearance(rowViews[oldIndex], isSelected: false)
+        }
+        if index < rowViews.count {
+            updateRowAppearance(rowViews[index], isSelected: true)
+            // 滚动到可见
+            rowViews[index].scrollToVisible(rowViews[index].bounds)
+        }
+    }
+
+    private func rebuildRows() {
+        for v in rowViews { v.removeFromSuperview() }
+        rowViews.removeAll()
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: popupWidth, height: fittingPopupSize.height))
+        scrollView.hasVerticalScroller = items.count > maxVisibleRows
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.autoresizingMask = [.width, .height]
+
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: popupWidth, height: CGFloat(items.count) * rowHeight))
+
+        for (i, item) in items.enumerated() {
+            let row = makeRow(item: item, index: i, isSelected: i == selectedIndex)
+            row.frame = NSRect(x: 0, y: CGFloat(items.count - 1 - i) * rowHeight, width: popupWidth, height: rowHeight)
+            documentView.addSubview(row)
+            rowViews.append(row)
+        }
+
+        scrollView.documentView = documentView
+        // 清除旧的 scroll views
+        for sub in subviews { sub.removeFromSuperview() }
+        addSubview(scrollView)
+
+        // 滚动到选中行
+        if selectedIndex < rowViews.count {
+            rowViews[selectedIndex].scrollToVisible(rowViews[selectedIndex].bounds)
+        }
+    }
+
+    private func makeRow(item: EditorAutocompleteItem, index: Int, isSelected: Bool) -> NSView {
+        let row = NSView()
+        row.wantsLayer = true
+        updateRowAppearance(row, isSelected: isSelected)
+
+        // 图标区域
+        let iconLabel = NSTextField(labelWithString: kindIcon(item.kind))
+        iconLabel.font = .systemFont(ofSize: 11)
+        iconLabel.frame = NSRect(x: 4, y: 2, width: 20, height: 20)
+        iconLabel.alignment = .center
+        row.addSubview(iconLabel)
+
+        // 标题
+        let titleLabel = NSTextField(labelWithString: item.title)
+        titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        titleLabel.textColor = .textColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.frame = NSRect(x: 26, y: 2, width: popupWidth - 90, height: 20)
+        row.addSubview(titleLabel)
+
+        // 类别标签
+        if let detail = item.detail {
+            let detailLabel = NSTextField(labelWithString: detail)
+            detailLabel.font = .systemFont(ofSize: 10)
+            detailLabel.textColor = .secondaryLabelColor
+            detailLabel.alignment = .right
+            detailLabel.frame = NSRect(x: popupWidth - 64, y: 4, width: 58, height: 16)
+            row.addSubview(detailLabel)
+        }
+
+        // 点击手势
+        let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked(_:)))
+        row.addGestureRecognizer(click)
+
+        return row
+    }
+
+    private func updateRowAppearance(_ row: NSView, isSelected: Bool) {
+        row.layer?.backgroundColor = isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            : NSColor.clear.cgColor
+    }
+
+    private func kindIcon(_ kind: EditorAutocompleteItemKind) -> String {
+        switch kind {
+        case .documentSymbol: return "𝑥"
+        case .languageKeyword: return "K"
+        case .languageTemplate: return "T"
+        }
+    }
+
+    @objc private func rowClicked(_ sender: NSClickGestureRecognizer) {
+        guard let view = sender.view,
+              let index = rowViews.firstIndex(of: view) else { return }
+        onAccept?(index)
     }
 }
 

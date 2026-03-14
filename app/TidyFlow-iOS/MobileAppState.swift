@@ -4703,6 +4703,9 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的 gutter 运行时状态（纯展示层，与折叠、查找替换同级，不持久化）
     @Published var editorGutterStateByDocument: [EditorDocumentKey: EditorGutterState] = [:]
 
+    /// 按文档记录的自动补全运行时状态（纯展示层，与查找/折叠/gutter 同级，不持久化）
+    @Published var editorAutocompleteStateByDocument: [EditorDocumentKey: EditorAutocompleteState] = [:]
+
     /// 正在进行的编辑器文件读取请求
     var pendingEditorFileReadRequests: Set<EditorRequestKey> = []
     /// 正在进行的编辑器文件保存请求
@@ -4842,6 +4845,8 @@ final class MobileAppState: ObservableObject {
         if let gs = editorGutterStateByDocument.removeValue(forKey: oldKey) {
             editorGutterStateByDocument[newKey] = gs
         }
+        // 迁移补全状态（通常迁移后重置即可）
+        editorAutocompleteStateByDocument.removeValue(forKey: oldKey)
     }
 
     /// 更新指定文档的撤销/重做能力状态
@@ -4954,6 +4959,60 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    // MARK: - 自动补全状态方法
+
+    /// 获取指定文档的自动补全状态（没有则返回隐藏状态）
+    func autocompleteState(for documentKey: EditorDocumentKey) -> EditorAutocompleteState {
+        editorAutocompleteStateByDocument[documentKey] ?? .hidden
+    }
+
+    /// 更新指定文档的自动补全状态
+    func updateAutocompleteState(_ state: EditorAutocompleteState, for documentKey: EditorDocumentKey) {
+        editorAutocompleteStateByDocument[documentKey] = state
+    }
+
+    /// 重置指定文档的自动补全状态（隐藏面板）
+    func resetAutocompleteState(for documentKey: EditorDocumentKey) {
+        editorAutocompleteStateByDocument[documentKey] = .hidden
+    }
+
+    /// 接受候选后，通过共享 replacement 规则返回新文本与新选区。
+    /// 平台桥接层调用此方法获取结果后写回编辑器。
+    func applyAcceptedAutocomplete(
+        _ item: EditorAutocompleteItem,
+        for documentKey: EditorDocumentKey,
+        currentText: String
+    ) -> (text: String, selection: EditorSelectionSnapshot)? {
+        let state = autocompleteState(for: documentKey)
+        let replacement = EditorAutocompleteEngine.replacement(for: item, state: state)
+
+        let nsText = currentText as NSString
+        let range = NSRange(location: replacement.rangeLocation, length: replacement.rangeLength)
+
+        guard range.location >= 0,
+              range.location + range.length <= nsText.length else {
+            return nil
+        }
+
+        let newText = nsText.replacingCharacters(in: range, with: replacement.replacementText)
+        let selection = EditorSelectionSnapshot(location: replacement.caretLocation, length: 0)
+
+        // 重置补全状态
+        resetAutocompleteState(for: documentKey)
+
+        return (text: newText, selection: selection)
+    }
+
+    /// 释放指定工作区下所有文档的自动补全状态
+    func releaseAllAutocompleteStates(workspaceKey: String) {
+        let keysToRemove = editorAutocompleteStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            editorAutocompleteStateByDocument.removeValue(forKey: key)
+        }
+    }
+
     /// 释放指定文档的会话状态（关闭文档时调用）
     func releaseEditorDocumentSession(globalWorkspaceKey: String, path: String) {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: globalWorkspaceKey, path: path) {
@@ -4961,6 +5020,7 @@ final class MobileAppState: ObservableObject {
             editorFoldingStateByDocument.removeValue(forKey: docKey)
             editorGutterStateByDocument.removeValue(forKey: docKey)
             editorHistoryStateByDocument.removeValue(forKey: docKey)
+            editorAutocompleteStateByDocument.removeValue(forKey: docKey)
         }
         editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }

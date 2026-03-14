@@ -571,5 +571,161 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertNil(store.historyStateByDocument[docB])
         XCTAssertNotNil(store.historyStateByDocument[docC], "不同工作区的历史不受影响")
     }
+
+    // MARK: - 补全状态
+
+    func testAutocompleteStateDefaultHidden() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        let state = store.autocompleteState(for: docKey)
+        XCTAssertFalse(state.isVisible)
+        XCTAssertTrue(state.items.isEmpty)
+    }
+
+    func testUpdateAutocompleteStatePersists() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        let state = EditorAutocompleteState(
+            isVisible: true,
+            query: "gu",
+            selectedIndex: 0,
+            replacementRange: NSRange(location: 4, length: 2),
+            items: [
+                EditorAutocompleteItem(id: "kw-guard", title: "guard", insertText: "guard", kind: .languageKeyword),
+            ]
+        )
+        store.updateAutocompleteState(state, for: docKey)
+        let retrieved = store.autocompleteState(for: docKey)
+        XCTAssertTrue(retrieved.isVisible)
+        XCTAssertEqual(retrieved.query, "gu")
+        XCTAssertEqual(retrieved.items.count, 1)
+    }
+
+    func testResetAutocompleteState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "test", items: [
+                EditorAutocompleteItem(id: "t", title: "test", insertText: "test", kind: .languageKeyword),
+            ]),
+            for: docKey
+        )
+        store.resetAutocompleteState(for: docKey)
+        let state = store.autocompleteState(for: docKey)
+        XCTAssertFalse(state.isVisible)
+    }
+
+    func testAutocompleteStatePerDocumentIsolation() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "alpha", items: [
+                EditorAutocompleteItem(id: "a", title: "alpha", insertText: "alpha", kind: .documentSymbol),
+            ]),
+            for: docA
+        )
+
+        XCTAssertTrue(store.autocompleteState(for: docA).isVisible)
+        XCTAssertFalse(store.autocompleteState(for: docB).isVisible,
+                        "不同文档的补全状态应隔离")
+    }
+
+    func testAutocompleteStateIsolatedBetweenWorkspaces() {
+        let store = makeStore()
+        let docMain = EditorDocumentKey(project: "proj", workspace: "main", path: "file.swift")
+        let docDev = EditorDocumentKey(project: "proj", workspace: "dev", path: "file.swift")
+
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "test"),
+            for: docMain
+        )
+
+        XCTAssertTrue(store.autocompleteState(for: docMain).isVisible)
+        XCTAssertFalse(store.autocompleteState(for: docDev).isVisible,
+                        "同名路径在不同工作区的补全状态应隔离")
+    }
+
+    func testReleaseDocumentClearsAutocompleteState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "test"),
+            for: docKey
+        )
+
+        store.releaseDocumentSession(workspaceKey: "proj:main", path: "f.swift")
+        XCTAssertFalse(store.autocompleteState(for: docKey).isVisible,
+                        "关闭文档后补全状态应被释放")
+    }
+
+    func testReleaseAllDocumentSessionsClearsAutocompleteState() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+        let docC = EditorDocumentKey(project: "proj", workspace: "dev", path: "c.swift")
+
+        for docKey in [docA, docB, docC] {
+            store.updateAutocompleteState(
+                EditorAutocompleteState(isVisible: true, query: "test"),
+                for: docKey
+            )
+        }
+
+        store.releaseAllDocumentSessions(workspaceKey: "proj:main")
+
+        XCTAssertFalse(store.autocompleteState(for: docA).isVisible)
+        XCTAssertFalse(store.autocompleteState(for: docB).isVisible)
+        XCTAssertTrue(store.autocompleteState(for: docC).isVisible,
+                       "不同工作区的补全状态不受影响")
+    }
+
+    func testApplyAcceptedAutocomplete() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+
+        // 设置补全状态
+        let state = EditorAutocompleteState(
+            isVisible: true,
+            query: "gu",
+            selectedIndex: 0,
+            replacementRange: NSRange(location: 4, length: 2),
+            items: [
+                EditorAutocompleteItem(id: "kw-guard", title: "guard", insertText: "guard", kind: .languageKeyword),
+            ]
+        )
+        store.updateAutocompleteState(state, for: docKey)
+
+        let result = store.applyAcceptedAutocomplete(
+            state.items[0],
+            for: docKey,
+            currentText: "let gu = 1"
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.text, "let guard = 1")
+        XCTAssertEqual(result?.selection.location, 9) // "let guard".count
+    }
+
+    func testMigrateDocumentRuntimeStateClearsAutocomplete() {
+        let store = makeStore()
+        let oldKey = EditorDocumentKey(project: "proj", workspace: "main", path: "old.txt")
+        let newKey = EditorDocumentKey(project: "proj", workspace: "main", path: "new.txt")
+        let wsKey = "proj:main"
+        store.editorDocumentsByWorkspace[wsKey] = [
+            "old.txt": makeSession(path: "old.txt"),
+            "new.txt": makeSession(path: "new.txt"),
+        ]
+
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "test"),
+            for: oldKey
+        )
+
+        store.migrateDocumentRuntimeState(from: oldKey, to: newKey)
+
+        // 迁移后旧 key 和新 key 的补全状态都应为空（补全不迁移，直接清除）
+        XCTAssertFalse(store.autocompleteState(for: oldKey).isVisible)
+    }
 }
 #endif

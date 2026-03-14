@@ -588,6 +588,66 @@ enum EditorSyntaxColorMapIOS {
     }
 }
 
+/// 支持硬件键盘补全快捷键的 UITextView 子类
+class EditorAutocompleteTextView: UITextView {
+    /// 补全快捷键回调（返回 true 表示已处理）
+    var onAutocompleteKeyDown: ((UIKeyCommand) -> Bool)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = super.keyCommands ?? []
+        // Ctrl-Space 手动触发
+        commands.append(UIKeyCommand(
+            input: " ",
+            modifierFlags: .control,
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        // Tab 接受候选
+        commands.append(UIKeyCommand(
+            input: "\t",
+            modifierFlags: [],
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        // Esc 关闭候选
+        commands.append(UIKeyCommand(
+            input: UIKeyCommand.inputEscape,
+            modifierFlags: [],
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        // Enter 接受候选
+        commands.append(UIKeyCommand(
+            input: "\r",
+            modifierFlags: [],
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        // Up 导航
+        commands.append(UIKeyCommand(
+            input: UIKeyCommand.inputUpArrow,
+            modifierFlags: [],
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        // Down 导航
+        commands.append(UIKeyCommand(
+            input: UIKeyCommand.inputDownArrow,
+            modifierFlags: [],
+            action: #selector(handleAutocompleteKey(_:))
+        ))
+        return commands
+    }
+
+    @objc private func handleAutocompleteKey(_ command: UIKeyCommand) {
+        if onAutocompleteKeyDown?(command) == true {
+            return
+        }
+        // 未被补全处理的按键，交回系统默认行为
+        // Tab 和 Enter 需要手动插入
+        if command.input == "\t" {
+            insertText("\t")
+        } else if command.input == "\r" {
+            insertText("\n")
+        }
+    }
+}
+
 struct EditorTextViewWrapper: UIViewRepresentable {
     @ObservedObject var appState: MobileAppState
     let documentKey: EditorDocumentKey
@@ -599,7 +659,7 @@ struct EditorTextViewWrapper: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = EditorAutocompleteTextView()
         textView.delegate = context.coordinator
         textView.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
         textView.autocorrectionType = .no
@@ -610,6 +670,48 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         textView.keyboardDismissMode = .interactive
         textView.alwaysBounceVertical = true
         textView.backgroundColor = .systemBackground
+
+        // 硬件键盘补全快捷键处理
+        textView.onAutocompleteKeyDown = { [weak textView] command in
+            guard let textView = textView else { return false }
+            let coordinator = context.coordinator
+
+            // Ctrl-Space：手动触发
+            if command.modifierFlags.contains(.control) && command.input == " " {
+                coordinator.triggerManualAutocomplete(textView: textView)
+                return true
+            }
+
+            guard coordinator.isAutocompleteVisible else { return false }
+
+            let docKey = coordinator.parent.documentKey
+            var state = coordinator.parent.appState.autocompleteState(for: docKey)
+
+            switch command.input {
+            case UIKeyCommand.inputUpArrow:
+                if state.selectedIndex > 0 {
+                    state.selectedIndex -= 1
+                    coordinator.parent.appState.updateAutocompleteState(state, for: docKey)
+                    coordinator.autocompletePopupView?.update(items: state.items, selectedIndex: state.selectedIndex)
+                }
+                return true
+            case UIKeyCommand.inputDownArrow:
+                if state.selectedIndex < state.items.count - 1 {
+                    state.selectedIndex += 1
+                    coordinator.parent.appState.updateAutocompleteState(state, for: docKey)
+                    coordinator.autocompletePopupView?.update(items: state.items, selectedIndex: state.selectedIndex)
+                }
+                return true
+            case "\t", "\r":
+                coordinator.acceptSelectedAutocomplete(textView: textView)
+                return true
+            case UIKeyCommand.inputEscape:
+                coordinator.dismissAutocompletePopup(textView: textView)
+                return true
+            default:
+                return false
+            }
+        }
 
         // 设置键盘辅助栏
         let accessory = EditorInputAccessoryView(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
@@ -677,6 +779,10 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         }
         accessory.onDismissKeyboard = { [weak textView] in
             textView?.resignFirstResponder()
+        }
+        accessory.onAutocomplete = { [weak textView] in
+            guard let textView = textView else { return }
+            context.coordinator.triggerManualAutocomplete(textView: textView)
         }
         textView.inputAccessoryView = accessory
         context.coordinator.accessoryView = accessory
@@ -753,7 +859,11 @@ struct EditorTextViewWrapper: UIViewRepresentable {
 
     func updateUIView(_ textView: UITextView, context: Context) {
         guard let session = appState.getEditorDocument(globalWorkspaceKey: globalWorkspaceKey, path: path),
-              session.loadStatus == .ready else { return }
+              session.loadStatus == .ready else {
+            // loadStatus 非 ready 时关闭补全弹层
+            context.coordinator.dismissAutocompletePopup(textView: textView)
+            return
+        }
 
         // 仅在内容不同时更新（避免光标跳转）
         if textView.text != session.content {
@@ -769,6 +879,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 )
             }
             context.coordinator.isApplyingHighlight = false
+            // 外部文本变化时关闭补全弹层
+            context.coordinator.dismissAutocompletePopup(textView: textView)
             // 文本变化后重新应用高亮和折叠
             context.coordinator.applySyntaxHighlighting(to: textView, filePath: path)
             context.coordinator.applyFoldingProjection(to: textView)
@@ -791,6 +903,10 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         weak var foldOverlay: EditorFoldOverlayUIView?
         private let highlighter = EditorSyntaxHighlighter()
         private let structureAnalyzer = EditorStructureAnalyzer()
+        /// 补全引擎（共享语义层）
+        private let autocompleteEngine = EditorAutocompleteEngine()
+        /// 补全候选弹层
+        var autocompletePopupView: EditorAutocompletePopupUIView?
         /// 上次应用的高亮快照指纹
         private var lastAppliedFingerprint: Int?
         /// 上次应用的主题
@@ -890,6 +1006,9 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             applyFoldingProjection(to: textView)
             refreshPairMatchOverlay(textView: textView)
 
+            // 刷新补全状态
+            refreshAutocompleteState(textView: textView, triggerKind: .automatic)
+
             return false
         }
 
@@ -922,6 +1041,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             applySyntaxHighlighting(to: textView, filePath: parent.path)
             applyFoldingProjection(to: textView)
             refreshPairMatchOverlay(textView: textView)
+            // 刷新补全状态
+            refreshAutocompleteState(textView: textView, triggerKind: .automatic)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -934,6 +1055,10 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             }
             // 选区变化时刷新括号/引号匹配覆盖层
             refreshPairMatchOverlay(textView: textView)
+            // 选区变化时刷新补全（纯光标移动也应关闭不相关的补全）
+            if !isProgrammaticTextUpdate {
+                refreshAutocompleteState(textView: textView, triggerKind: .automatic)
+            }
         }
 
         /// 计算字符偏移对应的行号（0-based）
@@ -1246,6 +1371,282 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             pairMatchOverlays.removeAll()
             lastPairMatchCacheKey = nil
         }
+
+        // MARK: - 自动补全
+
+        /// 刷新补全状态
+        func refreshAutocompleteState(textView: UITextView, triggerKind: EditorAutocompleteTriggerKind) {
+            let docKey = parent.documentKey
+
+            // 检查文档加载状态
+            let wsKey = parent.globalWorkspaceKey
+            if let session = parent.appState.getEditorDocument(globalWorkspaceKey: wsKey, path: parent.path),
+               session.loadStatus != .ready {
+                dismissAutocompletePopup(textView: textView)
+                return
+            }
+
+            let text = textView.text ?? ""
+            let cursorLocation = textView.selectedRange.location
+
+            let context = EditorAutocompleteContext(
+                filePath: parent.path,
+                text: text,
+                cursorLocation: cursorLocation,
+                triggerKind: triggerKind
+            )
+
+            let previousState = parent.appState.autocompleteState(for: docKey)
+            let newState = autocompleteEngine.update(context: context, previousState: previousState)
+            parent.appState.updateAutocompleteState(newState, for: docKey)
+
+            if newState.isVisible && !newState.items.isEmpty {
+                showAutocompletePopup(textView: textView, state: newState)
+            } else {
+                dismissAutocompletePopup(textView: textView)
+            }
+
+            // 更新辅助栏补全按钮状态
+            accessoryView?.hasAutocompleteCandidates = newState.isVisible && !newState.items.isEmpty
+        }
+
+        /// 手动触发补全
+        func triggerManualAutocomplete(textView: UITextView) {
+            refreshAutocompleteState(textView: textView, triggerKind: .manual)
+        }
+
+        /// 接受候选
+        func acceptSelectedAutocomplete(textView: UITextView) {
+            let docKey = parent.documentKey
+            let state = parent.appState.autocompleteState(for: docKey)
+            guard state.isVisible, state.selectedIndex < state.items.count else { return }
+
+            let selectedItem = state.items[state.selectedIndex]
+            let currentText = textView.text ?? ""
+            guard let result = parent.appState.applyAcceptedAutocomplete(
+                selectedItem,
+                for: docKey,
+                currentText: currentText
+            ) else { return }
+
+            // 记录编辑命令到共享历史
+            let command = EditorEditCommand(
+                mutation: EditorTextMutation(
+                    rangeLocation: state.replacementRange.location,
+                    rangeLength: state.replacementRange.length,
+                    replacementText: selectedItem.insertText
+                ),
+                beforeSelection: EditorSelectionSnapshot(
+                    location: textView.selectedRange.location,
+                    length: textView.selectedRange.length
+                ),
+                afterSelection: result.selection,
+                timestamp: Date(),
+                replacedText: (currentText as NSString).substring(with: state.replacementRange)
+            )
+            _ = parent.appState.recordEditorEdit(
+                currentText: currentText,
+                command: command,
+                documentKey: docKey
+            )
+
+            // 写回
+            isProgrammaticTextUpdate = true
+            textView.text = result.text
+            let maxLen = (result.text as NSString).length
+            textView.selectedRange = NSRange(
+                location: min(result.selection.location, maxLen),
+                length: 0
+            )
+            isProgrammaticTextUpdate = false
+
+            parent.appState.updateEditorDocumentContent(
+                globalWorkspaceKey: parent.globalWorkspaceKey,
+                path: parent.path,
+                content: result.text
+            )
+
+            // 关闭弹层
+            dismissAutocompletePopup(textView: textView)
+
+            // 刷新
+            accessoryView?.canUndo = parent.appState.editorCanUndo(documentKey: docKey)
+            accessoryView?.canRedo = parent.appState.editorCanRedo(documentKey: docKey)
+            applySyntaxHighlighting(to: textView, filePath: parent.path)
+            applyFoldingProjection(to: textView)
+            refreshPairMatchOverlay(textView: textView)
+        }
+
+        /// 显示补全弹层
+        private func showAutocompletePopup(textView: UITextView, state: EditorAutocompleteState) {
+            if autocompletePopupView == nil {
+                let popup = EditorAutocompletePopupUIView()
+                popup.onAccept = { [weak self, weak textView] index in
+                    guard let self = self, let textView = textView else { return }
+                    let docKey = self.parent.documentKey
+                    var s = self.parent.appState.autocompleteState(for: docKey)
+                    s.selectedIndex = index
+                    self.parent.appState.updateAutocompleteState(s, for: docKey)
+                    self.acceptSelectedAutocomplete(textView: textView)
+                }
+                textView.addSubview(popup)
+                autocompletePopupView = popup
+            }
+
+            guard let popup = autocompletePopupView else { return }
+            popup.update(items: state.items, selectedIndex: state.selectedIndex)
+
+            let caretRect = caretRectInTextView(textView: textView, at: state.replacementRange.location)
+            let popupSize = popup.fittingPopupSize
+            var origin = CGPoint(
+                x: caretRect.origin.x,
+                y: caretRect.maxY + 2
+            )
+
+            // 确保显示在编辑区内
+            let visibleRect = textView.bounds
+            if origin.y + popupSize.height > visibleRect.maxY - 44 {
+                origin.y = caretRect.origin.y - popupSize.height - 2
+            }
+            if origin.x + popupSize.width > visibleRect.maxX - 8 {
+                origin.x = max(8, visibleRect.maxX - popupSize.width - 8)
+            }
+
+            popup.frame = CGRect(origin: origin, size: popupSize)
+            popup.isHidden = false
+        }
+
+        /// 关闭补全弹层
+        func dismissAutocompletePopup(textView: UITextView? = nil) {
+            autocompletePopupView?.isHidden = true
+            parent.appState.resetAutocompleteState(for: parent.documentKey)
+            accessoryView?.hasAutocompleteCandidates = false
+        }
+
+        /// 补全面板是否可见
+        var isAutocompleteVisible: Bool {
+            parent.appState.autocompleteState(for: parent.documentKey).isVisible
+        }
+
+        /// 计算 textView 中指定字符偏移处的 caret rect
+        private func caretRectInTextView(textView: UITextView, at charOffset: Int) -> CGRect {
+            let nsText = (textView.text ?? "") as NSString
+            let safeOffset = max(0, min(charOffset, nsText.length))
+            guard let beginning = textView.position(from: textView.beginningOfDocument, offset: safeOffset),
+                  let textRange = textView.textRange(from: beginning, to: beginning) else {
+                return .zero
+            }
+            return textView.firstRect(for: textRange)
+        }
+    }
+}
+
+// MARK: - 编辑器补全候选弹层（iOS）
+
+/// iOS 补全候选弹层视图（UIView 子类，作为 textView 的子视图显示）。
+class EditorAutocompletePopupUIView: UIView {
+    var onAccept: ((Int) -> Void)?
+    private var items: [EditorAutocompleteItem] = []
+    private var selectedIndex: Int = 0
+
+    private let rowHeight: CGFloat = 36
+    private let maxVisibleRows = 6
+    private let popupWidth: CGFloat = 260
+
+    var fittingPopupSize: CGSize {
+        let rows = min(items.count, maxVisibleRows)
+        return CGSize(width: popupWidth, height: CGFloat(rows) * rowHeight + 4)
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .secondarySystemBackground
+        layer.cornerRadius = 8
+        layer.borderColor = UIColor.separator.cgColor
+        layer.borderWidth = 0.5
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.15
+        layer.shadowRadius = 8
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+        clipsToBounds = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(items: [EditorAutocompleteItem], selectedIndex: Int) {
+        self.items = items
+        self.selectedIndex = selectedIndex
+        rebuildRows()
+    }
+
+    private func rebuildRows() {
+        subviews.forEach { $0.removeFromSuperview() }
+
+        let scrollView = UIScrollView(frame: CGRect(origin: .zero, size: fittingPopupSize))
+        scrollView.showsVerticalScrollIndicator = items.count > maxVisibleRows
+        scrollView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(scrollView)
+
+        let contentHeight = CGFloat(items.count) * rowHeight
+        scrollView.contentSize = CGSize(width: popupWidth, height: contentHeight)
+
+        for (i, item) in items.enumerated() {
+            let row = makeRow(item: item, index: i, isSelected: i == selectedIndex)
+            row.frame = CGRect(x: 0, y: CGFloat(i) * rowHeight, width: popupWidth, height: rowHeight)
+            scrollView.addSubview(row)
+        }
+    }
+
+    private func makeRow(item: EditorAutocompleteItem, index: Int, isSelected: Bool) -> UIView {
+        let row = UIView()
+        row.backgroundColor = isSelected ? UIColor.systemBlue.withAlphaComponent(0.15) : .clear
+        row.tag = index
+
+        let iconLabel = UILabel()
+        iconLabel.text = kindIcon(item.kind)
+        iconLabel.font = .systemFont(ofSize: 12)
+        iconLabel.textAlignment = .center
+        iconLabel.frame = CGRect(x: 4, y: 8, width: 20, height: 20)
+        row.addSubview(iconLabel)
+
+        let titleLabel = UILabel()
+        titleLabel.text = item.title
+        titleLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        titleLabel.textColor = .label
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.frame = CGRect(x: 28, y: 8, width: popupWidth - 90, height: 20)
+        row.addSubview(titleLabel)
+
+        if let detail = item.detail {
+            let detailLabel = UILabel()
+            detailLabel.text = detail
+            detailLabel.font = .systemFont(ofSize: 10)
+            detailLabel.textColor = .secondaryLabel
+            detailLabel.textAlignment = .right
+            detailLabel.frame = CGRect(x: popupWidth - 64, y: 10, width: 58, height: 16)
+            row.addSubview(detailLabel)
+        }
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(rowTapped(_:)))
+        row.addGestureRecognizer(tap)
+        row.isUserInteractionEnabled = true
+
+        return row
+    }
+
+    private func kindIcon(_ kind: EditorAutocompleteItemKind) -> String {
+        switch kind {
+        case .documentSymbol: return "𝑥"
+        case .languageKeyword: return "K"
+        case .languageTemplate: return "T"
+        }
+    }
+
+    @objc private func rowTapped(_ sender: UITapGestureRecognizer) {
+        guard let view = sender.view else { return }
+        onAccept?(view.tag)
     }
 }
 

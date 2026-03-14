@@ -56,6 +56,8 @@
 		EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST005 /* EditorFindReplaceSemanticsTests.swift */; };
 		EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST007 /* EditorUnsavedProtectionTests.swift */; };
 		MEST0002 /* MobileEditorSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEST0001 /* MobileEditorSessionTests.swift */; };
+		EACS0002 /* EditorAutocompleteSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACS0001 /* EditorAutocompleteSemantics.swift */; };
+		EACST002 /* EditorAutocompleteSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACST001 /* EditorAutocompleteSemanticsTests.swift */; };
 		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
 		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
 		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
@@ -320,7 +322,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			TST10031 /* CodexChatConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10029 /* CodexChatConfigurationTests.swift */; };
 			TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002A /* CodexSlashCommandIntegrationTests.swift */; };
 			TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002B /* AISessionSubscribeAckDispatchTests.swift */; };
-			TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002D /* WorkspaceVisualSemanticsTests.swift */; };
 		TST10036 /* GitPanelSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002E /* GitPanelSemanticLayerTests.swift */; };
 		TST10037 /* GitConflictWizardSemanticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1002F /* GitConflictWizardSemanticTests.swift */; };
 		TST10038 /* MainThreadReliefRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST1003A /* MainThreadReliefRegressionTests.swift */; };
@@ -462,7 +463,6 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 			TST10029 /* CodexChatConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexChatConfigurationTests.swift; sourceTree = "<group>"; };
 			TST1002A /* CodexSlashCommandIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSlashCommandIntegrationTests.swift; sourceTree = "<group>"; };
 			TST1002B /* AISessionSubscribeAckDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionSubscribeAckDispatchTests.swift; sourceTree = "<group>"; };
-			TST1002D /* WorkspaceVisualSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceVisualSemanticsTests.swift; sourceTree = "<group>"; };
 		TST1002E /* GitPanelSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSemanticLayerTests.swift; sourceTree = "<group>"; };
 		TST1002F /* GitConflictWizardSemanticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardSemanticTests.swift; sourceTree = "<group>"; };
 		TST1003A /* MainThreadReliefRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainThreadReliefRegressionTests.swift; sourceTree = "<group>"; };
@@ -525,6 +525,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EDTST005 /* EditorFindReplaceSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemanticsTests.swift; sourceTree = "<group>"; };
 		EDTST007 /* EditorUnsavedProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUnsavedProtectionTests.swift; sourceTree = "<group>"; };
 		MEST0001 /* MobileEditorSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEditorSessionTests.swift; sourceTree = "<group>"; };
+		EACS0001 /* EditorAutocompleteSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAutocompleteSemantics.swift; sourceTree = "<group>"; };
+		EACST001 /* EditorAutocompleteSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAutocompleteSemanticsTests.swift; sourceTree = "<group>"; };
 		ESHLT001 /* EditorSyntaxHighlighterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighterTests.swift; sourceTree = "<group>"; };
 		TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageVisibilitySemanticsTests.swift; sourceTree = "<group>"; };
 		TST10047 /* AIChatStageProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStageProjectionTests.swift; sourceTree = "<group>"; };
@@ -741,6 +743,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				ESEM0001 /* EditorStructureSemantics.swift */,
 				EGUT0001 /* EditorGutterSemantics.swift */,
 				EPMH0001 /* EditorPairMatchSemantics.swift */,
+				EACS0001 /* EditorAutocompleteSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -967,7 +970,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST10029 /* CodexChatConfigurationTests.swift */,
 					TST1002A /* CodexSlashCommandIntegrationTests.swift */,
 					TST1002B /* AISessionSubscribeAckDispatchTests.swift */,
-					TST1002D /* WorkspaceVisualSemanticsTests.swift */,
 					TST1002E /* GitPanelSemanticLayerTests.swift */,
 					TST1002F /* GitConflictWizardSemanticTests.swift */,
 					TST1003A /* MainThreadReliefRegressionTests.swift */,
@@ -984,6 +986,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					EDTST005 /* EditorFindReplaceSemanticsTests.swift */,
 					EDTST007 /* EditorUnsavedProtectionTests.swift */,
 					MEST0001 /* MobileEditorSessionTests.swift */,
+					EACST001 /* EditorAutocompleteSemanticsTests.swift */,
 				ESHLT001 /* EditorSyntaxHighlighterTests.swift */,
 					TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */,
 					TST10047 /* AIChatStageProjectionTests.swift */,
@@ -1560,7 +1563,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				TST10031 /* CodexChatConfigurationTests.swift in Sources */,
 				TST10032 /* CodexSlashCommandIntegrationTests.swift in Sources */,
 				TST10033 /* AISessionSubscribeAckDispatchTests.swift in Sources */,
-				TST10035 /* WorkspaceVisualSemanticsTests.swift in Sources */,
 				TST10036 /* GitPanelSemanticLayerTests.swift in Sources */,
 				TST10037 /* GitConflictWizardSemanticTests.swift in Sources */,
 				TST10038 /* MainThreadReliefRegressionTests.swift in Sources */,
@@ -1600,6 +1602,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */,
 				EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */,
 				MEST0002 /* MobileEditorSessionTests.swift in Sources */,
+				EACST002 /* EditorAutocompleteSemanticsTests.swift in Sources */,
 				ESHLT002 /* EditorSyntaxHighlighterTests.swift in Sources */,
 				TST10044 /* AIChatMessageVisibilitySemanticsTests.swift in Sources */,
 				TST10046 /* AIChatStageProjectionTests.swift in Sources */,
@@ -1673,6 +1676,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				ESEM0002 /* EditorStructureSemantics.swift in Sources */,
 				EGUT0002 /* EditorGutterSemantics.swift in Sources */,
 				EPMH0002 /* EditorPairMatchSemantics.swift in Sources */,
+				EACS0002 /* EditorAutocompleteSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2156,7 +2160,6 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"MainThreadReliefRegressionTests.swift",
 					"SwiftUIPerformanceProjectionTests.swift",
 					"TerminalSearchCoordinatorTests.swift",
-					"WorkspaceVisualSemanticsTests.swift",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -2189,7 +2192,6 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"MainThreadReliefRegressionTests.swift",
 					"SwiftUIPerformanceProjectionTests.swift",
 					"TerminalSearchCoordinatorTests.swift",
-					"WorkspaceVisualSemanticsTests.swift",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
