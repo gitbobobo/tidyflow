@@ -440,4 +440,188 @@ final class EditorStructureSemanticsTests: XCTestCase {
         let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
         XCTAssertTrue(snapshot.foldRegions.isEmpty, "注释内的括号不应生成折叠区域")
     }
+
+    // MARK: - Gutter 投影：动态宽度（行号位数）
+
+    func testGutterDigitsFor9Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 9)
+        XCTAssertEqual(digits, 1, "1-9 行应为 1 位")
+    }
+
+    func testGutterDigitsFor10Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 10)
+        XCTAssertEqual(digits, 2, "10 行应为 2 位")
+    }
+
+    func testGutterDigitsFor99Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 99)
+        XCTAssertEqual(digits, 2, "99 行应为 2 位")
+    }
+
+    func testGutterDigitsFor100Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 100)
+        XCTAssertEqual(digits, 3, "100 行应为 3 位")
+    }
+
+    func testGutterDigitsFor999Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 999)
+        XCTAssertEqual(digits, 3, "999 行应为 3 位")
+    }
+
+    func testGutterDigitsFor1000Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 1000)
+        XCTAssertEqual(digits, 4, "1000 行应为 4 位")
+    }
+
+    func testGutterDigitsFor0Lines() {
+        let digits = EditorGutterLayoutMetrics.computeDigits(forMaxLine: 0)
+        XCTAssertEqual(digits, 1, "0 行应返回最少 1 位")
+    }
+
+    // MARK: - Gutter 投影：行项生成
+
+    func testGutterProjectionBasicLineItems() {
+        let code = "line1\nline2\nline3"
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: EditorCodeFoldingState())
+        let gutterState = EditorGutterState()
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        XCTAssertEqual(projection.lineItems.count, 3)
+        XCTAssertEqual(projection.lineItems[0].displayLineNumber, "1")
+        XCTAssertEqual(projection.lineItems[1].displayLineNumber, "2")
+        XCTAssertEqual(projection.lineItems[2].displayLineNumber, "3")
+        XCTAssertEqual(projection.lineItems[0].line, 0)
+        XCTAssertEqual(projection.lineItems[1].line, 1)
+        XCTAssertEqual(projection.lineItems[2].line, 2)
+    }
+
+    func testGutterProjectionHiddenLinesOmitted() {
+        let code = """
+        func test() {
+            line1
+            line2
+        }
+        """
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+        guard let region = snapshot.foldRegions.first else {
+            XCTFail("应有折叠区域")
+            return
+        }
+
+        var foldState = EditorCodeFoldingState()
+        foldState.collapsedRegionIDs.insert(region.id)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+        let gutterState = EditorGutterState()
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        // 折叠后隐藏行不应生成 item
+        let visibleLines = projection.lineItems.map(\.line)
+        XCTAssertTrue(visibleLines.contains(0), "折叠起始行应保留")
+        XCTAssertFalse(visibleLines.contains(1), "隐藏行不应生成 item")
+        XCTAssertFalse(visibleLines.contains(2), "隐藏行不应生成 item")
+
+        // 折叠起始行应标记为 fold placeholder 并携带 foldControl
+        let startItem = projection.lineItems.first { $0.line == 0 }
+        XCTAssertNotNil(startItem?.foldControl, "折叠起始行应携带 foldControl")
+        XCTAssertEqual(startItem?.isFoldPlaceholder, true, "折叠起始行应标记为 fold placeholder")
+    }
+
+    func testGutterProjectionCurrentLine() {
+        let code = "a\nb\nc"
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: EditorCodeFoldingState())
+        let gutterState = EditorGutterState(currentLine: 1)
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        XCTAssertFalse(projection.lineItems[0].isCurrentLine)
+        XCTAssertTrue(projection.lineItems[1].isCurrentLine, "第 1 行（0-based）应标为当前行")
+        XCTAssertFalse(projection.lineItems[2].isCurrentLine)
+    }
+
+    func testGutterProjectionCurrentLineHighlightDisabled() {
+        let code = "a\nb\nc"
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: EditorCodeFoldingState())
+        let gutterState = EditorGutterState(currentLine: 1, showsCurrentLineHighlight: false)
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        // 高亮关闭时所有行都不应标为当前行
+        for item in projection.lineItems {
+            XCTAssertFalse(item.isCurrentLine)
+        }
+    }
+
+    func testGutterProjectionBreakpoints() {
+        let code = "a\nb\nc"
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: EditorCodeFoldingState())
+        var breakpoints = EditorBreakpointSet()
+        breakpoints.toggle(line: 0)
+        breakpoints.toggle(line: 2)
+        let gutterState = EditorGutterState(breakpoints: breakpoints)
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        XCTAssertTrue(projection.lineItems[0].hasBreakpoint)
+        XCTAssertFalse(projection.lineItems[1].hasBreakpoint)
+        XCTAssertTrue(projection.lineItems[2].hasBreakpoint)
+    }
+
+    // MARK: - 断点集合
+
+    func testBreakpointSetToggle() {
+        var bps = EditorBreakpointSet()
+        XCTAssertTrue(bps.isEmpty)
+
+        bps.toggle(line: 5)
+        XCTAssertTrue(bps.contains(line: 5))
+        XCTAssertEqual(bps.count, 1)
+
+        bps.toggle(line: 5)
+        XCTAssertFalse(bps.contains(line: 5))
+        XCTAssertTrue(bps.isEmpty)
+    }
+
+    func testBreakpointSetRemoveAll() {
+        var bps = EditorBreakpointSet()
+        bps.toggle(line: 0)
+        bps.toggle(line: 10)
+        bps.toggle(line: 100)
+        XCTAssertEqual(bps.count, 3)
+
+        bps.removeAll()
+        XCTAssertTrue(bps.isEmpty)
+    }
+
+    func testBreakpointSetIsolation() {
+        var bps1 = EditorBreakpointSet()
+        var bps2 = EditorBreakpointSet()
+        bps1.toggle(line: 1)
+        bps2.toggle(line: 2)
+
+        XCTAssertTrue(bps1.contains(line: 1))
+        XCTAssertFalse(bps1.contains(line: 2))
+        XCTAssertFalse(bps2.contains(line: 1))
+        XCTAssertTrue(bps2.contains(line: 2))
+    }
+
+    // MARK: - Gutter 投影：宽度指标
+
+    func testGutterLayoutMetrics() {
+        // 生成一个 100 行文档
+        let lines = (0..<100).map { "line\($0)" }.joined(separator: "\n")
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: lines)
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: EditorCodeFoldingState())
+        let gutterState = EditorGutterState()
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        XCTAssertEqual(projection.layoutMetrics.lineNumberDigits, 3, "100 行文档最大显示 100，需 3 位")
+        XCTAssertEqual(projection.layoutMetrics.leadingAccessorySlots, 2, "应有断点位和折叠按钮位")
+    }
 }

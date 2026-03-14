@@ -647,7 +647,7 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         textView.inputAccessoryView = accessory
         context.coordinator.accessoryView = accessory
 
-        // 添加折叠 overlay
+        // 添加折叠 overlay（统一 gutter 视图）
         let foldOverlay = EditorFoldOverlayUIView()
         foldOverlay.translatesAutoresizingMaskIntoConstraints = false
         foldOverlay.isUserInteractionEnabled = true
@@ -659,8 +659,16 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             appState.updateFoldingState(state, for: self.documentKey)
             context.coordinator.applyFoldingProjection(to: textView)
         }
+        foldOverlay.onToggleBreakpoint = { [weak appState] line in
+            guard let appState = appState else { return }
+            appState.toggleBreakpoint(line: line, for: self.documentKey)
+            context.coordinator.updateGutterOverlayIfNeeded(textView: textView)
+        }
         textView.addSubview(foldOverlay)
         context.coordinator.foldOverlay = foldOverlay
+
+        // 左侧留出 gutter 空间（初始值，后续由 gutter 投影动态更新）
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 48, bottom: 8, right: 8)
 
         return textView
     }
@@ -695,12 +703,6 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         // 更新辅助栏的撤销/重做状态
         context.coordinator.accessoryView?.canUndo = textView.undoManager?.canUndo ?? false
         context.coordinator.accessoryView?.canRedo = textView.undoManager?.canRedo ?? false
-
-        // 更新 overlay 尺寸
-        if let overlay = context.coordinator.foldOverlay {
-            let overlayWidth: CGFloat = 24
-            overlay.frame = CGRect(x: 0, y: 0, width: overlayWidth, height: textView.contentSize.height)
-        }
     }
 
     class Coordinator: NSObject, UITextViewDelegate {
@@ -720,6 +722,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         /// 上次应用的折叠指纹
         private var lastAppliedFoldingFingerprint: Int?
         private var lastAppliedCollapsedCount: Int?
+        /// 上次应用的 gutter 缓存键（内容指纹、折叠数、当前行、断点数）
+        private var lastGutterCacheKey: (Int, Int, Int?, Int)?
 
         init(parent: EditorTextViewWrapper) {
             self.parent = parent
@@ -742,6 +746,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 if foldState.collapsedRegionIDs.count != beforeCount {
                     parent.appState.updateFoldingState(foldState, for: parent.documentKey)
                 }
+                // 更新当前行
+                parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
             }
 
             // 更新辅助栏撤销/重做状态
@@ -751,6 +757,16 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             // 用户输入后重新应用高亮和折叠
             applySyntaxHighlighting(to: textView, filePath: parent.path)
             applyFoldingProjection(to: textView)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !isApplyingHighlight else { return }
+            let cursorLine = lineNumber(for: textView.selectedRange.location, in: textView.text ?? "")
+            let oldLine = parent.appState.gutterState(for: parent.documentKey).currentLine
+            if cursorLine != oldLine {
+                parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
+                updateGutterOverlayIfNeeded(textView: textView)
+            }
         }
 
         /// 计算字符偏移对应的行号（0-based）
@@ -867,32 +883,64 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             foldState.reconcile(snapshot: snapshot)
             parent.appState.updateFoldingState(foldState, for: docKey)
 
-            // 生成投影
-            let projection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+            // 生成折叠投影
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+
+            // 获取 gutter 状态并构建 gutter 投影
+            let gutterState = parent.appState.gutterState(for: docKey)
+            let gutterProjection = EditorGutterProjectionBuilder.make(
+                snapshot: snapshot,
+                folding: foldingProjection,
+                state: gutterState
+            )
 
             // 更新缓存指纹
             lastAppliedFoldingFingerprint = snapshot.contentFingerprint
             lastAppliedCollapsedCount = foldState.collapsedRegionIDs.count
+            lastGutterCacheKey = (snapshot.contentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
 
             // 更新 overlay
-            updateFoldOverlay(projection: projection, textView: textView)
+            updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
         }
 
         /// 仅在折叠状态发生变化时重新应用
         func applyFoldingProjectionIfNeeded(to textView: UITextView) {
             let docKey = parent.documentKey
             let foldState = parent.appState.foldingState(for: docKey)
+            let gutterState = parent.appState.gutterState(for: docKey)
             let currentFingerprint = EditorSyntaxFingerprint.compute(textView.text ?? "")
+            let currentCacheKey = (currentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
 
-            if lastAppliedFoldingFingerprint == currentFingerprint,
-               lastAppliedCollapsedCount == foldState.collapsedRegionIDs.count {
+            if let last = lastGutterCacheKey,
+               last.0 == currentCacheKey.0,
+               last.1 == currentCacheKey.1,
+               last.2 == currentCacheKey.2,
+               last.3 == currentCacheKey.3 {
                 return
             }
             applyFoldingProjection(to: textView)
         }
 
-        /// 更新折叠 overlay 显示
-        private func updateFoldOverlay(projection: EditorCodeFoldingProjection, textView: UITextView) {
+        /// 仅刷新 gutter 显示（当前行/断点变化但文本和折叠不变时）
+        func updateGutterOverlayIfNeeded(textView: UITextView) {
+            guard let snapshot = lastStructureSnapshot else { return }
+
+            let docKey = parent.documentKey
+            let foldState = parent.appState.foldingState(for: docKey)
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+            let gutterState = parent.appState.gutterState(for: docKey)
+            let gutterProjection = EditorGutterProjectionBuilder.make(
+                snapshot: snapshot,
+                folding: foldingProjection,
+                state: gutterState
+            )
+
+            lastGutterCacheKey = (snapshot.contentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
+            updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
+        }
+
+        /// 更新 gutter overlay 显示
+        private func updateGutterOverlay(gutterProjection: EditorGutterProjection, foldingProjection: EditorCodeFoldingProjection, textView: UITextView) {
             guard let overlay = foldOverlay else { return }
 
             let text = textView.text ?? ""
@@ -900,21 +948,29 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             let font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
             let lineHeight = font.lineHeight
 
-            // 构建折叠控制点的 rect 信息
-            var controlRects: [(control: EditorFoldControl, rect: CGRect)] = []
-            for control in projection.foldControls {
-                let lineIndex = control.region.startLine
-                guard lineIndex < lines.count else { continue }
+            // 计算 gutter 宽度
+            let charWidth: CGFloat = 8.4
+            let metrics = gutterProjection.layoutMetrics
+            let gutterWidth = charWidth * CGFloat(max(metrics.lineNumberDigits, metrics.minimumCharacterColumns) + metrics.leadingAccessorySlots) + 12
 
-                let y = CGFloat(lineIndex) * lineHeight + textView.textContainerInset.top
-                let rect = CGRect(x: 0, y: y, width: 24, height: lineHeight)
-                controlRects.append((control, rect))
+            // 同步更新 textView 左侧 inset
+            let newInset = UIEdgeInsets(top: 8, left: gutterWidth, bottom: 8, right: 8)
+            if textView.textContainerInset != newInset {
+                textView.textContainerInset = newInset
+            }
+
+            // 构建 gutter 行项的 rect 信息
+            var lineItemRects: [(item: EditorGutterLineItem, rect: CGRect)] = []
+            for item in gutterProjection.lineItems {
+                guard item.line < lines.count else { continue }
+                let y = CGFloat(item.line) * lineHeight + textView.textContainerInset.top
+                let rect = CGRect(x: 0, y: y, width: gutterWidth, height: lineHeight)
+                lineItemRects.append((item, rect))
             }
 
             // 构建缩进导线的 rect 信息
-            let charWidth: CGFloat = 8.4
             var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
-            for guide in projection.visibleIndentGuides {
+            for guide in gutterProjection.visibleIndentGuides {
                 guard guide.startLine < lines.count, guide.endLine < lines.count else { continue }
 
                 let startY = CGFloat(guide.startLine) * lineHeight + textView.textContainerInset.top
@@ -925,34 +981,45 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             }
 
             let isDark = textView.traitCollection.userInterfaceStyle == .dark
-            overlay.updateContent(controls: controlRects, guides: guideLines, isDarkMode: isDark)
+            overlay.updateContent(
+                lineItems: lineItemRects,
+                guides: guideLines,
+                isDarkMode: isDark,
+                metrics: gutterProjection.layoutMetrics
+            )
 
             // 更新 overlay 尺寸
-            overlay.frame = CGRect(x: 0, y: 0, width: 24, height: textView.contentSize.height)
+            overlay.frame = CGRect(x: 0, y: 0, width: gutterWidth, height: textView.contentSize.height)
         }
     }
 }
 
-// MARK: - 折叠 Overlay 视图（iOS）
+// MARK: - 统一 Gutter 视图（iOS）
 
-/// iOS 编辑器折叠控制与缩进导线覆盖层。
+/// iOS 编辑器统一 gutter 覆盖层。
 /// 作为 UITextView 的子视图，跟随内容滚动。
+/// 通过共享 gutter 投影渲染行号、当前行高亮、断点圆点、折叠控件和缩进导线。
 class EditorFoldOverlayUIView: UIView {
     /// 折叠/展开按钮点击回调
     var onToggleFold: ((EditorFoldRegionID) -> Void)?
+    /// 断点切换回调（0-based 行号）
+    var onToggleBreakpoint: ((Int) -> Void)?
 
-    private var controlRects: [(control: EditorFoldControl, rect: CGRect)] = []
+    private var lineItemRects: [(item: EditorGutterLineItem, rect: CGRect)] = []
     private var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
     private var isDarkMode: Bool = false
+    private var metrics: EditorGutterLayoutMetrics = EditorGutterLayoutMetrics(lineNumberDigits: 1)
 
     func updateContent(
-        controls: [(control: EditorFoldControl, rect: CGRect)],
+        lineItems: [(item: EditorGutterLineItem, rect: CGRect)],
         guides: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)],
-        isDarkMode: Bool
+        isDarkMode: Bool,
+        metrics: EditorGutterLayoutMetrics
     ) {
-        self.controlRects = controls
+        self.lineItemRects = lineItems
         self.guideLines = guides
         self.isDarkMode = isDarkMode
+        self.metrics = metrics
         setNeedsDisplay()
     }
 
@@ -960,6 +1027,12 @@ class EditorFoldOverlayUIView: UIView {
         super.draw(rect)
 
         guard let context = UIGraphicsGetCurrentContext() else { return }
+
+        let charWidth: CGFloat = 8.4
+        let breakpointAreaWidth: CGFloat = 16
+        let foldAreaWidth: CGFloat = 16
+        let accessoryWidth = breakpointAreaWidth + foldAreaWidth
+        let lineNumberX = accessoryWidth + 2
 
         // 绘制缩进导线
         let guideColor = isDarkMode
@@ -975,33 +1048,80 @@ class EditorFoldOverlayUIView: UIView {
             context.strokePath()
         }
 
-        // 绘制折叠按钮
-        let buttonColor = isDarkMode
+        // 绘制行号、当前行高亮、断点和折叠按钮
+        let normalLineNumberColor = isDarkMode
+            ? UIColor(white: 1.0, alpha: 0.3)
+            : UIColor(white: 0.0, alpha: 0.3)
+        let currentLineNumberColor = isDarkMode
+            ? UIColor(white: 1.0, alpha: 0.8)
+            : UIColor(white: 0.0, alpha: 0.8)
+        let currentLineHighlightColor = isDarkMode
+            ? UIColor(white: 1.0, alpha: 0.06)
+            : UIColor(white: 0.0, alpha: 0.04)
+        let breakpointColor = UIColor(red: 0.9, green: 0.25, blue: 0.2, alpha: 0.85)
+        let foldButtonColor = isDarkMode
             ? UIColor(white: 1.0, alpha: 0.35)
             : UIColor(white: 0.0, alpha: 0.35)
 
-        for (control, controlRect) in controlRects {
-            guard controlRect.intersects(rect) else { continue }
+        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
-            let buttonSize: CGFloat = 14
-            let buttonCenter = CGPoint(x: controlRect.midX, y: controlRect.midY)
+        for (item, itemRect) in lineItemRects {
+            guard itemRect.intersects(rect) else { continue }
 
-            let path = UIBezierPath()
-            if control.isCollapsed {
-                // 折叠状态：右指三角 ▶
-                path.move(to: CGPoint(x: buttonCenter.x - buttonSize / 3, y: buttonCenter.y - buttonSize / 2))
-                path.addLine(to: CGPoint(x: buttonCenter.x + buttonSize / 3, y: buttonCenter.y))
-                path.addLine(to: CGPoint(x: buttonCenter.x - buttonSize / 3, y: buttonCenter.y + buttonSize / 2))
-            } else {
-                // 展开状态：下指三角 ▼
-                path.move(to: CGPoint(x: buttonCenter.x - buttonSize / 2, y: buttonCenter.y - buttonSize / 3))
-                path.addLine(to: CGPoint(x: buttonCenter.x + buttonSize / 2, y: buttonCenter.y - buttonSize / 3))
-                path.addLine(to: CGPoint(x: buttonCenter.x, y: buttonCenter.y + buttonSize / 3))
+            // 当前行背景高亮
+            if item.isCurrentLine {
+                context.setFillColor(currentLineHighlightColor.cgColor)
+                context.fill(CGRect(x: 0, y: itemRect.origin.y, width: bounds.width, height: itemRect.height))
             }
-            path.close()
 
-            buttonColor.setFill()
-            path.fill()
+            // 断点圆点
+            if item.hasBreakpoint {
+                let bpSize: CGFloat = 12
+                let bpRect = CGRect(
+                    x: (breakpointAreaWidth - bpSize) / 2,
+                    y: itemRect.midY - bpSize / 2,
+                    width: bpSize,
+                    height: bpSize
+                )
+                context.setFillColor(breakpointColor.cgColor)
+                context.fillEllipse(in: bpRect)
+            }
+
+            // 折叠按钮
+            if let foldControl = item.foldControl {
+                let buttonSize: CGFloat = 12
+                let buttonCenterX = breakpointAreaWidth + foldAreaWidth / 2
+                let buttonCenterY = itemRect.midY
+
+                let path = UIBezierPath()
+                if foldControl.isCollapsed {
+                    // 右指三角 ▶
+                    path.move(to: CGPoint(x: buttonCenterX - buttonSize / 3, y: buttonCenterY - buttonSize / 2))
+                    path.addLine(to: CGPoint(x: buttonCenterX + buttonSize / 3, y: buttonCenterY))
+                    path.addLine(to: CGPoint(x: buttonCenterX - buttonSize / 3, y: buttonCenterY + buttonSize / 2))
+                } else {
+                    // 下指三角 ▼
+                    path.move(to: CGPoint(x: buttonCenterX - buttonSize / 2, y: buttonCenterY - buttonSize / 3))
+                    path.addLine(to: CGPoint(x: buttonCenterX + buttonSize / 2, y: buttonCenterY - buttonSize / 3))
+                    path.addLine(to: CGPoint(x: buttonCenterX, y: buttonCenterY + buttonSize / 3))
+                }
+                path.close()
+                foldButtonColor.setFill()
+                path.fill()
+            }
+
+            // 行号文字（右对齐）
+            let textColor = item.isCurrentLine ? currentLineNumberColor : normalLineNumberColor
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor,
+            ]
+            let numStr = item.displayLineNumber as NSString
+            let textSize = numStr.size(withAttributes: attributes)
+            let maxDigitWidth = charWidth * CGFloat(max(metrics.lineNumberDigits, metrics.minimumCharacterColumns))
+            let textX = lineNumberX + maxDigitWidth - textSize.width
+            let textY = itemRect.origin.y + (itemRect.height - textSize.height) / 2
+            numStr.draw(at: CGPoint(x: textX, y: textY), withAttributes: attributes)
         }
     }
 
@@ -1011,12 +1131,25 @@ class EditorFoldOverlayUIView: UIView {
             return
         }
         let location = touch.location(in: self)
+        let breakpointAreaWidth: CGFloat = 16
+        let foldAreaWidth: CGFloat = 16
 
-        for (control, controlRect) in controlRects {
-            // 扩大命中区域确保触控友好
-            let hitRect = controlRect.insetBy(dx: -8, dy: -4)
-            if hitRect.contains(location) {
-                onToggleFold?(control.region.id)
+        for (item, itemRect) in lineItemRects {
+            let hitRect = itemRect.insetBy(dx: -8, dy: -4)
+            guard hitRect.contains(location) else { continue }
+
+            // 折叠按钮区域优先（触控优先级固定为折叠控件优先）
+            if item.foldControl != nil {
+                let foldHitX = breakpointAreaWidth...(breakpointAreaWidth + foldAreaWidth)
+                if foldHitX.contains(location.x) {
+                    onToggleFold?(item.foldControl!.region.id)
+                    return
+                }
+            }
+
+            // 断点区域命中
+            if location.x < breakpointAreaWidth + 4 {
+                onToggleBreakpoint?(item.line)
                 return
             }
         }
@@ -1025,25 +1158,48 @@ class EditorFoldOverlayUIView: UIView {
     }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        // 只有折叠按钮区域响应触控
-        for (_, controlRect) in controlRects {
-            let hitRect = controlRect.insetBy(dx: -8, dy: -4)
-            if hitRect.contains(point) {
-                return true
+        let breakpointAreaWidth: CGFloat = 16
+        let foldAreaWidth: CGFloat = 16
+
+        for (item, itemRect) in lineItemRects {
+            let hitRect = itemRect.insetBy(dx: -8, dy: -4)
+            guard hitRect.contains(point) else { continue }
+
+            // 折叠按钮区域
+            if item.foldControl != nil {
+                let foldHitX = breakpointAreaWidth...(breakpointAreaWidth + foldAreaWidth)
+                if foldHitX.contains(point.x) { return true }
             }
+
+            // 断点区域
+            if point.x < breakpointAreaWidth + 4 { return true }
         }
+        // 其余区域透传文本编辑
         return false
     }
 
     override var accessibilityElements: [Any]? {
         get {
-            return controlRects.map { (control, controlRect) in
-                let element = UIAccessibilityElement(accessibilityContainer: self)
-                element.accessibilityFrame = UIAccessibility.convertToScreenCoordinates(controlRect, in: self)
-                element.accessibilityLabel = control.isCollapsed ? "展开代码块" : "收起代码块"
-                element.accessibilityTraits = .button
-                return element
+            var elements: [UIAccessibilityElement] = []
+            for (item, itemRect) in lineItemRects {
+                // 折叠按钮辅助功能标签
+                if let foldControl = item.foldControl {
+                    let element = UIAccessibilityElement(accessibilityContainer: self)
+                    element.accessibilityFrame = UIAccessibility.convertToScreenCoordinates(itemRect, in: self)
+                    element.accessibilityLabel = foldControl.isCollapsed ? "展开代码块" : "收起代码块"
+                    element.accessibilityTraits = .button
+                    elements.append(element)
+                }
+                // 断点标记辅助功能标签
+                if item.hasBreakpoint {
+                    let element = UIAccessibilityElement(accessibilityContainer: self)
+                    element.accessibilityFrame = UIAccessibility.convertToScreenCoordinates(itemRect, in: self)
+                    element.accessibilityLabel = "断点，第 \(item.displayLineNumber) 行"
+                    element.accessibilityTraits = .button
+                    elements.append(element)
+                }
             }
+            return elements
         }
         set { super.accessibilityElements = newValue }
     }

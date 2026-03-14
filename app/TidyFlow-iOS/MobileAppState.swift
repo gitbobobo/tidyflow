@@ -4852,6 +4852,9 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的代码折叠状态（运行时展示层状态，不持久化）
     @Published var editorFoldingStateByDocument: [EditorDocumentKey: EditorCodeFoldingState] = [:]
 
+    /// 按文档记录的 gutter 运行时状态（纯展示层，与折叠、查找替换同级，不持久化）
+    @Published var editorGutterStateByDocument: [EditorDocumentKey: EditorGutterState] = [:]
+
     /// 正在进行的编辑器文件读取请求
     var pendingEditorFileReadRequests: Set<EditorRequestKey> = []
     /// 正在进行的编辑器文件保存请求
@@ -4982,11 +4985,48 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    // MARK: - Gutter 状态方法
+
+    /// 获取指定文档的 gutter 状态（没有则返回默认状态）
+    func gutterState(for documentKey: EditorDocumentKey) -> EditorGutterState {
+        editorGutterStateByDocument[documentKey] ?? EditorGutterState()
+    }
+
+    /// 更新指定文档的 gutter 状态
+    func updateGutterState(_ state: EditorGutterState, for documentKey: EditorDocumentKey) {
+        editorGutterStateByDocument[documentKey] = state
+    }
+
+    /// 切换指定文档指定行的断点
+    func toggleBreakpoint(line: Int, for documentKey: EditorDocumentKey) {
+        var state = gutterState(for: documentKey)
+        state.breakpoints.toggle(line: line)
+        editorGutterStateByDocument[documentKey] = state
+    }
+
+    /// 更新指定文档的当前行
+    func updateCurrentLine(_ line: Int?, for documentKey: EditorDocumentKey) {
+        var state = gutterState(for: documentKey)
+        state.currentLine = line
+        editorGutterStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定工作区下所有文档的 gutter 状态
+    func releaseAllGutterStates(workspaceKey: String) {
+        let keysToRemove = editorGutterStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            editorGutterStateByDocument.removeValue(forKey: key)
+        }
+    }
+
     /// 释放指定文档的会话状态（关闭文档时调用）
     func releaseEditorDocumentSession(globalWorkspaceKey: String, path: String) {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: globalWorkspaceKey, path: path) {
             editorFindReplaceStateByDocument.removeValue(forKey: docKey)
             editorFoldingStateByDocument.removeValue(forKey: docKey)
+            editorGutterStateByDocument.removeValue(forKey: docKey)
         }
         editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }

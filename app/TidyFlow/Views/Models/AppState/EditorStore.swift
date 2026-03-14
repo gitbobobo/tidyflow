@@ -56,6 +56,12 @@ class EditorStore: ObservableObject {
     /// 折叠状态是运行时展示层状态，不持久化，不混入 Core 生命周期模型。
     @Published var foldingStateByDocument: [EditorDocumentKey: EditorCodeFoldingState] = [:]
 
+    // MARK: - 按文档记录的 gutter 状态
+
+    /// 每个文档独立的 gutter 运行时状态，按文档键索引。
+    /// gutter 状态是纯展示层运行时状态，与查找替换、折叠状态同级，不持久化。
+    @Published var gutterStateByDocument: [EditorDocumentKey: EditorGutterState] = [:]
+
     // MARK: - 新建文件状态
 
     /// 新建文件计数器（用于生成 "Untitled-1", "Untitled-2" 等）
@@ -163,6 +169,7 @@ class EditorStore: ObservableObject {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: workspaceKey, path: path) {
             findReplaceStateByDocument.removeValue(forKey: docKey)
             foldingStateByDocument.removeValue(forKey: docKey)
+            gutterStateByDocument.removeValue(forKey: docKey)
         }
     }
 
@@ -179,6 +186,12 @@ class EditorStore: ObservableObject {
         }
         for key in foldKeysToRemove {
             foldingStateByDocument.removeValue(forKey: key)
+        }
+        let gutterKeysToRemove = gutterStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in gutterKeysToRemove {
+            gutterStateByDocument.removeValue(forKey: key)
         }
     }
 
@@ -233,6 +246,32 @@ class EditorStore: ObservableObject {
         for key in keysToRemove {
             foldingStateByDocument.removeValue(forKey: key)
         }
+    }
+
+    // MARK: - Gutter 状态方法
+
+    /// 获取指定文档的 gutter 状态（没有则返回默认状态）
+    func gutterState(for documentKey: EditorDocumentKey) -> EditorGutterState {
+        gutterStateByDocument[documentKey] ?? EditorGutterState()
+    }
+
+    /// 更新指定文档的 gutter 状态
+    func updateGutterState(_ state: EditorGutterState, for documentKey: EditorDocumentKey) {
+        gutterStateByDocument[documentKey] = state
+    }
+
+    /// 切换指定文档指定行的断点
+    func toggleBreakpoint(line: Int, for documentKey: EditorDocumentKey) {
+        var state = gutterState(for: documentKey)
+        state.breakpoints.toggle(line: line)
+        gutterStateByDocument[documentKey] = state
+    }
+
+    /// 更新指定文档的当前行
+    func updateCurrentLine(_ line: Int?, for documentKey: EditorDocumentKey) {
+        var state = gutterState(for: documentKey)
+        state.currentLine = line
+        gutterStateByDocument[documentKey] = state
     }
 
     // MARK: - 工作区级未保存状态查询

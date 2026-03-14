@@ -1007,8 +1007,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
         textView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.06)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
-        // 左侧留出 gutter 空间用于折叠控制
-        textView.textContainerInset = NSSize(width: 4, height: 4)
+        // 左侧留出 gutter 空间（初始值，后续由 gutter 投影动态更新）
+        textView.textContainerInset = NSSize(width: 48, height: 4)
         textView.autoresizingMask = [.width]
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
@@ -1031,6 +1031,12 @@ struct NativeCodeEditorView: NSViewRepresentable {
             // 重新应用折叠投影
             context.coordinator.applyFoldingProjection(to: textView)
         }
+        foldOverlay.onToggleBreakpoint = { [weak editorStore] line in
+            guard let docKey = context.coordinator.parent.documentKey else { return }
+            editorStore?.toggleBreakpoint(line: line, for: docKey)
+            // 刷新 gutter 显示
+            context.coordinator.updateGutterOverlayIfNeeded(textView: textView)
+        }
         context.coordinator.foldOverlay = foldOverlay
 
         scrollView.documentView = textView
@@ -1041,9 +1047,9 @@ struct NativeCodeEditorView: NSViewRepresentable {
         NSLayoutConstraint.activate([
             foldOverlay.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             foldOverlay.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            foldOverlay.widthAnchor.constraint(equalToConstant: 20),
             foldOverlay.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor),
         ])
+        // 初始宽度由首次 gutter 投影更新动态设置
 
         // 设置初始文本
         textView.string = text
@@ -1089,6 +1095,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
                     let targetLine0 = line - 1
                     foldState.expandRegions(containingLine: targetLine0, in: snapshot)
                     editorStore.updateFoldingState(foldState, for: docKey)
+                    // 更新当前行到跳转目标
+                    editorStore.updateCurrentLine(targetLine0, for: docKey)
                     context.coordinator.applyFoldingProjection(to: textView)
                 }
             }
@@ -1128,6 +1136,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
         /// 上次应用的折叠投影指纹（用于跳过重复应用）
         private var lastAppliedFoldingFingerprint: Int?
         private var lastAppliedCollapsedCount: Int?
+        /// 上次应用的 gutter 缓存键（内容指纹、折叠数、当前行、断点数）
+        private var lastGutterCacheKey: (Int, Int, Int?, Int)?
 
         init(parent: NativeCodeEditorView) {
             self.parent = parent
@@ -1148,11 +1158,27 @@ struct NativeCodeEditorView: NSViewRepresentable {
                 if foldState.collapsedRegionIDs.count != beforeCount {
                     parent.editorStore.updateFoldingState(foldState, for: docKey)
                 }
+                // 更新当前行
+                parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
             }
 
             // 用户输入后异步重算高亮和折叠
             applySyntaxHighlighting(to: textView)
             applyFoldingProjection(to: textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? UndoTrackingTextView else { return }
+            guard !isApplyingHighlight else { return }
+            guard let docKey = parent.documentKey else { return }
+
+            let cursorLine = lineNumber(for: textView.selectedRange().location, in: textView.string)
+            let oldLine = parent.editorStore.gutterState(for: docKey).currentLine
+            if cursorLine != oldLine {
+                parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
+                // 仅当前行变化时刷新 gutter（无需重新分析结构）
+                updateGutterOverlayIfNeeded(textView: textView)
+            }
         }
 
         /// 计算字符偏移对应的行号（0-based）
@@ -1261,32 +1287,64 @@ struct NativeCodeEditorView: NSViewRepresentable {
             foldState.reconcile(snapshot: snapshot)
             parent.editorStore.updateFoldingState(foldState, for: docKey)
 
-            // 生成投影
-            let projection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+            // 生成折叠投影
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+
+            // 获取 gutter 状态并构建 gutter 投影
+            let gutterState = parent.editorStore.gutterState(for: docKey)
+            let gutterProjection = EditorGutterProjectionBuilder.make(
+                snapshot: snapshot,
+                folding: foldingProjection,
+                state: gutterState
+            )
 
             // 更新缓存指纹
             lastAppliedFoldingFingerprint = snapshot.contentFingerprint
             lastAppliedCollapsedCount = foldState.collapsedRegionIDs.count
+            lastGutterCacheKey = (snapshot.contentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
 
             // 更新 overlay
-            updateFoldOverlay(projection: projection, textView: textView)
+            updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
         }
 
         /// 仅在折叠状态发生变化时重新应用（外部 toggle 驱动）
         func applyFoldingProjectionIfNeeded(to textView: UndoTrackingTextView) {
             guard let docKey = parent.documentKey else { return }
             let foldState = parent.editorStore.foldingState(for: docKey)
+            let gutterState = parent.editorStore.gutterState(for: docKey)
             let currentFingerprint = EditorSyntaxFingerprint.compute(textView.string)
+            let currentCacheKey = (currentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
 
-            if lastAppliedFoldingFingerprint == currentFingerprint,
-               lastAppliedCollapsedCount == foldState.collapsedRegionIDs.count {
+            if let last = lastGutterCacheKey,
+               last.0 == currentCacheKey.0,
+               last.1 == currentCacheKey.1,
+               last.2 == currentCacheKey.2,
+               last.3 == currentCacheKey.3 {
                 return
             }
             applyFoldingProjection(to: textView)
         }
 
-        /// 更新折叠 overlay 显示
-        private func updateFoldOverlay(projection: EditorCodeFoldingProjection, textView: UndoTrackingTextView) {
+        /// 仅刷新 gutter 显示（当前行/断点变化但文本和折叠不变时）
+        func updateGutterOverlayIfNeeded(textView: UndoTrackingTextView) {
+            guard let docKey = parent.documentKey,
+                  let snapshot = lastStructureSnapshot else { return }
+
+            let foldState = parent.editorStore.foldingState(for: docKey)
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+            let gutterState = parent.editorStore.gutterState(for: docKey)
+            let gutterProjection = EditorGutterProjectionBuilder.make(
+                snapshot: snapshot,
+                folding: foldingProjection,
+                state: gutterState
+            )
+
+            lastGutterCacheKey = (snapshot.contentFingerprint, foldState.collapsedRegionIDs.count, gutterState.currentLine, gutterState.breakpoints.count)
+            updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
+        }
+
+        /// 更新 gutter overlay 显示
+        private func updateGutterOverlay(gutterProjection: EditorGutterProjection, foldingProjection: EditorCodeFoldingProjection, textView: UndoTrackingTextView) {
             guard let overlay = foldOverlay else { return }
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer else { return }
@@ -1294,27 +1352,37 @@ struct NativeCodeEditorView: NSViewRepresentable {
             let text = textView.string
             let lines = text.components(separatedBy: "\n")
 
-            // 构建折叠控制点的 rect 信息
-            var controlRects: [(control: EditorFoldControl, rect: NSRect)] = []
-            for control in projection.foldControls {
-                let lineIndex = control.region.startLine
-                guard lineIndex < lines.count else { continue }
+            // 计算 gutter 宽度：字符宽度 × (行号位数 + 附件槽位) + padding
+            let charWidth: CGFloat = 7.8
+            let metrics = gutterProjection.layoutMetrics
+            let gutterWidth = charWidth * CGFloat(max(metrics.lineNumberDigits, metrics.minimumCharacterColumns) + metrics.leadingAccessorySlots) + 12
 
-                // 获取该行首字符的位置
-                let charIndex = charOffset(forLine: lineIndex, in: text)
+            // 动态更新 overlay 宽度约束
+            overlay.updateGutterWidth(gutterWidth)
+            // 同步更新 textView 左侧 inset 使文本不被 gutter 遮挡
+            let newInset = NSSize(width: gutterWidth, height: 4)
+            if textView.textContainerInset != newInset {
+                textView.textContainerInset = newInset
+            }
+
+            // 构建 gutter 行项的 rect 信息
+            var lineItemRects: [(item: EditorGutterLineItem, rect: NSRect)] = []
+            for item in gutterProjection.lineItems {
+                guard item.line < lines.count else { continue }
+
+                let charIndex = charOffset(forLine: item.line, in: text)
                 let glyphIndex = layoutManager.glyphIndexForCharacter(at: charIndex)
                 var lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
                 lineRect.origin.x = 0
                 lineRect.origin.y += textView.textContainerInset.height
-                lineRect.size.width = 20
+                lineRect.size.width = gutterWidth
 
-                controlRects.append((control, lineRect))
+                lineItemRects.append((item, lineRect))
             }
 
             // 构建缩进导线的 rect 信息
             var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
-            let charWidth: CGFloat = 7.8 // 等宽字体近似宽度
-            for guide in projection.visibleIndentGuides {
+            for guide in gutterProjection.visibleIndentGuides {
                 guard guide.startLine < lines.count, guide.endLine < lines.count else { continue }
 
                 let startCharIndex = charOffset(forLine: guide.startLine, in: text)
@@ -1334,9 +1402,10 @@ struct NativeCodeEditorView: NSViewRepresentable {
             }
 
             overlay.updateContent(
-                controls: controlRects,
+                lineItems: lineItemRects,
                 guides: guideLines,
-                isDarkMode: currentTheme() == .systemDark
+                isDarkMode: currentTheme() == .systemDark,
+                metrics: gutterProjection.layoutMetrics
             )
         }
 
@@ -1392,18 +1461,22 @@ class UndoTrackingTextView: NSTextView {
     }
 }
 
-// MARK: - 折叠 Overlay 视图（macOS）
+// MARK: - 统一 Gutter 视图（macOS）
 
-/// 编辑器折叠控制与缩进导线覆盖层。
+/// 编辑器统一 gutter 覆盖层。
 /// 作为 NSScrollView 的 contentView 子视图，跟随滚动。
-/// 负责绘制折叠按钮和缩进引导线。
+/// 通过共享 gutter 投影渲染行号、当前行高亮、断点圆点、折叠控件和缩进导线。
 class EditorFoldOverlayView: NSView {
     /// 折叠/展开按钮点击回调
     var onToggleFold: ((EditorFoldRegionID) -> Void)?
+    /// 断点切换回调（0-based 行号）
+    var onToggleBreakpoint: ((Int) -> Void)?
 
-    private var controlRects: [(control: EditorFoldControl, rect: NSRect)] = []
+    private var lineItemRects: [(item: EditorGutterLineItem, rect: NSRect)] = []
     private var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
     private var isDarkMode: Bool = false
+    private var metrics: EditorGutterLayoutMetrics = EditorGutterLayoutMetrics(lineNumberDigits: 1)
+    private var widthConstraint: NSLayoutConstraint?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1415,14 +1488,29 @@ class EditorFoldOverlayView: NSView {
         wantsLayer = true
     }
 
+    /// 更新 gutter 宽度约束
+    func updateGutterWidth(_ width: CGFloat) {
+        if let wc = widthConstraint {
+            if wc.constant != width {
+                wc.constant = width
+            }
+        } else {
+            let wc = widthAnchor.constraint(equalToConstant: width)
+            wc.isActive = true
+            widthConstraint = wc
+        }
+    }
+
     func updateContent(
-        controls: [(control: EditorFoldControl, rect: NSRect)],
+        lineItems: [(item: EditorGutterLineItem, rect: NSRect)],
         guides: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)],
-        isDarkMode: Bool
+        isDarkMode: Bool,
+        metrics: EditorGutterLayoutMetrics
     ) {
-        self.controlRects = controls
+        self.lineItemRects = lineItems
         self.guideLines = guides
         self.isDarkMode = isDarkMode
+        self.metrics = metrics
         needsDisplay = true
     }
 
@@ -1430,6 +1518,15 @@ class EditorFoldOverlayView: NSView {
         super.draw(dirtyRect)
 
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        let charWidth: CGFloat = 7.8
+        // 断点区域在最左边
+        let breakpointAreaWidth: CGFloat = 14
+        // 折叠按钮区域紧接断点
+        let foldAreaWidth: CGFloat = 14
+        let accessoryWidth = breakpointAreaWidth + foldAreaWidth
+        // 行号文字起始 x
+        let lineNumberX = accessoryWidth + 2
 
         // 绘制缩进导线
         let guideColor = isDarkMode
@@ -1439,56 +1536,110 @@ class EditorFoldOverlayView: NSView {
         context.setLineWidth(1.0)
 
         for guideLine in guideLines {
-            // 只绘制与 dirtyRect 相交的导线
             guard guideLine.endY >= dirtyRect.minY, guideLine.startY <= dirtyRect.maxY else { continue }
             context.move(to: CGPoint(x: guideLine.x, y: guideLine.startY))
             context.addLine(to: CGPoint(x: guideLine.x, y: guideLine.endY))
             context.strokePath()
         }
 
-        // 绘制折叠按钮
-        let buttonColor = isDarkMode
+        // 绘制行号、当前行高亮、断点和折叠按钮
+        let normalLineNumberColor = isDarkMode
+            ? NSColor(white: 1.0, alpha: 0.3)
+            : NSColor(white: 0.0, alpha: 0.3)
+        let currentLineNumberColor = isDarkMode
+            ? NSColor(white: 1.0, alpha: 0.8)
+            : NSColor(white: 0.0, alpha: 0.8)
+        let currentLineHighlightColor = isDarkMode
+            ? NSColor(white: 1.0, alpha: 0.06)
+            : NSColor(white: 0.0, alpha: 0.04)
+        let breakpointColor = NSColor(red: 0.9, green: 0.25, blue: 0.2, alpha: 0.85)
+        let foldButtonColor = isDarkMode
             ? NSColor(white: 1.0, alpha: 0.35)
             : NSColor(white: 0.0, alpha: 0.35)
 
-        for (control, rect) in controlRects {
+        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        for (item, rect) in lineItemRects {
             guard rect.intersects(dirtyRect) else { continue }
 
-            let buttonSize: CGFloat = 12
-            let buttonRect = NSRect(
-                x: rect.midX - buttonSize / 2,
-                y: rect.midY - buttonSize / 2,
-                width: buttonSize,
-                height: buttonSize
-            )
-
-            // 绘制折叠指示三角
-            let trianglePath = NSBezierPath()
-            if control.isCollapsed {
-                // 折叠状态：右指三角 ▶
-                trianglePath.move(to: NSPoint(x: buttonRect.minX + 2, y: buttonRect.minY + 1))
-                trianglePath.line(to: NSPoint(x: buttonRect.maxX - 2, y: buttonRect.midY))
-                trianglePath.line(to: NSPoint(x: buttonRect.minX + 2, y: buttonRect.maxY - 1))
-            } else {
-                // 展开状态：下指三角 ▼
-                trianglePath.move(to: NSPoint(x: buttonRect.minX + 1, y: buttonRect.minY + 2))
-                trianglePath.line(to: NSPoint(x: buttonRect.maxX - 1, y: buttonRect.minY + 2))
-                trianglePath.line(to: NSPoint(x: buttonRect.midX, y: buttonRect.maxY - 2))
+            // 当前行背景高亮
+            if item.isCurrentLine {
+                context.setFillColor(currentLineHighlightColor.cgColor)
+                context.fill(CGRect(x: 0, y: rect.origin.y, width: bounds.width, height: rect.height))
             }
-            trianglePath.close()
 
-            buttonColor.setFill()
-            trianglePath.fill()
+            // 断点圆点
+            if item.hasBreakpoint {
+                let bpSize: CGFloat = 10
+                let bpRect = CGRect(
+                    x: (breakpointAreaWidth - bpSize) / 2,
+                    y: rect.midY - bpSize / 2,
+                    width: bpSize,
+                    height: bpSize
+                )
+                context.setFillColor(breakpointColor.cgColor)
+                context.fillEllipse(in: bpRect)
+            }
+
+            // 折叠按钮
+            if let foldControl = item.foldControl {
+                let buttonSize: CGFloat = 10
+                let buttonCenterX = breakpointAreaWidth + foldAreaWidth / 2
+                let buttonCenterY = rect.midY
+
+                let trianglePath = NSBezierPath()
+                if foldControl.isCollapsed {
+                    // 右指三角 ▶
+                    trianglePath.move(to: NSPoint(x: buttonCenterX - buttonSize / 3, y: buttonCenterY - buttonSize / 2))
+                    trianglePath.line(to: NSPoint(x: buttonCenterX + buttonSize / 3, y: buttonCenterY))
+                    trianglePath.line(to: NSPoint(x: buttonCenterX - buttonSize / 3, y: buttonCenterY + buttonSize / 2))
+                } else {
+                    // 下指三角 ▼
+                    trianglePath.move(to: NSPoint(x: buttonCenterX - buttonSize / 2, y: buttonCenterY - buttonSize / 3))
+                    trianglePath.line(to: NSPoint(x: buttonCenterX + buttonSize / 2, y: buttonCenterY - buttonSize / 3))
+                    trianglePath.line(to: NSPoint(x: buttonCenterX, y: buttonCenterY + buttonSize / 3))
+                }
+                trianglePath.close()
+                foldButtonColor.setFill()
+                trianglePath.fill()
+            }
+
+            // 行号文字（右对齐）
+            let textColor = item.isCurrentLine ? currentLineNumberColor : normalLineNumberColor
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor,
+            ]
+            let numStr = item.displayLineNumber as NSString
+            let textSize = numStr.size(withAttributes: attributes)
+            let maxDigitWidth = charWidth * CGFloat(max(metrics.lineNumberDigits, metrics.minimumCharacterColumns))
+            let textX = lineNumberX + maxDigitWidth - textSize.width
+            let textY = rect.origin.y + (rect.height - textSize.height) / 2
+            numStr.draw(at: NSPoint(x: textX, y: textY), withAttributes: attributes)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+        let breakpointAreaWidth: CGFloat = 14
+        let foldAreaWidth: CGFloat = 14
 
-        for (control, rect) in controlRects {
+        for (item, rect) in lineItemRects {
             let hitRect = rect.insetBy(dx: -4, dy: -2)
-            if hitRect.contains(location) {
-                onToggleFold?(control.region.id)
+            guard hitRect.contains(location) else { continue }
+
+            // 折叠按钮区域命中检测
+            if item.foldControl != nil {
+                let foldHitX = breakpointAreaWidth...(breakpointAreaWidth + foldAreaWidth)
+                if foldHitX.contains(location.x) {
+                    onToggleFold?(item.foldControl!.region.id)
+                    return
+                }
+            }
+
+            // 断点区域命中检测
+            if location.x < breakpointAreaWidth + 4 {
+                onToggleBreakpoint?(item.line)
                 return
             }
         }
@@ -1498,14 +1649,24 @@ class EditorFoldOverlayView: NSView {
 
     override var isFlipped: Bool { true }
 
-    // 使 overlay 对鼠标事件透明（除了折叠按钮区域）
+    // 使 overlay 对鼠标事件透明（除了折叠按钮和断点区域）
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
-        for (_, rect) in controlRects {
+        let breakpointAreaWidth: CGFloat = 14
+        let foldAreaWidth: CGFloat = 14
+
+        for (item, rect) in lineItemRects {
             let hitRect = rect.insetBy(dx: -4, dy: -2)
-            if hitRect.contains(local) {
-                return self
+            guard hitRect.contains(local) else { continue }
+
+            // 折叠按钮区域
+            if item.foldControl != nil {
+                let foldHitX = breakpointAreaWidth...(breakpointAreaWidth + foldAreaWidth)
+                if foldHitX.contains(local.x) { return self }
             }
+
+            // 断点区域
+            if local.x < breakpointAreaWidth + 4 { return self }
         }
         return nil
     }

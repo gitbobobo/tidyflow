@@ -287,5 +287,105 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertTrue(store.foldingState(for: docProj2).collapsedRegionIDs.isEmpty,
                        "同名路径在不同项目的折叠状态应隔离")
     }
+
+    // MARK: - Gutter 状态
+
+    func testGutterStateDefaultValues() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        let state = store.gutterState(for: docKey)
+        XCTAssertNil(state.currentLine)
+        XCTAssertTrue(state.breakpoints.isEmpty)
+        XCTAssertTrue(state.showsCurrentLineHighlight)
+    }
+
+    func testUpdateCurrentLine() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        store.updateCurrentLine(5, for: docKey)
+        XCTAssertEqual(store.gutterState(for: docKey).currentLine, 5)
+
+        store.updateCurrentLine(nil, for: docKey)
+        XCTAssertNil(store.gutterState(for: docKey).currentLine)
+    }
+
+    func testToggleBreakpoint() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        store.toggleBreakpoint(line: 10, for: docKey)
+        XCTAssertTrue(store.gutterState(for: docKey).breakpoints.contains(line: 10))
+
+        store.toggleBreakpoint(line: 10, for: docKey)
+        XCTAssertFalse(store.gutterState(for: docKey).breakpoints.contains(line: 10))
+    }
+
+    func testGutterStatePerDocumentIsolation() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+
+        store.toggleBreakpoint(line: 5, for: docA)
+
+        XCTAssertTrue(store.gutterState(for: docA).breakpoints.contains(line: 5))
+        XCTAssertFalse(store.gutterState(for: docB).breakpoints.contains(line: 5),
+                       "不同文档的断点应隔离")
+    }
+
+    func testGutterStateIsolatedBetweenWorkspaces() {
+        let store = makeStore()
+        let docMain = EditorDocumentKey(project: "proj", workspace: "main", path: "file.swift")
+        let docDev = EditorDocumentKey(project: "proj", workspace: "dev", path: "file.swift")
+
+        store.toggleBreakpoint(line: 3, for: docMain)
+        store.updateCurrentLine(10, for: docMain)
+
+        XCTAssertTrue(store.gutterState(for: docMain).breakpoints.contains(line: 3))
+        XCTAssertFalse(store.gutterState(for: docDev).breakpoints.contains(line: 3),
+                       "同名路径在不同工作区的 gutter 状态应隔离")
+        XCTAssertNil(store.gutterState(for: docDev).currentLine)
+    }
+
+    func testGutterStateIsolatedBetweenProjects() {
+        let store = makeStore()
+        let docProj1 = EditorDocumentKey(project: "proj1", workspace: "main", path: "file.swift")
+        let docProj2 = EditorDocumentKey(project: "proj2", workspace: "main", path: "file.swift")
+
+        store.toggleBreakpoint(line: 7, for: docProj1)
+
+        XCTAssertTrue(store.gutterState(for: docProj1).breakpoints.contains(line: 7))
+        XCTAssertFalse(store.gutterState(for: docProj2).breakpoints.contains(line: 7),
+                       "同名路径在不同项目的 gutter 状态应隔离")
+    }
+
+    func testReleaseDocumentClearsGutterState() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        store.toggleBreakpoint(line: 5, for: docKey)
+        store.updateCurrentLine(10, for: docKey)
+
+        store.releaseDocumentSession(workspaceKey: "proj:main", path: "f.swift")
+
+        XCTAssertTrue(store.gutterState(for: docKey).breakpoints.isEmpty,
+                      "关闭文档后 gutter 状态应被释放")
+        XCTAssertNil(store.gutterState(for: docKey).currentLine)
+    }
+
+    func testReleaseAllDocumentSessionsClearsGutterState() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+        let docC = EditorDocumentKey(project: "proj", workspace: "dev", path: "c.swift")
+
+        store.toggleBreakpoint(line: 1, for: docA)
+        store.toggleBreakpoint(line: 2, for: docB)
+        store.toggleBreakpoint(line: 3, for: docC)
+
+        store.releaseAllDocumentSessions(workspaceKey: "proj:main")
+
+        XCTAssertTrue(store.gutterState(for: docA).breakpoints.isEmpty)
+        XCTAssertTrue(store.gutterState(for: docB).breakpoints.isEmpty)
+        XCTAssertFalse(store.gutterState(for: docC).breakpoints.isEmpty,
+                       "不同工作区的 gutter 状态不受影响")
+    }
 }
 #endif

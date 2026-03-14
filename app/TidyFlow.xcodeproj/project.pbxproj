@@ -44,6 +44,7 @@
 		EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFRS0001 /* EditorFindReplaceSemantics.swift */; };
 		ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHL0001 /* EditorSyntaxHighlighter.swift */; };
 		ESEM0002 /* EditorStructureSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESEM0001 /* EditorStructureSemantics.swift */; };
+		EGUT0002 /* EditorGutterSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EGUT0001 /* EditorGutterSemantics.swift */; };
 		ESHLT002 /* EditorSyntaxHighlighterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHLT001 /* EditorSyntaxHighlighterTests.swift */; };
 		EDTST002 /* EditorDocumentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST001 /* EditorDocumentSessionTests.swift */; };
 		EDTST004 /* EditorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST003 /* EditorStoreTests.swift */; };
@@ -400,6 +401,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EFRS0001 /* EditorFindReplaceSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemantics.swift; sourceTree = "<group>"; };
 		ESHL0001 /* EditorSyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighter.swift; sourceTree = "<group>"; };
 		ESEM0001 /* EditorStructureSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStructureSemantics.swift; sourceTree = "<group>"; };
+		EGUT0001 /* EditorGutterSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorGutterSemantics.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
@@ -738,6 +740,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				EFRS0001 /* EditorFindReplaceSemantics.swift */,
 				ESHL0001 /* EditorSyntaxHighlighter.swift */,
 				ESEM0001 /* EditorStructureSemantics.swift */,
+				EGUT0001 /* EditorGutterSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -1673,6 +1676,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */,
 				ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */,
 				ESEM0002 /* EditorStructureSemantics.swift in Sources */,
+				EGUT0002 /* EditorGutterSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

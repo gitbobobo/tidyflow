@@ -310,4 +310,102 @@ final class MobileEditorSessionTests: XCTestCase {
         let projection2 = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
         XCTAssertEqual(projection1, projection2, "相同输入应产出相同投影")
     }
+
+    // MARK: - Gutter 状态（共享类型测试，iOS 场景）
+
+    func testGutterStateDefaultValues() {
+        let state = EditorGutterState()
+        XCTAssertNil(state.currentLine)
+        XCTAssertTrue(state.breakpoints.isEmpty)
+        XCTAssertTrue(state.showsCurrentLineHighlight)
+    }
+
+    func testGutterStateCurrentLineUpdate() {
+        var state = EditorGutterState()
+        state.currentLine = 5
+        XCTAssertEqual(state.currentLine, 5)
+        state.currentLine = nil
+        XCTAssertNil(state.currentLine)
+    }
+
+    func testGutterBreakpointToggle() {
+        var state = EditorGutterState()
+        state.breakpoints.toggle(line: 10)
+        XCTAssertTrue(state.breakpoints.contains(line: 10))
+        state.breakpoints.toggle(line: 10)
+        XCTAssertFalse(state.breakpoints.contains(line: 10))
+    }
+
+    func testGutterStatePerDocumentIsolation() {
+        // 不同文档键的 gutter 状态应完全独立
+        let key1 = EditorDocumentKey(project: "app", workspace: "main", path: "src/index.ts")
+        let key2 = EditorDocumentKey(project: "app", workspace: "main", path: "src/utils.ts")
+        let key3 = EditorDocumentKey(project: "app", workspace: "dev", path: "src/index.ts")
+
+        var state1 = EditorGutterState()
+        state1.breakpoints.toggle(line: 5)
+        state1.currentLine = 10
+
+        var state2 = EditorGutterState()
+        state2.breakpoints.toggle(line: 20)
+
+        var state3 = EditorGutterState()
+        state3.currentLine = 30
+
+        // 各自独立
+        XCTAssertTrue(state1.breakpoints.contains(line: 5))
+        XCTAssertFalse(state2.breakpoints.contains(line: 5))
+        XCTAssertFalse(state3.breakpoints.contains(line: 5))
+
+        XCTAssertEqual(state1.currentLine, 10)
+        XCTAssertNil(state2.currentLine)
+        XCTAssertEqual(state3.currentLine, 30)
+
+        // 以 EditorDocumentKey 为键存储时隔离
+        var stateByDoc: [EditorDocumentKey: EditorGutterState] = [:]
+        stateByDoc[key1] = state1
+        stateByDoc[key2] = state2
+        stateByDoc[key3] = state3
+
+        XCTAssertEqual(stateByDoc[key1]?.currentLine, 10)
+        XCTAssertNil(stateByDoc[key2]?.currentLine)
+        XCTAssertEqual(stateByDoc[key3]?.currentLine, 30)
+    }
+
+    func testGutterProjectionWithFolding() {
+        let code = """
+        func test() {
+            line1
+            line2
+        }
+        extra
+        """
+        let analyzer = EditorStructureAnalyzer()
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+
+        var foldState = EditorCodeFoldingState()
+        if let region = snapshot.foldRegions.first {
+            foldState.collapsedRegionIDs.insert(region.id)
+        }
+
+        let folding = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+        var gutterState = EditorGutterState()
+        gutterState.currentLine = 0
+        gutterState.breakpoints.toggle(line: 4) // "extra" 行
+
+        let projection = EditorGutterProjectionBuilder.make(snapshot: snapshot, folding: folding, state: gutterState)
+
+        // 折叠后隐藏行不应出现
+        let visibleLines = projection.lineItems.map(\.line)
+        XCTAssertTrue(visibleLines.contains(0), "折叠起始行应保留")
+        XCTAssertTrue(visibleLines.contains(4), "未折叠行应保留")
+        XCTAssertFalse(visibleLines.contains(1), "隐藏行不应出现")
+        XCTAssertFalse(visibleLines.contains(2), "隐藏行不应出现")
+
+        // 当前行和断点正确
+        let line0Item = projection.lineItems.first { $0.line == 0 }
+        XCTAssertEqual(line0Item?.isCurrentLine, true)
+        let line4Item = projection.lineItems.first { $0.line == 4 }
+        XCTAssertEqual(line4Item?.hasBreakpoint, true)
+    }
 }
