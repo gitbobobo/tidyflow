@@ -130,6 +130,9 @@ class AppState: ObservableObject {
     /// 挂起中的文件树性能追踪 ID（key: project:workspace:path），结果到达时关闭追踪。
     var pendingFileListTraceIds: [String: String] = [:]
 
+    // 全局搜索状态（按 project:workspace 隔离）
+    @Published var globalSearchStates: [String: GlobalSearchState] = [:]
+
     // 向后兼容：保留原属性访问路径，代理到 fileCache
     var fileIndexCache: [String: FileIndexCache] {
         get { fileCache.fileIndexCache }

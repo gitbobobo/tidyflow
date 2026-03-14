@@ -1,5 +1,6 @@
 import SwiftUI
 import Shimmer
+import TidyFlowShared
 
 // 已拆分：
 // - ExplorerView.swift       文件浏览器（ExplorerView, FileTreeView, FileListContent, FileRowView）
@@ -105,7 +106,8 @@ struct InspectorContentView: View {
                     ExplorerView()
                         .environmentObject(appState)
                 case .search:
-                    SearchPlaceholderView()
+                    GlobalSearchPanelView()
+                        .environmentObject(appState)
                 case .git:
                     NativeGitPanelView()
                         .environmentObject(appState)
@@ -622,22 +624,245 @@ struct ExplorerPlaceholderView: View {
     }
 }
 
-struct SearchPlaceholderView: View {
+// MARK: - 全局搜索面板
+
+struct GlobalSearchPanelView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var searchText: String = ""
+    @State private var caseSensitive: Bool = false
+
+    private var searchState: GlobalSearchState {
+        appState.currentSearchState
+    }
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
+            searchBar
+            Divider()
+            resultContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - 搜索输入栏
+
+    private var searchBar: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+                TextField("rightPanel.search.placeholder".localized, text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .onSubmit {
+                        appState.performGlobalSearch(query: searchText, caseSensitive: caseSensitive)
+                    }
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        appState.performGlobalSearch(query: "")
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(6)
+
+            HStack {
+                Toggle(isOn: $caseSensitive) {
+                    Text("Aa")
+                        .font(.system(size: 11, weight: caseSensitive ? .bold : .regular, design: .monospaced))
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help("rightPanel.search.caseSensitive".localized)
+
+                Spacer()
+
+                if searchState.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if searchState.hasResults {
+                    Text("\(searchState.totalMatches) \("rightPanel.search.matches".localized)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    if searchState.truncated {
+                        Text("rightPanel.search.truncated".localized)
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - 结果区域
+
+    @ViewBuilder
+    private var resultContent: some View {
+        if let error = searchState.error {
+            statusView(icon: "exclamationmark.triangle", iconColor: .orange, message: error)
+        } else if searchState.isLoading && !searchState.hasResults {
+            VStack(spacing: 12) {
+                Spacer()
+                ProgressView()
+                Text("rightPanel.search.searching".localized)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if searchState.hasResults {
+            resultList
+        } else if !searchState.query.isEmpty {
+            statusView(icon: "magnifyingglass", iconColor: .secondary.opacity(0.6), message: "rightPanel.search.noResults".localized)
+        } else {
+            statusView(icon: "magnifyingglass", iconColor: .secondary.opacity(0.4), message: "rightPanel.search.prompt".localized)
+        }
+    }
+
+    private func statusView(icon: String, iconColor: Color, message: String) -> some View {
+        VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 40))
-                .foregroundColor(.secondary.opacity(0.6))
-            Text("rightPanel.globalSearch".localized)
-                .font(.headline)
-                .foregroundColor(.secondary)
-            Text("rightPanel.comingSoon".localized)
+            Image(systemName: icon)
+                .font(.system(size: 28))
+                .foregroundColor(iconColor)
+            Text(message)
                 .font(.caption)
-                .foregroundColor(.secondary.opacity(0.8))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    private var resultList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(searchState.sections) { section in
+                    SearchSectionView(section: section) { match in
+                        appState.openSearchResult(match)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+// MARK: - 搜索结果分组视图
+
+private struct SearchSectionView: View {
+    let section: GlobalSearchSection
+    let onSelect: (GlobalSearchMatch) -> Void
+    @State private var isExpanded: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 文件头
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 12)
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Text(section.fileName)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    if !section.directoryPath.isEmpty {
+                        Text(section.directoryPath)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text("\(section.matchCount)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15))
+                        .cornerRadius(4)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+
+            // 匹配列表
+            if isExpanded {
+                ForEach(section.matches) { match in
+                    SearchMatchRowView(match: match)
+                        .onTapGesture { onSelect(match) }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 搜索匹配行视图
+
+private struct SearchMatchRowView: View {
+    let match: GlobalSearchMatch
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("\(match.line)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(minWidth: 28, alignment: .trailing)
+
+            highlightedPreview
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .background(Color.clear)
+        .onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+
+    private var highlightedPreview: some View {
+        let segments = GlobalSearchPreviewFormatter.highlightedSegments(
+            preview: match.preview,
+            matchRanges: match.matchRanges
+        )
+        return segments.reduce(Text("")) { result, segment in
+            if segment.isHighlighted {
+                return result + Text(segment.text)
+                    .foregroundColor(.accentColor)
+                    .bold()
+            } else {
+                return result + Text(segment.text)
+                    .foregroundColor(.primary)
+            }
+        }
     }
 }
 

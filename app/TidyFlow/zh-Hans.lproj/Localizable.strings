@@ -239,6 +239,13 @@
 "rightPanel.explorerPlaceholder" = "文件浏览器";
 "rightPanel.comingSoon" = "即将推出";
 "rightPanel.globalSearch" = "全局搜索";
+"rightPanel.search.placeholder" = "搜索文件内容...";
+"rightPanel.search.caseSensitive" = "区分大小写";
+"rightPanel.search.matches" = "个匹配";
+"rightPanel.search.truncated" = "（已截断）";
+"rightPanel.search.searching" = "搜索中...";
+"rightPanel.search.noResults" = "未找到结果";
+"rightPanel.search.prompt" = "输入搜索关键词";
 "rightPanel.noTool" = "未选择工具";
 "rightPanel.noTool.hint" = "请从上方选择一个工具";
 "rightPanel.sessions" = "会话";

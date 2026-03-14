@@ -104,6 +104,7 @@ final class AppStateFileMessageHandlerAdapter: WeakTargetMessageAdapter<AppState
     func handleFileCopyResult(_ result: FileCopyResult) { dispatchToTarget { $0.handleFileCopyResult(result) } }
     func handleFileMoveResult(_ result: FileMoveResult) { dispatchToTarget { $0.handleFileMoveResult(result) } }
     func handleFileWriteResult(_ result: FileWriteResult) { dispatchToTarget { $0.handleFileWriteResult(result) } }
+    func handleFileContentSearchResult(_ result: FileContentSearchResult) { dispatchToTarget { $0.handleFileContentSearchResult(result) } }
     func handleFileChanged(_ notification: FileChangedNotification) {
         dispatchToTarget { appState in
             appState.invalidateFileCache(project: notification.project, workspace: notification.workspace)

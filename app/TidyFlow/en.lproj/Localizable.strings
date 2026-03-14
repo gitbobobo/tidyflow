@@ -237,6 +237,13 @@
 "rightPanel.explorerPlaceholder" = "File Explorer";
 "rightPanel.comingSoon" = "Coming Soon";
 "rightPanel.globalSearch" = "Global Search";
+"rightPanel.search.placeholder" = "Search files...";
+"rightPanel.search.caseSensitive" = "Case Sensitive";
+"rightPanel.search.matches" = "matches";
+"rightPanel.search.truncated" = "(truncated)";
+"rightPanel.search.searching" = "Searching...";
+"rightPanel.search.noResults" = "No results found";
+"rightPanel.search.prompt" = "Enter a search term";
 "rightPanel.noTool" = "No Tool Selected";
 "rightPanel.noTool.hint" = "Select a tool from above";
 "rightPanel.sessions" = "Sessions";

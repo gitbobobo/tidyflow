@@ -60,6 +60,7 @@
 		EACS0002 /* EditorAutocompleteSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACS0001 /* EditorAutocompleteSemantics.swift */; };
 		EACST002 /* EditorAutocompleteSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACST001 /* EditorAutocompleteSemanticsTests.swift */; };
 		EMMS0002 /* EditorMinimapSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMMS0001 /* EditorMinimapSemantics.swift */; };
+		GSEM0002 /* GlobalSearchSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = GSEM0001 /* GlobalSearchSemantics.swift */; };
 		EMMST002 /* EditorMinimapSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMMST001 /* EditorMinimapSemanticsTests.swift */; };
 		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
 		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
@@ -194,6 +195,7 @@
 		MDL00030A /* AppState+Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010A /* AppState+Workspace.swift */; };
 		MDL00030B /* AppState+CoreWS.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010B /* AppState+CoreWS.swift */; };
 		MDL00030C /* AppState+FileOps.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010C /* AppState+FileOps.swift */; };
+		MDL0003S1 /* AppState+Search.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL0001S1 /* AppState+Search.swift */; };
 		MDL00030D /* AppState+Projects.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010D /* AppState+Projects.swift */; };
 		MDL00030E /* AppState+Tabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010E /* AppState+Tabs.swift */; };
 		MDL00030F /* AppState+AIActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010F /* AppState+AIActions.swift */; };
@@ -532,6 +534,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EACS0001 /* EditorAutocompleteSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAutocompleteSemantics.swift; sourceTree = "<group>"; };
 		EACST001 /* EditorAutocompleteSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAutocompleteSemanticsTests.swift; sourceTree = "<group>"; };
 		EMMS0001 /* EditorMinimapSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMinimapSemantics.swift; sourceTree = "<group>"; };
+		GSEM0001 /* GlobalSearchSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSearchSemantics.swift; sourceTree = "<group>"; };
 		EMMST001 /* EditorMinimapSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMinimapSemanticsTests.swift; sourceTree = "<group>"; };
 		ESHLT001 /* EditorSyntaxHighlighterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighterTests.swift; sourceTree = "<group>"; };
 		TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageVisibilitySemanticsTests.swift; sourceTree = "<group>"; };
@@ -571,6 +574,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		MDL00010A /* AppState+Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Workspace.swift"; sourceTree = "<group>"; };
 		MDL00010B /* AppState+CoreWS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS.swift"; sourceTree = "<group>"; };
 		MDL00010C /* AppState+FileOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+FileOps.swift"; sourceTree = "<group>"; };
+		MDL0001S1 /* AppState+Search.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Search.swift"; sourceTree = "<group>"; };
 		MDL00010D /* AppState+Projects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Projects.swift"; sourceTree = "<group>"; };
 		MDL00010E /* AppState+Tabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Tabs.swift"; sourceTree = "<group>"; };
 		MDL00010F /* AppState+AIActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+AIActions.swift"; sourceTree = "<group>"; };
@@ -751,6 +755,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				EPMH0001 /* EditorPairMatchSemantics.swift */,
 				EACS0001 /* EditorAutocompleteSemantics.swift */,
 				EMMS0001 /* EditorMinimapSemantics.swift */,
+				GSEM0001 /* GlobalSearchSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -1168,6 +1173,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				TMS00002 /* TerminalStore.swift */,
 				EDS00002 /* EditorStore.swift */,
 				MDL00010C /* AppState+FileOps.swift */,
+				MDL0001S1 /* AppState+Search.swift */,
 				MDL00010D /* AppState+Projects.swift */,
 				RMT00012 /* AppState+RemoteTerminals.swift */,
 				MDL000110 /* AppState+Settings.swift */,
@@ -1430,6 +1436,7 @@ TSST011 /* TerminalSessionStore.swift */,
 				MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */,
 				MDL00031B /* WorkspaceKeySemantics.swift in Sources */,
 				MDL00030C /* AppState+FileOps.swift in Sources */,
+				MDL0003S1 /* AppState+Search.swift in Sources */,
 				MDL00030D /* AppState+Projects.swift in Sources */,
 				MDL00030E /* AppState+Tabs.swift in Sources */,
 				MDL00030F /* AppState+AIActions.swift in Sources */,
@@ -1689,6 +1696,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				EPMH0002 /* EditorPairMatchSemantics.swift in Sources */,
 				EACS0002 /* EditorAutocompleteSemantics.swift in Sources */,
 				EMMS0002 /* EditorMinimapSemantics.swift in Sources */,
+				GSEM0002 /* GlobalSearchSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1912,6 +1920,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"AppState+CoreWS+AIReconnect.swift",
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
+					"AppState+Search.swift",
 					"AppState+Projects.swift",
 					"AppState+RemoteTerminals.swift",
 					"AppState+Settings.swift",
