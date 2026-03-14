@@ -1,59 +1,23 @@
 import XCTest
 @testable import TidyFlowShared
 
-/// 编辑器查找替换语义测试：覆盖大小写不敏感查找、正则查找、非法正则、
-/// 替换当前、全部替换、匹配索引保持与切换文档隔离。
+/// 编辑器查找替换语义测试：验证共享引擎 EditorFindReplaceEngine 的纯值 API。
+/// 覆盖大小写不敏感查找、正则查找、非法正则、替换当前、全部替换、
+/// 匹配索引钳制、高亮目标行解析与切换文档隔离。
 final class EditorFindReplaceSemanticsTests: XCTestCase {
-
-    // MARK: - 查找匹配（纯逻辑，不依赖 UI）
-
-    /// 查找范围工具函数（复刻视图层逻辑，用于独立测试）
-    private func findRanges(
-        in text: String,
-        findText: String,
-        isCaseSensitive: Bool = false,
-        useRegex: Bool = false
-    ) -> (ranges: [Range<String.Index>], regexError: String?) {
-        guard !findText.isEmpty else { return ([], nil) }
-
-        if useRegex {
-            do {
-                let regex = try NSRegularExpression(
-                    pattern: findText,
-                    options: isCaseSensitive ? [] : [.caseInsensitive]
-                )
-                let nsText = text as NSString
-                let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
-                let ranges = matches.compactMap { Range($0.range, in: text) }
-                return (ranges, nil)
-            } catch {
-                return ([], "Invalid regex")
-            }
-        }
-
-        var ranges: [Range<String.Index>] = []
-        var searchRange = text.startIndex..<text.endIndex
-        let options: String.CompareOptions = isCaseSensitive ? [] : [.caseInsensitive]
-        while let range = text.range(of: findText, options: options, range: searchRange) {
-            ranges.append(range)
-            if range.upperBound == text.endIndex { break }
-            searchRange = range.upperBound..<text.endIndex
-        }
-        return (ranges, nil)
-    }
 
     // MARK: - 大小写不敏感查找
 
     func testCaseInsensitiveFindMatchesBothCases() {
         let text = "Hello hello HELLO"
-        let result = findRanges(in: text, findText: "hello", isCaseSensitive: false)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "hello", isCaseSensitive: false)
         XCTAssertEqual(result.ranges.count, 3)
         XCTAssertNil(result.regexError)
     }
 
     func testCaseSensitiveFindMatchesExactCase() {
         let text = "Hello hello HELLO"
-        let result = findRanges(in: text, findText: "hello", isCaseSensitive: true)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "hello", isCaseSensitive: true)
         XCTAssertEqual(result.ranges.count, 1)
     }
 
@@ -61,20 +25,20 @@ final class EditorFindReplaceSemanticsTests: XCTestCase {
 
     func testRegexFindMatchesPattern() {
         let text = "foo123 bar456 baz"
-        let result = findRanges(in: text, findText: "[a-z]+\\d+", useRegex: true)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "[a-z]+\\d+", useRegex: true)
         XCTAssertEqual(result.ranges.count, 2)
         XCTAssertNil(result.regexError)
     }
 
     func testRegexFindCaseInsensitive() {
         let text = "ABC abc Abc"
-        let result = findRanges(in: text, findText: "abc", isCaseSensitive: false, useRegex: true)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "abc", isCaseSensitive: false, useRegex: true)
         XCTAssertEqual(result.ranges.count, 3)
     }
 
     func testRegexFindCaseSensitive() {
         let text = "ABC abc Abc"
-        let result = findRanges(in: text, findText: "abc", isCaseSensitive: true, useRegex: true)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "abc", isCaseSensitive: true, useRegex: true)
         XCTAssertEqual(result.ranges.count, 1)
     }
 
@@ -82,62 +46,183 @@ final class EditorFindReplaceSemanticsTests: XCTestCase {
 
     func testInvalidRegexReturnsError() {
         let text = "hello world"
-        let result = findRanges(in: text, findText: "[invalid", useRegex: true)
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "[invalid", useRegex: true)
         XCTAssertTrue(result.ranges.isEmpty)
         XCTAssertNotNil(result.regexError)
     }
 
     func testInvalidRegexDoesNotCrash() {
         let text = "hello world"
-        // 多个非法正则模式
         for pattern in ["(", "(?<", "[", "*", "+?+"] {
-            let result = findRanges(in: text, findText: pattern, useRegex: true)
+            let result = EditorFindReplaceEngine.findMatches(in: text, findText: pattern, useRegex: true)
             // 要么有错误，要么匹配数正常（部分正则如 * 在 NSRegularExpression 中可能不会抛异常）
-            if result.regexError == nil {
-                // 正常匹配，没有崩溃
-            }
+            _ = result.regexError
         }
     }
 
-    // MARK: - 替换当前
+    // MARK: - 替换当前（通过共享引擎）
 
     func testReplaceCurrentAtIndex() {
-        var text = "aaa bbb aaa"
-        let result = findRanges(in: text, findText: "aaa")
-        XCTAssertEqual(result.ranges.count, 2)
-        // 替换第一个
-        let range = result.ranges[0]
-        text.replaceSubrange(range, with: "ccc")
-        XCTAssertEqual(text, "ccc bbb aaa")
+        let text = "aaa bbb aaa"
+        let state = EditorFindReplaceState(findText: "aaa", replaceText: "ccc")
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, state: state)
+        XCTAssertEqual(findResult.ranges.count, 2)
+
+        let result = EditorFindReplaceEngine.replaceCurrent(
+            in: text, matchRanges: findResult.ranges, currentIndex: 0, replaceText: "ccc", state: state
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.text, "ccc bbb aaa")
     }
 
-    // MARK: - 全部替换
+    func testReplaceCurrentWithInvalidIndexReturnsNil() {
+        let text = "aaa bbb"
+        let state = EditorFindReplaceState(findText: "aaa", replaceText: "ccc")
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, state: state)
+        let result = EditorFindReplaceEngine.replaceCurrent(
+            in: text, matchRanges: findResult.ranges, currentIndex: 5, replaceText: "ccc", state: state
+        )
+        XCTAssertNil(result)
+    }
+
+    func testReplaceCurrentWithRegexErrorReturnsNil() {
+        let text = "aaa"
+        var state = EditorFindReplaceState(findText: "aaa", replaceText: "ccc")
+        state.regexError = "some error"
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, findText: "aaa")
+        let result = EditorFindReplaceEngine.replaceCurrent(
+            in: text, matchRanges: findResult.ranges, currentIndex: 0, replaceText: "ccc", state: state
+        )
+        XCTAssertNil(result)
+    }
+
+    // MARK: - 全部替换（通过共享引擎）
 
     func testReplaceAllOccurrences() {
-        var text = "aaa bbb aaa"
-        let result = findRanges(in: text, findText: "aaa")
-        for range in result.ranges.reversed() {
-            text.replaceSubrange(range, with: "ccc")
-        }
-        XCTAssertEqual(text, "ccc bbb ccc")
+        let text = "aaa bbb aaa"
+        let state = EditorFindReplaceState(findText: "aaa", replaceText: "ccc")
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, state: state)
+
+        let result = EditorFindReplaceEngine.replaceAll(
+            in: text, matchRanges: findResult.ranges, replaceText: "ccc", state: state
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.text, "ccc bbb ccc")
     }
 
     func testReplaceAllWithDifferentLengthReplacement() {
-        var text = "ab ab ab"
-        let result = findRanges(in: text, findText: "ab")
-        for range in result.ranges.reversed() {
-            text.replaceSubrange(range, with: "xyz")
-        }
-        XCTAssertEqual(text, "xyz xyz xyz")
+        let text = "ab ab ab"
+        let state = EditorFindReplaceState(findText: "ab", replaceText: "xyz")
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, state: state)
+
+        let result = EditorFindReplaceEngine.replaceAll(
+            in: text, matchRanges: findResult.ranges, replaceText: "xyz", state: state
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.text, "xyz xyz xyz")
+    }
+
+    func testReplaceAllEmptyMatchesReturnsNil() {
+        let text = "aaa"
+        let state = EditorFindReplaceState(findText: "zzz", replaceText: "ccc")
+        let result = EditorFindReplaceEngine.replaceAll(
+            in: text, matchRanges: [], replaceText: "ccc", state: state
+        )
+        XCTAssertNil(result)
     }
 
     // MARK: - 空查找文本
 
     func testEmptyFindTextReturnsNoMatches() {
         let text = "hello world"
-        let result = findRanges(in: text, findText: "")
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "")
         XCTAssertTrue(result.ranges.isEmpty)
         XCTAssertNil(result.regexError)
+    }
+
+    // MARK: - 匹配索引钳制
+
+    func testClampMatchIndexWithKeepSelection() {
+        XCTAssertEqual(EditorFindReplaceEngine.clampMatchIndex(currentIndex: 5, matchCount: 3, keepSelection: true), 2)
+        XCTAssertEqual(EditorFindReplaceEngine.clampMatchIndex(currentIndex: 1, matchCount: 3, keepSelection: true), 1)
+        XCTAssertEqual(EditorFindReplaceEngine.clampMatchIndex(currentIndex: -1, matchCount: 3, keepSelection: true), 0)
+    }
+
+    func testClampMatchIndexWithoutKeepSelection() {
+        XCTAssertEqual(EditorFindReplaceEngine.clampMatchIndex(currentIndex: 5, matchCount: 3, keepSelection: false), 0)
+        XCTAssertEqual(EditorFindReplaceEngine.clampMatchIndex(currentIndex: -1, matchCount: 0, keepSelection: false), -1)
+    }
+
+    func testMatchIndexClampedAfterReplace() {
+        let text = "aaa bbb aaa ccc aaa"
+        let state = EditorFindReplaceState(findText: "aaa", replaceText: "xxx")
+        let findResult = EditorFindReplaceEngine.findMatches(in: text, state: state)
+        XCTAssertEqual(findResult.ranges.count, 3)
+
+        let result = EditorFindReplaceEngine.replaceCurrent(
+            in: text, matchRanges: findResult.ranges, currentIndex: 1, replaceText: "xxx", state: state
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result!.newRanges.count, 2)
+        XCTAssertTrue(result!.currentMatchIndex >= 0 && result!.currentMatchIndex < result!.newRanges.count)
+    }
+
+    // MARK: - 导航索引
+
+    func testNextMatchIndexWrapsAround() {
+        XCTAssertEqual(EditorFindReplaceEngine.nextMatchIndex(currentIndex: 2, matchCount: 3), 0)
+        XCTAssertEqual(EditorFindReplaceEngine.nextMatchIndex(currentIndex: 0, matchCount: 3), 1)
+        XCTAssertEqual(EditorFindReplaceEngine.nextMatchIndex(currentIndex: -1, matchCount: 3), 0)
+        XCTAssertEqual(EditorFindReplaceEngine.nextMatchIndex(currentIndex: 0, matchCount: 0), -1)
+    }
+
+    func testPreviousMatchIndexWrapsAround() {
+        XCTAssertEqual(EditorFindReplaceEngine.previousMatchIndex(currentIndex: 0, matchCount: 3), 2)
+        XCTAssertEqual(EditorFindReplaceEngine.previousMatchIndex(currentIndex: 2, matchCount: 3), 1)
+        XCTAssertEqual(EditorFindReplaceEngine.previousMatchIndex(currentIndex: -1, matchCount: 3), 0)
+        XCTAssertEqual(EditorFindReplaceEngine.previousMatchIndex(currentIndex: 0, matchCount: 0), -1)
+    }
+
+    // MARK: - 高亮目标行
+
+    func testTargetLineForCurrentMatch() {
+        let text = "line1\nline2\nline3"
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "line3")
+        XCTAssertEqual(result.ranges.count, 1)
+        let line = EditorFindReplaceEngine.targetLineForCurrentMatch(in: text, matchRanges: result.ranges, currentIndex: 0)
+        XCTAssertEqual(line, 3)
+    }
+
+    func testTargetLineForFirstLine() {
+        let text = "hello\nworld"
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "hello")
+        let line = EditorFindReplaceEngine.targetLineForCurrentMatch(in: text, matchRanges: result.ranges, currentIndex: 0)
+        XCTAssertEqual(line, 1)
+    }
+
+    func testTargetLineForInvalidIndexReturnsNil() {
+        let text = "hello"
+        let result = EditorFindReplaceEngine.findMatches(in: text, findText: "hello")
+        let line = EditorFindReplaceEngine.targetLineForCurrentMatch(in: text, matchRanges: result.ranges, currentIndex: 5)
+        XCTAssertNil(line)
+    }
+
+    // MARK: - 匹配状态文本
+
+    func testMatchStatusText() {
+        XCTAssertEqual(EditorFindReplaceEngine.matchStatusText(currentIndex: 0, matchCount: 5), "1/5")
+        XCTAssertEqual(EditorFindReplaceEngine.matchStatusText(currentIndex: 4, matchCount: 5), "5/5")
+        XCTAssertEqual(EditorFindReplaceEngine.matchStatusText(currentIndex: -1, matchCount: 0), "0/0")
+        XCTAssertEqual(EditorFindReplaceEngine.matchStatusText(currentIndex: -1, matchCount: 3), "0/0")
+    }
+
+    // MARK: - 使用 State 对象查找
+
+    func testFindMatchesWithState() {
+        let text = "Hello hello HELLO"
+        let state = EditorFindReplaceState(findText: "hello", isCaseSensitive: false)
+        let result = EditorFindReplaceEngine.findMatches(in: text, state: state)
+        XCTAssertEqual(result.ranges.count, 3)
     }
 
     // MARK: - 切换文档隔离（通过 EditorFindReplaceState）
@@ -145,29 +230,10 @@ final class EditorFindReplaceSemanticsTests: XCTestCase {
     func testFindReplaceStatesAreIsolatedPerDocument() {
         let stateA = EditorFindReplaceState(findText: "alpha", isCaseSensitive: true)
         let stateB = EditorFindReplaceState(findText: "beta", useRegex: true)
-        // 不同文档的查找状态互不影响
         XCTAssertNotEqual(stateA, stateB)
         XCTAssertEqual(stateA.findText, "alpha")
         XCTAssertTrue(stateA.isCaseSensitive)
         XCTAssertEqual(stateB.findText, "beta")
         XCTAssertTrue(stateB.useRegex)
-    }
-
-    // MARK: - 匹配索引保持
-
-    func testMatchIndexClampedAfterReplace() {
-        let text = "aaa bbb aaa ccc aaa"
-        let result = findRanges(in: text, findText: "aaa")
-        XCTAssertEqual(result.ranges.count, 3)
-
-        // 模拟替换第二个后，重新查找
-        var modifiedText = text
-        modifiedText.replaceSubrange(result.ranges[1], with: "xxx")
-        let newResult = findRanges(in: modifiedText, findText: "aaa")
-        XCTAssertEqual(newResult.ranges.count, 2)
-
-        // 索引应被 clamp 到有效范围
-        let clampedIndex = min(1, newResult.ranges.count - 1)
-        XCTAssertEqual(clampedIndex, 1)
     }
 }

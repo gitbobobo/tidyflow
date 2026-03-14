@@ -188,4 +188,84 @@ final class EditorDocumentSessionTests: XCTestCase {
         // 可变量消除编译警告
         session.isDirty = false
     }
+
+    // MARK: - 共享状态变换辅助 API
+
+    func testApplyLoadSuccessSetsCorrectState() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession.loading(key: key)
+        session.applyLoadSuccess(content: "hello world")
+        XCTAssertEqual(session.content, "hello world")
+        XCTAssertEqual(session.loadStatus, .ready)
+        XCTAssertFalse(session.isDirty)
+        XCTAssertEqual(session.conflictState, .none)
+        XCTAssertEqual(session.baselineContentHash, EditorDocumentSession.contentHash("hello world"))
+    }
+
+    func testApplyContentEditMakesDirty() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "original")
+        session.applyContentEdit("modified")
+        XCTAssertEqual(session.content, "modified")
+        XCTAssertTrue(session.isDirty)
+    }
+
+    func testApplyContentEditClearsChangedOnDisk() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "original")
+        session.conflictState = .changedOnDisk
+        session.applyContentEdit("modified")
+        XCTAssertEqual(session.conflictState, .none)
+    }
+
+    func testApplyContentEditPreservesDeletedOnDisk() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "original")
+        session.conflictState = .deletedOnDisk
+        session.applyContentEdit("modified")
+        XCTAssertEqual(session.conflictState, .deletedOnDisk)
+    }
+
+    func testApplyContentEditWithSameContentNotDirty() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "same")
+        session.applyContentEdit("same")
+        XCTAssertFalse(session.isDirty)
+    }
+
+    func testApplySaveSuccessClearsDirtyAndConflict() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "original")
+        session.applyContentEdit("modified")
+        XCTAssertTrue(session.isDirty)
+        session.applySaveSuccess()
+        XCTAssertFalse(session.isDirty)
+        XCTAssertEqual(session.conflictState, .none)
+        XCTAssertEqual(session.baselineContentHash, EditorDocumentSession.contentHash("modified"))
+    }
+
+    func testApplyDiskChange() {
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.txt")
+        var session = EditorDocumentSession(key: key)
+        session.applyLoadSuccess(content: "hello")
+        session.applyDiskChange(kind: .changedOnDisk)
+        XCTAssertEqual(session.conflictState, .changedOnDisk)
+        session.applyDiskChange(kind: .deletedOnDisk)
+        XCTAssertEqual(session.conflictState, .deletedOnDisk)
+    }
+
+    // MARK: - EditorRequestKey
+
+    func testEditorRequestKeyEquality() {
+        let a = EditorRequestKey(project: "p", workspace: "w", path: "f.txt")
+        let b = EditorRequestKey(project: "p", workspace: "w", path: "f.txt")
+        let c = EditorRequestKey(project: "p", workspace: "w2", path: "f.txt")
+        XCTAssertEqual(a, b)
+        XCTAssertNotEqual(a, c)
+    }
 }

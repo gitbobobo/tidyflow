@@ -2,6 +2,8 @@ import XCTest
 @testable import TidyFlow
 @testable import TidyFlowShared
 
+#if os(macOS)
+
 /// EditorStore 测试：覆盖按文档记录 undo/redo 能力、文档关闭后释放状态、
 /// 按工作区聚合 dirty 文档。
 final class EditorStoreTests: XCTestCase {
@@ -190,3 +192,4 @@ final class EditorStoreTests: XCTestCase {
         XCTAssertEqual(store.generateUntitledFileName(), "Untitled-1")
     }
 }
+#endif
