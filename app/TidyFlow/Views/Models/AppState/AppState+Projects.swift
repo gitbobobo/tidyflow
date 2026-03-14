@@ -342,10 +342,10 @@ extension AppState {
             },
             // 编辑器撤销/重做、新建文件、另存为
             Command(id: "workspace.undo", title: "Undo", subtitle: "Undo last edit", scope: .workspace, keyHint: "Cmd+Z") { app in
-                app.editorStore.requestUndo()
+                app.requestUndoForActiveDocument()
             },
             Command(id: "workspace.redo", title: "Redo", subtitle: "Redo last undone edit", scope: .workspace, keyHint: "Cmd+Shift+Z") { app in
-                app.editorStore.requestRedo()
+                app.requestRedoForActiveDocument()
             },
             Command(id: "workspace.newFile", title: "New File", subtitle: "Create a new untitled file", scope: .workspace, keyHint: "Cmd+N") { app in
                 app.createNewEditorFile()
@@ -355,10 +355,9 @@ extension AppState {
             },
             Command(id: "workspace.find", title: "Find / Replace", subtitle: "Find and replace in current file", scope: .workspace, keyHint: "Cmd+F") { app in
                 if let activeTab = app.getActiveTab(), activeTab.kind == .terminal {
-                    app.editorStore.showFindReplacePanel = false
                     NotificationCenter.default.post(name: .terminalSearchRequested, object: activeTab.id)
                 } else {
-                    app.editorStore.showFindReplacePanel = true
+                    app.presentFindReplaceForActiveDocument()
                 }
             },
             // UX-3a: Git rebase commands

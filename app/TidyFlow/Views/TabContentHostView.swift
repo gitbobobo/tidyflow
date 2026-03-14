@@ -209,7 +209,9 @@ private struct BottomPanelInstanceItemView: View {
                 Divider()
                 Button("editor.findReplace".localized) {
                     appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
-                    appState.editorStore.showFindReplacePanel = true
+                    if let docKey = EditorDocumentKey(globalWorkspaceKey: workspaceKey, path: tab.payload) {
+                        appState.editorStore.presentFindReplace(documentKey: docKey)
+                    }
                 }
                 Button("editor.newFile".localized) {
                     appState.createNewEditorFile()
@@ -468,19 +470,28 @@ struct NativeEditorContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var editorStore: EditorStore
     @State private var highlightedLine: Int?
-    @State private var findText: String = ""
-    @State private var replaceText: String = ""
     @State private var matchRanges: [Range<String.Index>] = []
     @State private var currentMatchIndex: Int = -1
-    @State private var isCaseSensitive: Bool = false
-    @State private var useRegex: Bool = false
+    @State private var regexError: String?
+
+    /// 当前文档的 EditorDocumentKey（若可解析）
+    private var documentKey: EditorDocumentKey? {
+        guard let globalKey = appState.currentGlobalWorkspaceKey else { return nil }
+        return EditorDocumentKey(globalWorkspaceKey: globalKey, path: path)
+    }
+
+    /// 当前文档的查找替换状态
+    private var findState: EditorFindReplaceState {
+        guard let docKey = documentKey else { return EditorFindReplaceState() }
+        return editorStore.findReplaceState(for: docKey)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Group {
                 if let globalKey = appState.currentGlobalWorkspaceKey,
                    let doc = appState.getEditorDocument(globalWorkspaceKey: globalKey, path: path) {
-                    switch doc.status {
+                    switch doc.loadStatus {
                     case .loading:
                         ProgressView("Loading editor...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -491,7 +502,7 @@ struct NativeEditorContentView: View {
                     case .idle, .ready:
                         let textBinding = editorBinding(globalKey: globalKey)
                         VStack(spacing: 0) {
-                            if editorStore.showFindReplacePanel && appState.activeEditorPath == path {
+                            if findState.isVisible && appState.activeEditorPath == path {
                                 findReplacePanel(textBinding: textBinding)
                                 Divider()
                             }
@@ -499,9 +510,8 @@ struct NativeEditorContentView: View {
                             NativeCodeEditorView(
                                 text: textBinding,
                                 highlightedLine: $highlightedLine,
-                                onUndoRedoStateChange: { canUndo, canRedo in
-                                    editorStore.updateUndoRedoState(canUndo: canUndo, canRedo: canRedo)
-                                }
+                                documentKey: documentKey,
+                                editorStore: editorStore
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .onAppear {
@@ -520,16 +530,16 @@ struct NativeEditorContentView: View {
             openDocumentIfNeeded(force: false)
             consumePendingRevealIfNeeded()
         }
-        .onChange(of: findText) { _, _ in
+        .onChange(of: findState.findText) { _, _ in
             refreshMatches(for: currentEditorText(), keepSelection: false)
         }
-        .onChange(of: isCaseSensitive) { _, _ in
+        .onChange(of: findState.isCaseSensitive) { _, _ in
             refreshMatches(for: currentEditorText(), keepSelection: false)
         }
-        .onChange(of: useRegex) { _, _ in
+        .onChange(of: findState.useRegex) { _, _ in
             refreshMatches(for: currentEditorText(), keepSelection: false)
         }
-        .onChange(of: editorStore.showFindReplacePanel) { _, isShowing in
+        .onChange(of: findState.isVisible) { _, isShowing in
             guard isShowing, appState.activeEditorPath == path else { return }
             refreshMatches(for: currentEditorText(), keepSelection: false)
         }
@@ -543,25 +553,51 @@ struct NativeEditorContentView: View {
 
     @ViewBuilder
     private func findReplacePanel(textBinding: Binding<String>) -> some View {
+        let findBinding = Binding<String>(
+            get: { findState.findText },
+            set: { newValue in
+                guard let docKey = documentKey else { return }
+                var state = editorStore.findReplaceState(for: docKey)
+                state.findText = newValue
+                editorStore.updateFindReplaceState(state, for: docKey)
+            }
+        )
+        let replaceBinding = Binding<String>(
+            get: { findState.replaceText },
+            set: { newValue in
+                guard let docKey = documentKey else { return }
+                var state = editorStore.findReplaceState(for: docKey)
+                state.replaceText = newValue
+                editorStore.updateFindReplaceState(state, for: docKey)
+            }
+        )
+
         HStack(spacing: 8) {
-            TextField("editor.find.placeholder".localized, text: $findText)
+            TextField("editor.find.placeholder".localized, text: findBinding)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 180)
-            TextField("editor.replace.placeholder".localized, text: $replaceText)
+            TextField("editor.replace.placeholder".localized, text: replaceBinding)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 180)
 
             Button("Aa") {
-                isCaseSensitive.toggle()
+                guard let docKey = documentKey else { return }
+                var state = editorStore.findReplaceState(for: docKey)
+                state.isCaseSensitive.toggle()
+                editorStore.updateFindReplaceState(state, for: docKey)
             }
             .buttonStyle(.bordered)
-            .tint(isCaseSensitive ? .accentColor : .secondary)
+            .tint(findState.isCaseSensitive ? .accentColor : .secondary)
 
             Button(".*") {
-                useRegex.toggle()
+                guard let docKey = documentKey else { return }
+                var state = editorStore.findReplaceState(for: docKey)
+                state.useRegex.toggle()
+                state.regexError = nil
+                editorStore.updateFindReplaceState(state, for: docKey)
             }
             .buttonStyle(.bordered)
-            .tint(useRegex ? .accentColor : .secondary)
+            .tint(findState.useRegex ? .accentColor : .secondary)
 
             Button {
                 navigateToPreviousMatch(in: textBinding.wrappedValue)
@@ -584,20 +620,29 @@ struct NativeEditorContentView: View {
                 .foregroundColor(.secondary)
                 .frame(minWidth: 52, alignment: .trailing)
 
+            if let regexError {
+                Text(regexError)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                    .lineLimit(1)
+                    .frame(maxWidth: 120)
+            }
+
             Button("editor.replace.one".localized) {
                 replaceCurrent(in: textBinding)
             }
             .buttonStyle(.bordered)
-            .disabled(currentMatchIndex < 0)
+            .disabled(currentMatchIndex < 0 || regexError != nil)
 
             Button("editor.replace.all".localized) {
                 replaceAll(in: textBinding)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(matchRanges.isEmpty)
+            .disabled(matchRanges.isEmpty || regexError != nil)
 
             Button {
-                editorStore.showFindReplacePanel = false
+                guard let docKey = documentKey else { return }
+                editorStore.dismissFindReplace(documentKey: docKey)
             } label: {
                 Image(systemName: "xmark")
             }
@@ -642,7 +687,7 @@ struct NativeEditorContentView: View {
     }
 
     private func navigateToNextMatch(in text: String) {
-        guard !findText.isEmpty else { return }
+        guard !findState.findText.isEmpty else { return }
         if matchRanges.isEmpty {
             refreshMatches(for: text, keepSelection: false)
             return
@@ -652,7 +697,7 @@ struct NativeEditorContentView: View {
     }
 
     private func navigateToPreviousMatch(in text: String) {
-        guard !findText.isEmpty else { return }
+        guard !findState.findText.isEmpty else { return }
         if matchRanges.isEmpty {
             refreshMatches(for: text, keepSelection: false)
             return
@@ -666,19 +711,19 @@ struct NativeEditorContentView: View {
     }
 
     private func replaceCurrent(in textBinding: Binding<String>) {
-        guard currentMatchIndex >= 0, currentMatchIndex < matchRanges.count else { return }
+        guard currentMatchIndex >= 0, currentMatchIndex < matchRanges.count, regexError == nil else { return }
         var text = textBinding.wrappedValue
         let range = matchRanges[currentMatchIndex]
-        text.replaceSubrange(range, with: replaceText)
+        text.replaceSubrange(range, with: findState.replaceText)
         textBinding.wrappedValue = text
         refreshMatches(for: text, keepSelection: true)
     }
 
     private func replaceAll(in textBinding: Binding<String>) {
-        guard !matchRanges.isEmpty else { return }
+        guard !matchRanges.isEmpty, regexError == nil else { return }
         var text = textBinding.wrappedValue
         for range in matchRanges.reversed() {
-            text.replaceSubrange(range, with: replaceText)
+            text.replaceSubrange(range, with: findState.replaceText)
         }
         textBinding.wrappedValue = text
         refreshMatches(for: text, keepSelection: false)
@@ -694,22 +739,34 @@ struct NativeEditorContentView: View {
     }
 
     private func findRanges(in text: String) -> [Range<String.Index>] {
-        guard !findText.isEmpty else { return [] }
+        let searchText = findState.findText
+        guard !searchText.isEmpty else {
+            regexError = nil
+            return []
+        }
 
-        if useRegex, let regex = try? NSRegularExpression(
-            pattern: findText,
-            options: isCaseSensitive ? [] : [.caseInsensitive]
-        ) {
-            let nsText = text as NSString
-            return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
-                Range($0.range, in: text)
+        if findState.useRegex {
+            do {
+                let regex = try NSRegularExpression(
+                    pattern: searchText,
+                    options: findState.isCaseSensitive ? [] : [.caseInsensitive]
+                )
+                regexError = nil
+                let nsText = text as NSString
+                return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
+                    Range($0.range, in: text)
+                }
+            } catch {
+                regexError = "editor.find.invalidRegex".localized
+                return []
             }
         }
 
+        regexError = nil
         var ranges: [Range<String.Index>] = []
         var searchRange = text.startIndex..<text.endIndex
-        let options: String.CompareOptions = isCaseSensitive ? [] : [.caseInsensitive]
-        while let range = text.range(of: findText, options: options, range: searchRange) {
+        let options: String.CompareOptions = findState.isCaseSensitive ? [] : [.caseInsensitive]
+        while let range = text.range(of: searchText, options: options, range: searchRange) {
             ranges.append(range)
             if range.upperBound == text.endIndex { break }
             searchRange = range.upperBound..<text.endIndex
@@ -750,7 +807,10 @@ struct EditorStatusBar: View {
             Spacer()
 
             Button("editor.findReplace".localized) {
-                editorStore.showFindReplacePanel = true
+                if let globalKey = appState.currentGlobalWorkspaceKey,
+                   let docKey = EditorDocumentKey(globalWorkspaceKey: globalKey, path: path) {
+                    editorStore.presentFindReplace(documentKey: docKey)
+                }
             }
             .buttonStyle(.borderless)
 
@@ -907,71 +967,159 @@ struct DiffToolbar: View {
     }
 }
 
-struct NativeCodeEditorView: View {
+// MARK: - NSTextView 包装编辑器
+
+#if os(macOS)
+import AppKit
+import TidyFlowShared
+
+/// NSViewRepresentable 包装的 NSTextView / NSScrollView 方案。
+/// 从原生 undoManager 驱动 canUndo/canRedo；支持程序化选区、行跳转和查找替换桥接。
+struct NativeCodeEditorView: NSViewRepresentable {
     @Binding var text: String
     @Binding var highlightedLine: Int?
-    var onUndoRedoStateChange: ((Bool, Bool) -> Void)?
-    @State private var selection: TextSelection?
-    @State private var revealedLineBanner: Int?
-    @FocusState private var isFocused: Bool
+    var documentKey: EditorDocumentKey?
+    var editorStore: EditorStore
 
-    var body: some View {
-        TextEditor(text: $text, selection: $selection)
-            .font(.system(size: 13, design: .monospaced))
-            .scrollContentBackground(.hidden)
-            .background(tfTextSurfaceColor)
-            .focused($isFocused)
-            .overlay(alignment: .topTrailing) {
-                if let revealedLineBanner {
-                    Text("已定位到第 \(revealedLineBanner) 行")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.regularMaterial, in: Capsule())
-                        .padding(10)
-                }
-            }
-            .onAppear {
-                isFocused = true
-                onUndoRedoStateChange?(false, false)
-                reveal(line: highlightedLine)
-            }
-            .onChange(of: text) { _, _ in
-                onUndoRedoStateChange?(false, false)
-            }
-            .onChange(of: highlightedLine) { _, line in
-                reveal(line: line)
-            }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
     }
 
-    private func reveal(line: Int?) {
-        guard let line, line > 0 else { return }
-        let targetIndex = indexForLine(line, in: text)
-        selection = TextSelection(insertionPoint: targetIndex)
-        revealedLineBanner = line
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let textView = UndoTrackingTextView()
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.isRichText = false
+        textView.usesFontPanel = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textColor = NSColor.textColor
+        textView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.06)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.delegate = context.coordinator
+
+        // 配置撤销/重做状态观察
+        textView.onUndoRedoStateDidChange = { [weak editorStore] canUndo, canRedo in
+            guard let docKey = context.coordinator.parent.documentKey else { return }
+            editorStore?.updateUndoRedoState(canUndo: canUndo, canRedo: canRedo, documentKey: docKey)
+        }
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+
+        // 设置初始文本
+        textView.string = text
+
+        // 首次加载后自动聚焦
         DispatchQueue.main.async {
-            highlightedLine = nil
+            scrollView.window?.makeFirstResponder(textView)
+            textView.startObservingUndoManager()
+            textView.reportUndoRedoState()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if revealedLineBanner == line {
-                revealedLineBanner = nil
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? UndoTrackingTextView else { return }
+        context.coordinator.parent = self
+
+        // 同步文本内容（避免循环更新）
+        if textView.string != text {
+            let selectedRanges = textView.selectedRanges
+            textView.string = text
+            textView.selectedRanges = selectedRanges
+            textView.reportUndoRedoState()
+        }
+
+        // 处理行跳转
+        if let line = highlightedLine, line > 0 {
+            let targetIndex = indexForLine(line, in: textView.string)
+            let nsRange = NSRange(location: targetIndex, length: 0)
+            textView.setSelectedRange(nsRange)
+            textView.scrollRangeToVisible(nsRange)
+            DispatchQueue.main.async {
+                highlightedLine = nil
             }
         }
     }
 
-    private func indexForLine(_ line: Int, in text: String) -> String.Index {
+    private func indexForLine(_ line: Int, in text: String) -> Int {
         var currentLine = 1
-        var index = text.startIndex
-        while index < text.endIndex && currentLine < line {
-            if text[index] == "\n" {
-                currentLine += 1
-            }
-            index = text.index(after: index)
+        for (i, char) in text.enumerated() {
+            if currentLine >= line { return i }
+            if char == "\n" { currentLine += 1 }
         }
-        return index
+        return text.count
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NativeCodeEditorView
+        weak var textView: UndoTrackingTextView?
+
+        init(parent: NativeCodeEditorView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? UndoTrackingTextView else { return }
+            parent.text = textView.string
+            textView.reportUndoRedoState()
+        }
     }
 }
+
+/// 支持撤销/重做状态追踪的 NSTextView 子类。
+/// 通过 NSUndoManager 通知监听撤销/重做状态变化并回调外部。
+class UndoTrackingTextView: NSTextView {
+    var onUndoRedoStateDidChange: ((Bool, Bool) -> Void)?
+    private var undoObservers: [NSObjectProtocol] = []
+
+    func reportUndoRedoState() {
+        let canUndo = undoManager?.canUndo ?? false
+        let canRedo = undoManager?.canRedo ?? false
+        onUndoRedoStateDidChange?(canUndo, canRedo)
+    }
+
+    func startObservingUndoManager() {
+        stopObservingUndoManager()
+        guard let um = undoManager else { return }
+        let nc = NotificationCenter.default
+        let names: [Notification.Name] = [
+            .NSUndoManagerDidUndoChange,
+            .NSUndoManagerDidRedoChange,
+            .NSUndoManagerCheckpoint,
+        ]
+        for name in names {
+            let obs = nc.addObserver(forName: name, object: um, queue: .main) { [weak self] _ in
+                self?.reportUndoRedoState()
+            }
+            undoObservers.append(obs)
+        }
+    }
+
+    func stopObservingUndoManager() {
+        let nc = NotificationCenter.default
+        for obs in undoObservers { nc.removeObserver(obs) }
+        undoObservers.removeAll()
+    }
+
+    deinit {
+        stopObservingUndoManager()
+    }
+}
+#endif
 
 // MARK: - Diff Status Bar
 

@@ -302,6 +302,7 @@
 "editor.replace.all" = "Replace All";
 "editor.saveAs.targetPath" = "Target path";
 "editor.saveAs.hint" = "Enter a new path to save the current document.";
+"editor.find.invalidRegex" = "Invalid regex";
 
 /* Quick Actions */
 "quickActions.switchWorkspace" = "Switch Workspace";

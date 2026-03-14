@@ -4838,6 +4838,57 @@ final class MobileAppState: ObservableObject {
         WorkspaceKeySemantics.globalKey(project: project, workspace: workspace)
     }
 
+    // MARK: - 共享编辑器会话接口（iOS 适配层）
+    //
+    // iOS 本轮不承诺完整编辑器 UI，但必须接入与 macOS 相同的共享文档会话类型与命令接口。
+    // 后续补 UI 时无需再定义另一套 dirty/undo/find 语义。
+
+    /// 编辑器文档缓存（与 macOS EditorStore 使用相同的 EditorDocumentSession 类型）
+    @Published var editorDocumentsByWorkspace: [String: [String: EditorDocumentSession]] = [:]
+
+    /// 按文档记录的查找替换状态
+    @Published var editorFindReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
+
+    /// 获取指定文档会话
+    func getEditorDocument(globalWorkspaceKey: String, path: String) -> EditorDocumentSession? {
+        editorDocumentsByWorkspace[globalWorkspaceKey]?[path]
+    }
+
+    /// 请求指定文档撤销（空实现，等待 iOS 编辑器 UI 落地）
+    func requestUndo(documentKey: EditorDocumentKey) {
+        // iOS 编辑器 UI 未落地，空实现占位
+    }
+
+    /// 请求指定文档重做（空实现，等待 iOS 编辑器 UI 落地）
+    func requestRedo(documentKey: EditorDocumentKey) {
+        // iOS 编辑器 UI 未落地，空实现占位
+    }
+
+    /// 展示指定文档的查找替换面板（空实现，等待 iOS 编辑器 UI 落地）
+    func presentFindReplace(documentKey: EditorDocumentKey) {
+        var state = editorFindReplaceStateByDocument[documentKey] ?? EditorFindReplaceState()
+        state.isVisible = true
+        editorFindReplaceStateByDocument[documentKey] = state
+    }
+
+    /// 关闭指定文档的查找替换面板
+    func dismissFindReplace(documentKey: EditorDocumentKey) {
+        var state = editorFindReplaceStateByDocument[documentKey] ?? EditorFindReplaceState()
+        state.isVisible = false
+        editorFindReplaceStateByDocument[documentKey] = state
+    }
+
+    /// 保存指定文档（空实现，等待 iOS 编辑器 UI 落地）
+    func saveDocument(documentKey: EditorDocumentKey) {
+        // iOS 编辑器 UI 未落地，空实现占位
+    }
+
+    /// 指定工作区内是否存在未保存的文档
+    func hasDirtyDocuments(workspaceKey: String) -> Bool {
+        guard let docs = editorDocumentsByWorkspace[workspaceKey] else { return false }
+        return docs.values.contains { $0.isDirty }
+    }
+
     // MARK: - 文件工作区相位（统一状态机）
 
     /// 设置指定工作区的文件相位（供 MessageHandler 适配器调用）。

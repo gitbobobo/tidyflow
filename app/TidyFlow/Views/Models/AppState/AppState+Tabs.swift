@@ -135,15 +135,20 @@ extension AppState {
         guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
 
         if tab.kind == .editor && tab.isDirty {
-            pendingCloseWorkspaceKey = workspaceKey
-            pendingCloseTabId = tabId
+            let docKey = EditorDocumentKey(globalWorkspaceKey: workspaceKey, path: tab.payload)
+            pendingCloseRequest = DocumentCloseRequest(
+                documentKey: docKey,
+                workspaceKey: workspaceKey,
+                tabId: tabId,
+                scope: .singleTab
+            )
             showUnsavedChangesAlert = true
             return
         }
 
-        // 关闭 editor Tab 时释放该文档的撤销/重做历史记录
+        // 关闭 editor Tab 时释放该文档的会话状态
         if tab.kind == .editor {
-            editorStore.releaseDocumentUndoHistory(workspaceKey: workspaceKey, path: tab.payload)
+            editorStore.releaseDocumentSession(workspaceKey: workspaceKey, path: tab.payload)
         }
 
         performCloseTab(workspaceKey: workspaceKey, tabId: tabId)
@@ -199,8 +204,8 @@ extension AppState {
         for tab in tabs {
             performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
-        // 释放该工作区所有文档的撤销/重做历史记录
-        editorStore.releaseAllDocumentUndoHistory(workspaceKey: workspaceKey)
+        // 释放该工作区所有文档的会话状态
+        editorStore.releaseAllDocumentSessions(workspaceKey: workspaceKey)
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
         activeBottomPanelCategoryByWorkspace.removeValue(forKey: workspaceKey)
         lastActiveTabIdByWorkspaceByCategory.removeValue(forKey: workspaceKey)
@@ -220,14 +225,15 @@ extension AppState {
         onConfirmed: (() -> Void)? = nil
     ) -> Bool {
         guard editorStore.hasDirtyDocuments(workspaceKey: workspaceKey) else {
-            // 无未保存文档，直接执行
             onConfirmed?()
             return true
         }
-        // 有未保存文档：触发工作区级确认对话框
-        // 设置 pendingCloseWorkspaceKey 但不设置 pendingCloseTabId（工作区级）
-        pendingCloseWorkspaceKey = workspaceKey
-        pendingCloseTabId = nil
+        pendingCloseRequest = DocumentCloseRequest(
+            documentKey: nil,
+            workspaceKey: workspaceKey,
+            tabId: nil,
+            scope: .workspace
+        )
         showUnsavedChangesAlert = true
         return false
     }

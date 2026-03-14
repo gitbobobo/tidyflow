@@ -40,6 +40,11 @@
 		SHR02021 /* CoreWSLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01021 /* CoreWSLog.swift */; };
 		SHR02022 /* CoreWSURLBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01022 /* CoreWSURLBuilder.swift */; };
 		SHR02023 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01023 /* ClientSettingsModels.swift */; };
+		EDSS0002 /* EditorDocumentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSS0001 /* EditorDocumentSession.swift */; };
+		EDTST002 /* EditorDocumentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST001 /* EditorDocumentSessionTests.swift */; };
+		EDTST004 /* EditorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST003 /* EditorStoreTests.swift */; };
+		EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST005 /* EditorFindReplaceSemanticsTests.swift */; };
+		EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST007 /* EditorUnsavedProtectionTests.swift */; };
 		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
 		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
 		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
@@ -383,6 +388,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01021 /* CoreWSLog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSLog.swift; sourceTree = "<group>"; };
 		SHR01022 /* CoreWSURLBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSURLBuilder.swift; sourceTree = "<group>"; };
 		SHR01023 /* ClientSettingsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClientSettingsModels.swift; sourceTree = "<group>"; };
+		EDSS0001 /* EditorDocumentSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorDocumentSession.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
@@ -497,6 +503,10 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		AICSG011 /* AIChatStageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatStageView.swift"; sourceTree = "<group>"; };
 		TST10042 /* AIChatTextRunGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatTextRunGroupingTests.swift; sourceTree = "<group>"; };
 		TST10043 /* AIChatPendingInteractionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPendingInteractionProjectionTests.swift; sourceTree = "<group>"; };
+		EDTST001 /* EditorDocumentSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentSessionTests.swift; sourceTree = "<group>"; };
+		EDTST003 /* EditorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStoreTests.swift; sourceTree = "<group>"; };
+		EDTST005 /* EditorFindReplaceSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemanticsTests.swift; sourceTree = "<group>"; };
+		EDTST007 /* EditorUnsavedProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUnsavedProtectionTests.swift; sourceTree = "<group>"; };
 		TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageVisibilitySemanticsTests.swift; sourceTree = "<group>"; };
 		TST10047 /* AIChatStageProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStageProjectionTests.swift; sourceTree = "<group>"; };
 		TST10049 /* EvolutionRecoveryModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRecoveryModelTests.swift; sourceTree = "<group>"; };
@@ -708,6 +718,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				GWSD0101 /* GitWorkspaceStateDriver.swift */,
 				MHA00101 /* MessageHandlerAdapter.swift */,
 				SHR01023 /* ClientSettingsModels.swift */,
+				EDSS0001 /* EditorDocumentSession.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -943,6 +954,10 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST1003E /* SwiftUIPerformanceProjectionTests.swift */,
 					TST10042 /* AIChatTextRunGroupingTests.swift */,
 					TST10043 /* AIChatPendingInteractionProjectionTests.swift */,
+					EDTST001 /* EditorDocumentSessionTests.swift */,
+					EDTST003 /* EditorStoreTests.swift */,
+					EDTST005 /* EditorFindReplaceSemanticsTests.swift */,
+					EDTST007 /* EditorUnsavedProtectionTests.swift */,
 					TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */,
 					TST10047 /* AIChatStageProjectionTests.swift */,
 					TST10049 /* EvolutionRecoveryModelTests.swift */,
@@ -1555,6 +1570,10 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */,
 				TST10040 /* AIChatTextRunGroupingTests.swift in Sources */,
 				TST10041 /* AIChatPendingInteractionProjectionTests.swift in Sources */,
+				EDTST002 /* EditorDocumentSessionTests.swift in Sources */,
+				EDTST004 /* EditorStoreTests.swift in Sources */,
+				EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */,
+				EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */,
 				TST10044 /* AIChatMessageVisibilitySemanticsTests.swift in Sources */,
 				TST10046 /* AIChatStageProjectionTests.swift in Sources */,
 				TST10048 /* EvolutionRecoveryModelTests.swift in Sources */,
@@ -1621,6 +1640,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02021 /* CoreWSLog.swift in Sources */,
 				SHR02022 /* CoreWSURLBuilder.swift in Sources */,
 				SHR02023 /* ClientSettingsModels.swift in Sources */,
+				EDSS0002 /* EditorDocumentSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

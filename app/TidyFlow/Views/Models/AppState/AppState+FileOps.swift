@@ -129,7 +129,7 @@ extension AppState {
         content.hashValue
     }
 
-    func getEditorDocument(globalWorkspaceKey: String, path: String) -> EditorDocumentState? {
+    func getEditorDocument(globalWorkspaceKey: String, path: String) -> EditorDocumentSession? {
         editorDocumentsByWorkspace[globalWorkspaceKey]?[path]
     }
 
@@ -137,7 +137,7 @@ extension AppState {
         guard var workspaceDocs = editorDocumentsByWorkspace[globalWorkspaceKey],
               var doc = workspaceDocs[path] else { return }
         doc.content = content
-        doc.isDirty = contentHash(content) != doc.originalContentHash
+        doc.isDirty = contentHash(content) != doc.baselineContentHash
         doc.conflictState = .none
         workspaceDocs[path] = doc
         editorDocumentsByWorkspace[globalWorkspaceKey] = workspaceDocs
@@ -151,10 +151,11 @@ extension AppState {
     func openEditorDocument(project: String, workspace: String, path: String, force: Bool = false) {
         let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
         var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
-        if !force, let existing = workspaceDocs[path], existing.status == .ready {
+        if !force, let existing = workspaceDocs[path], existing.loadStatus == .ready {
             return
         }
-        workspaceDocs[path] = .loading(path: path)
+        let docKey = EditorDocumentKey(project: project, workspace: workspace, path: path)
+        workspaceDocs[path] = .loading(key: docKey)
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
 
         let key = editorRequestKey(project: project, workspace: workspace, path: path)
@@ -204,14 +205,15 @@ extension AppState {
 
         let content = String(decoding: result.content, as: UTF8.self)
         let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+        let docKey = EditorDocumentKey(project: result.project, workspace: result.workspace, path: result.path)
         var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
-        workspaceDocs[result.path] = EditorDocumentState(
-            path: result.path,
+        workspaceDocs[result.path] = EditorDocumentSession(
+            key: docKey,
             content: content,
-            originalContentHash: contentHash(content),
+            baselineContentHash: contentHash(content),
             isDirty: false,
             lastLoadedAt: Date(),
-            status: .ready,
+            loadStatus: .ready,
             conflictState: .none
         )
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
@@ -507,10 +509,10 @@ extension AppState {
         if result.success {
             if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
                var doc = workspaceDocs[result.path] {
-                doc.originalContentHash = contentHash(doc.content)
+                doc.baselineContentHash = contentHash(doc.content)
                 doc.isDirty = false
                 doc.lastLoadedAt = Date()
-                doc.status = .ready
+                doc.loadStatus = .ready
                 doc.conflictState = .none
                 workspaceDocs[result.path] = doc
                 editorDocumentsByWorkspace[globalKey] = workspaceDocs

@@ -569,13 +569,9 @@ class AppState: ObservableObject {
         get { editorStore.showUnsavedChangesAlert }
         set { editorStore.showUnsavedChangesAlert = newValue }
     }
-    var pendingCloseTabId: UUID? {
-        get { editorStore.pendingCloseTabId }
-        set { editorStore.pendingCloseTabId = newValue }
-    }
-    var pendingCloseWorkspaceKey: String? {
-        get { editorStore.pendingCloseWorkspaceKey }
-        set { editorStore.pendingCloseWorkspaceKey = newValue }
+    var pendingCloseRequest: DocumentCloseRequest? {
+        get { editorStore.pendingCloseRequest }
+        set { editorStore.pendingCloseRequest = newValue }
     }
     var pendingCloseAfterSave: (workspaceKey: String, tabId: UUID)? {
         get { editorStore.pendingCloseAfterSave }
@@ -593,7 +589,7 @@ class AppState: ObservableObject {
         get { editorStore.onEditorFileChanged }
         set { editorStore.onEditorFileChanged = newValue }
     }
-    var editorDocumentsByWorkspace: [String: [String: EditorDocumentState]] {
+    var editorDocumentsByWorkspace: [String: [String: EditorDocumentSession]] {
         get { editorStore.editorDocumentsByWorkspace }
         set { editorStore.editorDocumentsByWorkspace = newValue }
     }

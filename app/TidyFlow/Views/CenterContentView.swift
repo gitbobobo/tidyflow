@@ -35,24 +35,34 @@ struct CenterContentView: View {
         }
         .alert("tabContent.unsavedChanges".localized, isPresented: $editorStore.showUnsavedChangesAlert) {
             Button("common.save".localized, role: nil) {
-                if let wsKey = appState.pendingCloseWorkspaceKey,
-                   let tabId = appState.pendingCloseTabId {
-                    appState.saveAndCloseTab(workspaceKey: wsKey, tabId: tabId)
+                if let request = appState.pendingCloseRequest {
+                    switch request.scope {
+                    case .singleTab:
+                        if let tabId = request.tabId {
+                            appState.saveAndCloseTab(workspaceKey: request.workspaceKey, tabId: tabId)
+                        }
+                    case .workspace:
+                        // 工作区级：批量保存所有 dirty 文档后关闭
+                        appState.batchSaveAndCloseWorkspace(workspaceKey: request.workspaceKey)
+                    }
                 }
-                appState.pendingCloseWorkspaceKey = nil
-                appState.pendingCloseTabId = nil
+                appState.pendingCloseRequest = nil
             }
             Button("tabContent.dontSave".localized, role: .destructive) {
-                if let wsKey = appState.pendingCloseWorkspaceKey,
-                   let tabId = appState.pendingCloseTabId {
-                    appState.performCloseTab(workspaceKey: wsKey, tabId: tabId)
+                if let request = appState.pendingCloseRequest {
+                    switch request.scope {
+                    case .singleTab:
+                        if let tabId = request.tabId {
+                            appState.performCloseTab(workspaceKey: request.workspaceKey, tabId: tabId)
+                        }
+                    case .workspace:
+                        appState.forceCloseAllTabs(workspaceKey: request.workspaceKey)
+                    }
                 }
-                appState.pendingCloseWorkspaceKey = nil
-                appState.pendingCloseTabId = nil
+                appState.pendingCloseRequest = nil
             }
             Button("common.cancel".localized, role: .cancel) {
-                appState.pendingCloseWorkspaceKey = nil
-                appState.pendingCloseTabId = nil
+                appState.pendingCloseRequest = nil
             }
         } message: {
             Text("tabContent.unsavedChanges.message".localized)

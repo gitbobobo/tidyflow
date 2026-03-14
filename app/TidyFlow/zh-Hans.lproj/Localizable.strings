@@ -304,6 +304,7 @@
 "editor.replace.all" = "全部替换";
 "editor.saveAs.targetPath" = "目标路径";
 "editor.saveAs.hint" = "输入新路径以保存当前文档。";
+"editor.find.invalidRegex" = "正则表达式无效";
 
 /* 快捷操作 */
 "quickActions.switchWorkspace" = "切换工作空间";

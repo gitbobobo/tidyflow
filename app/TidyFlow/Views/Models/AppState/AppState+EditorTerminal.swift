@@ -159,20 +159,19 @@ extension AppState {
         guard let globalKey = currentGlobalWorkspaceKey else { return }
         let untitledName = editorStore.generateUntitledFileName()
 
-        // 在文档状态中创建一个未保存的新文档
+        let docKey = EditorDocumentKey(globalWorkspaceKey: globalKey, path: untitledName)
         var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
-        workspaceDocs[untitledName] = EditorDocumentState(
-            path: untitledName,
+        workspaceDocs[untitledName] = EditorDocumentSession(
+            key: docKey ?? EditorDocumentKey(project: selectedProjectName, workspace: selectedWorkspaceKey ?? "", path: untitledName),
             content: "",
-            originalContentHash: 0,  // 空内容的 hash
-            isDirty: true,  // 新文件标记为 dirty，需要保存
+            baselineContentHash: 0,
+            isDirty: true,
             lastLoadedAt: Date(),
-            status: .ready,
+            loadStatus: .ready,
             conflictState: .none
         )
         editorDocumentsByWorkspace[globalKey] = workspaceDocs
 
-        // 创建新的编辑器 Tab
         addTab(workspaceKey: globalKey, kind: .editor, title: untitledName, payload: untitledName)
     }
 
@@ -193,14 +192,14 @@ extension AppState {
               var workspaceDocs = editorDocumentsByWorkspace[globalKey],
               let oldDoc = workspaceDocs[oldPath] else { return }
 
-        // 创建新文档（使用新路径）
-        let newDoc = EditorDocumentState(
-            path: newPath,
+        let docKey = EditorDocumentKey(globalWorkspaceKey: globalKey, path: newPath)
+        let newDoc = EditorDocumentSession(
+            key: docKey ?? EditorDocumentKey(project: selectedProjectName, workspace: selectedWorkspaceKey ?? "", path: newPath),
             content: oldDoc.content,
-            originalContentHash: 0,  // 新文件，需要保存
+            baselineContentHash: 0,
             isDirty: true,
             lastLoadedAt: Date(),
-            status: .ready,
+            loadStatus: .ready,
             conflictState: .none
         )
         workspaceDocs.removeValue(forKey: oldPath)
@@ -231,6 +230,52 @@ extension AppState {
         editorStore.pendingSaveAsPath = nil
         editorStore.pendingSaveAsWorkspaceKey = nil
         editorStore.showSaveAsPanel = false
+    }
+
+    // MARK: - 会话级编辑器命令（统一入口）
+
+    /// 当前活跃文档的 EditorDocumentKey（由 activeEditorPath + currentGlobalWorkspaceKey 派生）
+    var activeDocumentKey: EditorDocumentKey? {
+        guard let globalKey = currentGlobalWorkspaceKey,
+              let path = activeEditorPath else { return nil }
+        return EditorDocumentKey(globalWorkspaceKey: globalKey, path: path)
+    }
+
+    /// 请求当前活跃文档撤销
+    func requestUndoForActiveDocument() {
+        guard let docKey = activeDocumentKey else { return }
+        editorStore.requestUndo(documentKey: docKey)
+    }
+
+    /// 请求当前活跃文档重做
+    func requestRedoForActiveDocument() {
+        guard let docKey = activeDocumentKey else { return }
+        editorStore.requestRedo(documentKey: docKey)
+    }
+
+    /// 展示当前活跃文档的查找替换面板
+    func presentFindReplaceForActiveDocument() {
+        guard let docKey = activeDocumentKey else { return }
+        editorStore.presentFindReplace(documentKey: docKey)
+    }
+
+    /// 按文档键保存文档
+    func saveDocument(documentKey: EditorDocumentKey) {
+        saveEditorDocument(project: documentKey.project, workspace: documentKey.workspace, path: documentKey.path)
+    }
+
+    /// 批量保存工作区内所有 dirty 文档并关闭工作区
+    func batchSaveAndCloseWorkspace(workspaceKey: String) {
+        let dirtyPaths = editorStore.dirtyDocumentPaths(workspaceKey: workspaceKey)
+        let parts = workspaceKey.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            forceCloseAllTabs(workspaceKey: workspaceKey)
+            return
+        }
+        for path in dirtyPaths {
+            saveEditorDocument(project: parts[0], workspace: parts[1], path: path)
+        }
+        forceCloseAllTabs(workspaceKey: workspaceKey)
     }
 
     /// Check if active tab is a diff tab

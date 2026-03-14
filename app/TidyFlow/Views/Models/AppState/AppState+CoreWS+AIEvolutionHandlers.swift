@@ -1319,13 +1319,14 @@ extension AppState {
 
             let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
             var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
-            workspaceDocs[path] = EditorDocumentState(
-                path: path,
+            let docKey = EditorDocumentKey(project: project, workspace: workspace, path: path)
+            workspaceDocs[path] = EditorDocumentSession(
+                key: docKey,
                 content: "",
-                originalContentHash: 0,
+                baselineContentHash: 0,
                 isDirty: false,
                 lastLoadedAt: Date(),
-                status: .error(failure.message),
+                loadStatus: .error(failure.message),
                 conflictState: .none
             )
             editorDocumentsByWorkspace[globalKey] = workspaceDocs
