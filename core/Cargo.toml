@@ -46,6 +46,7 @@ async-trait = "0.1.89"
 gix = "0.80"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
 anyhow = "1"
+which = "8.0.2"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

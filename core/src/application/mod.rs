@@ -1,4 +1,5 @@
 pub mod file;
+pub mod formatting;
 pub mod project;
 pub mod project_admin;
 pub mod project_command;

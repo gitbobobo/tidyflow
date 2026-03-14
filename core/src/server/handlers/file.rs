@@ -4,6 +4,7 @@ use crate::server::context::SharedAppState;
 use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
+mod formatting;
 mod mutate;
 pub(crate) mod query;
 pub(crate) mod read_write;
@@ -61,6 +62,7 @@ pub async fn handle_file_message(
         query::handle_query_message(client_msg, socket, app_state),
         read_write::handle_read_write_message(client_msg, socket, app_state),
         mutate::handle_mutate_message(client_msg, socket, app_state),
+        formatting::handle_formatting_message(client_msg, socket, app_state),
     );
 
     Ok(false)
