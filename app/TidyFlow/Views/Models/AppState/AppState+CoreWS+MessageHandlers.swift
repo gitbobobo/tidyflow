@@ -39,8 +39,7 @@ final class AppStateGitMessageHandlerAdapter: GitMessageHandler {
     func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) { appState?.gitCache.handleGitRebaseOntoDefaultResult(result) }
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) { appState?.gitCache.handleGitResetIntegrationWorktreeResult(result) }
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {
-        appState?.gitCache.fetchGitStatus(workspaceKey: notification.workspace)
-        appState?.gitCache.fetchGitBranches(workspaceKey: notification.workspace)
+        appState?.gitCache.applyGitInput(.gitStatusChanged, project: notification.project, workspace: notification.workspace)
     }
     func handleGitAIMergeResult(_ result: GitAIMergeResult) { appState?.handleGitAIMergeResult(result) }
     // v1.40: 冲突向导

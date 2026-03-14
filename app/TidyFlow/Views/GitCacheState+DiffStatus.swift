@@ -83,46 +83,22 @@ extension GitCacheState {
     // MARK: - Phase C3-1: Git Status API
 
     func handleGitStatusResult(_ result: GitStatusResult) {
+        applyGitInput(.gitStatusResult(result), project: result.project, workspace: result.workspace)
         let key = gitStatusCacheKey(project: result.project, workspace: result.workspace)
-        let cache = GitStatusCache(
-            items: result.items,
-            isLoading: false,
-            error: result.error,
-            isGitRepo: result.isGitRepo,
-            updatedAt: Date(),
-            hasStagedChanges: result.hasStagedChanges,
-            stagedCount: result.stagedCount,
-            currentBranch: result.currentBranch,
-            defaultBranch: result.defaultBranch,
-            aheadBy: result.aheadBy,
-            behindBy: result.behindBy,
-            comparedBranch: result.comparedBranch
-        )
-        gitStatusCache[key] = cache
         gitStatusIndexCache.removeValue(forKey: key)
     }
 
     func fetchGitStatus(workspaceKey: String, cacheMode: HTTPQueryCacheMode = .default) {
         let projectName = selectedProjectName
-        let key = gitStatusCacheKey(project: projectName, workspace: workspaceKey)
         guard connectionState == .connected else {
-            var cache = gitStatusCache[key] ?? GitStatusCache.empty()
-            cache.error = "Disconnected"
-            cache.isLoading = false
-            gitStatusCache[key] = cache
+            let key = gitStatusCacheKey(project: projectName, workspace: workspaceKey)
+            var state = workspaceGitState[key] ?? .empty
+            state.statusCache.error = "Disconnected"
+            state.statusCache.isLoading = false
+            workspaceGitState[key] = state
             return
         }
-        let existing = gitStatusCache[key]
-        // 已经在加载中时跳过冗余的 @Published 写入，避免不必要的 objectWillChange
-        if existing?.isLoading == true {
-            wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey, cacheMode: cacheMode)
-            return
-        }
-        var cache = existing ?? GitStatusCache.empty()
-        cache.isLoading = true
-        cache.error = nil
-        gitStatusCache[key] = cache
-        wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey, cacheMode: cacheMode)
+        applyGitInput(.refreshStatus(cacheMode: cacheMode), project: projectName, workspace: workspaceKey)
     }
 
     func refreshGitStatus() {
@@ -132,14 +108,13 @@ extension GitCacheState {
 
     func getGitStatusCache(workspaceKey: String) -> GitStatusCache? {
         let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
-        return gitStatusCache[key]
+        return workspaceGitState[key]?.statusCache
     }
 
     /// 是否已经拿到过一次该工作区的 Git 状态结果。
-    /// 用于区分首次加载中的空态与已知“工作区干净”的后台刷新。
     func hasResolvedGitStatus(workspaceKey: String) -> Bool {
-        guard let cache = getGitStatusCache(workspaceKey: workspaceKey) else { return false }
-        return cache.updatedAt != .distantPast || cache.error != nil || !cache.isGitRepo
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return workspaceGitState[key]?.hasResolvedStatus ?? false
     }
 
     func getGitStatusIndex(workspaceKey: String) -> GitStatusIndex {
@@ -147,7 +122,7 @@ extension GitCacheState {
         if let index = gitStatusIndexCache[key] {
             return index
         }
-        if let cache = gitStatusCache[key] {
+        if let cache = workspaceGitState[key]?.statusCache {
             let index = GitStatusIndex(from: cache)
             gitStatusIndexCache[key] = index
             return index
@@ -157,13 +132,14 @@ extension GitCacheState {
 
     func shouldFetchGitStatus(workspaceKey: String) -> Bool {
         let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
-        guard let cache = gitStatusCache[key] else { return true }
+        guard let cache = workspaceGitState[key]?.statusCache else { return true }
         return cache.isExpired && !cache.isLoading
     }
 
     /// 返回当前工作区的语义快照；缓存不存在时返回空快照而不是 nil，避免视图层需要 nil 判断
     func getGitSemanticSnapshot(workspaceKey: String) -> GitPanelSemanticSnapshot {
-        getGitStatusCache(workspaceKey: workspaceKey)?.semanticSnapshot ?? .empty()
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return workspaceGitState[key]?.semanticSnapshot ?? .empty()
     }
 
     // MARK: - Git Log (Commit History) API

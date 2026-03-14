@@ -41,6 +41,7 @@ final class MobileAppStateGitMessageHandlerAdapter: GitMessageHandler {
     func handleGitStatusResult(_ result: GitStatusResult) { dispatchToMain { $0.handleGitStatusResult(result) } }
     func handleGitBranchesResult(_ result: GitBranchesResult) { dispatchToMain { $0.handleGitBranchesResult(result) } }
     func handleGitCommitResult(_ result: GitCommitResult) { dispatchToMain { $0.handleGitCommitResult(result) } }
+    func handleGitOpResult(_ result: GitOpResult) { dispatchToMain { $0.handleGitOpResult(result) } }
     func handleGitAIMergeResult(_ result: GitAIMergeResult) { dispatchToMain { $0.handleGitAIMergeResult(result) } }
     func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) { dispatchToMain { $0.handleGitMergeToDefaultResult(result) } }
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) { dispatchToMain { $0.handleGitStatusChanged(notification) } }

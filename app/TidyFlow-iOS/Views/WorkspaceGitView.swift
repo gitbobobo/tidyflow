@@ -377,7 +377,7 @@ struct WorkspaceGitView: View {
                 commitMessage = ""
             } label: {
                 HStack {
-                    if gitState.isCommitting {
+                    if appState.workspaceGitState[appState.globalWorkspaceKey(project: project, workspace: workspace)]?.commitInFlight == true {
                         ProgressView()
                             .scaleEffect(0.9)
                     } else {
@@ -386,9 +386,9 @@ struct WorkspaceGitView: View {
                     Text("提交到 \(projection.snapshot.currentBranch ?? "当前分支")")
                 }
             }
-            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || gitState.isCommitting)
+            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.workspaceGitState[appState.globalWorkspaceKey(project: project, workspace: workspace)]?.commitInFlight == true)
 
-            if let result = gitState.commitResult, !result.isEmpty {
+            if let result = appState.workspaceGitState[appState.globalWorkspaceKey(project: project, workspace: workspace)]?.commitResult, !result.isEmpty {
                 Text(result)
                     .font(.caption)
                     .foregroundColor(result.contains("成功") ? .green : .red)
@@ -460,6 +460,10 @@ private struct MobileBranchListSheet: View {
         appState.gitDetailStateForWorkspace(project: project, workspace: workspace)
     }
 
+    private var sharedState: GitWorkspaceState {
+        appState.workspaceGitState[appState.globalWorkspaceKey(project: project, workspace: workspace)] ?? .empty
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -470,12 +474,19 @@ private struct MobileBranchListSheet: View {
                             Button("创建") {
                                 let name = newBranchName.trimmingCharacters(in: .whitespaces)
                                 guard !name.isEmpty else { return }
-                                // 通过终端命令创建并切换分支（现有协议暂不支持直接切换，用 AI Commit 通道不适合，故只显示入口）
-                                appState.gitStage(project: project, workspace: workspace, path: nil, scope: "all")
+                                appState.gitCreateBranch(project: project, workspace: workspace, branch: name)
                                 showNewBranchInput = false
                                 newBranchName = ""
                             }
-                            .disabled(newBranchName.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .disabled(
+                                newBranchName.trimmingCharacters(in: .whitespaces).isEmpty
+                                || sharedState.isBranchCreateInFlight
+                            )
+
+                            if sharedState.isBranchCreateInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
                         }
                     }
                 }
@@ -488,15 +499,18 @@ private struct MobileBranchListSheet: View {
                             Text(branch.name)
                                 .fontWeight(branch.name == gitState.currentBranch ? .semibold : .regular)
                             Spacer()
+                            if sharedState.branchSwitchInFlight == branch.name {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            if branch.name != gitState.currentBranch {
-                                // 通知系统切换分支（目前 iOS WSClient 支持 requestGitBranches 查询；
-                                // 切换操作需通过终端执行 git checkout）
-                                isPresented = false
+                            if branch.name != gitState.currentBranch && sharedState.canSwitchBranch {
+                                appState.gitSwitchBranch(project: project, workspace: workspace, branch: branch.name)
                             }
                         }
+                        .opacity(sharedState.isBranchSwitchInFlight && sharedState.branchSwitchInFlight != branch.name ? 0.5 : 1.0)
                     }
 
                     if gitState.branches.isEmpty {
@@ -521,6 +535,12 @@ private struct MobileBranchListSheet: View {
             }
             .onAppear {
                 appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
+            }
+            // 分支切换/创建成功后自动关闭
+            .onChange(of: sharedState.branchCache.current) { _, _ in
+                if !sharedState.isBranchSwitchInFlight && !sharedState.isBranchCreateInFlight {
+                    isPresented = false
+                }
             }
         }
     }

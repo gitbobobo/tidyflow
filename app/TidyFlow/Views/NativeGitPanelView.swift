@@ -390,12 +390,12 @@ struct GitCommitInputSection: View {
             get: {
                 guard let ws = appState.selectedWorkspaceKey else { return "" }
                 let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
-                return gitCache.commitMessage[key] ?? ""
+                return gitCache.workspaceGitState[key]?.commitMessage ?? ""
             },
             set: { newValue in
                 guard let ws = appState.selectedWorkspaceKey else { return }
                 let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
-                gitCache.commitMessage[key] = newValue
+                gitCache.workspaceGitState[key, default: .empty].commitMessage = newValue
             }
         )
     }
@@ -403,7 +403,7 @@ struct GitCommitInputSection: View {
     private var currentMessage: String {
         guard let ws = appState.selectedWorkspaceKey else { return "" }
         let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
-        return gitCache.commitMessage[key] ?? ""
+        return gitCache.workspaceGitState[key]?.commitMessage ?? ""
     }
 
     private var hasStagedChanges: Bool {

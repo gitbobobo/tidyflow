@@ -71,10 +71,10 @@ struct BranchPickerView: View {
         .onAppear {
             loadBranchesIfNeeded()
         }
-        .onChange(of: gitCache.branchCreateInFlight) { _, inFlight in
+        .onChange(of: gitCache.workspaceGitState) { _, _ in
             // Close picker when create succeeds (inFlight becomes empty)
             if let ws = appState.selectedWorkspaceKey,
-               inFlight[appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)] == nil &&
+               gitCache.isBranchCreateInFlight(workspaceKey: ws) == false &&
                 showCreateForm &&
                 !newBranchName.isEmpty {
                 // Check if the branch was actually created (exists in cache)
@@ -193,7 +193,7 @@ struct BranchListView: View {
     private func isSwitchingTo(_ branch: String) -> Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
         let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
-        return gitCache.branchSwitchInFlight[key] == branch
+        return gitCache.workspaceGitState[key]?.branchSwitchInFlight == branch
     }
 }
 
@@ -214,8 +214,7 @@ struct CreateBranchRowView: View {
 
     private var isCreating: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
-        let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
-        return gitCache.branchCreateInFlight[key] != nil
+        return gitCache.isBranchCreateInFlight(workspaceKey: ws)
     }
 
     private var branchExists: Bool {

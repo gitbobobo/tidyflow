@@ -9,38 +9,19 @@ extension MobileAppState {
     // MARK: - Git
 
     func handleGitStatusResult(_ result: GitStatusResult) {
-        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
-        var detail = workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-        detail.currentBranch = result.currentBranch
-        detail.defaultBranch = result.defaultBranch
-        detail.isGitRepo = result.isGitRepo
-        detail.aheadBy = result.aheadBy
-        detail.behindBy = result.behindBy
-        let staged = result.items.filter { $0.staged == true }
-        let unstaged = result.items.filter { $0.staged != true }
-        detail.stagedItems = staged
-        detail.unstagedItems = unstaged
-        workspaceGitDetailState[key] = detail
+        applyGitInput(.gitStatusResult(result), project: result.project, workspace: result.workspace)
     }
 
     func handleGitBranchesResult(_ result: GitBranchesResult) {
-        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
-        var detail = workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-        detail.currentBranch = result.current
-        detail.branches = result.branches
-        workspaceGitDetailState[key] = detail
+        applyGitInput(.gitBranchesResult(result), project: result.project, workspace: result.workspace)
     }
 
     func handleGitCommitResult(_ result: GitCommitResult) {
-        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
-        var detail = workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-        detail.isCommitting = false
-        detail.commitResult = result.ok ? "提交成功" : (result.message ?? "提交失败")
-        if result.ok {
-            detail.stagedItems = []
-            wsClient.requestGitStatus(project: result.project, workspace: result.workspace)
-        }
-        workspaceGitDetailState[key] = detail
+        applyGitInput(.gitCommitResult(result), project: result.project, workspace: result.workspace)
+    }
+
+    func handleGitOpResult(_ result: GitOpResult) {
+        applyGitInput(.gitOpResult(result), project: result.project, workspace: result.workspace)
     }
 
     func handleGitAIMergeResult(_ result: GitAIMergeResult) {
@@ -95,8 +76,7 @@ extension MobileAppState {
     }
 
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {
-        wsClient.requestGitStatus(project: notification.project, workspace: notification.workspace)
-        wsClient.requestGitBranches(project: notification.project, workspace: notification.workspace)
+        applyGitInput(.gitStatusChanged, project: notification.project, workspace: notification.workspace)
     }
 
     // v1.40: 冲突向导 handler（与 macOS GitCacheState+Operations 语义对齐）

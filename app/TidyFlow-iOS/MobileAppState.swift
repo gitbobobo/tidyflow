@@ -173,6 +173,10 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
+
+    /// 共享 Git 工作区状态（key: globalKey -> GitWorkspaceState）
+    /// 通过 GitWorkspaceStateDriver 统一管理 status/branch/stage/commit/switch/create 状态迁移
+    @Published var workspaceGitState: [String: GitWorkspaceState] = [:]
     /// iOS Diff 缓存：按 DiffDescriptor.cacheKey（"project:workspace:path:mode"）隔离，
     /// 直接复用 TidyFlowShared 的 DiffCache 与 DiffDescriptor，确保与 macOS 语义一致。
     @Published var workspaceDiffCache: [String: DiffCache] = [:]
@@ -1209,39 +1213,57 @@ final class MobileAppState: ObservableObject {
     }
 
     func gitDetailStateForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitDetailState {
-        workspaceGitDetailState[globalWorkspaceKey(project: project, workspace: workspace)] ??
-        MobileWorkspaceGitDetailState.empty()
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        // 优先从共享 GitWorkspaceState 派生
+        if let state = workspaceGitState[key] {
+            return MobileWorkspaceGitDetailState(
+                currentBranch: state.branchCache.current.isEmpty ? state.statusCache.currentBranch : state.branchCache.current,
+                defaultBranch: state.statusCache.defaultBranch,
+                branches: state.branchCache.branches,
+                stagedItems: state.statusCache.stagedItems,
+                unstagedItems: state.statusCache.unstagedItems,
+                isGitRepo: state.statusCache.isGitRepo,
+                aheadBy: state.statusCache.aheadBy,
+                behindBy: state.statusCache.behindBy,
+                isCommitting: state.commitInFlight,
+                commitResult: state.commitResult
+            )
+        }
+        return workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
     }
 
     /// 向 Core 请求指定工作区的 Git 状态与分支列表
     func fetchGitDetailForWorkspace(project: String, workspace: String) {
-        wsClient.requestGitStatus(project: project, workspace: workspace)
-        wsClient.requestGitBranches(project: project, workspace: workspace)
+        applyGitInput(.refreshStatus(cacheMode: .default), project: project, workspace: workspace)
+        applyGitInput(.refreshBranches(cacheMode: .default), project: project, workspace: workspace)
     }
 
     /// Git 暂存操作
     func gitStage(project: String, workspace: String, path: String?, scope: String) {
-        wsClient.requestGitStage(project: project, workspace: workspace, path: path, scope: scope)
+        applyGitInput(.stage(path: path, scope: scope), project: project, workspace: workspace)
     }
 
     /// Git 取消暂存操作
     func gitUnstage(project: String, workspace: String, path: String?, scope: String) {
-        wsClient.requestGitUnstage(project: project, workspace: workspace, path: path, scope: scope)
+        applyGitInput(.unstage(path: path, scope: scope), project: project, workspace: workspace)
     }
 
     /// Git 丢弃更改操作
     func gitDiscard(project: String, workspace: String, path: String?, scope: String) {
-        wsClient.requestGitDiscard(project: project, workspace: workspace, path: path, scope: scope)
+        applyGitInput(.discard(path: path, scope: scope, includeUntracked: false), project: project, workspace: workspace)
     }
 
     /// Git 提交操作
     func gitCommit(project: String, workspace: String, message: String) {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
-        var state = workspaceGitDetailState[key] ?? MobileWorkspaceGitDetailState.empty()
-        state.isCommitting = true
-        state.commitResult = nil
-        workspaceGitDetailState[key] = state
-        wsClient.requestGitCommit(project: project, workspace: workspace, message: message)
+        applyGitInput(.commit(message: message), project: project, workspace: workspace)
+    }
+
+    func gitSwitchBranch(project: String, workspace: String, branch: String) {
+        applyGitInput(.switchBranch(name: branch), project: project, workspace: workspace)
+    }
+
+    func gitCreateBranch(project: String, workspace: String, branch: String) {
+        applyGitInput(.createBranch(name: branch), project: project, workspace: workspace)
     }
 
     func tasksForWorkspace(project: String, workspace: String) -> [WorkspaceTaskItem] {
@@ -4750,6 +4772,59 @@ final class MobileAppState: ObservableObject {
 
     private func explorerCachePrefix(project: String, workspace: String) -> String {
         WorkspaceKeySemantics.fileCachePrefix(project: project, workspace: workspace)
+    }
+
+    // MARK: - 共享 Git 驱动辅助方法
+
+    /// 将输入投递到共享 Git 工作区驱动，更新状态并返回待执行的副作用列表。
+    @discardableResult
+    func driveGitInput(
+        _ input: GitWorkspaceInput,
+        project: String,
+        workspace: String
+    ) -> [GitWorkspaceEffect] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let context = GitWorkspaceContext(projectName: project, workspaceName: workspace, globalKey: key)
+        let currentState = workspaceGitState[key] ?? .empty
+        let (newState, effects) = GitWorkspaceStateDriver.reduce(state: currentState, input: input, context: context)
+        if currentState != newState {
+            workspaceGitState[key] = newState
+        }
+        return effects
+    }
+
+    /// 执行共享驱动产出的副作用列表（翻译为 WSClient 调用）
+    func executeGitEffects(_ effects: [GitWorkspaceEffect], project: String, workspace: String) {
+        for effect in effects {
+            switch effect {
+            case .requestStatus(let cacheMode):
+                wsClient.requestGitStatus(project: project, workspace: workspace, cacheMode: cacheMode)
+            case .requestBranches(let cacheMode):
+                wsClient.requestGitBranches(project: project, workspace: workspace, cacheMode: cacheMode)
+            case .requestStage(let path, let scope):
+                wsClient.requestGitStage(project: project, workspace: workspace, path: path, scope: scope)
+            case .requestUnstage(let path, let scope):
+                wsClient.requestGitUnstage(project: project, workspace: workspace, path: path, scope: scope)
+            case .requestDiscard(let path, let scope, let includeUntracked):
+                wsClient.requestGitDiscard(project: project, workspace: workspace, path: path, scope: scope, includeUntracked: includeUntracked)
+            case .requestCommit(let message):
+                wsClient.requestGitCommit(project: project, workspace: workspace, message: message)
+            case .requestSwitchBranch(let name):
+                wsClient.requestGitSwitchBranch(project: project, workspace: workspace, branch: name)
+            case .requestCreateBranch(let name):
+                wsClient.requestGitCreateBranch(project: project, workspace: workspace, branch: name)
+            }
+        }
+    }
+
+    /// 便捷方法：投递输入到共享驱动并立即执行副作用
+    func applyGitInput(
+        _ input: GitWorkspaceInput,
+        project: String,
+        workspace: String
+    ) {
+        let effects = driveGitInput(input, project: project, workspace: workspace)
+        executeGitEffects(effects, project: project, workspace: workspace)
     }
 
     func globalWorkspaceKey(project: String, workspace: String) -> String {

@@ -155,8 +155,7 @@ final class GitWorkspaceProjectionStore {
 
         appState.$selectedProjectName.sink { _ in refresh() }.store(in: &cancellables)
         appState.$selectedWorkspaceKey.sink { _ in refresh() }.store(in: &cancellables)
-        gitCache.$gitStatusCache.sink { _ in refresh() }.store(in: &cancellables)
-        gitCache.$gitOpsInFlight.sink { _ in refresh() }.store(in: &cancellables)
+        gitCache.$workspaceGitState.sink { _ in refresh() }.store(in: &cancellables)
 
         refresh()
     }
@@ -195,19 +194,21 @@ final class GitWorkspaceProjectionStore {
             self.refresh(appState: appState, project: project, workspace: workspace)
         }
 
-        appState.$workspaceGitDetailState.sink { _ in refresh() }.store(in: &cancellables)
+        appState.$workspaceGitState.sink { _ in refresh() }.store(in: &cancellables)
 
         refresh()
     }
 
     func refresh(appState: MobileAppState, project: String, workspace: String) {
         let workspaceKey = appState.globalWorkspaceKey(project: project, workspace: workspace)
-        let snapshot = appState.gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot
+        let sharedState = appState.workspaceGitState[workspaceKey]
+        let snapshot = sharedState?.semanticSnapshot
+            ?? appState.gitDetailStateForWorkspace(project: project, workspace: workspace).semanticSnapshot
         let next = GitWorkspaceProjectionSemantics.make(
             workspaceKey: workspaceKey,
             snapshot: snapshot,
-            isStageAllInFlight: false,
-            hasResolvedStatus: true
+            isStageAllInFlight: sharedState?.isStageAllInFlight ?? false,
+            hasResolvedStatus: sharedState?.hasResolvedStatus ?? true
         )
         _ = updateProjection(next)
     }

@@ -117,7 +117,7 @@ final class WorkspaceOverviewProjectionStore {
         appState.$workspaceTabs.sink { _ in refresh() }.store(in: &cancellables)
         appState.$selectedProjectId.sink { _ in refresh() }.store(in: &cancellables)
         appState.$selectedWorkspaceKey.sink { _ in refresh() }.store(in: &cancellables)
-        appState.gitCache.$gitStatusCache.sink { _ in refresh() }.store(in: &cancellables)
+        appState.gitCache.$workspaceGitState.sink { _ in refresh() }.store(in: &cancellables)
         appState.gitCache.$conflictWizardCache.sink { _ in refresh() }.store(in: &cancellables)
 
         refresh()

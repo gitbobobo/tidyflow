@@ -11,34 +11,20 @@ import TidyFlowShared
 /// - GitCacheState+Operations.swift  — Stage/Unstage / Branch / Commit / Rebase / Merge / Integration API
 class GitCacheState: ObservableObject {
 
-    // MARK: - @Published 属性（原 AppState 中的 Git 相关属性）
+    // MARK: - @Published 属性
+
+    /// 共享 Git 工作区状态（key: globalKey -> GitWorkspaceState）
+    /// 通过 GitWorkspaceStateDriver 统一管理 status/branch/stage/commit 等状态迁移
+    @Published var workspaceGitState: [String: GitWorkspaceState] = [:]
 
     // Phase C2-2a: Diff Cache (key: "workspace:path:mode" -> DiffCache)
     @Published var diffCache: [String: DiffCache] = [:]
-
-    // Phase C3-1: Git Status Cache (workspace key -> GitStatusCache)
-    @Published var gitStatusCache: [String: GitStatusCache] = [:]
 
     // Git Log Cache (workspace key -> GitLogCache)
     @Published var gitLogCache: [String: GitLogCache] = [:]
 
     // Git Show Cache (workspace key + sha -> GitShowCache)
     @Published var gitShowCache: [String: GitShowCache] = [:]
-
-    // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
-    @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
-
-    // Phase C3-3a: Git Branch Cache (workspace key -> GitBranchCache)
-    @Published var gitBranchCache: [String: GitBranchCache] = [:]
-    // Phase C3-3a: Branch switch in-flight (workspace key -> target branch)
-    @Published var branchSwitchInFlight: [String: String] = [:]
-    // Phase C3-3b: Branch create in-flight (workspace key -> new branch name)
-    @Published var branchCreateInFlight: [String: String] = [:]
-
-    // Phase C3-4a: Commit message per workspace
-    @Published var commitMessage: [String: String] = [:]
-    // Phase C3-4a: Commit in-flight (workspace key -> true)
-    @Published var commitInFlight: [String: Bool] = [:]
 
     // Phase UX-3a: Git operation status cache (workspace key -> GitOpStatusCache)
     @Published var gitOpStatusCache: [String: GitOpStatusCache] = [:]
@@ -136,19 +122,13 @@ class GitCacheState: ObservableObject {
     /// 在工作区被删除、项目下线或断线重连时调用，防止残留数据误导界面。
     /// - Parameter globalKey: "project:workspace" 格式的全局键
     func clearWorkspaceCache(globalKey: String) {
-        gitStatusCache.removeValue(forKey: globalKey)
+        workspaceGitState.removeValue(forKey: globalKey)
         gitLogCache.removeValue(forKey: globalKey)
-        gitBranchCache.removeValue(forKey: globalKey)
-        gitOpsInFlight.removeValue(forKey: globalKey)
         gitOpStatusCache.removeValue(forKey: globalKey)
         gitIntegrationStatusCache.removeValue(forKey: globalKey)
-        commitMessage.removeValue(forKey: globalKey)
-        commitInFlight.removeValue(forKey: globalKey)
         rebaseInFlight.removeValue(forKey: globalKey)
         mergeInFlight.removeValue(forKey: globalKey)
         rebaseOntoDefaultInFlight.removeValue(forKey: globalKey)
-        branchSwitchInFlight.removeValue(forKey: globalKey)
-        branchCreateInFlight.removeValue(forKey: globalKey)
         gitStatusIndexCache.removeValue(forKey: globalKey)
         // Diff 缓存键格式为 "project:workspace:path:mode"，按前缀过滤
         let prefix = globalKey + ":"
@@ -170,21 +150,68 @@ class GitCacheState: ObservableObject {
                 .forEach { cache.removeValue(forKey: $0) }
         }
 
-        evictSimpleCache(&gitStatusCache)
+        evictSimpleCache(&workspaceGitState)
         evictSimpleCache(&gitLogCache)
-        evictSimpleCache(&gitBranchCache)
-        evictSimpleCache(&gitOpsInFlight)
         evictSimpleCache(&gitOpStatusCache)
         evictSimpleCache(&gitIntegrationStatusCache)
-        evictSimpleCache(&commitMessage)
-        evictSimpleCache(&commitInFlight)
         evictSimpleCache(&rebaseInFlight)
         evictSimpleCache(&mergeInFlight)
         evictSimpleCache(&rebaseOntoDefaultInFlight)
-        evictSimpleCache(&branchSwitchInFlight)
-        evictSimpleCache(&branchCreateInFlight)
         evictSimpleCache(&gitStatusIndexCache)
         evictPrefixCache(&diffCache)
         evictPrefixCache(&gitShowCache)
+    }
+
+    // MARK: - 共享驱动辅助方法
+
+    /// 将输入投递到共享 Git 工作区驱动，更新状态并返回待执行的副作用列表。
+    @discardableResult
+    func driveGitInput(
+        _ input: GitWorkspaceInput,
+        project: String,
+        workspace: String
+    ) -> [GitWorkspaceEffect] {
+        let key = workspaceCacheKey(workspace: workspace, project: project)
+        let context = GitWorkspaceContext(projectName: project, workspaceName: workspace, globalKey: key)
+        let currentState = workspaceGitState[key] ?? .empty
+        let (newState, effects) = GitWorkspaceStateDriver.reduce(state: currentState, input: input, context: context)
+        if currentState != newState {
+            workspaceGitState[key] = newState
+        }
+        return effects
+    }
+
+    /// 执行共享驱动产出的副作用列表（翻译为 WSClient 调用）
+    func executeGitEffects(_ effects: [GitWorkspaceEffect], project: String, workspace: String) {
+        for effect in effects {
+            switch effect {
+            case .requestStatus(let cacheMode):
+                wsClient?.requestGitStatus(project: project, workspace: workspace, cacheMode: cacheMode)
+            case .requestBranches(let cacheMode):
+                wsClient?.requestGitBranches(project: project, workspace: workspace, cacheMode: cacheMode)
+            case .requestStage(let path, let scope):
+                wsClient?.requestGitStage(project: project, workspace: workspace, path: path, scope: scope)
+            case .requestUnstage(let path, let scope):
+                wsClient?.requestGitUnstage(project: project, workspace: workspace, path: path, scope: scope)
+            case .requestDiscard(let path, let scope, let includeUntracked):
+                wsClient?.requestGitDiscard(project: project, workspace: workspace, path: path, scope: scope, includeUntracked: includeUntracked)
+            case .requestCommit(let message):
+                wsClient?.requestGitCommit(project: project, workspace: workspace, message: message)
+            case .requestSwitchBranch(let name):
+                wsClient?.requestGitSwitchBranch(project: project, workspace: workspace, branch: name)
+            case .requestCreateBranch(let name):
+                wsClient?.requestGitCreateBranch(project: project, workspace: workspace, branch: name)
+            }
+        }
+    }
+
+    /// 便捷方法：投递输入到共享驱动并立即执行副作用
+    func applyGitInput(
+        _ input: GitWorkspaceInput,
+        project: String,
+        workspace: String
+    ) {
+        let effects = driveGitInput(input, project: project, workspace: workspace)
+        executeGitEffects(effects, project: project, workspace: workspace)
     }
 }

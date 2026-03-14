@@ -1027,7 +1027,7 @@ public struct GitOpInFlight: Equatable, Hashable {
 // MARK: - Phase C3-3a: Git Branch Protocol Models
 
 /// Single branch info
-public struct GitBranchItem: Identifiable {
+public struct GitBranchItem: Identifiable, Equatable {
     public let id: String  // Use name as unique ID
     public let name: String
 
@@ -1077,7 +1077,7 @@ public struct GitBranchesResult {
 }
 
 /// Cached git branches for a workspace
-public struct GitBranchCache {
+public struct GitBranchCache: Equatable {
     public var current: String
     public var branches: [GitBranchItem]
     public var isLoading: Bool
