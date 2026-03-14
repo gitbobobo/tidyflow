@@ -566,6 +566,42 @@ private struct FileWriteRequest: TypedWSRequest {
     public var action: String { "file_write" }
 }
 
+// MARK: - 格式化请求
+
+private struct FileFormatCapabilitiesQueryRequest: TypedWSRequest {
+    public let project: String
+    public let workspace: String
+    public let path: String
+
+    public var action: String { "file_format_capabilities_query" }
+    public var validationProject: String? { project }
+    public var validationWorkspace: String? { workspace }
+}
+
+private struct FileFormatExecuteRequest: TypedWSRequest {
+    public let project: String
+    public let workspace: String
+    public let path: String
+    public let scope: String
+    public let text: String
+    public let selectionStart: Int?
+    public let selectionEnd: Int?
+
+    public var action: String { "file_format_execute" }
+    public var validationProject: String? { project }
+    public var validationWorkspace: String? { workspace }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case path
+        case scope
+        case text
+        case selectionStart = "selection_start"
+        case selectionEnd = "selection_end"
+    }
+}
+
 private struct RunProjectCommandRequest: TypedWSRequest {
     public let project: String
     public let workspace: String
@@ -2646,5 +2682,25 @@ extension WSClient {
             "type": "health_repair",
             "request": requestDict
         ])
+    }
+
+    // MARK: - 文件格式化
+
+    /// 查询文件格式化能力
+    public func requestFileFormatCapabilities(project: String, workspace: String, path: String) {
+        sendTyped(FileFormatCapabilitiesQueryRequest(project: project, workspace: workspace, path: path))
+    }
+
+    /// 请求执行文件格式化
+    public func requestFileFormatExecute(context: EditorFormattingRequestContext) {
+        sendTyped(FileFormatExecuteRequest(
+            project: context.project,
+            workspace: context.workspace,
+            path: context.path,
+            scope: context.scope.rawValue,
+            text: context.text,
+            selectionStart: context.selectionStart,
+            selectionEnd: context.selectionEnd
+        ))
     }
 }

@@ -90,6 +90,8 @@ public struct EditorDocumentSession: Equatable, Sendable {
     public var loadStatus: EditorDocumentLoadStatus
     /// 磁盘冲突状态
     public var conflictState: EditorConflictState
+    /// 文档格式化运行时状态（共享真源）
+    public var formattingState: EditorFormattingState
 
     public init(
         key: EditorDocumentKey,
@@ -101,7 +103,8 @@ public struct EditorDocumentSession: Equatable, Sendable {
         selectionSet: EditorSelectionSet = .zero,
         lastLoadedAt: Date = .distantPast,
         loadStatus: EditorDocumentLoadStatus = .idle,
-        conflictState: EditorConflictState = .none
+        conflictState: EditorConflictState = .none,
+        formattingState: EditorFormattingState = .idle
     ) {
         self.key = key
         self.content = content
@@ -113,6 +116,7 @@ public struct EditorDocumentSession: Equatable, Sendable {
         self.lastLoadedAt = lastLoadedAt
         self.loadStatus = loadStatus
         self.conflictState = conflictState
+        self.formattingState = formattingState
     }
 
     /// 构建"正在加载"中的初始状态
@@ -332,4 +336,46 @@ public enum EditorSessionCommand: Equatable, Sendable {
     case saveAs
     case presentFindReplace
     case dismissFindReplace
+    case formatDocument
+}
+
+// MARK: - 格式化状态辅助
+
+extension EditorDocumentSession {
+    /// 当前是否正在格式化
+    public var isFormatting: Bool { formattingState.isFormatting }
+
+    /// 最近一次格式化错误
+    public var lastFormattingError: EditorFormattingError? { formattingState.lastFormattingError }
+
+    /// 当前文档支持的格式化作用域
+    public var supportedFormattingScopes: [EditorFormatScope] { formattingState.supportedFormattingScopes }
+
+    /// 标记格式化开始
+    public mutating func markFormattingStarted() {
+        formattingState.isFormatting = true
+        formattingState.lastFormattingError = nil
+    }
+
+    /// 标记格式化完成（成功或无变化）
+    public mutating func markFormattingCompleted() {
+        formattingState.isFormatting = false
+    }
+
+    /// 标记格式化失败
+    public mutating func markFormattingFailed(error: EditorFormattingError) {
+        formattingState.isFormatting = false
+        formattingState.lastFormattingError = error
+    }
+
+    /// 更新支持的格式化作用域（从能力查询结果）
+    public mutating func updateFormattingCapabilities(_ capabilities: [EditorFormattingCapability]) {
+        var scopes = Set<EditorFormatScope>()
+        for cap in capabilities {
+            for scope in cap.supportedScopes {
+                scopes.insert(scope)
+            }
+        }
+        formattingState.supportedFormattingScopes = Array(scopes).sorted { $0.rawValue < $1.rawValue }
+    }
 }

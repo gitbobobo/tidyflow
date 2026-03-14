@@ -46,6 +46,7 @@ public extension KeybindingConfig {
             KeybindingConfig(commandId: "workspace.closeOtherTabs", keyCombination: "cmd+option+t", context: "workspace"),
             KeybindingConfig(commandId: "workspace.save", keyCombination: "cmd+s", context: "workspace"),
             KeybindingConfig(commandId: "workspace.find", keyCombination: "cmd+f", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.formatDocument", keyCombination: "cmd+shift+i", context: "editor"),
         ]
     }
 
@@ -60,6 +61,7 @@ public extension KeybindingConfig {
             "workspace.closeOtherTabs": "关闭其他标签",
             "workspace.save": "保存",
             "workspace.find": "查找",
+            "workspace.formatDocument": "格式化文档",
         ]
         return names[commandId] ?? commandId
     }
@@ -445,6 +447,8 @@ public struct ClientSettings: Codable {
     public var workspaceTodos: [String: [WorkspaceTodoItem]]
     /// 用户自定义快捷键配置
     public var keybindings: [KeybindingConfig]
+    /// 语言级格式化配置
+    public var editorFormattingConfigs: [EditorFormattingLanguageConfig]
 
     enum CodingKeys: String, CodingKey {
         case workspaceShortcuts
@@ -457,6 +461,7 @@ public struct ClientSettings: Codable {
         case evolutionAgentProfiles = "evolution_agent_profiles"
         case workspaceTodos = "workspace_todos"
         case keybindings
+        case editorFormattingConfigs = "editor_formatting_configs"
     }
 
     public init(
@@ -469,7 +474,8 @@ public struct ClientSettings: Codable {
         evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = [],
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:],
         workspaceTodos: [String: [WorkspaceTodoItem]] = [:],
-        keybindings: [KeybindingConfig] = []
+        keybindings: [KeybindingConfig] = [],
+        editorFormattingConfigs: [EditorFormattingLanguageConfig] = []
     ) {
         self.workspaceShortcuts = workspaceShortcuts
         self.mergeAIAgent = mergeAIAgent
@@ -481,6 +487,7 @@ public struct ClientSettings: Codable {
         self.evolutionAgentProfiles = evolutionAgentProfiles
         self.workspaceTodos = workspaceTodos
         self.keybindings = keybindings
+        self.editorFormattingConfigs = editorFormattingConfigs
     }
 
     public init(from decoder: Decoder) throws {
@@ -495,6 +502,7 @@ public struct ClientSettings: Codable {
         evolutionAgentProfiles = [:]
         workspaceTodos = try container.decodeIfPresent([String: [WorkspaceTodoItem]].self, forKey: .workspaceTodos) ?? [:]
         keybindings = try container.decodeIfPresent([KeybindingConfig].self, forKey: .keybindings) ?? []
+        editorFormattingConfigs = try container.decodeIfPresent([EditorFormattingLanguageConfig].self, forKey: .editorFormattingConfigs) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -507,6 +515,7 @@ public struct ClientSettings: Codable {
         try container.encode(nodeDiscoveryEnabled, forKey: .nodeDiscoveryEnabled)
         try container.encode(workspaceTodos, forKey: .workspaceTodos)
         try container.encode(keybindings, forKey: .keybindings)
+        try container.encode(editorFormattingConfigs, forKey: .editorFormattingConfigs)
     }
 }
 
@@ -533,6 +542,7 @@ public struct VSCodeKeybindingsImporter {
         "workbench.action.files.save": "workspace.save",
         "actions.find": "workspace.find",
         "workbench.action.closeOtherEditors": "workspace.closeOtherTabs",
+        "editor.action.formatDocument": "workspace.formatDocument",
     ]
 
     public static func importFrom(jsonData: Data) -> (mapped: [KeybindingConfig], unmapped: [String]) {

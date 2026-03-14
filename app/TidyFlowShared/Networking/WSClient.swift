@@ -145,6 +145,10 @@ public class WSClient: NSObject, ObservableObject {
     public var onFileWriteResult: ((FileWriteResult) -> Void)?
     // 文件读取回调（预览/查看）
     public var onFileReadResult: ((FileReadResult) -> Void)?
+    // 文件格式化回调
+    public var onFileFormatCapabilitiesResult: ((FileFormatCapabilitiesResult) -> Void)?
+    public var onFileFormatResult: ((FileFormatResult) -> Void)?
+    public var onFileFormatError: ((FileFormatErrorResult) -> Void)?
     // v1.29: 项目命令回调
     public var onProjectCommandsSaved: ((String, Bool, String?) -> Void)?
     public var onProjectCommandStarted: ((String, String, String, String) -> Void)?

@@ -466,6 +466,39 @@ extension WSClient {
                 }
             }
             return true
+        case "file_format_capabilities_result":
+            if let result = FileFormatCapabilitiesResult.from(json: json) {
+                if let handler = fileMessageHandler {
+                    handler.handleFileFormatCapabilitiesResult(result)
+                } else {
+                    onFileFormatCapabilitiesResult?(result)
+                }
+            } else {
+                CoreWSLog.ws.error("Failed to parse FileFormatCapabilitiesResult")
+            }
+            return true
+        case "file_format_result":
+            if let result = FileFormatResult.from(json: json) {
+                if let handler = fileMessageHandler {
+                    handler.handleFileFormatResult(result)
+                } else {
+                    onFileFormatResult?(result)
+                }
+            } else {
+                CoreWSLog.ws.error("Failed to parse FileFormatResult")
+            }
+            return true
+        case "file_format_error":
+            if let result = FileFormatErrorResult.from(json: json) {
+                if let handler = fileMessageHandler {
+                    handler.handleFileFormatError(result)
+                } else {
+                    onFileFormatError?(result)
+                }
+            } else {
+                CoreWSLog.ws.error("Failed to parse FileFormatErrorResult")
+            }
+            return true
         default:
             return false
         }

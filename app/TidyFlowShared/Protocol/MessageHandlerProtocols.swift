@@ -97,6 +97,9 @@ public protocol FileMessageHandler: AnyObject {
     func handleFileContentSearchResult(_ result: FileContentSearchResult)
     func handleWatchSubscribed(_ result: WatchSubscribedResult)
     func handleWatchUnsubscribed()
+    func handleFileFormatCapabilitiesResult(_ result: FileFormatCapabilitiesResult)
+    func handleFileFormatResult(_ result: FileFormatResult)
+    func handleFileFormatError(_ result: FileFormatErrorResult)
 }
 
 public extension FileMessageHandler {
@@ -112,6 +115,9 @@ public extension FileMessageHandler {
     func handleFileContentSearchResult(_ result: FileContentSearchResult) {}
     func handleWatchSubscribed(_ result: WatchSubscribedResult) {}
     func handleWatchUnsubscribed() {}
+    func handleFileFormatCapabilitiesResult(_ result: FileFormatCapabilitiesResult) {}
+    func handleFileFormatResult(_ result: FileFormatResult) {}
+    func handleFileFormatError(_ result: FileFormatErrorResult) {}
 }
 
 public protocol TerminalMessageHandler: AnyObject {

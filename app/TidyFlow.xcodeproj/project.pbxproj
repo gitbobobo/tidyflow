@@ -42,6 +42,7 @@
 		SHR02023 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01023 /* ClientSettingsModels.swift */; };
 		EDSS0002 /* EditorDocumentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSS0001 /* EditorDocumentSession.swift */; };
 		EURD0002 /* EditorUndoRedoSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EURD0001 /* EditorUndoRedoSemantics.swift */; };
+		EFMT0002 /* EditorFormattingSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFMT0001 /* EditorFormattingSemantics.swift */; };
 		EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFRS0001 /* EditorFindReplaceSemantics.swift */; };
 		ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHL0001 /* EditorSyntaxHighlighter.swift */; };
 		ESEM0002 /* EditorStructureSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESEM0001 /* EditorStructureSemantics.swift */; };
@@ -406,6 +407,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01023 /* ClientSettingsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClientSettingsModels.swift; sourceTree = "<group>"; };
 		EDSS0001 /* EditorDocumentSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorDocumentSession.swift; sourceTree = "<group>"; };
 		EURD0001 /* EditorUndoRedoSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorUndoRedoSemantics.swift; sourceTree = "<group>"; };
+		EFMT0001 /* EditorFormattingSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorFormattingSemantics.swift; sourceTree = "<group>"; };
 		EFRS0001 /* EditorFindReplaceSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemantics.swift; sourceTree = "<group>"; };
 		ESHL0001 /* EditorSyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighter.swift; sourceTree = "<group>"; };
 		ESEM0001 /* EditorStructureSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStructureSemantics.swift; sourceTree = "<group>"; };
@@ -752,6 +754,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01023 /* ClientSettingsModels.swift */,
 				EDSS0001 /* EditorDocumentSession.swift */,
 				EURD0001 /* EditorUndoRedoSemantics.swift */,
+				EFMT0001 /* EditorFormattingSemantics.swift */,
 				EFRS0001 /* EditorFindReplaceSemantics.swift */,
 				ESHL0001 /* EditorSyntaxHighlighter.swift */,
 				ESEM0001 /* EditorStructureSemantics.swift */,
@@ -1698,6 +1701,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02023 /* ClientSettingsModels.swift in Sources */,
 				EDSS0002 /* EditorDocumentSession.swift in Sources */,
 				EURD0002 /* EditorUndoRedoSemantics.swift in Sources */,
+				EFMT0002 /* EditorFormattingSemantics.swift in Sources */,
 				EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */,
 				ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */,
 				ESEM0002 /* EditorStructureSemantics.swift in Sources */,

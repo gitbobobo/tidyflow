@@ -522,3 +522,154 @@ public struct FileContentSearchResult: Equatable, Sendable {
         self.searchDurationMs = searchDurationMs
     }
 }
+
+// MARK: - 文件格式化协议模型
+
+/// 格式化能力查询结果
+public struct FileFormatCapabilitiesResult {
+    public let project: String
+    public let workspace: String
+    public let path: String
+    public let language: String
+    public let capabilities: [EditorFormattingCapability]
+
+    public static func from(json: [String: Any]) -> FileFormatCapabilitiesResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String else {
+            return nil
+        }
+        let language = json["language"] as? String ?? ""
+        var capabilities: [EditorFormattingCapability] = []
+        if let capsJson = json["capabilities"] as? [[String: Any]] {
+            for capJson in capsJson {
+                guard let formatterId = capJson["formatter_id"] as? String,
+                      let capLanguage = capJson["language"] as? String else { continue }
+                let scopeStrings = capJson["supported_scopes"] as? [String] ?? []
+                let scopes = scopeStrings.compactMap { EditorFormatScope(rawValue: $0) }
+                capabilities.append(EditorFormattingCapability(
+                    formatterId: formatterId,
+                    language: capLanguage,
+                    supportedScopes: scopes
+                ))
+            }
+        }
+        return FileFormatCapabilitiesResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            language: language,
+            capabilities: capabilities
+        )
+    }
+
+    public init(project: String, workspace: String, path: String, language: String, capabilities: [EditorFormattingCapability]) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.language = language
+        self.capabilities = capabilities
+    }
+}
+
+/// 格式化执行结果
+public struct FileFormatResult {
+    public let project: String
+    public let workspace: String
+    public let path: String
+    public let formattedText: String
+    public let formatterId: String
+    public let scope: EditorFormatScope
+    public let changed: Bool
+
+    public static func from(json: [String: Any]) -> FileFormatResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String,
+              let formattedText = json["formatted_text"] as? String,
+              let formatterId = json["formatter_id"] as? String else {
+            return nil
+        }
+        let scopeString = json["scope"] as? String ?? "document"
+        let scope = EditorFormatScope(rawValue: scopeString) ?? .document
+        let changed = json["changed"] as? Bool ?? false
+        return FileFormatResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            formattedText: formattedText,
+            formatterId: formatterId,
+            scope: scope,
+            changed: changed
+        )
+    }
+
+    public init(project: String, workspace: String, path: String, formattedText: String, formatterId: String, scope: EditorFormatScope, changed: Bool) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.formattedText = formattedText
+        self.formatterId = formatterId
+        self.scope = scope
+        self.changed = changed
+    }
+
+    /// 转换为共享语义层结果
+    public func toFormattingResult() -> EditorFormattingResult {
+        EditorFormattingResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            formattedText: formattedText,
+            formatterId: formatterId,
+            scope: scope,
+            changed: changed
+        )
+    }
+}
+
+/// 格式化错误结果
+public struct FileFormatErrorResult {
+    public let project: String
+    public let workspace: String
+    public let path: String
+    public let errorCode: EditorFormattingErrorCode
+    public let message: String?
+
+    public static func from(json: [String: Any]) -> FileFormatErrorResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String else {
+            return nil
+        }
+        let errorCodeString = json["error_code"] as? String ?? "execution_failed"
+        let errorCode = EditorFormattingErrorCode(rawValue: errorCodeString) ?? .executionFailed
+        let message = json["message"] as? String
+        return FileFormatErrorResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            errorCode: errorCode,
+            message: message
+        )
+    }
+
+    public init(project: String, workspace: String, path: String, errorCode: EditorFormattingErrorCode, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.path = path
+        self.errorCode = errorCode
+        self.message = message
+    }
+
+    /// 转换为共享语义层错误
+    public func toFormattingError() -> EditorFormattingError {
+        EditorFormattingError(
+            project: project,
+            workspace: workspace,
+            path: path,
+            errorCode: errorCode,
+            message: message
+        )
+    }
+}

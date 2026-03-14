@@ -196,6 +196,14 @@ extension WSClient {
                     return KeybindingConfig(commandId: commandId, keyCombination: keyCombination, context: context)
                 }
             }
+            var editorFormattingConfigs: [EditorFormattingLanguageConfig] = []
+            if let fmtJson = json["editor_formatting_configs"] as? [[String: Any]] {
+                let decoder = JSONDecoder()
+                editorFormattingConfigs = fmtJson.compactMap { item -> EditorFormattingLanguageConfig? in
+                    guard let data = try? JSONSerialization.data(withJSONObject: item) else { return nil }
+                    return try? decoder.decode(EditorFormattingLanguageConfig.self, from: data)
+                }
+            }
             let settings = ClientSettings(
                 workspaceShortcuts: workspaceShortcuts,
                 mergeAIAgent: mergeAIAgent,
@@ -206,7 +214,8 @@ extension WSClient {
                 evolutionDefaultProfiles: evolutionDefaultProfiles,
                 evolutionAgentProfiles: evolutionAgentProfiles,
                 workspaceTodos: workspaceTodos,
-                keybindings: keybindings
+                keybindings: keybindings,
+                editorFormattingConfigs: editorFormattingConfigs
             )
             if let handler = settingsMessageHandler {
                 handler.handleClientSettingsResult(settings)
