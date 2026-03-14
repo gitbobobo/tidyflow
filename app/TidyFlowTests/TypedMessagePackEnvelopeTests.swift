@@ -1,6 +1,7 @@
 import XCTest
 import MessagePacker
 @testable import TidyFlow
+@testable import TidyFlowShared
 
 final class TypedMessagePackEnvelopeTests: XCTestCase {
     private struct TestTypedRequest: TypedWSRequest {

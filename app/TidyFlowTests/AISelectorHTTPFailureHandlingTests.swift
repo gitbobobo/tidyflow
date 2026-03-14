@@ -1,5 +1,6 @@
 import XCTest
 @testable import TidyFlow
+@testable import TidyFlowShared
 
 @MainActor
 final class AISelectorHTTPFailureHandlingTests: XCTestCase {

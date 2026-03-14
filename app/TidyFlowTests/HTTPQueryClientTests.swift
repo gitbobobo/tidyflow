@@ -1,6 +1,6 @@
 import XCTest
 @testable import TidyFlow
-import TidyFlowShared
+@testable import TidyFlowShared
 
 private actor HTTPFetchCounter {
     private var value: Int = 0

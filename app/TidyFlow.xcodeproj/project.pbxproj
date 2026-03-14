@@ -29,6 +29,19 @@
 		SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01016 /* CoordinatorSnapshotApplier.swift */; };
 		SHR02017 /* EvolutionControlSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01017 /* EvolutionControlSemantics.swift */; };
 		SHR02018 /* SharedTerminalShellDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01018 /* SharedTerminalShellDriver.swift */; };
+		SHR02019 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01019 /* WSClient.swift */; };
+		SHR0201A /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101A /* WSClient+Send.swift */; };
+		SHR0201B /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101B /* WSClient+Receive.swift */; };
+		SHR0201C /* WSClient+Receive+DomainRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101C /* WSClient+Receive+DomainRouting.swift */; };
+		SHR0201D /* WSClient+Receive+DomainCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101D /* WSClient+Receive+DomainCore.swift */; };
+		SHR0201E /* WSClient+Receive+DomainWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101E /* WSClient+Receive+DomainWorkspace.swift */; };
+		SHR0201F /* WSClient+Receive+DomainAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0101F /* WSClient+Receive+DomainAI.swift */; };
+		SHR02020 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01020 /* AnyCodable.swift */; };
+		SHR02021 /* CoreWSLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01021 /* CoreWSLog.swift */; };
+		SHR02022 /* CoreWSURLBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01022 /* CoreWSURLBuilder.swift */; };
+		SHR02023 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01023 /* ClientSettingsModels.swift */; };
+		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
+		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
 		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
 		GWSD0201 /* GitWorkspaceStateDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = GWSD0101 /* GitWorkspaceStateDriver.swift */; };
 		CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */; };
@@ -51,14 +64,12 @@
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		2CE8E4846E61AEF7F4977EEC /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
 		3DFCBC76B433FB811DF17512 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
-		4CF1B8472DFEE28D7A8B1058 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
 		5B5240BAA41C840D0593927E /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
 		CERC00001 /* CoreErrorCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CERC00011 /* CoreErrorCode.swift */; };
 		ESBT00001 /* ErrorSemanticsBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESBT00011 /* ErrorSemanticsBridgeTests.swift */; };
 		5C4A680741E10100F1A1A150 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		6737475ACFA51F4EFC6E1D20 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		6DC2CD6DD0EA09E6120CCC90 /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
-		733BBDF339DADDE6BD492ECA /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
 		821C66245F142DF0B78EBF45 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
 		8686DEB656CDB748854F7725 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0C7853A8D54BE247818D1333 /* Foundation.framework */; };
 		930A28E05020B9AD2A364722 /* FileBrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000108 /* FileBrowserModels.swift */; };
@@ -66,7 +77,6 @@
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
 		A1000003 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Fonts */; };
 		A1000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000016 /* Assets.xcassets */; };
-		A63C63F68A938CE6F19B1257 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
 		A866AA59997825F9AB6ECE6D /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */; };
 		MOB00023 /* TerminalInputAccessoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00013 /* TerminalInputAccessoryView.swift */; };
@@ -114,9 +124,7 @@
 
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
 		EVT00001 /* EvidenceTabSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVT00011 /* EvidenceTabSemantics.swift */; };
-		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
-		B3A00007 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
 		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
 		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
 		BD77E0F7459611D0A5EB331C /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
@@ -128,7 +136,6 @@
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
-		D79D7F7652CD8A0ABD9B7573 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		E3E4B6E2850AFF7F84278D20 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000104 /* ClientSettingsModels.swift */; };
 		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
 		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
@@ -230,12 +237,6 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuild
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		SPL00003 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
-		SPL00004 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
-		SPL00005 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
-		SPL0000B /* WSClient+Receive+DomainRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00016 /* WSClient+Receive+DomainRouting.swift */; };
-		SPL0000C /* WSClient+Receive+DomainCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00017 /* WSClient+Receive+DomainCore.swift */; };
-		SPL0000D /* WSClient+Receive+DomainWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00018 /* WSClient+Receive+DomainWorkspace.swift */; };
-		SPL0000E /* WSClient+Receive+DomainAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00019 /* WSClient+Receive+DomainAI.swift */; };
 		SPL00006 /* FloatingPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00021 /* FloatingPanelController.swift */; };
 		SPL00007 /* GitPanelSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00022 /* GitPanelSections.swift */; };
 SPL00046 /* GitConflictWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00045 /* GitConflictWizardView.swift */; };
@@ -371,6 +372,17 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01016 /* CoordinatorSnapshotApplier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorSnapshotApplier.swift; sourceTree = "<group>"; };
 		SHR01017 /* EvolutionControlSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionControlSemantics.swift; sourceTree = "<group>"; };
 		SHR01018 /* SharedTerminalShellDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTerminalShellDriver.swift; sourceTree = "<group>"; };
+		SHR01019 /* WSClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
+		SHR0101A /* WSClient+Send.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
+		SHR0101B /* WSClient+Receive.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
+		SHR0101C /* WSClient+Receive+DomainRouting.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainRouting.swift"; sourceTree = "<group>"; };
+		SHR0101D /* WSClient+Receive+DomainCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainCore.swift"; sourceTree = "<group>"; };
+		SHR0101E /* WSClient+Receive+DomainWorkspace.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainWorkspace.swift"; sourceTree = "<group>"; };
+		SHR0101F /* WSClient+Receive+DomainAI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainAI.swift"; sourceTree = "<group>"; };
+		SHR01020 /* AnyCodable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
+		SHR01021 /* CoreWSLog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSLog.swift; sourceTree = "<group>"; };
+		SHR01022 /* CoreWSURLBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSURLBuilder.swift; sourceTree = "<group>"; };
+		SHR01023 /* ClientSettingsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClientSettingsModels.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
@@ -489,9 +501,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST10047 /* AIChatStageProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStageProjectionTests.swift; sourceTree = "<group>"; };
 		TST10049 /* EvolutionRecoveryModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRecoveryModelTests.swift; sourceTree = "<group>"; };
 
-		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
-		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
 		B3A0001A /* AIChatProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModels.swift; sourceTree = "<group>"; };
 		EVT00011 /* EvidenceTabSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceTabSemantics.swift; sourceTree = "<group>"; };
 		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
@@ -585,14 +595,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
-		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
-		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
 		CERC00011 /* CoreErrorCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreErrorCode.swift; sourceTree = "<group>"; };
 		ESBT00011 /* ErrorSemanticsBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorSemanticsBridgeTests.swift; sourceTree = "<group>"; };
-		SPL00016 /* WSClient+Receive+DomainRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainRouting.swift"; sourceTree = "<group>"; };
-		SPL00017 /* WSClient+Receive+DomainCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainCore.swift"; sourceTree = "<group>"; };
-		SPL00018 /* WSClient+Receive+DomainWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainWorkspace.swift"; sourceTree = "<group>"; };
-		SPL00019 /* WSClient+Receive+DomainAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainAI.swift"; sourceTree = "<group>"; };
 		SPL00021 /* FloatingPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanelController.swift; sourceTree = "<group>"; };
 		SPL00022 /* GitPanelSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSections.swift; sourceTree = "<group>"; };
 		SPL00045 /* GitConflictWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitConflictWizardView.swift; sourceTree = "<group>"; };
@@ -662,6 +666,15 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				SHRMGP01 /* MessagePacker in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TSTFWK01 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TSTMGP01 /* MessagePacker in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -694,6 +707,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01018 /* SharedTerminalShellDriver.swift */,
 				GWSD0101 /* GitWorkspaceStateDriver.swift */,
 				MHA00101 /* MessageHandlerAdapter.swift */,
+				SHR01023 /* ClientSettingsModels.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -717,9 +731,19 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 		SHR0000A /* Networking */ = {
 			isa = PBXGroup;
 			children = (
+				SHR01020 /* AnyCodable.swift */,
 				SHR01008 /* CoreTransport.swift */,
 				SHR01009 /* CoreWSClient.swift */,
+				SHR01021 /* CoreWSLog.swift */,
+				SHR01022 /* CoreWSURLBuilder.swift */,
 				SHR01011 /* HTTPQueryCache.swift */,
+				SHR01019 /* WSClient.swift */,
+				SHR0101A /* WSClient+Send.swift */,
+				SHR0101B /* WSClient+Receive.swift */,
+				SHR0101C /* WSClient+Receive+DomainRouting.swift */,
+				SHR0101D /* WSClient+Receive+DomainCore.swift */,
+				SHR0101E /* WSClient+Receive+DomainWorkspace.swift */,
+				SHR0101F /* WSClient+Receive+DomainAI.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -985,7 +1009,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 		B3A00020 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
-				B3A00017 /* AnyCodable.swift */,
 				B3A0001A /* AIChatProtocolModels.swift */,
 				EVT00011 /* EvidenceTabSemantics.swift */,
 				SPL00013 /* FileProtocolModels.swift */,
@@ -993,13 +1016,6 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				SPL00011 /* ProjectProtocolModels.swift */,
 				B3A00016 /* ProtocolModels.swift */,
 				TPR00002 /* TypedProtocol.swift */,
-				B3A00015 /* WSClient.swift */,
-				SPL00015 /* WSClient+Receive.swift */,
-				SPL00016 /* WSClient+Receive+DomainRouting.swift */,
-				SPL00017 /* WSClient+Receive+DomainCore.swift */,
-				SPL00018 /* WSClient+Receive+DomainWorkspace.swift */,
-				SPL00019 /* WSClient+Receive+DomainAI.swift */,
-				SPL00014 /* WSClient+Send.swift */,
 				CERC00011 /* CoreErrorCode.swift */,
 				1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */,
 			);
@@ -1157,6 +1173,7 @@ TSST011 /* TerminalSessionStore.swift */,
 			buildConfigurationList = TST100C0 /* Build configuration list for PBXNativeTarget "TidyFlowTests" */;
 			buildPhases = (
 				TST100B0 /* Sources */,
+				TSTFWK01 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -1164,6 +1181,9 @@ TSST011 /* TerminalSessionStore.swift */,
 				TST100D0 /* PBXTargetDependency */,
 			);
 			name = TidyFlowTests;
+			packageProductDependencies = (
+				TSTMGP02 /* MessagePacker */,
+			);
 			productName = TidyFlowTests;
 			productReference = TST10020 /* TidyFlowTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1197,6 +1217,9 @@ TSST011 /* TerminalSessionStore.swift */,
 			dependencies = (
 			);
 			name = TidyFlowShared;
+			packageProductDependencies = (
+				SHRMGP02 /* MessagePacker */,
+			);
 			productName = TidyFlowShared;
 			productReference = SHR00005 /* TidyFlowShared.framework */;
 			productType = "com.apple.product-type.framework";
@@ -1449,13 +1472,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				EVPS0001 /* EvolutionPipelineSheetViews.swift in Sources */,
 				QAV00001 /* QuickActionsView.swift in Sources */,
 				SHP00001 /* SystemHealthPopoverView.swift in Sources */,
-				B3A00005 /* WSClient.swift in Sources */,
-				SPL00004 /* WSClient+Send.swift in Sources */,
-				SPL00005 /* WSClient+Receive.swift in Sources */,
-				SPL0000B /* WSClient+Receive+DomainRouting.swift in Sources */,
-				SPL0000C /* WSClient+Receive+DomainCore.swift in Sources */,
-				SPL0000D /* WSClient+Receive+DomainWorkspace.swift in Sources */,
-				SPL0000E /* WSClient+Receive+DomainAI.swift in Sources */,
 				TPR00001 /* TypedProtocol.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				B3A0000A /* AIChatProtocolModels.swift in Sources */,
@@ -1464,7 +1480,6 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				SPL00001 /* ProjectProtocolModels.swift in Sources */,
 				SPL00002 /* GitProtocolModels.swift in Sources */,
 				SPL00003 /* FileProtocolModels.swift in Sources */,
-				B3A00007 /* AnyCodable.swift in Sources */,
 				D3900001 /* AppConfig.swift in Sources */,
 				D3900002 /* CoreProcessManager.swift in Sources */,
 				D3900003 /* PortAllocator.swift in Sources */,
@@ -1595,6 +1610,17 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02018 /* SharedTerminalShellDriver.swift in Sources */,
 				GWSD0201 /* GitWorkspaceStateDriver.swift in Sources */,
 				MHA00201 /* MessageHandlerAdapter.swift in Sources */,
+				SHR02019 /* WSClient.swift in Sources */,
+				SHR0201A /* WSClient+Send.swift in Sources */,
+				SHR0201B /* WSClient+Receive.swift in Sources */,
+				SHR0201C /* WSClient+Receive+DomainRouting.swift in Sources */,
+				SHR0201D /* WSClient+Receive+DomainCore.swift in Sources */,
+				SHR0201E /* WSClient+Receive+DomainWorkspace.swift in Sources */,
+				SHR0201F /* WSClient+Receive+DomainAI.swift in Sources */,
+				SHR02020 /* AnyCodable.swift in Sources */,
+				SHR02021 /* CoreWSLog.swift in Sources */,
+				SHR02022 /* CoreWSURLBuilder.swift in Sources */,
+				SHR02023 /* ClientSettingsModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2300,6 +2326,16 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 
 /* Begin XCSwiftPackageProductDependency section */
 		MSGPK002 /* MessagePacker */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
+			productName = MessagePacker;
+		};
+		SHRMGP02 /* MessagePacker */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
+			productName = MessagePacker;
+		};
+		TSTMGP02 /* MessagePacker */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
 			productName = MessagePacker;

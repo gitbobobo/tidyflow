@@ -1,6 +1,6 @@
 import XCTest
 @testable import TidyFlow
-import TidyFlowShared
+@testable import TidyFlowShared
 
 final class SharedNetworkAbstractionTests: XCTestCase {
     func testServerEnvelopeMetaInit() {
@@ -90,8 +90,11 @@ final class MessageHandlerAdapterPatternTests: XCTestCase {
         let _: KeyPath<any CoreWSClientProtocol, (any GitMessageHandler)?> = \.gitMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any ProjectMessageHandler)?> = \.projectMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any FileMessageHandler)?> = \.fileMessageHandler
+        let _: KeyPath<any CoreWSClientProtocol, (any SettingsMessageHandler)?> = \.settingsMessageHandler
+        let _: KeyPath<any CoreWSClientProtocol, (any NodeMessageHandler)?> = \.nodeMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any TerminalMessageHandler)?> = \.terminalMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any AIMessageHandler)?> = \.aiMessageHandler
+        let _: KeyPath<any CoreWSClientProtocol, (any EvidenceMessageHandler)?> = \.evidenceMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any EvolutionMessageHandler)?> = \.evolutionMessageHandler
         let _: KeyPath<any CoreWSClientProtocol, (any ErrorMessageHandler)?> = \.errorMessageHandler
     }

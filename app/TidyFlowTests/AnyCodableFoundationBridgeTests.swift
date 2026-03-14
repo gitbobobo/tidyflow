@@ -1,5 +1,6 @@
 import XCTest
 @testable import TidyFlow
+@testable import TidyFlowShared
 
 final class AnyCodableFoundationBridgeTests: XCTestCase {
     func testNSNumberZeroStaysInteger() {

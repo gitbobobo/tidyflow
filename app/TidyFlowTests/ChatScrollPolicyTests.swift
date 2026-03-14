@@ -1,5 +1,6 @@
 import XCTest
 @testable import TidyFlow
+@testable import TidyFlowShared
 
 // MARK: - ChatScrollPolicy 单元测试
 // 覆盖计划定义的四类场景：状态机、自动跟随、手动恢复、流式增量

@@ -235,6 +235,34 @@ public extension ErrorMessageHandler {
     }
 }
 
+/// Settings 领域消息处理协议
+public protocol SettingsMessageHandler: AnyObject {
+    func handleClientSettingsResult(_ settings: ClientSettings)
+    func handleClientSettingsSaved(_ ok: Bool, _ message: String?)
+}
+
+public extension SettingsMessageHandler {
+    func handleClientSettingsResult(_ settings: ClientSettings) {}
+    func handleClientSettingsSaved(_ ok: Bool, _ message: String?) {}
+}
+
+/// Node 领域消息处理协议
+public protocol NodeMessageHandler: AnyObject {
+    func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2)
+    func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2])
+    func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2)
+    func handleNodePairingResult(_ result: NodePairingResultV2)
+    func handleNodePeerStatus(peerNodeID: String, status: String, lastSeenAtUnix: UInt64?)
+}
+
+public extension NodeMessageHandler {
+    func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2) {}
+    func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {}
+    func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2) {}
+    func handleNodePairingResult(_ result: NodePairingResultV2) {}
+    func handleNodePeerStatus(peerNodeID: String, status: String, lastSeenAtUnix: UInt64?) {}
+}
+
 // MARK: - 类型安全的请求构建器
 
 /// Git 领域请求

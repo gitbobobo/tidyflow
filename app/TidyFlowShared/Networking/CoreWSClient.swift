@@ -20,8 +20,11 @@ public protocol CoreWSClientProtocol: CoreMessageDispatcher {
     var gitMessageHandler: (any GitMessageHandler)? { get set }
     var projectMessageHandler: (any ProjectMessageHandler)? { get set }
     var fileMessageHandler: (any FileMessageHandler)? { get set }
+    var settingsMessageHandler: (any SettingsMessageHandler)? { get set }
+    var nodeMessageHandler: (any NodeMessageHandler)? { get set }
     var terminalMessageHandler: (any TerminalMessageHandler)? { get set }
     var aiMessageHandler: (any AIMessageHandler)? { get set }
+    var evidenceMessageHandler: (any EvidenceMessageHandler)? { get set }
     var evolutionMessageHandler: (any EvolutionMessageHandler)? { get set }
     var errorMessageHandler: (any ErrorMessageHandler)? { get set }
 }
