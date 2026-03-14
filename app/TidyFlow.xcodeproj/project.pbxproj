@@ -50,6 +50,7 @@
 		ESHLT002 /* EditorSyntaxHighlighterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHLT001 /* EditorSyntaxHighlighterTests.swift */; };
 		EDTST002 /* EditorDocumentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST001 /* EditorDocumentSessionTests.swift */; };
 		EURDT002 /* EditorUndoRedoSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EURDT001 /* EditorUndoRedoSemanticsTests.swift */; };
+		EMSST002 /* EditorMultiSelectionSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMSST001 /* EditorMultiSelectionSemanticsTests.swift */; };
 		EDTST004 /* EditorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST003 /* EditorStoreTests.swift */; };
 		ESTST002 /* EditorStructureSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESTST001 /* EditorStructureSemanticsTests.swift */; };
 		EPMHT002 /* EditorPairMatchSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EPMHT001 /* EditorPairMatchSemanticsTests.swift */; };
@@ -519,6 +520,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST10043 /* AIChatPendingInteractionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPendingInteractionProjectionTests.swift; sourceTree = "<group>"; };
 		EDTST001 /* EditorDocumentSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentSessionTests.swift; sourceTree = "<group>"; };
 		EURDT001 /* EditorUndoRedoSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUndoRedoSemanticsTests.swift; sourceTree = "<group>"; };
+		EMSST001 /* EditorMultiSelectionSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorMultiSelectionSemanticsTests.swift; sourceTree = "<group>"; };
 		EDTST003 /* EditorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStoreTests.swift; sourceTree = "<group>"; };
 		ESTST001 /* EditorStructureSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStructureSemanticsTests.swift; sourceTree = "<group>"; };
 		EPMHT001 /* EditorPairMatchSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPairMatchSemanticsTests.swift; sourceTree = "<group>"; };
@@ -980,6 +982,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST10043 /* AIChatPendingInteractionProjectionTests.swift */,
 					EDTST001 /* EditorDocumentSessionTests.swift */,
 				EURDT001 /* EditorUndoRedoSemanticsTests.swift */,
+				EMSST001 /* EditorMultiSelectionSemanticsTests.swift */,
 					EDTST003 /* EditorStoreTests.swift */,
 					ESTST001 /* EditorStructureSemanticsTests.swift */,
 					EPMHT001 /* EditorPairMatchSemanticsTests.swift */,
@@ -1596,6 +1599,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				TST10041 /* AIChatPendingInteractionProjectionTests.swift in Sources */,
 				EDTST002 /* EditorDocumentSessionTests.swift in Sources */,
 				EURDT002 /* EditorUndoRedoSemanticsTests.swift in Sources */,
+				EMSST002 /* EditorMultiSelectionSemanticsTests.swift in Sources */,
 				EDTST004 /* EditorStoreTests.swift in Sources */,
 				ESTST002 /* EditorStructureSemanticsTests.swift in Sources */,
 				EPMHT002 /* EditorPairMatchSemanticsTests.swift in Sources */,
