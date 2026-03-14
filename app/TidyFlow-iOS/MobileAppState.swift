@@ -4849,6 +4849,9 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的查找替换状态
     @Published var editorFindReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
 
+    /// 按文档记录的代码折叠状态（运行时展示层状态，不持久化）
+    @Published var editorFoldingStateByDocument: [EditorDocumentKey: EditorCodeFoldingState] = [:]
+
     /// 正在进行的编辑器文件读取请求
     var pendingEditorFileReadRequests: Set<EditorRequestKey> = []
     /// 正在进行的编辑器文件保存请求
@@ -4952,10 +4955,38 @@ final class MobileAppState: ObservableObject {
         editorFindReplaceStateByDocument[documentKey] = state
     }
 
+    // MARK: - 折叠状态方法
+
+    /// 获取指定文档的折叠状态（没有则返回默认状态）
+    func foldingState(for documentKey: EditorDocumentKey) -> EditorCodeFoldingState {
+        editorFoldingStateByDocument[documentKey] ?? EditorCodeFoldingState()
+    }
+
+    /// 更新指定文档的折叠状态
+    func updateFoldingState(_ state: EditorCodeFoldingState, for documentKey: EditorDocumentKey) {
+        editorFoldingStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定文档的折叠状态
+    func releaseFoldingState(for documentKey: EditorDocumentKey) {
+        editorFoldingStateByDocument.removeValue(forKey: documentKey)
+    }
+
+    /// 释放指定工作区下所有文档的折叠状态
+    func releaseAllFoldingStates(workspaceKey: String) {
+        let keysToRemove = editorFoldingStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            editorFoldingStateByDocument.removeValue(forKey: key)
+        }
+    }
+
     /// 释放指定文档的会话状态（关闭文档时调用）
     func releaseEditorDocumentSession(globalWorkspaceKey: String, path: String) {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: globalWorkspaceKey, path: path) {
             editorFindReplaceStateByDocument.removeValue(forKey: docKey)
+            editorFoldingStateByDocument.removeValue(forKey: docKey)
         }
         editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }

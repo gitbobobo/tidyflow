@@ -977,6 +977,7 @@ enum EditorSyntaxColorMapMacOS {
 
 /// NSViewRepresentable 包装的 NSTextView / NSScrollView 方案。
 /// 从原生 undoManager 驱动 canUndo/canRedo；支持程序化选区、行跳转和查找替换桥接。
+/// 集成共享折叠投影层，提供代码折叠控制、隐藏行管理和缩进导线渲染。
 struct NativeCodeEditorView: NSViewRepresentable {
     @Binding var text: String
     @Binding var highlightedLine: Int?
@@ -1006,6 +1007,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
         textView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.06)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // 左侧留出 gutter 空间用于折叠控制
         textView.textContainerInset = NSSize(width: 4, height: 4)
         textView.autoresizingMask = [.width]
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
@@ -1018,8 +1020,30 @@ struct NativeCodeEditorView: NSViewRepresentable {
             editorStore?.updateUndoRedoState(canUndo: canUndo, canRedo: canRedo, documentKey: docKey)
         }
 
+        // 配置折叠 overlay
+        let foldOverlay = EditorFoldOverlayView()
+        foldOverlay.translatesAutoresizingMaskIntoConstraints = false
+        foldOverlay.onToggleFold = { [weak editorStore] regionID in
+            guard let docKey = context.coordinator.parent.documentKey else { return }
+            var state = editorStore?.foldingState(for: docKey) ?? EditorCodeFoldingState()
+            state.toggle(regionID)
+            editorStore?.updateFoldingState(state, for: docKey)
+            // 重新应用折叠投影
+            context.coordinator.applyFoldingProjection(to: textView)
+        }
+        context.coordinator.foldOverlay = foldOverlay
+
         scrollView.documentView = textView
         context.coordinator.textView = textView
+
+        // 把 fold overlay 添加到 scrollView 的 contentView 上（跟随滚动）
+        scrollView.contentView.addSubview(foldOverlay)
+        NSLayoutConstraint.activate([
+            foldOverlay.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            foldOverlay.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            foldOverlay.widthAnchor.constraint(equalToConstant: 20),
+            foldOverlay.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor),
+        ])
 
         // 设置初始文本
         textView.string = text
@@ -1030,6 +1054,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
             textView.startObservingUndoManager()
             textView.reportUndoRedoState()
             context.coordinator.applySyntaxHighlighting(to: textView)
+            context.coordinator.applyFoldingProjection(to: textView)
         }
 
         return scrollView
@@ -1045,15 +1070,28 @@ struct NativeCodeEditorView: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selectedRanges
             textView.reportUndoRedoState()
-            // 文本变化时重新应用高亮
+            // 文本变化时重新应用高亮和折叠
             context.coordinator.applySyntaxHighlighting(to: textView)
+            context.coordinator.applyFoldingProjection(to: textView)
         } else {
             // 文本未变，但检查主题是否变化（深浅色切换）
             context.coordinator.applyHighlightingIfThemeChanged(to: textView)
+            // 检查折叠状态是否被外部更新（如状态容器中的 toggle）
+            context.coordinator.applyFoldingProjectionIfNeeded(to: textView)
         }
 
         // 处理行跳转
         if let line = highlightedLine, line > 0 {
+            // 跳转前自动展开包含目标行的折叠区域
+            if let docKey = documentKey {
+                var foldState = editorStore.foldingState(for: docKey)
+                if let snapshot = context.coordinator.lastStructureSnapshot {
+                    let targetLine0 = line - 1
+                    foldState.expandRegions(containingLine: targetLine0, in: snapshot)
+                    editorStore.updateFoldingState(foldState, for: docKey)
+                    context.coordinator.applyFoldingProjection(to: textView)
+                }
+            }
             let targetIndex = indexForLine(line, in: textView.string)
             let nsRange = NSRange(location: targetIndex, length: 0)
             textView.setSelectedRange(nsRange)
@@ -1076,13 +1114,20 @@ struct NativeCodeEditorView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeCodeEditorView
         weak var textView: UndoTrackingTextView?
+        weak var foldOverlay: EditorFoldOverlayView?
         private let highlighter = EditorSyntaxHighlighter()
+        private let structureAnalyzer = EditorStructureAnalyzer()
         /// 上次应用的高亮快照指纹，用于跳过重复应用
         private var lastAppliedFingerprint: Int?
         /// 上次应用的主题
         private var lastAppliedTheme: EditorSyntaxTheme?
         /// 标记当前是否正在程序性地更新属性（防止触发 textDidChange）
         private var isApplyingHighlight = false
+        /// 最近一次结构分析快照（供行跳转时展开折叠区域用）
+        var lastStructureSnapshot: EditorStructureSnapshot?
+        /// 上次应用的折叠投影指纹（用于跳过重复应用）
+        private var lastAppliedFoldingFingerprint: Int?
+        private var lastAppliedCollapsedCount: Int?
 
         init(parent: NativeCodeEditorView) {
             self.parent = parent
@@ -1093,8 +1138,27 @@ struct NativeCodeEditorView: NSViewRepresentable {
             guard !isApplyingHighlight else { return }
             parent.text = textView.string
             textView.reportUndoRedoState()
-            // 用户输入后异步重算高亮
+
+            // 编辑时自动展开包含光标位置的已折叠区域
+            if let docKey = parent.documentKey, let snapshot = lastStructureSnapshot {
+                let cursorLine = lineNumber(for: textView.selectedRange().location, in: textView.string)
+                var foldState = parent.editorStore.foldingState(for: docKey)
+                let beforeCount = foldState.collapsedRegionIDs.count
+                foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                if foldState.collapsedRegionIDs.count != beforeCount {
+                    parent.editorStore.updateFoldingState(foldState, for: docKey)
+                }
+            }
+
+            // 用户输入后异步重算高亮和折叠
             applySyntaxHighlighting(to: textView)
+            applyFoldingProjection(to: textView)
+        }
+
+        /// 计算字符偏移对应的行号（0-based）
+        private func lineNumber(for charOffset: Int, in text: String) -> Int {
+            let prefix = text.prefix(charOffset)
+            return prefix.filter { $0 == "\n" }.count
         }
 
         /// 检测当前系统主题
@@ -1179,6 +1243,112 @@ struct NativeCodeEditorView: NSViewRepresentable {
             lastAppliedFingerprint = snapshot.contentFingerprint
             lastAppliedTheme = theme
         }
+
+        // MARK: - 折叠投影
+
+        /// 计算并应用折叠投影到 overlay
+        func applyFoldingProjection(to textView: UndoTrackingTextView) {
+            guard let filePath = parent.filePath else { return }
+            let text = textView.string
+
+            // 计算结构快照
+            let snapshot = structureAnalyzer.analyze(filePath: filePath, text: text)
+            lastStructureSnapshot = snapshot
+
+            // 获取当前折叠状态并 reconcile
+            guard let docKey = parent.documentKey else { return }
+            var foldState = parent.editorStore.foldingState(for: docKey)
+            foldState.reconcile(snapshot: snapshot)
+            parent.editorStore.updateFoldingState(foldState, for: docKey)
+
+            // 生成投影
+            let projection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+
+            // 更新缓存指纹
+            lastAppliedFoldingFingerprint = snapshot.contentFingerprint
+            lastAppliedCollapsedCount = foldState.collapsedRegionIDs.count
+
+            // 更新 overlay
+            updateFoldOverlay(projection: projection, textView: textView)
+        }
+
+        /// 仅在折叠状态发生变化时重新应用（外部 toggle 驱动）
+        func applyFoldingProjectionIfNeeded(to textView: UndoTrackingTextView) {
+            guard let docKey = parent.documentKey else { return }
+            let foldState = parent.editorStore.foldingState(for: docKey)
+            let currentFingerprint = EditorSyntaxFingerprint.compute(textView.string)
+
+            if lastAppliedFoldingFingerprint == currentFingerprint,
+               lastAppliedCollapsedCount == foldState.collapsedRegionIDs.count {
+                return
+            }
+            applyFoldingProjection(to: textView)
+        }
+
+        /// 更新折叠 overlay 显示
+        private func updateFoldOverlay(projection: EditorCodeFoldingProjection, textView: UndoTrackingTextView) {
+            guard let overlay = foldOverlay else { return }
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+
+            let text = textView.string
+            let lines = text.components(separatedBy: "\n")
+
+            // 构建折叠控制点的 rect 信息
+            var controlRects: [(control: EditorFoldControl, rect: NSRect)] = []
+            for control in projection.foldControls {
+                let lineIndex = control.region.startLine
+                guard lineIndex < lines.count else { continue }
+
+                // 获取该行首字符的位置
+                let charIndex = charOffset(forLine: lineIndex, in: text)
+                let glyphIndex = layoutManager.glyphIndexForCharacter(at: charIndex)
+                var lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+                lineRect.origin.x = 0
+                lineRect.origin.y += textView.textContainerInset.height
+                lineRect.size.width = 20
+
+                controlRects.append((control, lineRect))
+            }
+
+            // 构建缩进导线的 rect 信息
+            var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
+            let charWidth: CGFloat = 7.8 // 等宽字体近似宽度
+            for guide in projection.visibleIndentGuides {
+                guard guide.startLine < lines.count, guide.endLine < lines.count else { continue }
+
+                let startCharIndex = charOffset(forLine: guide.startLine, in: text)
+                let endCharIndex = charOffset(forLine: guide.endLine, in: text)
+
+                let startGlyph = layoutManager.glyphIndexForCharacter(at: startCharIndex)
+                let endGlyph = layoutManager.glyphIndexForCharacter(at: endCharIndex)
+
+                let startRect = layoutManager.lineFragmentRect(forGlyphAt: startGlyph, effectiveRange: nil)
+                let endRect = layoutManager.lineFragmentRect(forGlyphAt: endGlyph, effectiveRange: nil)
+
+                let x = CGFloat(guide.column) * charWidth + textView.textContainerInset.width + textView.textContainerOrigin.x
+                let startY = startRect.origin.y + textView.textContainerInset.height
+                let endY = endRect.maxY + textView.textContainerInset.height
+
+                guideLines.append((guide, startY, endY, x))
+            }
+
+            overlay.updateContent(
+                controls: controlRects,
+                guides: guideLines,
+                isDarkMode: currentTheme() == .systemDark
+            )
+        }
+
+        /// 计算指定行的字符偏移
+        private func charOffset(forLine line: Int, in text: String) -> Int {
+            var currentLine = 0
+            for (i, ch) in text.enumerated() {
+                if currentLine == line { return i }
+                if ch == "\n" { currentLine += 1 }
+            }
+            return text.count
+        }
     }
 }
 
@@ -1219,6 +1389,125 @@ class UndoTrackingTextView: NSTextView {
 
     deinit {
         stopObservingUndoManager()
+    }
+}
+
+// MARK: - 折叠 Overlay 视图（macOS）
+
+/// 编辑器折叠控制与缩进导线覆盖层。
+/// 作为 NSScrollView 的 contentView 子视图，跟随滚动。
+/// 负责绘制折叠按钮和缩进引导线。
+class EditorFoldOverlayView: NSView {
+    /// 折叠/展开按钮点击回调
+    var onToggleFold: ((EditorFoldRegionID) -> Void)?
+
+    private var controlRects: [(control: EditorFoldControl, rect: NSRect)] = []
+    private var guideLines: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)] = []
+    private var isDarkMode: Bool = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    func updateContent(
+        controls: [(control: EditorFoldControl, rect: NSRect)],
+        guides: [(guide: EditorIndentGuideSegment, startY: CGFloat, endY: CGFloat, x: CGFloat)],
+        isDarkMode: Bool
+    ) {
+        self.controlRects = controls
+        self.guideLines = guides
+        self.isDarkMode = isDarkMode
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        // 绘制缩进导线
+        let guideColor = isDarkMode
+            ? NSColor(white: 1.0, alpha: 0.08)
+            : NSColor(white: 0.0, alpha: 0.08)
+        context.setStrokeColor(guideColor.cgColor)
+        context.setLineWidth(1.0)
+
+        for guideLine in guideLines {
+            // 只绘制与 dirtyRect 相交的导线
+            guard guideLine.endY >= dirtyRect.minY, guideLine.startY <= dirtyRect.maxY else { continue }
+            context.move(to: CGPoint(x: guideLine.x, y: guideLine.startY))
+            context.addLine(to: CGPoint(x: guideLine.x, y: guideLine.endY))
+            context.strokePath()
+        }
+
+        // 绘制折叠按钮
+        let buttonColor = isDarkMode
+            ? NSColor(white: 1.0, alpha: 0.35)
+            : NSColor(white: 0.0, alpha: 0.35)
+
+        for (control, rect) in controlRects {
+            guard rect.intersects(dirtyRect) else { continue }
+
+            let buttonSize: CGFloat = 12
+            let buttonRect = NSRect(
+                x: rect.midX - buttonSize / 2,
+                y: rect.midY - buttonSize / 2,
+                width: buttonSize,
+                height: buttonSize
+            )
+
+            // 绘制折叠指示三角
+            let trianglePath = NSBezierPath()
+            if control.isCollapsed {
+                // 折叠状态：右指三角 ▶
+                trianglePath.move(to: NSPoint(x: buttonRect.minX + 2, y: buttonRect.minY + 1))
+                trianglePath.line(to: NSPoint(x: buttonRect.maxX - 2, y: buttonRect.midY))
+                trianglePath.line(to: NSPoint(x: buttonRect.minX + 2, y: buttonRect.maxY - 1))
+            } else {
+                // 展开状态：下指三角 ▼
+                trianglePath.move(to: NSPoint(x: buttonRect.minX + 1, y: buttonRect.minY + 2))
+                trianglePath.line(to: NSPoint(x: buttonRect.maxX - 1, y: buttonRect.minY + 2))
+                trianglePath.line(to: NSPoint(x: buttonRect.midX, y: buttonRect.maxY - 2))
+            }
+            trianglePath.close()
+
+            buttonColor.setFill()
+            trianglePath.fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+
+        for (control, rect) in controlRects {
+            let hitRect = rect.insetBy(dx: -4, dy: -2)
+            if hitRect.contains(location) {
+                onToggleFold?(control.region.id)
+                return
+            }
+        }
+
+        super.mouseDown(with: event)
+    }
+
+    override var isFlipped: Bool { true }
+
+    // 使 overlay 对鼠标事件透明（除了折叠按钮区域）
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        for (_, rect) in controlRects {
+            let hitRect = rect.insetBy(dx: -4, dy: -2)
+            if hitRect.contains(local) {
+                return self
+            }
+        }
+        return nil
     }
 }
 #endif

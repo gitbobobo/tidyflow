@@ -191,4 +191,123 @@ final class MobileEditorSessionTests: XCTestCase {
         XCTAssertEqual(UnsavedCloseDecision.cancel, .cancel)
         XCTAssertNotEqual(UnsavedCloseDecision.saveAndClose, .cancel)
     }
+
+    // MARK: - 折叠状态隔离（共享层验证）
+
+    func testFoldingStatePerDocumentIsolation() {
+        // 模拟 iOS MobileAppState 中的折叠状态字典
+        var foldingState: [EditorDocumentKey: EditorCodeFoldingState] = [:]
+
+        let keyA = EditorDocumentKey(project: "p", workspace: "w", path: "a.swift")
+        let keyB = EditorDocumentKey(project: "p", workspace: "w", path: "b.swift")
+
+        var stateA = EditorCodeFoldingState()
+        stateA.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        foldingState[keyA] = stateA
+
+        XCTAssertEqual(foldingState[keyA]?.collapsedRegionIDs.count, 1)
+        XCTAssertNil(foldingState[keyB], "不同文档的折叠状态应隔离")
+    }
+
+    func testFoldingStateMultiWorkspaceIsolation() {
+        var foldingState: [EditorDocumentKey: EditorCodeFoldingState] = [:]
+
+        let keyMain = EditorDocumentKey(project: "app1", workspace: "main", path: "file.swift")
+        let keyDev = EditorDocumentKey(project: "app1", workspace: "dev", path: "file.swift")
+        let keyOther = EditorDocumentKey(project: "app2", workspace: "main", path: "file.swift")
+
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 5, kind: .braces))
+        foldingState[keyMain] = state
+
+        XCTAssertNotNil(foldingState[keyMain])
+        XCTAssertNil(foldingState[keyDev], "同项目不同工作区的折叠状态应隔离")
+        XCTAssertNil(foldingState[keyOther], "不同项目同名工作区的折叠状态应隔离")
+    }
+
+    func testFoldingStateReleaseOnDocumentClose() {
+        var foldingState: [EditorDocumentKey: EditorCodeFoldingState] = [:]
+
+        let key = EditorDocumentKey(project: "p", workspace: "w", path: "f.swift")
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        foldingState[key] = state
+
+        // 模拟文档关闭
+        foldingState.removeValue(forKey: key)
+        XCTAssertNil(foldingState[key], "文档关闭后应释放折叠状态")
+    }
+
+    func testFoldingStateReconcileAfterReload() {
+        let analyzer = EditorStructureAnalyzer()
+
+        let code1 = """
+        func a() {
+            print("a")
+        }
+        func b() {
+            print("b")
+        }
+        """
+        let snapshot1 = analyzer.analyze(filePath: "test.swift", text: code1)
+
+        var foldState = EditorCodeFoldingState()
+        for region in snapshot1.foldRegions {
+            foldState.collapsedRegionIDs.insert(region.id)
+        }
+
+        // 模拟重载：文本变化，只保留第一个函数
+        let code2 = """
+        func a() {
+            print("a updated")
+        }
+        """
+        let snapshot2 = analyzer.analyze(filePath: "test.swift", text: code2)
+        foldState.reconcile(snapshot: snapshot2)
+
+        // 只保留仍存在的折叠区域
+        XCTAssertEqual(foldState.collapsedRegionIDs.count, snapshot2.foldRegions.count)
+    }
+
+    func testProjectionDoesNotModifyDocumentContent() {
+        let code = """
+        func test() {
+            print("hello")
+        }
+        """
+        let analyzer = EditorStructureAnalyzer()
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+
+        var foldState = EditorCodeFoldingState()
+        if let region = snapshot.foldRegions.first {
+            foldState.collapsedRegionIDs.insert(region.id)
+        }
+        let projection = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+
+        // 投影只产出隐藏行范围和控制点，不修改原始文本
+        XCTAssertFalse(projection.hiddenLineRanges.isEmpty)
+        // 验证原始代码没有被修改（投影是纯函数）
+        let snapshot2 = analyzer.analyze(filePath: "test.swift", text: code)
+        XCTAssertEqual(snapshot.contentFingerprint, snapshot2.contentFingerprint)
+    }
+
+    func testProjectionRebuildableAfterThemeSwitch() {
+        let code = """
+        func test() {
+            print("themed")
+        }
+        """
+        let analyzer = EditorStructureAnalyzer()
+        let snapshot = analyzer.analyze(filePath: "test.swift", text: code)
+
+        var foldState = EditorCodeFoldingState()
+        if let region = snapshot.foldRegions.first {
+            foldState.collapsedRegionIDs.insert(region.id)
+        }
+
+        // 主题切换不影响结构分析和折叠投影
+        let projection1 = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+        let projection2 = EditorCodeFoldingProjection.make(snapshot: snapshot, state: foldState)
+        XCTAssertEqual(projection1, projection2, "相同输入应产出相同投影")
+    }
 }

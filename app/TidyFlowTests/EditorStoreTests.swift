@@ -191,5 +191,101 @@ final class EditorStoreTests: XCTestCase {
         store.resetUntitledCounter()
         XCTAssertEqual(store.generateUntitledFileName(), "Untitled-1")
     }
+
+    // MARK: - 折叠状态
+
+    func testFoldingStateDefaultsForUnknownDocument() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.txt")
+        let state = store.foldingState(for: docKey)
+        XCTAssertEqual(state, EditorCodeFoldingState())
+        XCTAssertTrue(state.collapsedRegionIDs.isEmpty)
+    }
+
+    func testUpdateFoldingStatePersists() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        store.updateFoldingState(state, for: docKey)
+
+        let retrieved = store.foldingState(for: docKey)
+        XCTAssertEqual(retrieved.collapsedRegionIDs.count, 1)
+    }
+
+    func testReleaseFoldingStateOnDocumentClose() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        store.updateFoldingState(state, for: docKey)
+
+        store.releaseDocumentSession(workspaceKey: "proj:main", path: "f.swift")
+
+        XCTAssertTrue(store.foldingState(for: docKey).collapsedRegionIDs.isEmpty)
+    }
+
+    func testReleaseAllDocumentSessionsClearsFoldingState() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+        let docC = EditorDocumentKey(project: "proj", workspace: "dev", path: "c.swift")
+
+        let regionID = EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces)
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(regionID)
+
+        store.updateFoldingState(state, for: docA)
+        store.updateFoldingState(state, for: docB)
+        store.updateFoldingState(state, for: docC)
+
+        store.releaseAllDocumentSessions(workspaceKey: "proj:main")
+
+        XCTAssertTrue(store.foldingState(for: docA).collapsedRegionIDs.isEmpty)
+        XCTAssertTrue(store.foldingState(for: docB).collapsedRegionIDs.isEmpty)
+        // 不同工作区不受影响
+        XCTAssertFalse(store.foldingState(for: docC).collapsedRegionIDs.isEmpty)
+    }
+
+    func testFoldingStatePerDocumentIsolation() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "proj", workspace: "main", path: "a.swift")
+        let docB = EditorDocumentKey(project: "proj", workspace: "main", path: "b.swift")
+
+        var stateA = EditorCodeFoldingState()
+        stateA.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 5, kind: .braces))
+        store.updateFoldingState(stateA, for: docA)
+
+        XCTAssertEqual(store.foldingState(for: docA).collapsedRegionIDs.count, 1)
+        XCTAssertEqual(store.foldingState(for: docB).collapsedRegionIDs.count, 0)
+    }
+
+    func testFoldingStateIsolatedBetweenWorkspaces() {
+        let store = makeStore()
+        let docMain = EditorDocumentKey(project: "proj", workspace: "main", path: "file.swift")
+        let docDev = EditorDocumentKey(project: "proj", workspace: "dev", path: "file.swift")
+
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        store.updateFoldingState(state, for: docMain)
+
+        XCTAssertFalse(store.foldingState(for: docMain).collapsedRegionIDs.isEmpty)
+        XCTAssertTrue(store.foldingState(for: docDev).collapsedRegionIDs.isEmpty,
+                       "同名路径在不同工作区的折叠状态应隔离")
+    }
+
+    func testFoldingStateIsolatedBetweenProjects() {
+        let store = makeStore()
+        let docProj1 = EditorDocumentKey(project: "proj1", workspace: "main", path: "file.swift")
+        let docProj2 = EditorDocumentKey(project: "proj2", workspace: "main", path: "file.swift")
+
+        var state = EditorCodeFoldingState()
+        state.collapsedRegionIDs.insert(EditorFoldRegionID(startLine: 0, endLine: 3, kind: .braces))
+        store.updateFoldingState(state, for: docProj1)
+
+        XCTAssertFalse(store.foldingState(for: docProj1).collapsedRegionIDs.isEmpty)
+        XCTAssertTrue(store.foldingState(for: docProj2).collapsedRegionIDs.isEmpty,
+                       "同名路径在不同项目的折叠状态应隔离")
+    }
 }
 #endif

@@ -43,9 +43,11 @@
 		EDSS0002 /* EditorDocumentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSS0001 /* EditorDocumentSession.swift */; };
 		EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFRS0001 /* EditorFindReplaceSemantics.swift */; };
 		ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHL0001 /* EditorSyntaxHighlighter.swift */; };
+		ESEM0002 /* EditorStructureSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESEM0001 /* EditorStructureSemantics.swift */; };
 		ESHLT002 /* EditorSyntaxHighlighterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESHLT001 /* EditorSyntaxHighlighterTests.swift */; };
 		EDTST002 /* EditorDocumentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST001 /* EditorDocumentSessionTests.swift */; };
 		EDTST004 /* EditorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST003 /* EditorStoreTests.swift */; };
+		ESTST002 /* EditorStructureSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ESTST001 /* EditorStructureSemanticsTests.swift */; };
 		EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST005 /* EditorFindReplaceSemanticsTests.swift */; };
 		EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST007 /* EditorUnsavedProtectionTests.swift */; };
 		MEST0002 /* MobileEditorSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEST0001 /* MobileEditorSessionTests.swift */; };
@@ -397,6 +399,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EDSS0001 /* EditorDocumentSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorDocumentSession.swift; sourceTree = "<group>"; };
 		EFRS0001 /* EditorFindReplaceSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemantics.swift; sourceTree = "<group>"; };
 		ESHL0001 /* EditorSyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyntaxHighlighter.swift; sourceTree = "<group>"; };
+		ESEM0001 /* EditorStructureSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStructureSemantics.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
@@ -515,6 +518,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		TST10043 /* AIChatPendingInteractionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPendingInteractionProjectionTests.swift; sourceTree = "<group>"; };
 		EDTST001 /* EditorDocumentSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentSessionTests.swift; sourceTree = "<group>"; };
 		EDTST003 /* EditorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStoreTests.swift; sourceTree = "<group>"; };
+		ESTST001 /* EditorStructureSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStructureSemanticsTests.swift; sourceTree = "<group>"; };
 		EDTST005 /* EditorFindReplaceSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemanticsTests.swift; sourceTree = "<group>"; };
 		EDTST007 /* EditorUnsavedProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUnsavedProtectionTests.swift; sourceTree = "<group>"; };
 		MEST0001 /* MobileEditorSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEditorSessionTests.swift; sourceTree = "<group>"; };
@@ -733,6 +737,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				EDSS0001 /* EditorDocumentSession.swift */,
 				EFRS0001 /* EditorFindReplaceSemantics.swift */,
 				ESHL0001 /* EditorSyntaxHighlighter.swift */,
+				ESEM0001 /* EditorStructureSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -972,6 +977,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					TST10043 /* AIChatPendingInteractionProjectionTests.swift */,
 					EDTST001 /* EditorDocumentSessionTests.swift */,
 					EDTST003 /* EditorStoreTests.swift */,
+					ESTST001 /* EditorStructureSemanticsTests.swift */,
 					EDTST005 /* EditorFindReplaceSemanticsTests.swift */,
 					EDTST007 /* EditorUnsavedProtectionTests.swift */,
 					MEST0001 /* MobileEditorSessionTests.swift */,
@@ -1592,6 +1598,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				TST10041 /* AIChatPendingInteractionProjectionTests.swift in Sources */,
 				EDTST002 /* EditorDocumentSessionTests.swift in Sources */,
 				EDTST004 /* EditorStoreTests.swift in Sources */,
+				ESTST002 /* EditorStructureSemanticsTests.swift in Sources */,
 				EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */,
 				EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */,
 				MEST0002 /* MobileEditorSessionTests.swift in Sources */,
@@ -1665,6 +1672,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				EDSS0002 /* EditorDocumentSession.swift in Sources */,
 				EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */,
 				ESHL0002 /* EditorSyntaxHighlighter.swift in Sources */,
+				ESEM0002 /* EditorStructureSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

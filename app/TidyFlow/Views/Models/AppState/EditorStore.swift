@@ -50,6 +50,12 @@ class EditorStore: ObservableObject {
     /// 切换标签时保留各自查找条件；面板可见性也按文档记录。
     @Published var findReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
 
+    // MARK: - 按文档记录的折叠状态
+
+    /// 每个文档独立的代码折叠状态，按文档键索引。
+    /// 折叠状态是运行时展示层状态，不持久化，不混入 Core 生命周期模型。
+    @Published var foldingStateByDocument: [EditorDocumentKey: EditorCodeFoldingState] = [:]
+
     // MARK: - 新建文件状态
 
     /// 新建文件计数器（用于生成 "Untitled-1", "Untitled-2" 等）
@@ -156,6 +162,7 @@ class EditorStore: ObservableObject {
     func releaseDocumentSession(workspaceKey: String, path: String) {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: workspaceKey, path: path) {
             findReplaceStateByDocument.removeValue(forKey: docKey)
+            foldingStateByDocument.removeValue(forKey: docKey)
         }
     }
 
@@ -166,6 +173,12 @@ class EditorStore: ObservableObject {
         }
         for key in keysToRemove {
             findReplaceStateByDocument.removeValue(forKey: key)
+        }
+        let foldKeysToRemove = foldingStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in foldKeysToRemove {
+            foldingStateByDocument.removeValue(forKey: key)
         }
     }
 
@@ -193,6 +206,33 @@ class EditorStore: ObservableObject {
         var state = findReplaceState(for: documentKey)
         state.isVisible = false
         findReplaceStateByDocument[documentKey] = state
+    }
+
+    // MARK: - 折叠状态方法
+
+    /// 获取指定文档的折叠状态（没有则返回默认状态）
+    func foldingState(for documentKey: EditorDocumentKey) -> EditorCodeFoldingState {
+        foldingStateByDocument[documentKey] ?? EditorCodeFoldingState()
+    }
+
+    /// 更新指定文档的折叠状态
+    func updateFoldingState(_ state: EditorCodeFoldingState, for documentKey: EditorDocumentKey) {
+        foldingStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定文档的折叠状态
+    func releaseFoldingState(for documentKey: EditorDocumentKey) {
+        foldingStateByDocument.removeValue(forKey: documentKey)
+    }
+
+    /// 释放指定工作区下所有文档的折叠状态
+    func releaseAllFoldingStates(workspaceKey: String) {
+        let keysToRemove = foldingStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            foldingStateByDocument.removeValue(forKey: key)
+        }
     }
 
     // MARK: - 工作区级未保存状态查询
