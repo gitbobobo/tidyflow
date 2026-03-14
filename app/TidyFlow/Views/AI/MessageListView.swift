@@ -323,12 +323,8 @@ struct AIChatTranscriptContainer: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var lastAppliedSourceMessageCount: Int = 0
     @State private var viewportState: AIChatTranscriptViewportState = AIChatTranscriptViewportState()
-    @State private var renderPlan = AIChatTranscriptRenderPlan(
-        displayMessages: [],
-        refreshStrategy: .fullRefresh,
-        fullRenderRange: nil,
-        pendingAnchorID: nil
-    )
+    /// 共享转录投影 store：管理 displayMessages、messageIndexMap 与渲染范围。
+    @State private var transcriptStore = AIChatTranscriptProjectionStore()
     @State private var jumpToBottomRequestID: Int = 0
     @State private var scrollExecutionGate: ChatScrollExecutionGate = ChatScrollExecutionGate()
     @State private var deferredUpdateState: AIChatTranscriptDeferredUpdateState = AIChatTranscriptDeferredUpdateState()
@@ -336,8 +332,6 @@ struct AIChatTranscriptContainer: View {
     /// 程序化滚动保护截止时间：在此时间点前，不允许因 onScrollGeometryChange 的异步反馈中断 autoFollow。
     /// 解决 proxy.scrollTo() 异步执行期间旧 metrics 误触发 autoFollow 断开的竞态问题。
     @State private var programmaticScrollProtectedUntil: Date = .distantPast
-    /// 上次完整重算时的消息数量，用于检测结构性变化。
-    @State private var cachedDisplayMessageSourceCount: Int = -1
     /// 会话级 Markdown 流式渲染协调器，生命周期与 AIChatTranscriptContainer 实例一致。
     @State private var renderCoordinator = AIChatStreamingRenderCoordinator()
 
@@ -372,10 +366,10 @@ struct AIChatTranscriptContainer: View {
         self.onOpenLinkedSession = onOpenLinkedSession
     }
 
-    /// 当前显示消息列表只来源于已应用缓存。
+    /// 当前显示消息列表只来源于转录投影 store。
     /// 滚动中的流式更新会先积压到 deferred state，直到滚动结束后再统一刷新缓存。
     private var displayMessages: [AIChatMessage] {
-        renderPlan.displayMessages
+        transcriptStore.projection.displayMessages
     }
 
     private func applyPlannerRender(forceFullRefresh: Bool = false) -> AIChatTranscriptRenderPlan {
@@ -383,25 +377,18 @@ struct AIChatTranscriptContainer: View {
             sourceMessages: messages,
             pendingQuestions: pendingQuestions,
             viewportState: viewportState,
-            cachedDisplayMessages: forceFullRefresh ? [] : renderPlan.displayMessages,
-            cachedSourceCount: forceFullRefresh ? -1 : cachedDisplayMessageSourceCount,
+            cachedDisplayMessages: forceFullRefresh ? [] : transcriptStore.projection.displayMessages,
+            cachedSourceCount: forceFullRefresh ? -1 : transcriptStore.cachedSourceCount,
             isScrollInFlight: deferredUpdateState.isScrollInFlight
         )
-        renderPlan = plan
-        cachedDisplayMessageSourceCount = messages.count
+        transcriptStore.apply(plan: plan, sourceCount: messages.count)
         lastAppliedSourceMessageCount = messages.count
         return plan
     }
 
     private func resetTranscriptRenderState() {
         viewportState.reset()
-        renderPlan = AIChatTranscriptRenderPlan(
-            displayMessages: [],
-            refreshStrategy: .fullRefresh,
-            fullRenderRange: nil,
-            pendingAnchorID: nil
-        )
-        cachedDisplayMessageSourceCount = -1
+        transcriptStore.reset()
     }
 
     private func updateStableRenderRange(for visibleIDs: Set<String>) {
@@ -413,12 +400,7 @@ struct AIChatTranscriptContainer: View {
             totalCount: msgs.count,
             window: virtualizationWindow
         )
-        renderPlan = AIChatTranscriptRenderPlan(
-            displayMessages: renderPlan.displayMessages,
-            refreshStrategy: renderPlan.refreshStrategy,
-            fullRenderRange: viewportState.stableFullRenderRange,
-            pendingAnchorID: viewportState.pendingPrependAnchorID
-        )
+        transcriptStore.updateFullRenderRange(viewportState.stableFullRenderRange)
     }
 
     var body: some View {
@@ -429,7 +411,8 @@ struct AIChatTranscriptContainer: View {
                     messages: displayMessages,
                     pendingQuestions: pendingQuestions,
                     virtualizationWindow: virtualizationWindow,
-                    fullRenderRange: renderPlan.fullRenderRange,
+                    fullRenderRange: transcriptStore.projection.fullRenderRange,
+                    messageIndexMap: transcriptStore.projection.messageIndexMap,
                     sessionId: aiChatStore.currentSessionId ?? "",
                     loadingOlderState: loadingOlderState,
                     bottomOverlayInset: bottomOverlayInset,
@@ -834,6 +817,8 @@ struct AIChatTranscriptContent: View {
     /// 仅在可见区非空时由上层更新，避免快速滚动期间的 warm start 抖动。
     /// nil 时由 virtualizationWindow.shouldFullyRender 回退到 warm start 尾部预热。
     let fullRenderRange: ClosedRange<Int>?
+    /// 由转录投影 store 预计算的消息 ID → 索引映射，避免每帧在 body 内重建。
+    let messageIndexMap: [String: Int]
     let sessionId: String
     let loadingOlderState: AIChatLoadingOlderState
     let bottomOverlayInset: CGFloat
@@ -863,9 +848,7 @@ struct AIChatTranscriptContent: View {
             LazyVStack(spacing: 0) {
                 loadingOlderHeader
 
-                let msgIndexMap = Dictionary(
-                    uniqueKeysWithValues: messages.enumerated().map { ($1.id, $0) }
-                )
+                let msgIndexMap = messageIndexMap
                 ForEach(messages) { message in
                     let index = msgIndexMap[message.id] ?? 0
                     let prefersFullRender = virtualizationWindow.shouldFullyRender(

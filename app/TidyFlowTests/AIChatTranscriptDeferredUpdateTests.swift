@@ -350,3 +350,220 @@ final class AIChatTranscriptUpdatePlannerTests: XCTestCase {
         )
     }
 }
+
+// MARK: - AIChatTranscriptProjectionStore 测试
+
+/// 验证共享转录投影 store 的增量刷新语义与缓存边界。
+final class AIChatTranscriptProjectionStoreTests: XCTestCase {
+
+    private func makeMsg(id: String, text: String = "text", streaming: Bool = false) -> AIChatMessage {
+        AIChatMessage(
+            id: id,
+            messageId: id,
+            role: .assistant,
+            parts: [AIChatPart(id: "\(id)-p", kind: .text, text: text)],
+            isStreaming: streaming
+        )
+    }
+
+    func testEmptyProjectionAfterInit() {
+        let store = AIChatTranscriptProjectionStore()
+        XCTAssertTrue(store.projection.displayMessages.isEmpty)
+        XCTAssertTrue(store.projection.messageIndexMap.isEmpty)
+        XCTAssertNil(store.projection.fullRenderRange)
+        XCTAssertEqual(store.cachedSourceCount, -1)
+    }
+
+    func testApplyPlanBuildsIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<5).map { makeMsg(id: "m\($0)") }
+        let plan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan, sourceCount: 5)
+
+        XCTAssertEqual(store.projection.displayMessages.count, 5)
+        XCTAssertEqual(store.projection.messageIndexMap.count, 5)
+        for i in 0..<5 {
+            XCTAssertEqual(store.projection.messageIndexMap["m\(i)"], i)
+        }
+        XCTAssertEqual(store.cachedSourceCount, 5)
+    }
+
+    func testTailSyncReusesIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<5).map { makeMsg(id: "m\($0)") }
+
+        // 先做 fullRefresh 建立初始 indexMap
+        let initialPlan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: initialPlan, sourceCount: 5)
+        let initialIndexMap = store.projection.messageIndexMap
+
+        // tailSync：消息数不变，只更新尾消息文本
+        var tailMessages = messages
+        tailMessages[4] = makeMsg(id: "m4", text: "updated-tail", streaming: true)
+        let tailPlan = AIChatTranscriptRenderPlan(
+            displayMessages: tailMessages,
+            refreshStrategy: .tailSync,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: tailPlan, sourceCount: 5)
+
+        // tailSync 应复用已有 indexMap，不重建
+        XCTAssertEqual(store.projection.messageIndexMap, initialIndexMap,
+                       "tailSync 应复用已有 indexMap，不重建")
+        XCTAssertEqual(store.projection.displayMessages.last?.parts.first?.text, "updated-tail")
+    }
+
+    func testUpdateFullRenderRangeDoesNotRebuildMessages() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<10).map { makeMsg(id: "m\($0)") }
+        let plan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan, sourceCount: 10)
+
+        // 更新渲染范围
+        store.updateFullRenderRange(2...8)
+        XCTAssertEqual(store.projection.fullRenderRange, 2...8)
+        XCTAssertEqual(store.projection.displayMessages.count, 10, "updateFullRenderRange 不应改变消息列表")
+        XCTAssertEqual(store.projection.messageIndexMap.count, 10, "updateFullRenderRange 不应改变索引映射")
+    }
+
+    func testUpdateFullRenderRangeSkipsWhenUnchanged() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = [makeMsg(id: "m0")]
+        let plan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: 0...0,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan, sourceCount: 1)
+
+        // 相同范围不应触发更新
+        store.updateFullRenderRange(0...0)
+        XCTAssertEqual(store.projection.fullRenderRange, 0...0)
+    }
+
+    func testResetClearsAllState() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<5).map { makeMsg(id: "m\($0)") }
+        let plan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: 0...4,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan, sourceCount: 5)
+
+        store.reset()
+
+        XCTAssertTrue(store.projection.displayMessages.isEmpty)
+        XCTAssertTrue(store.projection.messageIndexMap.isEmpty)
+        XCTAssertNil(store.projection.fullRenderRange)
+        XCTAssertEqual(store.cachedSourceCount, -1)
+    }
+
+    func testSessionSwitchClearsOldProjection() {
+        let store = AIChatTranscriptProjectionStore()
+
+        // 会话 A
+        let messagesA = (0..<3).map { makeMsg(id: "a\($0)") }
+        let planA = AIChatTranscriptRenderPlan(
+            displayMessages: messagesA,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: 0...2,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: planA, sourceCount: 3)
+        XCTAssertEqual(store.projection.messageIndexMap["a0"], 0)
+
+        // 会话切换
+        store.reset()
+
+        // 会话 B
+        let messagesB = (0..<2).map { makeMsg(id: "b\($0)") }
+        let planB = AIChatTranscriptRenderPlan(
+            displayMessages: messagesB,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: planB, sourceCount: 2)
+
+        XCTAssertNil(store.projection.messageIndexMap["a0"], "会话 A 的索引不应残留")
+        XCTAssertEqual(store.projection.messageIndexMap["b0"], 0)
+        XCTAssertEqual(store.projection.messageIndexMap["b1"], 1)
+    }
+
+    func testPendingQuestionFullRefreshRebuildsIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<5).map { makeMsg(id: "m\($0)") }
+
+        // 初始 fullRefresh
+        let plan1 = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan1, sourceCount: 5)
+
+        // pendingQuestion 变更导致过滤后消息减少（模拟 fullRefresh）
+        let filteredMessages = Array(messages.prefix(3))
+        let plan2 = AIChatTranscriptRenderPlan(
+            displayMessages: filteredMessages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan2, sourceCount: 5)
+
+        XCTAssertEqual(store.projection.displayMessages.count, 3)
+        XCTAssertEqual(store.projection.messageIndexMap.count, 3,
+                       "pendingQuestion 变更后的 fullRefresh 应重建 indexMap")
+    }
+
+    func testHistoryPrependRebuildsIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+
+        // 初始 5 条消息
+        let initial = (0..<5).map { makeMsg(id: "m\($0)") }
+        let plan1 = AIChatTranscriptRenderPlan(
+            displayMessages: initial,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan1, sourceCount: 5)
+        XCTAssertEqual(store.projection.messageIndexMap["m0"], 0)
+
+        // 历史 prepend：在头部插入 3 条
+        let prepended = (0..<3).map { makeMsg(id: "h\($0)") } + initial
+        let plan2 = AIChatTranscriptRenderPlan(
+            displayMessages: prepended,
+            refreshStrategy: .preserveAnchor(anchorID: "m0"),
+            fullRenderRange: nil,
+            pendingAnchorID: "m0"
+        )
+        store.apply(plan: plan2, sourceCount: 8)
+
+        XCTAssertEqual(store.projection.messageIndexMap["h0"], 0)
+        XCTAssertEqual(store.projection.messageIndexMap["m0"], 3,
+                       "prepend 后原有消息索引应偏移")
+        XCTAssertEqual(store.projection.displayMessages.count, 8)
+    }
+}

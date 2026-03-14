@@ -115,7 +115,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
     func test_gitStatusResult_updatesStatusCacheAndResolved() {
         let result = GitStatusResult(
             project: "proj", workspace: "ws",
-            items: [], error: nil, isGitRepo: true,
+            items: [], isGitRepo: true, error: nil,
             hasStagedChanges: false, stagedCount: 0,
             currentBranch: "main", defaultBranch: "main",
             aheadBy: 0, behindBy: 0, comparedBranch: nil
@@ -144,7 +144,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
     func test_gitOpResult_stageSuccess_removesOpAndRefreshesStatus() {
         var state = GitWorkspaceState.empty
         state.opsInFlight.insert(GitOpInFlight(op: "stage", path: "a.swift", scope: "file"))
-        let result = GitOpResult(project: "proj", workspace: "ws", op: "stage", path: "a.swift", scope: "file", ok: true, message: nil)
+        let result = GitOpResult(project: "proj", workspace: "ws", op: "stage", ok: true, message: nil, path: "a.swift", scope: "file")
         let (next, effects) = drive(state, .gitOpResult(result))
         XCTAssertTrue(next.opsInFlight.isEmpty)
         XCTAssertEqual(effects, [.requestStatus(cacheMode: .default)])
@@ -153,7 +153,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
     func test_gitOpResult_switchBranchSuccess_clearsInFlightAndRefreshes() {
         var state = GitWorkspaceState.empty
         state.branchSwitchInFlight = "feature"
-        let result = GitOpResult(project: "proj", workspace: "ws", op: "switch_branch", path: nil, scope: nil, ok: true, message: nil)
+        let result = GitOpResult(project: "proj", workspace: "ws", op: "switch_branch", ok: true, message: nil, path: nil, scope: "branch")
         let (next, effects) = drive(state, .gitOpResult(result))
         XCTAssertNil(next.branchSwitchInFlight)
         XCTAssertEqual(effects, [.requestStatus(cacheMode: .default), .requestBranches(cacheMode: .default)])
@@ -162,7 +162,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
     func test_gitOpResult_switchBranchFailure_clearsInFlightNoRefresh() {
         var state = GitWorkspaceState.empty
         state.branchSwitchInFlight = "feature"
-        let result = GitOpResult(project: "proj", workspace: "ws", op: "switch_branch", path: nil, scope: nil, ok: false, message: "error")
+        let result = GitOpResult(project: "proj", workspace: "ws", op: "switch_branch", ok: false, message: "error", path: nil, scope: "branch")
         let (next, effects) = drive(state, .gitOpResult(result))
         XCTAssertNil(next.branchSwitchInFlight)
         XCTAssertTrue(effects.isEmpty)
@@ -171,7 +171,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
     func test_gitOpResult_createBranchSuccess() {
         var state = GitWorkspaceState.empty
         state.branchCreateInFlight = "hotfix"
-        let result = GitOpResult(project: "proj", workspace: "ws", op: "create_branch", path: nil, scope: nil, ok: true, message: nil)
+        let result = GitOpResult(project: "proj", workspace: "ws", op: "create_branch", ok: true, message: nil, path: nil, scope: "branch")
         let (next, effects) = drive(state, .gitOpResult(result))
         XCTAssertNil(next.branchCreateInFlight)
         XCTAssertEqual(effects, [.requestStatus(cacheMode: .default), .requestBranches(cacheMode: .default)])
@@ -183,7 +183,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
         var state = GitWorkspaceState.empty
         state.commitInFlight = true
         state.commitMessage = "fix: bug"
-        let result = GitCommitResult(project: "proj", workspace: "ws", ok: true, message: "ok")
+        let result = GitCommitResult(project: "proj", workspace: "ws", ok: true, message: "ok", sha: nil)
         let (next, effects) = drive(state, .gitCommitResult(result))
         XCTAssertFalse(next.commitInFlight)
         XCTAssertEqual(next.commitMessage, "")
@@ -195,7 +195,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
         var state = GitWorkspaceState.empty
         state.commitInFlight = true
         state.commitMessage = "fix: bug"
-        let result = GitCommitResult(project: "proj", workspace: "ws", ok: false, message: "conflict")
+        let result = GitCommitResult(project: "proj", workspace: "ws", ok: false, message: "conflict", sha: nil)
         let (next, effects) = drive(state, .gitCommitResult(result))
         XCTAssertFalse(next.commitInFlight)
         XCTAssertEqual(next.commitMessage, "fix: bug")
@@ -242,7 +242,7 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
         // 两个工作区分别驱动不同输入
         let statusA = GitStatusResult(
             project: "projA", workspace: "ws1",
-            items: [], error: nil, isGitRepo: true,
+            items: [], isGitRepo: true, error: nil,
             hasStagedChanges: true, stagedCount: 3,
             currentBranch: "main", defaultBranch: "main",
             aheadBy: 0, behindBy: 0, comparedBranch: nil
@@ -270,10 +270,10 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
         let statusResult = GitStatusResult(
             project: "proj", workspace: "ws",
             items: [
-                GitStatusItem(path: "a.swift", status: "M", staged: true),
-                GitStatusItem(path: "b.swift", status: "??", staged: false)
+                GitStatusItem(id: "a.swift", path: "a.swift", status: "M", staged: true, renameFrom: nil, additions: nil, deletions: nil),
+                GitStatusItem(id: "b.swift", path: "b.swift", status: "??", staged: false, renameFrom: nil, additions: nil, deletions: nil)
             ],
-            error: nil, isGitRepo: true,
+            isGitRepo: true, error: nil,
             hasStagedChanges: true, stagedCount: 1,
             currentBranch: "dev", defaultBranch: "main",
             aheadBy: 1, behindBy: 2, comparedBranch: "main"
@@ -298,8 +298,8 @@ final class GitWorkspaceStateDriverTests: XCTestCase {
         // 模拟有暂存
         let statusResult = GitStatusResult(
             project: "proj", workspace: "ws",
-            items: [GitStatusItem(path: "a.swift", status: "M", staged: true)],
-            error: nil, isGitRepo: true,
+            items: [GitStatusItem(id: "a.swift", path: "a.swift", status: "M", staged: true, renameFrom: nil, additions: nil, deletions: nil)],
+            isGitRepo: true, error: nil,
             hasStagedChanges: true, stagedCount: 1,
             currentBranch: "main", defaultBranch: "main",
             aheadBy: 0, behindBy: 0, comparedBranch: nil

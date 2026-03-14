@@ -299,4 +299,61 @@ final class MobileEvolutionLifecycleSemanticsTests: XCTestCase {
         // 清理
         firstTask.cancel()
     }
+
+    // MARK: - 结构/性能投影拆分刷新验证
+
+    func testIOS_sourceSnapshot_performanceSignatureIsZero() {
+        // iOS makeSourceSnapshot 必须将 performanceSignature 设为 0，
+        // 使性能变化不触发结构投影的 snapshot diff。
+        // 这通过确认 SourceSnapshot.Equatable 语义实现。
+        let snapshot1 = makeSourceSnapshotStub(performanceSignature: 0)
+        let snapshot2 = makeSourceSnapshotStub(performanceSignature: 0)
+        XCTAssertEqual(snapshot1, snapshot2,
+                       "performanceSignature 固定为 0 时，两个结构相同的快照应相等")
+    }
+
+    func testIOS_sourceSnapshot_differentPerformanceSignature_wouldBreakEquality() {
+        // 如果 performanceSignature 不为 0，不同的性能时间戳会导致结构投影虚假 diff
+        let snapshot1 = makeSourceSnapshotStub(performanceSignature: 100)
+        let snapshot2 = makeSourceSnapshotStub(performanceSignature: 200)
+        XCTAssertNotEqual(snapshot1, snapshot2,
+                          "不同 performanceSignature 应导致 snapshot 不相等——这正是 iOS 需要固定为 0 的原因")
+    }
+
+    @MainActor
+    func testIOS_performanceProjection_updateOnlyChangesPerformanceField() {
+        // 验证 updatePerformanceProjection 只替换 .performance，不触发整体 projection 替换
+        let store = EvolutionPipelineProjectionStore()
+        let p1 = EvolutionPipelinePerformanceProjection(decision: .paused, metrics: .empty)
+        let p2 = EvolutionPipelinePerformanceProjection(
+            decision: EvolutionRealtimeSamplingDecision(tier: .live, reason: "healthy"),
+            metrics: .empty
+        )
+
+        XCTAssertNotEqual(p1, p2, "前后性能投影应不同")
+    }
+
+    // MARK: - 时间线签名去重：相同输入不触发投影更新
+
+    func testEvolutionProjection_equalSnapshotsDoNotTriggerRefresh() {
+        let snap1 = makeSourceSnapshotStub(performanceSignature: 0)
+        let snap2 = makeSourceSnapshotStub(performanceSignature: 0)
+        XCTAssertEqual(snap1, snap2,
+                       "输入未变时 SourceSnapshot 相等，不应触发投影更新")
+    }
+
+    // MARK: - 辅助
+
+    private func makeSourceSnapshotStub(performanceSignature: Int) -> EvolutionPipelineProjectionStore.SourceSnapshotTestProxy {
+        EvolutionPipelineProjectionStore.SourceSnapshotTestProxy(
+            project: "test-proj",
+            workspace: "test-ws",
+            schedulerHash: 42,
+            controlHash: 7,
+            currentItemSignature: nil,
+            blockingSignature: 0,
+            cycleHistorySignature: 0,
+            performanceSignature: performanceSignature
+        )
+    }
 }

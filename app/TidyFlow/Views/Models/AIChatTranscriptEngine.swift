@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Observation
 
 // MARK: - 聊天转录引擎共享纯类型
 //
@@ -162,5 +163,109 @@ enum AIChatTranscriptUpdatePlanner {
             return .fullRefresh
         }
         return .none
+    }
+}
+
+// MARK: - AIChatTranscriptProjection
+
+/// 聊天转录投影：消息列表的完整显示数据，由 `AIChatTranscriptProjectionStore` 维护。
+///
+/// 包含 displayMessages、预计算的 messageIndexMap 和稳定化的渲染范围，
+/// 使 `AIChatTranscriptContent` 不再在 body 内重复构建索引映射。
+/// macOS 与 iOS 均复用同一投影类型，不存在平台分支。
+struct AIChatTranscriptProjection {
+    let displayMessages: [AIChatMessage]
+    /// 预计算的消息 ID → 索引映射，避免 Content body 内每帧重建。
+    let messageIndexMap: [String: Int]
+    let fullRenderRange: ClosedRange<Int>?
+    let pendingAnchorID: String?
+    let refreshStrategy: AIChatTranscriptRefreshStrategy
+    let sourceCount: Int
+
+    static let empty = AIChatTranscriptProjection(
+        displayMessages: [],
+        messageIndexMap: [:],
+        fullRenderRange: nil,
+        pendingAnchorID: nil,
+        refreshStrategy: .fullRefresh,
+        sourceCount: 0
+    )
+}
+
+// MARK: - AIChatTranscriptInvalidationSignature
+
+/// 转录失效签名：仅包含影响整表结构的最小信号，
+/// 用于判断是否需要 fullRefresh，不包含 tailRevision 等高频信号。
+struct AIChatTranscriptInvalidationSignature: Equatable {
+    let messageCount: Int
+    let pendingQuestionVersion: Int
+    let sessionToken: String?
+}
+
+// MARK: - AIChatTranscriptProjectionStore
+
+/// 聊天转录投影 store：管理 displayMessages、messageIndexMap 与渲染范围的生命周期。
+///
+/// 职责：
+/// - 仅在结构性变化时重建整表投影（消息数变化、会话切换、pendingQuestion 变更）
+/// - tail token 更新走尾消息 patch，不重建索引映射
+/// - 视口范围更新仅替换 fullRenderRange，不重建消息列表
+///
+/// macOS 与 iOS 共享同一实现。`AIChatTranscriptContainer` 持有此 store，
+/// `AIChatTranscriptContent` 消费其产出的投影。
+@Observable
+final class AIChatTranscriptProjectionStore {
+    private(set) var projection: AIChatTranscriptProjection = .empty
+    /// 上次应用 plan 时的 source message count，用于检测结构性变化。
+    private(set) var cachedSourceCount: Int = -1
+
+    /// 应用 planner 产出的渲染计划，同步更新投影。
+    ///
+    /// - 当刷新策略为 tailSync 时，仅替换尾消息，复用已有 indexMap
+    ///   （尾消息替换不改变索引结构）。
+    /// - 其他策略完整重建 indexMap。
+    @discardableResult
+    func apply(plan: AIChatTranscriptRenderPlan, sourceCount: Int) -> AIChatTranscriptRefreshStrategy {
+        let indexMap: [String: Int]
+        switch plan.refreshStrategy {
+        case .tailSync where !projection.messageIndexMap.isEmpty:
+            // tailSync：消息数不变、仅尾部内容变化，复用已有 indexMap
+            indexMap = projection.messageIndexMap
+        default:
+            indexMap = Self.buildIndexMap(plan.displayMessages)
+        }
+        projection = AIChatTranscriptProjection(
+            displayMessages: plan.displayMessages,
+            messageIndexMap: indexMap,
+            fullRenderRange: plan.fullRenderRange,
+            pendingAnchorID: plan.pendingAnchorID,
+            refreshStrategy: plan.refreshStrategy,
+            sourceCount: sourceCount
+        )
+        cachedSourceCount = sourceCount
+        return plan.refreshStrategy
+    }
+
+    /// 仅更新稳定化的完整渲染范围，不重建消息列表与索引映射。
+    func updateFullRenderRange(_ range: ClosedRange<Int>?) {
+        guard range != projection.fullRenderRange else { return }
+        projection = AIChatTranscriptProjection(
+            displayMessages: projection.displayMessages,
+            messageIndexMap: projection.messageIndexMap,
+            fullRenderRange: range,
+            pendingAnchorID: projection.pendingAnchorID,
+            refreshStrategy: projection.refreshStrategy,
+            sourceCount: projection.sourceCount
+        )
+    }
+
+    /// 会话切换时完全重置。
+    func reset() {
+        projection = .empty
+        cachedSourceCount = -1
+    }
+
+    private static func buildIndexMap(_ messages: [AIChatMessage]) -> [String: Int] {
+        Dictionary(uniqueKeysWithValues: messages.enumerated().map { ($1.id, $0) })
     }
 }

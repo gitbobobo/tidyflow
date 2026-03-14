@@ -342,3 +342,89 @@ final class MainThreadReliefRegressionTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 转录投影 store 在高频 delta 场景下的增量语义
+
+/// 验证 AIChatTranscriptProjectionStore 在高频 delta flush 后正确复用 indexMap，
+/// 避免 O(N) 重建。
+final class TranscriptStoreHighFrequencyDeltaTests: XCTestCase {
+
+    private func makeMsg(id: String, text: String, streaming: Bool = false) -> AIChatMessage {
+        AIChatMessage(
+            id: id,
+            messageId: id,
+            role: .assistant,
+            parts: [AIChatPart(id: "\(id)-part", kind: .text, text: text)],
+            isStreaming: streaming
+        )
+    }
+
+    func testTailSyncAfter300DeltasReusesIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+        let messageCount = 100
+        let messages = (0..<messageCount).map {
+            makeMsg(id: "m\($0)", text: "initial-\($0)", streaming: $0 == messageCount - 1)
+        }
+
+        // 初始 fullRefresh
+        let initialPlan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: initialPlan, sourceCount: messageCount)
+
+        let initialMap = store.projection.messageIndexMap
+        XCTAssertEqual(initialMap.count, messageCount)
+
+        // 模拟 300 次 delta flush 后的 tailSync：消息数不变，只有尾消息文本更新
+        var updatedMessages = messages
+        updatedMessages[messageCount - 1] = makeMsg(
+            id: "m\(messageCount - 1)",
+            text: "after-300-deltas",
+            streaming: true
+        )
+        let tailPlan = AIChatTranscriptRenderPlan(
+            displayMessages: updatedMessages,
+            refreshStrategy: .tailSync,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: tailPlan, sourceCount: messageCount)
+
+        // tailSync 应复用 indexMap，不重建
+        XCTAssertEqual(store.projection.messageIndexMap, initialMap,
+                       "高频 delta 后的 tailSync 应复用 indexMap，避免 O(N) 重建")
+        XCTAssertEqual(store.projection.displayMessages.last?.parts.first?.text, "after-300-deltas")
+    }
+
+    func testMultipleConsecutiveTailSyncsNeverRebuildIndexMap() {
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<50).map { makeMsg(id: "m\($0)", text: "v0", streaming: $0 == 49) }
+
+        let initialPlan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: initialPlan, sourceCount: 50)
+        let baseMap = store.projection.messageIndexMap
+
+        // 连续 10 次 tailSync
+        for round in 1...10 {
+            var msgs = messages
+            msgs[49] = makeMsg(id: "m49", text: "v\(round)", streaming: true)
+            let plan = AIChatTranscriptRenderPlan(
+                displayMessages: msgs,
+                refreshStrategy: .tailSync,
+                fullRenderRange: nil,
+                pendingAnchorID: nil
+            )
+            store.apply(plan: plan, sourceCount: 50)
+            XCTAssertEqual(store.projection.messageIndexMap, baseMap,
+                           "第 \(round) 次 tailSync 不应重建 indexMap")
+        }
+    }
+}

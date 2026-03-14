@@ -1047,18 +1047,28 @@ final class EvolutionPipelineProjectionStore {
             self.refreshIfNeeded(appState: appState, project: project, workspace: workspace)
         }
 
-        // 合并多路订阅为单一管道，避免同一次状态更新触发多次 refresh
+        // 合并结构性订阅为单一管道，不再包含 performanceObservability
         Publishers.MergeMany([
             appState.$evolutionScheduler.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionWorkspaceItems.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionCycleHistories.map { _ in () }.eraseToAnyPublisher(),
             appState.$evolutionBlockingRequired.map { _ in () }.eraseToAnyPublisher(),
-            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher(),
-            appState.$performanceObservability.map { _ in () }.eraseToAnyPublisher()
+            appState.$evolutionPendingActionByWorkspace.map { _ in () }.eraseToAnyPublisher()
         ])
         .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
         .sink { _ in refresh() }
         .store(in: &cancellables)
+
+        // 性能投影独立通道：与 macOS 对齐，不走结构 refresh，只更新 performance 子投影
+        let perfRefresh = { [weak self, weak appState] in
+            guard let self, let appState else { return }
+            self.refreshPerformanceIfNeeded(appState: appState, project: project, workspace: workspace)
+        }
+        appState.$performanceObservability
+            .map { _ in () }
+            .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+            .sink { _ in perfRefresh() }
+            .store(in: &cancellables)
 
         refresh()
     }
@@ -1071,11 +1081,6 @@ final class EvolutionPipelineProjectionStore {
             workspace: workspace
         )
         lastSourceSnapshot = snapshot
-        let performance = EvolutionPipelineProjectionSemantics.buildPerformanceProjection(
-            appState: appState,
-            project: project,
-            workspace: workspace
-        )
         _ = updateProjection(
             EvolutionPipelineProjectionSemantics.make(
                 appState: appState,
@@ -1090,9 +1095,19 @@ final class EvolutionPipelineProjectionStore {
                     rawCycleHistories: rawCycleHistories,
                     signature: snapshot.cycleHistorySignature
                 ),
-                performance: performance
+                performance: projection.performance
             )
         )
+    }
+
+    /// 仅刷新性能投影（与 macOS 对齐的独立通道），不触发结构投影全量 refresh
+    private func refreshPerformanceIfNeeded(appState: MobileAppState, project: String, workspace: String) {
+        let next = EvolutionPipelineProjectionSemantics.buildPerformanceProjection(
+            appState: appState,
+            project: project,
+            workspace: workspace
+        )
+        _ = updatePerformanceProjection(next)
     }
     #endif
 
@@ -1162,7 +1177,8 @@ final class EvolutionPipelineProjectionStore {
             cycleHistorySignature: cycleHistorySignature(
                 rawCycleHistories(appState: appState, project: project, workspace: workspace)
             ),
-            performanceSignature: Int(appState.performanceObservability.snapshotAt & 0x7FFF_FFFF_FFFF_FFFF)
+            // 与 macOS 对齐：性能签名不纳入结构 snapshot，由独立通道更新
+            performanceSignature: 0
         )
     }
     #endif
@@ -1374,5 +1390,19 @@ final class EvolutionPipelineProjectionStore {
         )
         projection = updated
         return true
+    }
+
+    // MARK: - 测试辅助
+
+    /// 用于测试 SourceSnapshot 等值语义的代理类型，避免暴露私有结构
+    struct SourceSnapshotTestProxy: Equatable {
+        let project: String
+        let workspace: String
+        let schedulerHash: Int
+        let controlHash: Int
+        let currentItemSignature: Int?
+        let blockingSignature: Int
+        let cycleHistorySignature: Int
+        let performanceSignature: Int
     }
 }

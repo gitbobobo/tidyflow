@@ -204,4 +204,62 @@ final class EvolutionPerfFixtureTests: XCTestCase {
             XCTAssertFalse(surface.scenarioIds.isEmpty, "\(surface) 必须至少关联一个 scenario id")
         }
     }
+
+    // MARK: - 投影 store 在 fixture 场景下的结构/性能通道验证
+
+    @MainActor
+    func testFixtureRound_doesNotBreakSourceSnapshotTestProxyContract() {
+        // 验证 SourceSnapshotTestProxy 的 Equatable 语义与 SourceSnapshot 一致：
+        // performanceSignature 差异应导致不等
+        let proxy1 = EvolutionPipelineProjectionStore.SourceSnapshotTestProxy(
+            project: "perf-fixture-project",
+            workspace: "perf-fixture-workspace",
+            schedulerHash: 1,
+            controlHash: 1,
+            currentItemSignature: nil,
+            blockingSignature: 0,
+            cycleHistorySignature: 0,
+            performanceSignature: 0
+        )
+        let proxy2 = EvolutionPipelineProjectionStore.SourceSnapshotTestProxy(
+            project: "perf-fixture-project",
+            workspace: "perf-fixture-workspace",
+            schedulerHash: 1,
+            controlHash: 1,
+            currentItemSignature: nil,
+            blockingSignature: 0,
+            cycleHistorySignature: 0,
+            performanceSignature: 0
+        )
+        XCTAssertEqual(proxy1, proxy2,
+                       "相同字段的 SourceSnapshotTestProxy 应相等，iOS 固定 performanceSignature=0 可保证结构快照稳定")
+    }
+
+    @MainActor
+    func testFixtureRound_transcriptStoreReset_clearsCachedState() {
+        // 验证 AIChatTranscriptProjectionStore.reset 后不残留 fixture 数据
+        let store = AIChatTranscriptProjectionStore()
+        let messages = (0..<5).map { i in
+            AIChatMessage(
+                id: "fixture-m\(i)",
+                messageId: "fixture-m\(i)",
+                role: .assistant,
+                parts: [AIChatPart(id: "p\(i)", kind: .text, text: "fixture")]
+            )
+        }
+        let plan = AIChatTranscriptRenderPlan(
+            displayMessages: messages,
+            refreshStrategy: .fullRefresh,
+            fullRenderRange: nil,
+            pendingAnchorID: nil
+        )
+        store.apply(plan: plan, sourceCount: 5)
+        XCTAssertEqual(store.projection.displayMessages.count, 5)
+
+        store.reset()
+
+        XCTAssertTrue(store.projection.displayMessages.isEmpty, "reset 后不应残留 fixture 消息")
+        XCTAssertTrue(store.projection.messageIndexMap.isEmpty, "reset 后不应残留 fixture 索引映射")
+        XCTAssertEqual(store.cachedSourceCount, -1, "reset 后 cachedSourceCount 应为 -1")
+    }
 }

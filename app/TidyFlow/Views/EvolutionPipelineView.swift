@@ -42,6 +42,69 @@ final class SharedSecondTicker: ObservableObject {
     }
 }
 
+// MARK: - 时间线局部状态容器
+
+/// 时间线与循环轮次相关的局部状态，隔离在独立容器中，
+/// 避免时间线重算驱动整个 Evolution 页面 body 重绘。
+@Observable
+final class EvolutionTimelineLocalState {
+    /// 已完成会话的时间线记录（本轮）
+    var completedTimeline: [PipelineTimelineEntry] = []
+    /// 上次记录的轮次
+    var lastRecordedRound: Int = 0
+    /// 当前循环的开始时间
+    var cycleStartDate: Date = Date()
+    /// 当前时间线快照签名（用于跳过重复重算）
+    var timelineSnapshotSignature: Int = 0
+
+    func reset() {
+        completedTimeline.removeAll()
+        lastRecordedRound = 0
+        cycleStartDate = Date()
+        timelineSnapshotSignature = 0
+    }
+}
+
+// MARK: - 实时监控局部状态容器
+
+/// 实时指标、趋势缓冲与 SharedSecondTicker 激活状态的局部容器，
+/// 避免秒级计时更新或趋势追加驱动整个 Evolution 页面 body 重绘。
+@Observable
+final class EvolutionRealtimeLocalState {
+    var realtimeIndicatorsActive: Bool = false
+    var activeRealtimeConsumerID: String?
+    var lastRealtimeMetricsSignature: String = ""
+    /// 当前活跃的性能监控 key（用于追踪并在切换时取消旧任务）
+    var activeMonitorKey: String = ""
+    /// 有界实时指标趋势缓冲（最多 60 个样本，切换工作区时清空）
+    var realtimeTrendBuffer: [EvolutionRealtimeMetricsProjection] = []
+    static let trendBufferLimit = 60
+
+    func appendSample(_ sample: EvolutionRealtimeMetricsProjection) {
+        guard sample.snapshotAt > 0 else { return }
+        realtimeTrendBuffer.append(sample)
+        if realtimeTrendBuffer.count > Self.trendBufferLimit {
+            let trimCount = realtimeTrendBuffer.count - Self.trendBufferLimit
+            realtimeTrendBuffer.removeFirst(trimCount)
+        }
+    }
+
+    func clearTrendBuffer() -> Int {
+        let count = realtimeTrendBuffer.count
+        guard count > 0 else { return 0 }
+        realtimeTrendBuffer.removeAll()
+        return count
+    }
+
+    func reset() {
+        realtimeIndicatorsActive = false
+        activeRealtimeConsumerID = nil
+        lastRealtimeMetricsSignature = ""
+        activeMonitorKey = ""
+        realtimeTrendBuffer.removeAll()
+    }
+}
+
 struct EvolutionRunningAgentCardModel: Identifiable, Equatable {
     let id: String
     let stage: String
@@ -83,22 +146,10 @@ struct EvolutionPipelineView: View {
     @State private var loopRoundAdjustmentDeltaText: String = ""
     @State private var loopRoundAdjustmentValidationMessage: String?
 
-    /// 已完成会话的时间线记录（本轮）
-    @State private var completedTimeline: [PipelineTimelineEntry] = []
-    /// 上次记录的轮次
-    @State private var lastRecordedRound: Int = 0
-    /// 当前循环的开始时间
-    @State private var cycleStartDate: Date = Date()
-    /// 当前时间线快照签名（用于跳过重复重算）
-    @State private var timelineSnapshotSignature: Int = 0
-    @State private var realtimeIndicatorsActive: Bool = false
-    @State private var activeRealtimeConsumerID: String?
-    @State private var lastRealtimeMetricsSignature: String = ""
-    /// 当前活跃的性能监控 key（用于追踪并在切换时取消旧任务）
-    @State private var activeMonitorKey: String = ""
-    /// 有界实时指标趋势缓冲（最多 60 个样本，切换工作区时清空）
-    @State private var realtimeTrendBuffer: [EvolutionRealtimeMetricsProjection] = []
-    private static let realtimeTrendBufferLimit = 60
+    /// 已完成时间线、轮次追踪等局部状态容器（隔离时间线重算触发范围）
+    @State private var timelineState = EvolutionTimelineLocalState()
+    /// 实时指标、趋势缓冲、SharedSecondTicker 激活等局部状态容器（隔离高频更新触发范围）
+    @State private var realtimeState = EvolutionRealtimeLocalState()
     private let untitledCycleTitle = "Untitled"
 
     private struct EvolutionPipelineBlockerDraft {
@@ -155,7 +206,7 @@ struct EvolutionPipelineView: View {
 
     /// 是否启用实时动画（来自性能投影，degraded/paused 档位时关闭以节省资源）
     private var enableRealtimeAnimation: Bool {
-        projection.performance.enableAnimation && realtimeIndicatorsActive
+        projection.performance.enableAnimation && realtimeState.realtimeIndicatorsActive
     }
 
     /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
@@ -640,7 +691,7 @@ struct EvolutionPipelineView: View {
                     title: currentCycleDisplayTitle,
                     badge: currentCycleBadge,
                     startTimeText: currentCycleStartTimeText,
-                    stageEntries: completedTimeline.map { entry in
+                    stageEntries: timelineState.completedTimeline.map { entry in
                         PipelineCycleStageEntry(
                             id: entry.id,
                             stage: entry.stage,
@@ -690,7 +741,7 @@ struct EvolutionPipelineView: View {
     }
 
     private var hasCurrentCycleRow: Bool {
-        !completedTimeline.isEmpty || hasRunningAgents
+        !timelineState.completedTimeline.isEmpty || hasRunningAgents
     }
 
     private var currentCycleDisplayTitle: String {
@@ -698,7 +749,7 @@ struct EvolutionPipelineView: View {
     }
 
     private var currentCycleRound: Int {
-        max(1, currentItem?.globalLoopRound ?? lastRecordedRound)
+        max(1, currentItem?.globalLoopRound ?? timelineState.lastRecordedRound)
     }
 
     private var hasRunningAgents: Bool {
@@ -714,7 +765,7 @@ struct EvolutionPipelineView: View {
                 return cycleStartTimeText(earliest)
             }
         }
-        return cycleStartTimeText(cycleStartDate)
+        return cycleStartTimeText(timelineState.cycleStartDate)
     }
 
     private func cycleStartTimeText(_ date: Date) -> String {
@@ -815,7 +866,7 @@ struct EvolutionPipelineView: View {
             title: cycleDisplayTitle(item.title),
             round: max(1, item.globalLoopRound),
             status: item.status,
-            startTimeText: cycleStartTimeText(earliestStart ?? cycleStartDate),
+            startTimeText: cycleStartTimeText(earliestStart ?? timelineState.cycleStartDate),
             totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
             terminalReasonCode: item.terminalReasonCode,
             terminalErrorMessage: item.terminalErrorMessage,
@@ -1052,7 +1103,7 @@ struct EvolutionPipelineView: View {
         VStack(alignment: .leading, spacing: 4) {
             sectionLabel("evolution.page.pipeline.completedAgents".localized, icon: "checkmark.circle.fill", color: .green)
             HStack(spacing: 2) {
-                ForEach(completedTimeline) { entry in
+                ForEach(timelineState.completedTimeline) { entry in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
@@ -1141,7 +1192,7 @@ struct EvolutionPipelineView: View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("evolution.page.pipeline.completedAgents".localized, icon: "checkmark.circle.fill", color: .green)
 
-            ForEach(Array(completedTimeline.enumerated()), id: \.element.id) { index, entry in
+            ForEach(Array(timelineState.completedTimeline.enumerated()), id: \.element.id) { index, entry in
                 HStack(spacing: 8) {
                     VStack(spacing: 0) {
                         if index > 0 {
@@ -1152,7 +1203,7 @@ struct EvolutionPipelineView: View {
                         Circle()
                             .fill(stageColor(entry.stage))
                             .frame(width: 8, height: 8)
-                        if index < completedTimeline.count - 1 {
+                        if index < timelineState.completedTimeline.count - 1 {
                             Rectangle()
                                 .fill(stageColor(entry.stage).opacity(0.3))
                                 .frame(width: 2, height: 8)
@@ -1205,7 +1256,7 @@ struct EvolutionPipelineView: View {
                 ))
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: completedTimeline.count)
+        .animation(.easeInOut(duration: 0.4), value: timelineState.completedTimeline.count)
     }
 
     // MARK: - 历史循环详情（上方详情）
@@ -1423,45 +1474,45 @@ struct EvolutionPipelineView: View {
     private func updateTimeline() {
         let startedAt = CFAbsoluteTimeGetCurrent()
         guard let item = currentItem else {
-            timelineSnapshotSignature = 0
-            if !completedTimeline.isEmpty {
-                completedTimeline.removeAll()
+            timelineState.timelineSnapshotSignature = 0
+            if !timelineState.completedTimeline.isEmpty {
+                timelineState.completedTimeline.removeAll()
             }
             return
         }
 
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
-        if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 {
-            completedTimeline.removeAll()
-            cycleStartDate = Date()
+        if item.globalLoopRound > timelineState.lastRecordedRound && timelineState.lastRecordedRound > 0 {
+            timelineState.completedTimeline.removeAll()
+            timelineState.cycleStartDate = Date()
             if let ws = workspace {
                 appState.requestEvolutionCycleHistory(project: project, workspace: ws)
             }
         }
-        lastRecordedRound = item.globalLoopRound
+        timelineState.lastRecordedRound = item.globalLoopRound
 
         let signature = EvolutionPipelineProjectionSemantics.timelineSignature(for: item)
-        guard signature != timelineSnapshotSignature else { return }
-        timelineSnapshotSignature = signature
+        guard signature != timelineState.timelineSnapshotSignature else { return }
+        timelineState.timelineSnapshotSignature = signature
 
         // 委托共享语义层执行过滤、排序、映射
         let newTimeline = EvolutionPipelineProjectionSemantics.buildCompletedTimeline(from: item)
-        if completedTimeline != newTimeline {
-            completedTimeline = newTimeline
+        if timelineState.completedTimeline != newTimeline {
+            timelineState.completedTimeline = newTimeline
         }
         let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         TFLog.perf.info("perf evolution_timeline_recompute_ms=\(durationMs, privacy: .public) key=\(workspaceContextKey, privacy: .public)")
     }
 
     private func resetCurrentCycleTimeline() {
-        completedTimeline.removeAll()
-        lastRecordedRound = 0
-        cycleStartDate = Date()
-        timelineSnapshotSignature = 0
+        timelineState.completedTimeline.removeAll()
+        timelineState.lastRecordedRound = 0
+        timelineState.cycleStartDate = Date()
+        timelineState.timelineSnapshotSignature = 0
     }
 
     private func resetLocalTimeline() {
-        resetCurrentCycleTimeline()
+        timelineState.reset()
     }
 
     /// 工作区或项目切换时的统一入口——清理旧缓冲、重置状态、刷新数据、重启监控
@@ -1481,21 +1532,21 @@ struct EvolutionPipelineView: View {
 
     private func updateRealtimeIndicatorsActivation() {
         let shouldActivate = shouldEnableRealtimeIndicators
-        if activeRealtimeConsumerID != realtimeConsumerID {
-            if let activeRealtimeConsumerID {
-                SharedSecondTicker.shared.setActive(false, consumerID: activeRealtimeConsumerID)
+        if realtimeState.activeRealtimeConsumerID != realtimeConsumerID {
+            if let activeID = realtimeState.activeRealtimeConsumerID {
+                SharedSecondTicker.shared.setActive(false, consumerID: activeID)
             }
-            activeRealtimeConsumerID = realtimeConsumerID
+            realtimeState.activeRealtimeConsumerID = realtimeConsumerID
         }
         SharedSecondTicker.shared.setActive(shouldActivate, consumerID: realtimeConsumerID)
-        if realtimeIndicatorsActive != shouldActivate {
-            realtimeIndicatorsActive = shouldActivate
+        if realtimeState.realtimeIndicatorsActive != shouldActivate {
+            realtimeState.realtimeIndicatorsActive = shouldActivate
         }
         let animEnabled = enableRealtimeAnimation
         let metricsSignature =
             "\(shouldActivate)|\(animEnabled)|\(runningAgentCards.count)|\(appState.isSceneActive)|\(workspaceContextKey)"
-        guard metricsSignature != lastRealtimeMetricsSignature else { return }
-        lastRealtimeMetricsSignature = metricsSignature
+        guard metricsSignature != realtimeState.lastRealtimeMetricsSignature else { return }
+        realtimeState.lastRealtimeMetricsSignature = metricsSignature
         TFLog.perf.info(
             "perf evolution_realtime_indicators active=\(shouldActivate ? 1 : 0, privacy: .public) animation=\(animEnabled ? 1 : 0, privacy: .public) tier=\(projection.performance.tier.rawValue, privacy: .public) running_cards=\(runningAgentCards.count, privacy: .public) scene_active=\(appState.isSceneActive ? 1 : 0, privacy: .public) key=\(workspaceContextKey, privacy: .public)"
         )
@@ -1507,11 +1558,11 @@ struct EvolutionPipelineView: View {
     }
 
     private func deactivateRealtimeIndicators() {
-        if let activeRealtimeConsumerID {
-            SharedSecondTicker.shared.setActive(false, consumerID: activeRealtimeConsumerID)
+        if let activeID = realtimeState.activeRealtimeConsumerID {
+            SharedSecondTicker.shared.setActive(false, consumerID: activeID)
         }
-        activeRealtimeConsumerID = nil
-        realtimeIndicatorsActive = false
+        realtimeState.activeRealtimeConsumerID = nil
+        realtimeState.realtimeIndicatorsActive = false
     }
 
     // MARK: - 性能监控管理（WI-002 / WI-003）
@@ -1524,15 +1575,15 @@ struct EvolutionPipelineView: View {
             stopPerformanceMonitor()
             return
         }
-        guard key != activeMonitorKey || appState.evolutionPerformanceMonitorTasks[key] == nil else {
+        guard key != realtimeState.activeMonitorKey || appState.evolutionPerformanceMonitorTasks[key] == nil else {
             return
         }
         // 停止旧 key 的监控
-        if !activeMonitorKey.isEmpty && activeMonitorKey != key {
-            appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
+        if !realtimeState.activeMonitorKey.isEmpty && realtimeState.activeMonitorKey != key {
+            appState.stopEvolutionPerformanceMonitoring(contextKey: realtimeState.activeMonitorKey)
         }
         let cycleID = currentItem?.cycleID
-        activeMonitorKey = key
+        realtimeState.activeMonitorKey = key
         appState.startEvolutionPerformanceMonitoring(
             project: proj,
             workspace: ws,
@@ -1543,9 +1594,9 @@ struct EvolutionPipelineView: View {
 
     /// 停止当前性能监控回路
     private func stopPerformanceMonitor() {
-        guard !activeMonitorKey.isEmpty else { return }
-        appState.stopEvolutionPerformanceMonitoring(contextKey: activeMonitorKey)
-        activeMonitorKey = ""
+        guard !realtimeState.activeMonitorKey.isEmpty else { return }
+        appState.stopEvolutionPerformanceMonitoring(contextKey: realtimeState.activeMonitorKey)
+        realtimeState.activeMonitorKey = ""
     }
 
     // MARK: - 有界实时趋势缓冲（WI-003）
@@ -1554,23 +1605,23 @@ struct EvolutionPipelineView: View {
     private func appendRealtimeTrendSample() {
         let sample = projection.performance.metrics
         guard sample.snapshotAt > 0 else { return }
-        realtimeTrendBuffer.append(sample)
-        if realtimeTrendBuffer.count > Self.realtimeTrendBufferLimit {
-            let trimCount = realtimeTrendBuffer.count - Self.realtimeTrendBufferLimit
-            realtimeTrendBuffer.removeFirst(trimCount)
+        let countBefore = realtimeState.realtimeTrendBuffer.count
+        realtimeState.appendSample(sample)
+        let trimCount = countBefore + 1 - realtimeState.realtimeTrendBuffer.count
+        if trimCount > 0 {
             TFLog.perf.info(
-                "perf evolution_monitor buffer_trim key=\(workspaceContextKey, privacy: .public) trimmed=\(trimCount, privacy: .public) remain=\(realtimeTrendBuffer.count, privacy: .public)"
+                "perf evolution_monitor buffer_trim key=\(workspaceContextKey, privacy: .public) trimmed=\(trimCount, privacy: .public) remain=\(realtimeState.realtimeTrendBuffer.count, privacy: .public)"
             )
         }
     }
 
     /// 清空实时趋势缓冲（切换工作区时调用）
     private func clearRealtimeTrendBuffer() {
-        guard !realtimeTrendBuffer.isEmpty else { return }
+        guard !realtimeState.realtimeTrendBuffer.isEmpty else { return }
         TFLog.perf.info(
-            "perf evolution_monitor buffer_clear key=\(workspaceContextKey, privacy: .public) cleared=\(realtimeTrendBuffer.count, privacy: .public)"
+            "perf evolution_monitor buffer_clear key=\(workspaceContextKey, privacy: .public) cleared=\(realtimeState.realtimeTrendBuffer.count, privacy: .public)"
         )
-        realtimeTrendBuffer.removeAll()
+        realtimeState.clearTrendBuffer()
     }
 
     // MARK: - Stage Session

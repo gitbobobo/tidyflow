@@ -408,3 +408,84 @@ final class EvolutionRealtimeSamplingSemanticsTests: XCTestCase {
         )
     }
 }
+
+// MARK: - EvolutionTimelineLocalState / EvolutionRealtimeLocalState 测试
+
+/// 验证 Evolution 面板局部状态容器的隔离性和重置语义。
+#if os(macOS)
+final class EvolutionLocalStateContainerTests: XCTestCase {
+
+    func testTimelineLocalState_resetClearsAllFields() {
+        let state = EvolutionTimelineLocalState()
+        state.lastRecordedRound = 5
+        state.timelineSnapshotSignature = 42
+        state.completedTimeline = [PipelineTimelineEntry(
+            id: "entry-0", stage: "plan", agent: "agent-1",
+            toolCallCount: 3, completedAt: "2025-01-01T00:00:00Z"
+        )]
+
+        state.reset()
+
+        XCTAssertEqual(state.lastRecordedRound, 0, "reset 后 lastRecordedRound 应为 0")
+        XCTAssertEqual(state.timelineSnapshotSignature, 0, "reset 后 timelineSnapshotSignature 应为 0")
+        XCTAssertTrue(state.completedTimeline.isEmpty, "reset 后 completedTimeline 应为空")
+    }
+
+    func testRealtimeLocalState_resetClearsAllFields() {
+        let state = EvolutionRealtimeLocalState()
+        state.realtimeIndicatorsActive = true
+        state.activeRealtimeConsumerID = "consumer-1"
+        state.lastRealtimeMetricsSignature = "sig-123"
+        state.activeMonitorKey = "proj/ws"
+
+        state.reset()
+
+        XCTAssertFalse(state.realtimeIndicatorsActive, "reset 后 realtimeIndicatorsActive 应为 false")
+        XCTAssertNil(state.activeRealtimeConsumerID, "reset 后 activeRealtimeConsumerID 应为 nil")
+        XCTAssertEqual(state.lastRealtimeMetricsSignature, "", "reset 后 lastRealtimeMetricsSignature 应为空")
+        XCTAssertEqual(state.activeMonitorKey, "", "reset 后 activeMonitorKey 应为空")
+        XCTAssertTrue(state.realtimeTrendBuffer.isEmpty, "reset 后 realtimeTrendBuffer 应为空")
+    }
+
+    func testRealtimeLocalState_trendBufferCapsAt60() {
+        let state = EvolutionRealtimeLocalState()
+        for i in 1...70 {
+            state.appendSample(EvolutionRealtimeMetricsProjection(
+                workspaceMetrics: [], clientMetrics: [], diagnoses: [],
+                snapshotAt: UInt64(i)
+            ))
+        }
+        XCTAssertEqual(state.realtimeTrendBuffer.count, EvolutionRealtimeLocalState.trendBufferLimit,
+                       "趋势缓冲应限制在 \(EvolutionRealtimeLocalState.trendBufferLimit) 个样本")
+        XCTAssertEqual(state.realtimeTrendBuffer.first?.snapshotAt, 11,
+                       "前 10 个样本应被淘汰，缓冲从第 11 个开始")
+    }
+
+    func testRealtimeLocalState_clearTrendBuffer_returnsCount() {
+        let state = EvolutionRealtimeLocalState()
+        for i in 1...5 {
+            state.appendSample(EvolutionRealtimeMetricsProjection(
+                workspaceMetrics: [], clientMetrics: [], diagnoses: [],
+                snapshotAt: UInt64(i)
+            ))
+        }
+        let cleared = state.clearTrendBuffer()
+        XCTAssertEqual(cleared, 5)
+        XCTAssertTrue(state.realtimeTrendBuffer.isEmpty)
+    }
+
+    func testMultipleWorkspaceContexts_stateIsIndependent() {
+        // 验证两个独立的 state 容器实例不共享全局状态
+        let stateA = EvolutionTimelineLocalState()
+        let stateB = EvolutionTimelineLocalState()
+
+        stateA.lastRecordedRound = 3
+        stateB.lastRecordedRound = 7
+
+        XCTAssertEqual(stateA.lastRecordedRound, 3)
+        XCTAssertEqual(stateB.lastRecordedRound, 7)
+        XCTAssertNotEqual(stateA.lastRecordedRound, stateB.lastRecordedRound,
+                          "不同工作区的 state 容器不应共享全局状态")
+    }
+}
+#endif
