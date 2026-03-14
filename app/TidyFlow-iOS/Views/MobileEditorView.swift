@@ -18,6 +18,8 @@ struct MobileEditorView: View {
     @State private var showUnsavedAlert = false
     /// 纯视图层保存中指示（非业务真源，仅驱动即时视觉反馈）
     @State private var isSavingLocally = false
+    /// Minimap 投影状态
+    @State private var minimapProjection: EditorMinimapProjection?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -166,13 +168,26 @@ struct MobileEditorView: View {
                 .accessibilityIdentifier("editor-error")
                 Spacer()
             case .ready:
-                EditorTextViewWrapper(
-                    appState: appState,
-                    documentKey: documentKey,
-                    globalWorkspaceKey: globalWorkspaceKey,
-                    path: path
-                )
-                .accessibilityIdentifier("editor-text-view")
+                ZStack(alignment: .trailing) {
+                    EditorTextViewWrapper(
+                        appState: appState,
+                        documentKey: documentKey,
+                        globalWorkspaceKey: globalWorkspaceKey,
+                        path: path,
+                        onMinimapProjectionUpdate: { projection in
+                            minimapProjection = projection
+                        }
+                    )
+                    .accessibilityIdentifier("editor-text-view")
+
+                    if let projection = minimapProjection, projection.shouldDisplay {
+                        EditorMinimapViewIOS(projection: projection) { ratio in
+                            handleMinimapTap(ratio: ratio)
+                        }
+                        .frame(width: 44)
+                        .padding(.trailing, 4)
+                    }
+                }
             }
         } else {
             Spacer()
@@ -188,6 +203,44 @@ struct MobileEditorView: View {
             .accessibilityIdentifier("editor-opening")
             Spacer()
         }
+    }
+
+    // MARK: - Minimap 点击跳转
+
+    private func handleMinimapTap(ratio: CGFloat) {
+        guard let projection = minimapProjection else { return }
+        let visibleIndex = EditorMinimapProjectionBuilder.visibleLineIndex(
+            fromRatio: Double(ratio),
+            in: projection.snapshot
+        )
+        guard let targetSource = EditorMinimapProjectionBuilder.targetSourceLine(
+            fromVisibleLineIndex: visibleIndex,
+            in: projection.snapshot
+        ) else { return }
+
+        // 展开包含目标行的折叠块
+        var foldState = appState.foldingState(for: documentKey)
+        if let content = appState.getEditorDocument(
+            globalWorkspaceKey: globalWorkspaceKey, path: path
+        )?.content {
+            let analyzer = EditorStructureAnalyzer()
+            let structSnapshot = analyzer.analyze(filePath: path, text: content)
+            let beforeCount = foldState.collapsedRegionIDs.count
+            foldState.expandRegions(containingLine: targetSource, in: structSnapshot)
+            if foldState.collapsedRegionIDs.count != beforeCount {
+                appState.updateFoldingState(foldState, for: documentKey)
+            }
+        }
+
+        // 更新当前行
+        appState.updateCurrentLine(targetSource, for: documentKey)
+
+        // 通过 NotificationCenter 请求滚动到目标行（由 Coordinator 响应）
+        NotificationCenter.default.post(
+            name: .editorMinimapScrollToLine,
+            object: nil,
+            userInfo: ["line": targetSource, "documentKey": "\(documentKey)"]
+        )
     }
 
     // MARK: - 冲突提示条
@@ -677,9 +730,12 @@ struct EditorTextViewWrapper: UIViewRepresentable {
     let documentKey: EditorDocumentKey
     let globalWorkspaceKey: String
     let path: String
+    var onMinimapProjectionUpdate: ((EditorMinimapProjection) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+        let coordinator = Coordinator(parent: self)
+        coordinator.onMinimapProjectionUpdate = onMinimapProjectionUpdate
+        return coordinator
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -937,6 +993,31 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
 
+        // 注册 minimap 滚动到目标行的通知
+        NotificationCenter.default.addObserver(
+            forName: .editorMinimapScrollToLine,
+            object: nil,
+            queue: .main
+        ) { [weak textView] notification in
+            guard let textView = textView,
+                  let line = notification.userInfo?["line"] as? Int else { return }
+            let text = textView.text ?? ""
+            let lines = text.components(separatedBy: "\n")
+            var charOffset = 0
+            for i in 0..<min(line, lines.count) {
+                charOffset += lines[i].count + 1
+            }
+            let safeOffset = min(charOffset, (text as NSString).length)
+            if let pos = textView.position(from: textView.beginningOfDocument, offset: safeOffset),
+               let range = textView.textRange(from: pos, to: pos) {
+                let rect = textView.firstRect(for: range)
+                let targetY = rect.origin.y - textView.bounds.height / 2
+                let maxY = textView.contentSize.height - textView.bounds.height
+                let clampedY = max(0, min(targetY, maxY))
+                textView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: true)
+            }
+        }
+
         return textView
     }
 
@@ -978,6 +1059,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         // 更新辅助栏的撤销/重做状态（来自共享历史能力）
         context.coordinator.accessoryView?.canUndo = appState.editorCanUndo(documentKey: documentKey)
         context.coordinator.accessoryView?.canRedo = appState.editorCanRedo(documentKey: documentKey)
+        // 同步 minimap 回调
+        context.coordinator.onMinimapProjectionUpdate = onMinimapProjectionUpdate
     }
 
     class Coordinator: NSObject, UITextViewDelegate {
@@ -1012,6 +1095,11 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         private var pairMatchOverlays: [UIView] = []
         /// 上次匹配快照缓存键（内容指纹、选区位置、主题）
         private var lastPairMatchCacheKey: (Int, Int, EditorSyntaxTheme)?
+
+        /// 最新的 minimap 投影回调
+        var onMinimapProjectionUpdate: ((EditorMinimapProjection) -> Void)?
+        /// 上次 viewport 更新缓存键
+        private var lastViewportCacheKey: (CGFloat, CGFloat, Int)?
 
         init(parent: EditorTextViewWrapper) {
             self.parent = parent
@@ -1236,6 +1324,13 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             }
         }
 
+        // MARK: - 滚动跟踪（UIScrollViewDelegate）
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let textView = scrollView as? UITextView else { return }
+            updateViewportState(textView: textView)
+        }
+
         /// 计算字符偏移对应的行号（0-based）
         private func lineNumber(for charOffset: Int, in text: String) -> Int {
             let prefix = text.prefix(charOffset)
@@ -1368,6 +1463,8 @@ struct EditorTextViewWrapper: UIViewRepresentable {
 
             // 更新 overlay
             updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
+            // 折叠/内容变化后刷新 minimap
+            refreshMinimapProjection(textView: textView)
         }
 
         /// 仅在折叠状态发生变化时重新应用
@@ -1714,6 +1811,67 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             }
             return textView.firstRect(for: textRange)
         }
+
+        // MARK: - Viewport 追踪与 Minimap 投影
+
+        /// 根据 UITextView 的 contentOffset 和尺寸更新 EditorViewportState
+        func updateViewportState(textView: UITextView) {
+            let text = textView.text ?? ""
+            let lineCount = text.components(separatedBy: "\n").count
+            let font = textView.font ?? UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+            let effectiveLineHeight = max(font.lineHeight, 1)
+
+            let firstLine = max(0, Int(textView.contentOffset.y / effectiveLineHeight))
+            let viewportSpan = max(1, Int(textView.bounds.height / effectiveLineHeight))
+            let lastLine = min(lineCount - 1, firstLine + viewportSpan - 1)
+
+            // 缓存判断
+            let cacheKey = (textView.contentOffset.y, textView.bounds.height, lineCount)
+            if let last = lastViewportCacheKey,
+               abs(last.0 - cacheKey.0) < 1.0,
+               abs(last.1 - cacheKey.1) < 1.0,
+               last.2 == cacheKey.2 {
+                return
+            }
+            lastViewportCacheKey = cacheKey
+
+            let vpState = EditorViewportState(
+                firstVisibleLine: firstLine,
+                lastVisibleLine: lastLine,
+                viewportLineSpan: viewportSpan,
+                lineCount: lineCount
+            )
+            parent.appState.updateViewportState(vpState, for: parent.documentKey)
+
+            refreshMinimapProjection(textView: textView, viewportState: vpState)
+        }
+
+        /// 重算 minimap 投影并通知外层
+        func refreshMinimapProjection(textView: UITextView, viewportState: EditorViewportState? = nil) {
+            let text = textView.text ?? ""
+            let filePath = parent.path
+            let vpState = viewportState ?? parent.appState.viewportState(for: parent.documentKey)
+            let theme = currentTheme(for: textView)
+
+            let syntaxSnapshot = highlighter.highlight(
+                filePath: filePath,
+                text: text,
+                theme: theme
+            )
+            guard let structSnapshot = lastStructureSnapshot else { return }
+            let foldState = parent.appState.foldingState(for: parent.documentKey)
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: structSnapshot, state: foldState)
+
+            let projection = EditorMinimapProjectionBuilder.make(
+                text: text,
+                filePath: filePath,
+                syntaxSnapshot: syntaxSnapshot,
+                structureSnapshot: structSnapshot,
+                foldingProjection: foldingProjection,
+                viewportState: vpState
+            )
+            onMinimapProjectionUpdate?(projection)
+        }
     }
 }
 
@@ -2042,4 +2200,86 @@ class EditorFoldOverlayUIView: UIView {
 extension Notification.Name {
     static let mobileEditorFindPrevious = Notification.Name("mobileEditorFindPrevious")
     static let mobileEditorFindNext = Notification.Name("mobileEditorFindNext")
+    static let editorMinimapScrollToLine = Notification.Name("editorMinimapScrollToLine")
+}
+
+// MARK: - iOS Minimap 视图
+
+/// iOS 端 minimap 渲染视图。
+/// 使用 Canvas 绘制每行语义角色色条和 viewport 指示器。
+struct EditorMinimapViewIOS: View {
+    let projection: EditorMinimapProjection
+    var onTapRatio: (CGFloat) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let lineCount = projection.snapshot.lineDescriptors.count
+            guard lineCount > 0 else { return AnyView(Color.clear) }
+
+            let lineHeight = max(1.0, geo.size.height / CGFloat(lineCount))
+            let clamped = min(lineHeight, 2.0)
+
+            return AnyView(
+                Canvas { context, size in
+                    let effectiveLineH = min(clamped, size.height / CGFloat(lineCount))
+
+                    // 绘制行色条
+                    for (idx, line) in projection.snapshot.lineDescriptors.enumerated() {
+                        let y = CGFloat(idx) * effectiveLineH
+                        let roleColor = EditorSyntaxColorMapIOS.minimapColor(for: line.dominantRole)
+                        let width = size.width * CGFloat(line.emphasis)
+                        context.fill(
+                            Path(CGRect(x: 0, y: y, width: width, height: max(effectiveLineH, 0.5))),
+                            with: .color(Color(uiColor: roleColor).opacity(0.85))
+                        )
+                    }
+
+                    // 绘制 viewport 指示器
+                    let vp = projection.viewportProjection
+                    let vpY = vp.effectiveTopRatio * size.height
+                    let vpH = max(vp.effectiveHeightRatio * size.height, 4)
+                    context.fill(
+                        Path(CGRect(x: 0, y: vpY, width: size.width, height: vpH)),
+                        with: .color(Color.primary.opacity(0.15))
+                    )
+                    context.stroke(
+                        Path(CGRect(x: 0, y: vpY, width: size.width, height: vpH)),
+                        with: .color(Color.primary.opacity(0.3)),
+                        lineWidth: 0.5
+                    )
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            let ratio = max(0, min(1, value.location.y / geo.size.height))
+                            onTapRatio(ratio)
+                        }
+                )
+                .background(Color(uiColor: .systemBackground).opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .accessibilityLabel("代码缩略图")
+                .accessibilityIdentifier("editor-minimap-ios")
+            )
+        }
+    }
+}
+
+// MARK: - iOS Minimap 色彩映射
+
+extension EditorSyntaxColorMapIOS {
+    /// minimap 语义角色到 UIColor 的映射
+    static func minimapColor(for role: EditorSyntaxRole) -> UIColor {
+        switch role {
+        case .keyword: return .systemPurple
+        case .type: return .systemTeal
+        case .function: return .systemBlue
+        case .string: return .systemOrange
+        case .number: return .systemGreen
+        case .comment: return .systemGray
+        case .attribute: return .systemBrown
+        case .punctuation: return .systemGray
+        case .plain: return .label
+        }
+    }
 }

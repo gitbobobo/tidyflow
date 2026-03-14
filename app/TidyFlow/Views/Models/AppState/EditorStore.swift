@@ -77,6 +77,12 @@ class EditorStore: ObservableObject {
     /// 补全状态与查找/折叠/gutter 同级，是纯展示层运行时状态，不持久化。
     @Published var autocompleteStateByDocument: [EditorDocumentKey: EditorAutocompleteState] = [:]
 
+    // MARK: - 按文档记录的 minimap/viewport 状态
+
+    /// 每个文档独立的视口运行时状态，按文档键索引。
+    /// viewport 状态是纯展示层运行时状态，与折叠/gutter 同级，不持久化，不混入 Core 生命周期模型。
+    @Published var viewportStateByDocument: [EditorDocumentKey: EditorViewportState] = [:]
+
     // MARK: - 新建文件状态
 
     /// 新建文件计数器（用于生成 "Untitled-1", "Untitled-2" 等）
@@ -203,6 +209,10 @@ class EditorStore: ObservableObject {
         }
         // 迁移补全状态（通常迁移后重置即可）
         autocompleteStateByDocument.removeValue(forKey: oldKey)
+        // 迁移 viewport 状态
+        if let vs = viewportStateByDocument.removeValue(forKey: oldKey) {
+            viewportStateByDocument[newKey] = vs
+        }
     }
 
     /// 请求指定文档的撤销操作（回调到编辑器视图执行实际回放）
@@ -256,6 +266,7 @@ class EditorStore: ObservableObject {
             gutterStateByDocument.removeValue(forKey: docKey)
             historyStateByDocument.removeValue(forKey: docKey)
             autocompleteStateByDocument.removeValue(forKey: docKey)
+            viewportStateByDocument.removeValue(forKey: docKey)
         }
     }
 
@@ -291,9 +302,13 @@ class EditorStore: ObservableObject {
         for key in autocompleteKeysToRemove {
             autocompleteStateByDocument.removeValue(forKey: key)
         }
+        let viewportKeysToRemove = viewportStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in viewportKeysToRemove {
+            viewportStateByDocument.removeValue(forKey: key)
+        }
     }
-
-    // MARK: - 查找替换方法
 
     /// 获取指定文档的查找替换状态（没有则返回默认状态）
     func findReplaceState(for documentKey: EditorDocumentKey) -> EditorFindReplaceState {
@@ -448,5 +463,32 @@ class EditorStore: ObservableObject {
     /// 重置未命名文件计数器
     func resetUntitledCounter() {
         untitledFileCounter = 0
+    }
+
+    // MARK: - Viewport 状态方法
+
+    /// 获取指定文档的视口状态（没有则返回默认状态）
+    func viewportState(for documentKey: EditorDocumentKey) -> EditorViewportState {
+        viewportStateByDocument[documentKey] ?? EditorViewportState()
+    }
+
+    /// 更新指定文档的视口状态
+    func updateViewportState(_ state: EditorViewportState, for documentKey: EditorDocumentKey) {
+        viewportStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定文档的视口状态
+    func releaseViewportState(for documentKey: EditorDocumentKey) {
+        viewportStateByDocument.removeValue(forKey: documentKey)
+    }
+
+    /// 释放指定工作区下所有文档的视口状态
+    func releaseAllViewportStates(workspaceKey: String) {
+        let keysToRemove = viewportStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            viewportStateByDocument.removeValue(forKey: key)
+        }
     }
 }

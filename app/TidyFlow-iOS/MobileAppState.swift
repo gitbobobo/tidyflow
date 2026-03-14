@@ -4706,6 +4706,9 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的自动补全运行时状态（纯展示层，与查找/折叠/gutter 同级，不持久化）
     @Published var editorAutocompleteStateByDocument: [EditorDocumentKey: EditorAutocompleteState] = [:]
 
+    /// 按文档记录的视口运行时状态（纯展示层，与折叠/gutter 同级，不持久化，不混入 Core 生命周期模型）
+    @Published var editorViewportStateByDocument: [EditorDocumentKey: EditorViewportState] = [:]
+
     /// 正在进行的编辑器文件读取请求
     var pendingEditorFileReadRequests: Set<EditorRequestKey> = []
     /// 正在进行的编辑器文件保存请求
@@ -4852,6 +4855,10 @@ final class MobileAppState: ObservableObject {
         }
         // 迁移补全状态（通常迁移后重置即可）
         editorAutocompleteStateByDocument.removeValue(forKey: oldKey)
+        // 迁移 viewport 状态
+        if let vs = editorViewportStateByDocument.removeValue(forKey: oldKey) {
+            editorViewportStateByDocument[newKey] = vs
+        }
     }
 
     /// 更新指定文档的撤销/重做能力状态
@@ -5019,6 +5026,33 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    // MARK: - Viewport 状态方法
+
+    /// 获取指定文档的视口状态（没有则返回默认状态）
+    func viewportState(for documentKey: EditorDocumentKey) -> EditorViewportState {
+        editorViewportStateByDocument[documentKey] ?? EditorViewportState()
+    }
+
+    /// 更新指定文档的视口状态
+    func updateViewportState(_ state: EditorViewportState, for documentKey: EditorDocumentKey) {
+        editorViewportStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定文档的视口状态
+    func releaseViewportState(for documentKey: EditorDocumentKey) {
+        editorViewportStateByDocument.removeValue(forKey: documentKey)
+    }
+
+    /// 释放指定工作区下所有文档的视口状态
+    func releaseAllViewportStates(workspaceKey: String) {
+        let keysToRemove = editorViewportStateByDocument.keys.filter {
+            "\($0.project):\($0.workspace)" == workspaceKey
+        }
+        for key in keysToRemove {
+            editorViewportStateByDocument.removeValue(forKey: key)
+        }
+    }
+
     /// 释放指定文档的会话状态（关闭文档时调用）
     func releaseEditorDocumentSession(globalWorkspaceKey: String, path: String) {
         if let docKey = EditorDocumentKey(globalWorkspaceKey: globalWorkspaceKey, path: path) {
@@ -5027,6 +5061,7 @@ final class MobileAppState: ObservableObject {
             editorGutterStateByDocument.removeValue(forKey: docKey)
             editorHistoryStateByDocument.removeValue(forKey: docKey)
             editorAutocompleteStateByDocument.removeValue(forKey: docKey)
+            editorViewportStateByDocument.removeValue(forKey: docKey)
         }
         editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }

@@ -471,6 +471,7 @@ struct NativeEditorContentView: View {
     @State private var matchRanges: [Range<String.Index>] = []
     @State private var currentMatchIndex: Int = -1
     @State private var regexError: String?
+    @State private var minimapProjection: EditorMinimapProjection = .hidden
 
     /// 当前文档的 EditorDocumentKey（若可解析）
     private var documentKey: EditorDocumentKey? {
@@ -510,9 +511,25 @@ struct NativeEditorContentView: View {
                                 highlightedLine: $highlightedLine,
                                 documentKey: documentKey,
                                 editorStore: editorStore,
-                                filePath: path
+                                filePath: path,
+                                onMinimapProjectionUpdate: { projection in
+                                    minimapProjection = projection
+                                }
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .overlay(alignment: .trailing) {
+                                if minimapProjection.shouldDisplay {
+                                    EditorMinimapView(
+                                        projection: minimapProjection,
+                                        colorMap: EditorSyntaxColorMapMacOS.colors(
+                                            for: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .systemDark : .systemLight
+                                        ),
+                                        onTapLine: { visibleIndex in
+                                            handleMinimapTap(visibleIndex: visibleIndex, textBinding: textBinding)
+                                        }
+                                    )
+                                }
+                            }
                             .onAppear {
                                 refreshMatches(for: textBinding.wrappedValue, keepSelection: false)
                             }
@@ -751,6 +768,32 @@ struct NativeEditorContentView: View {
         highlightedLine = reveal.line
         editorStore.pendingEditorReveal = nil
     }
+
+    /// 处理 minimap 点击：展开折叠、跳转到目标行
+    private func handleMinimapTap(visibleIndex: Int, textBinding: Binding<String>) {
+        guard let docKey = documentKey else { return }
+
+        // 从可见行索引映射到原始行号
+        guard let sourceLine = EditorMinimapProjectionBuilder.targetSourceLine(
+            fromVisibleLineIndex: visibleIndex,
+            in: minimapProjection.snapshot
+        ) else { return }
+
+        // 展开包含目标行的折叠区域
+        var foldState = editorStore.foldingState(for: docKey)
+        // 通过结构快照获取折叠信息
+        let text = textBinding.wrappedValue
+        let analyzer = EditorStructureAnalyzer()
+        let snapshot = analyzer.analyze(filePath: path, text: text)
+        foldState.expandRegions(containingLine: sourceLine, in: snapshot)
+        editorStore.updateFoldingState(foldState, for: docKey)
+
+        // 更新当前行
+        editorStore.updateCurrentLine(sourceLine, for: docKey)
+
+        // 触发行跳转（+1 因为 highlightedLine 使用 1-based）
+        highlightedLine = sourceLine + 1
+    }
 }
 
 // MARK: - Editor Status Bar
@@ -982,6 +1025,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
     var documentKey: EditorDocumentKey?
     var editorStore: EditorStore
     var filePath: String?
+    var onMinimapProjectionUpdate: ((EditorMinimapProjection) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -1118,6 +1162,19 @@ struct NativeCodeEditorView: NSViewRepresentable {
         ])
         // 初始宽度由首次 gutter 投影更新动态设置
 
+        // 设置 NSScrollView bounds change 监听（用于 viewport 追踪）
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.onMinimapProjectionUpdate = onMinimapProjectionUpdate
+        context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak coordinator = context.coordinator] _ in
+            guard let coordinator = coordinator,
+                  let tv = coordinator.textView else { return }
+            coordinator.updateViewportState(textView: tv)
+        }
+
         // 设置初始文本
         textView.string = text
 
@@ -1134,6 +1191,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? UndoTrackingTextView else { return }
         context.coordinator.parent = self
+        context.coordinator.onMinimapProjectionUpdate = onMinimapProjectionUpdate
 
         // 同步文本内容（避免循环更新）
         if textView.string != text {
@@ -1221,6 +1279,13 @@ struct NativeCodeEditorView: NSViewRepresentable {
         private var pairMatchOverlays: [NSView] = []
         /// 上次匹配快照缓存键（内容指纹、选区位置、主题）
         private var lastPairMatchCacheKey: (Int, Int, EditorSyntaxTheme)?
+
+        /// 滚动监听 token（用于取消 NSScrollView bounds change 观察）
+        var scrollObserver: NSObjectProtocol?
+        /// 最新的 minimap 投影（由 Coordinator 管理，通过闭包回写到外层 SwiftUI 状态）
+        var onMinimapProjectionUpdate: ((EditorMinimapProjection) -> Void)?
+        /// 上次 viewport 更新的缓存键（避免重复计算）
+        private var lastViewportCacheKey: (CGFloat, CGFloat, Int)?
 
         init(parent: NativeCodeEditorView) {
             self.parent = parent
@@ -1551,9 +1616,9 @@ struct NativeCodeEditorView: NSViewRepresentable {
 
             // 更新 overlay
             updateGutterOverlay(gutterProjection: gutterProjection, foldingProjection: foldingProjection, textView: textView)
+            // 折叠/内容变化后刷新 minimap
+            refreshMinimapProjection(textView: textView)
         }
-
-        /// 仅在折叠状态发生变化时重新应用（外部 toggle 驱动）
         func applyFoldingProjectionIfNeeded(to textView: UndoTrackingTextView) {
             guard let docKey = parent.documentKey else { return }
             let foldState = parent.editorStore.foldingState(for: docKey)
@@ -1942,6 +2007,142 @@ struct NativeCodeEditorView: NSViewRepresentable {
                 width: 1,
                 height: rect.height
             )
+        }
+
+        // MARK: - Viewport 追踪与 Minimap 投影
+
+        /// 根据 NSScrollView 可见区域更新 EditorViewportState
+        func updateViewportState(textView: UndoTrackingTextView) {
+            guard let docKey = parent.documentKey,
+                  let scrollView = textView.enclosingScrollView else { return }
+
+            let visibleRect = scrollView.documentVisibleRect
+            let text = textView.string
+            let lineCount = text.components(separatedBy: "\n").count
+
+            // 估算行高
+            let lineHeight: CGFloat = textView.font?.pointSize ?? 13
+            let effectiveLineHeight = max(lineHeight * 1.4, 1)
+
+            let firstLine = max(0, Int(visibleRect.origin.y / effectiveLineHeight))
+            let viewportSpan = max(1, Int(visibleRect.height / effectiveLineHeight))
+            let lastLine = min(lineCount - 1, firstLine + viewportSpan - 1)
+
+            // 缓存判断：避免重复更新
+            let cacheKey = (visibleRect.origin.y, visibleRect.height, lineCount)
+            if let last = lastViewportCacheKey,
+               abs(last.0 - cacheKey.0) < 1.0,
+               abs(last.1 - cacheKey.1) < 1.0,
+               last.2 == cacheKey.2 {
+                return
+            }
+            lastViewportCacheKey = cacheKey
+
+            let vpState = EditorViewportState(
+                firstVisibleLine: firstLine,
+                lastVisibleLine: lastLine,
+                viewportLineSpan: viewportSpan,
+                lineCount: lineCount
+            )
+            parent.editorStore.updateViewportState(vpState, for: docKey)
+
+            // 触发 minimap 投影重算
+            refreshMinimapProjection(textView: textView, viewportState: vpState)
+        }
+
+        /// 重算 minimap 投影并通知外层
+        func refreshMinimapProjection(textView: UndoTrackingTextView, viewportState: EditorViewportState? = nil) {
+            guard let docKey = parent.documentKey,
+                  let filePath = parent.filePath else { return }
+
+            let text = textView.string
+            let vpState = viewportState ?? parent.editorStore.viewportState(for: docKey)
+
+            let syntaxSnapshot = highlighter.highlight(
+                filePath: filePath,
+                text: text,
+                theme: currentTheme()
+            )
+            guard let structSnapshot = lastStructureSnapshot else { return }
+            let foldState = parent.editorStore.foldingState(for: docKey)
+            let foldingProjection = EditorCodeFoldingProjection.make(snapshot: structSnapshot, state: foldState)
+
+            let projection = EditorMinimapProjectionBuilder.make(
+                text: text,
+                filePath: filePath,
+                syntaxSnapshot: syntaxSnapshot,
+                structureSnapshot: structSnapshot,
+                foldingProjection: foldingProjection,
+                viewportState: vpState
+            )
+            onMinimapProjectionUpdate?(projection)
+        }
+
+        deinit {
+            if let observer = scrollObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+}
+
+// MARK: - macOS Minimap 视图
+
+/// macOS 编辑器 minimap 视图：以纯色细条绘制代码概览，叠加半透明视口指示。
+/// 消费共享 EditorMinimapProjection，不自行推导语义。
+struct EditorMinimapView: View {
+    let projection: EditorMinimapProjection
+    let colorMap: [EditorSyntaxRole: NSColor]
+    /// 点击 minimap 时回调可见行索引
+    var onTapLine: ((Int) -> Void)?
+
+    var body: some View {
+        if projection.shouldDisplay {
+            GeometryReader { geo in
+                let lineHeight: CGFloat = max(1.5, min(3.0, geo.size.height / CGFloat(max(projection.snapshot.visibleLineCount, 1))))
+                let totalHeight = lineHeight * CGFloat(projection.snapshot.visibleLineCount)
+
+                ZStack(alignment: .top) {
+                    // 行条目绘制
+                    Canvas { context, size in
+                        for descriptor in projection.snapshot.lineDescriptors {
+                            let y = CGFloat(descriptor.visibleLineIndex) * lineHeight
+                            let indent = CGFloat(descriptor.indentLevel) * 4
+                            let width = max(4, (size.width - indent) * CGFloat(descriptor.emphasis))
+                            let nsColor = colorMap[descriptor.dominantRole] ?? NSColor.gray
+                            let color = Color(nsColor: nsColor)
+                            let rect = CGRect(x: indent, y: y, width: width, height: max(lineHeight - 0.5, 1))
+                            context.fill(Path(rect), with: .color(color.opacity(descriptor.isFoldPlaceholder ? 0.5 : 0.8)))
+                        }
+                    }
+                    .frame(height: totalHeight)
+
+                    // 视口指示器
+                    let vpProj = projection.viewportProjection
+                    let vpTop = vpProj.effectiveTopRatio * totalHeight
+                    let vpHeight = max(vpProj.effectiveHeightRatio * totalHeight, 8)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.primary.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+                        )
+                        .frame(height: vpHeight)
+                        .offset(y: vpTop)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .contentShape(Rectangle())
+                .onTapGesture { location in
+                    let ratio = location.y / max(totalHeight, 1)
+                    let visibleIndex = EditorMinimapProjectionBuilder.visibleLineIndex(
+                        fromRatio: ratio,
+                        in: projection.snapshot
+                    )
+                    onTapLine?(visibleIndex)
+                }
+            }
+            .frame(width: 60)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
         }
     }
 }
