@@ -14,14 +14,14 @@ use sqlx::{Pool, Row, Sqlite};
 
 use super::sqlite_store;
 use super::state::{
-    AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
-    KeybindingConfig, NodeAuthTokenEntry, NodeDiscoverySettings, NodeIdentity, PairedNodeEntry,
-    Project, ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError, TemplateCommand,
+    AppState, ClientSettings, EvolutionModelSelection, EvolutionStageProfile, KeybindingConfig,
+    NodeAuthTokenEntry, NodeDiscoverySettings, NodeIdentity, PairedNodeEntry, Project,
+    ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError, TemplateCommand,
     WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus, WorkspaceTodoItem,
     WorkspaceTerminalRecoveryEntry,
 };
 
-const DB_SCHEMA_VERSION: &str = "1";
+const DB_SCHEMA_VERSION: &str = "2";
 
 #[derive(Clone)]
 pub struct StateStore {
@@ -225,25 +225,6 @@ impl StateStore {
             )
             .unwrap_or_default();
         }
-
-        client_settings.custom_commands = sqlx::query(
-            r#"
-            SELECT id, name, icon, command
-            FROM custom_commands
-            ORDER BY id
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| StateError::ReadError(e.to_string()))?
-        .into_iter()
-        .map(|row| CustomCommand {
-            id: row.try_get("id").unwrap_or_default(),
-            name: row.try_get("name").unwrap_or_default(),
-            icon: row.try_get("icon").unwrap_or_default(),
-            command: row.try_get("command").unwrap_or_default(),
-        })
-        .collect();
 
         client_settings.workspace_shortcuts = sqlx::query(
             r#"
@@ -763,7 +744,6 @@ impl StateStore {
             "projects",
             "project_commands",
             "workspaces",
-            "custom_commands",
             "workspace_shortcuts",
             "workspace_todos",
             "evolution_stage_profiles",
@@ -847,22 +827,6 @@ impl StateStore {
             .bind(identity.node_name.clone())
             .bind(&identity.bootstrap_pair_key)
             .bind(i64::try_from(identity.created_at_unix).unwrap_or(0))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| StateError::WriteError(e.to_string()))?;
-        }
-
-        for command in &state.client_settings.custom_commands {
-            sqlx::query(
-                r#"
-                INSERT INTO custom_commands (id, name, icon, command)
-                VALUES (?1, ?2, ?3, ?4)
-                "#,
-            )
-            .bind(&command.id)
-            .bind(&command.name)
-            .bind(&command.icon)
-            .bind(&command.command)
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -1291,14 +1255,6 @@ impl StateStore {
             )
             "#,
             r#"
-            CREATE TABLE IF NOT EXISTS custom_commands (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                icon TEXT NOT NULL,
-                command TEXT NOT NULL
-            )
-            "#,
-            r#"
             CREATE TABLE IF NOT EXISTS workspace_shortcuts (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -1422,6 +1378,18 @@ impl StateStore {
         }
         self.ensure_client_settings_columns().await?;
         self.ensure_workspace_recovery_columns().await?;
+        self.remove_legacy_custom_commands_table().await?;
+        sqlx::query(
+            r#"
+            INSERT INTO meta (key, value)
+            VALUES ('schema_version', ?1)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+        )
+        .bind(DB_SCHEMA_VERSION)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StateError::WriteError(e.to_string()))?;
         Ok(())
     }
 
@@ -1464,6 +1432,14 @@ impl StateStore {
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn remove_legacy_custom_commands_table(&self) -> Result<(), StateError> {
+        sqlx::query("DROP TABLE IF EXISTS custom_commands")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
         Ok(())
     }
 
@@ -1649,12 +1625,6 @@ mod tests {
             model: None,
             config_options: HashMap::new(),
         }];
-        state.client_settings.custom_commands = vec![CustomCommand {
-            id: "cmd-1".to_string(),
-            name: "Build".to_string(),
-            icon: "hammer".to_string(),
-            command: "cargo build".to_string(),
-        }];
         state.client_settings.workspace_shortcuts =
             HashMap::from([("1".to_string(), "demo/default".to_string())]);
         state.client_settings.workspace_todos = HashMap::from([(
@@ -1741,7 +1711,6 @@ mod tests {
             loaded.client_settings.evolution_default_profiles[0].ai_tool,
             "opencode"
         );
-        assert_eq!(loaded.client_settings.custom_commands.len(), 1);
         assert_eq!(
             loaded
                 .client_settings
@@ -1781,6 +1750,37 @@ mod tests {
             .setup_result
             .as_ref()
             .is_some_and(|r| r.success));
+    }
+
+    #[tokio::test]
+    async fn init_schema_should_drop_legacy_custom_commands_table() {
+        let store = StateStore::open_in_memory_for_test()
+            .await
+            .expect("in-memory store should initialize");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS custom_commands (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                icon TEXT NOT NULL,
+                command TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&store.pool)
+        .await
+        .expect("legacy custom_commands table should be created");
+
+        store.init_schema().await.expect("schema init should succeed");
+
+        let row = sqlx::query(
+            "SELECT COUNT(1) AS count FROM sqlite_master WHERE type = 'table' AND name = 'custom_commands'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .expect("sqlite_master query should succeed");
+        assert_eq!(row.try_get::<i64, _>("count").unwrap_or(-1), 0);
     }
 
     /// CHK-003: 工作区恢复元数据按 (project, workspace) 复合键 roundtrip

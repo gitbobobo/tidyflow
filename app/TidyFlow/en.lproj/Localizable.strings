@@ -40,12 +40,6 @@
 "settings.language.system" = "Follow System";
 "settings.language.zh" = "中文";
 "settings.language.en" = "English";
-"settings.noCommands" = "No custom commands";
-"settings.addCommand" = "Add Command";
-"settings.terminalCommands" = "Terminal Commands";
-"settings.terminalCommands.footer" = "Configure quick commands to run when creating new terminals";
-"settings.deleteCommand" = "Delete Command";
-"settings.deleteCommand.message" = "Are you sure you want to delete command \"%@\"?";
 "settings.icon" = "Icon";
 "settings.icon.choose" = "Choose...";
 "settings.name" = "Name";
@@ -308,7 +302,6 @@
 "quickActions.switchWorkspace" = "Switch Workspace";
 "quickActions.switchTab" = "Switch Tab";
 "quickActions.openTerminal" = "Open Terminal";
-"quickActions.quickCommands" = "Quick Commands";
 
 /* Relative Time */
 "time.justNow" = "just now";

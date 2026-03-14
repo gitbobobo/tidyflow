@@ -176,18 +176,6 @@ extension WSClient {
     public func handleSettingsDomain(_ action: String, json: [String: Any]) -> Bool {
         switch action {
         case "client_settings_result":
-            var commands: [CustomCommand] = []
-            if let commandsJson = json["custom_commands"] as? [[String: Any]] {
-                commands = commandsJson.compactMap { cmdJson -> CustomCommand? in
-                    guard let id = cmdJson["id"] as? String,
-                          let name = cmdJson["name"] as? String,
-                          let icon = cmdJson["icon"] as? String,
-                          let command = cmdJson["command"] as? String else {
-                        return nil
-                    }
-                    return CustomCommand(id: id, name: name, icon: icon, command: command)
-                }
-            }
             let workspaceShortcuts = json["workspace_shortcuts"] as? [String: String] ?? [:]
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
@@ -209,7 +197,6 @@ extension WSClient {
                 }
             }
             let settings = ClientSettings(
-                customCommands: commands,
                 workspaceShortcuts: workspaceShortcuts,
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,

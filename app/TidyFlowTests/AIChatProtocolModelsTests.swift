@@ -1431,7 +1431,6 @@ final class AIChatProtocolModelsTests: XCTestCase {
 
     func testClientSettingsEncodeWorkspaceTodosToSnakeCase() throws {
         let settings = ClientSettings(
-            customCommands: [],
             workspaceShortcuts: [:],
             mergeAIAgent: nil,
             fixedPort: 0,

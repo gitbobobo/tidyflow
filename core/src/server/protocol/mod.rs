@@ -376,7 +376,6 @@ pub enum ClientMessage {
     // v1.21: Client settings
     GetClientSettings,
     SaveClientSettings {
-        custom_commands: Vec<CustomCommandInfo>,
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
         /// 用于合并操作的 AI Agent
@@ -1241,7 +1240,6 @@ pub enum ServerMessage {
 
     // v1.21: Client settings result
     ClientSettingsResult {
-        custom_commands: Vec<CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
@@ -2297,15 +2295,6 @@ pub struct ConflictSnapshotInfo {
     pub all_resolved: bool,
 }
 
-/// 自定义命令信息（用于协议传输）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomCommandInfo {
-    pub id: String,
-    pub name: String,
-    pub icon: String,
-    pub command: String,
-}
-
 /// 快捷键绑定配置（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2848,7 +2837,6 @@ mod tests {
     fn test_parse_save_client_settings_without_workspace_todos() {
         let json = r#"{
             "type":"save_client_settings",
-            "custom_commands":[],
             "workspace_shortcuts":{},
             "merge_ai_agent":"codex"
         }"#;
@@ -2868,7 +2856,6 @@ mod tests {
     fn test_parse_save_client_settings_with_workspace_todos() {
         let json = r#"{
             "type":"save_client_settings",
-            "custom_commands":[],
             "workspace_shortcuts":{},
             "workspace_todos":{
                 "demo:default":[

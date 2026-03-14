@@ -40,12 +40,6 @@
 "settings.language.system" = "跟随系统";
 "settings.language.zh" = "中文";
 "settings.language.en" = "English";
-"settings.noCommands" = "暂无自定义命令";
-"settings.addCommand" = "添加命令";
-"settings.terminalCommands" = "终端命令";
-"settings.terminalCommands.footer" = "配置快捷命令，在新建终端时快速执行";
-"settings.deleteCommand" = "删除命令";
-"settings.deleteCommand.message" = "确定要删除命令「%@」吗？";
 "settings.icon" = "图标";
 "settings.icon.choose" = "选择...";
 "settings.name" = "名称";
@@ -310,7 +304,6 @@
 "quickActions.switchWorkspace" = "切换工作空间";
 "quickActions.switchTab" = "切换 Tab";
 "quickActions.openTerminal" = "打开终端";
-"quickActions.quickCommands" = "快捷命令";
 
 /* 相对时间 */
 "time.justNow" = "刚刚";

@@ -22,11 +22,6 @@ struct QuickActionsView: View {
                 VStack(spacing: 16) {
                     // 主要操作：打开终端
                     openTerminalButton
-
-                    // 自定义命令列表
-                    if !appState.clientSettings.customCommands.isEmpty {
-                        customCommandsSection
-                    }
                 }
                 .padding(.bottom, 32)
 
@@ -120,54 +115,11 @@ struct QuickActionsView: View {
         .buttonStyle(QuickActionButtonStyle(isPrimary: true))
     }
 
-    // MARK: - 自定义命令列表
-
-    private var customCommandsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("quickActions.quickCommands".localized)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.leading, 8)
-
-            VStack(spacing: 8) {
-                ForEach(appState.clientSettings.customCommands) { command in
-                    customCommandRow(command)
-                }
-            }
-        }
-        .frame(width: 320)
-    }
-
-    private func customCommandRow(_ command: CustomCommand) -> some View {
-        Button(action: { executeCommand(command) }) {
-            HStack(spacing: 12) {
-                CommandIconView(iconName: command.icon, size: 20)
-                    .foregroundColor(.secondary)
-
-                Text(command.name)
-                    .font(.body)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "play.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .buttonStyle(QuickActionButtonStyle(isPrimary: false))
-    }
-
     // MARK: - Actions
 
     private func openTerminal() {
         guard let workspaceKey = appState.currentGlobalWorkspaceKey else { return }
         appState.addTerminalTab(workspaceKey: workspaceKey)
-    }
-
-    private func executeCommand(_ command: CustomCommand) {
-        guard let workspaceKey = appState.currentGlobalWorkspaceKey else { return }
-        appState.addTerminalWithCustomCommand(workspaceKey: workspaceKey, command: command)
     }
 }
 

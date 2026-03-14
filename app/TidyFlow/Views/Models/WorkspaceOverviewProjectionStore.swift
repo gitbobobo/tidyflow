@@ -40,7 +40,6 @@ final class WorkspaceOverviewProjectionStore {
         appState.$conflictWizardCache.sink { _ in refresh() }.store(in: &cancellables)
         appState.taskStore.$tasksByKey.sink { _ in refresh() }.store(in: &cancellables)
         appState.$workspaceTodosByKey.sink { _ in refresh() }.store(in: &cancellables)
-        appState.$customCommands.sink { _ in refresh() }.store(in: &cancellables)
 
         refresh()
     }
@@ -168,4 +167,3 @@ final class WorkspaceOverviewProjectionStore {
         return true
     }
 }
-

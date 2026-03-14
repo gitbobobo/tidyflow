@@ -19,7 +19,6 @@ pub async fn handle_node_message(
             let current_settings = {
                 let state = ctx.app_state.read().await;
                 (
-                    state.client_settings.custom_commands.clone(),
                     state.client_settings.workspace_shortcuts.clone(),
                     state.client_settings.merge_ai_agent.clone(),
                 )
@@ -27,18 +26,8 @@ pub async fn handle_node_message(
             crate::application::settings::save_client_settings(
                 &ctx.app_state,
                 crate::application::settings::SaveClientSettingsParams {
-                    custom_commands: current_settings
-                        .0
-                        .iter()
-                        .map(|c| crate::server::protocol::CustomCommandInfo {
-                            id: c.id.clone(),
-                            name: c.name.clone(),
-                            icon: c.icon.clone(),
-                            command: c.command.clone(),
-                        })
-                        .collect(),
-                    workspace_shortcuts: current_settings.1,
-                    merge_ai_agent: current_settings.2,
+                    workspace_shortcuts: current_settings.0,
+                    merge_ai_agent: current_settings.1,
                     fixed_port: None,
                     remote_access_enabled: None,
                     node_name: Some(node_name.clone()),

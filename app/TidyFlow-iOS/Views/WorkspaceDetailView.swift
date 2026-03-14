@@ -549,27 +549,6 @@ struct WorkspaceDetailView: View {
                 } label: {
                     Label("新建终端", systemImage: "terminal")
                 }
-
-                if !appState.customCommands.isEmpty {
-                    Divider()
-                    ForEach(appState.customCommands) { cmd in
-                        Button {
-                            appState.navigationPath.append(MobileRoute.terminal(
-                                project: project,
-                                workspace: workspace,
-                                command: cmd.command,
-                                commandIcon: cmd.icon,
-                                commandName: cmd.name
-                            ))
-                        } label: {
-                            Label {
-                                Text(cmd.name)
-                            } icon: {
-                                MobileCommandIconView(iconName: cmd.icon, size: 14)
-                            }
-                        }
-                    }
-                }
             }
 
             Button {

@@ -1,4 +1,5 @@
 import SwiftUI
+import TidyFlowShared
 
 /// 工作区级终端壳层容器
 ///
@@ -77,12 +78,14 @@ struct MobileTerminalView: View {
             if let termId {
                 appState.attachTerminal(project: project, workspace: workspace, termId: termId)
             } else if let command {
-                appState.createTerminalWithCommand(
+                appState.createTerminal(
                     project: project,
                     workspace: workspace,
-                    command: command,
-                    icon: commandIcon,
-                    name: commandName
+                    launchRequest: TerminalLaunchRequest(
+                        title: commandName,
+                        icon: commandIcon,
+                        command: command
+                    )
                 )
             } else {
                 // 默认选中工作区上次活跃终端；若无则创建新终端

@@ -16,7 +16,6 @@ pub async fn handle_mutate_message(
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::SaveClientSettings {
-            custom_commands,
             workspace_shortcuts,
             merge_ai_agent,
             fixed_port,
@@ -31,7 +30,6 @@ pub async fn handle_mutate_message(
             save_client_settings(
                 &ctx.app_state,
                 SaveClientSettingsParams {
-                    custom_commands: custom_commands.clone(),
                     workspace_shortcuts: workspace_shortcuts.clone(),
                     merge_ai_agent: merge_ai_agent.clone(),
                     fixed_port: *fixed_port,

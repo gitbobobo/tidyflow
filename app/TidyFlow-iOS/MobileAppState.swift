@@ -169,7 +169,6 @@ final class MobileAppState: ObservableObject {
     @Published var workspaces: [WorkspaceInfo] = []
     @Published var workspacesByProject: [String: [WorkspaceInfo]] = [:]
     @Published var activeTerminals: [TerminalSessionInfo] = []
-    @Published var customCommands: [CustomCommand] = []
     @Published var workspaceShortcuts: [String: String] = [:]
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
@@ -392,12 +391,8 @@ final class MobileAppState: ObservableObject {
     private var pendingTermWorkspace: String = ""
     /// 待附着的终端 ID（重连场景）
     private var pendingAttachTermId: String = ""
-    /// 待执行的自定义命令（终端创建后自动发送）
-    var pendingCustomCommand: String = ""
-    /// 待执行命令图标（用于终端列表展示）
-    var pendingCustomCommandIcon: String = ""
-    /// 待执行命令名称（用于终端列表展示）
-    var pendingCustomCommandName: String = ""
+    /// 待创建终端的预填充启动参数。
+    var pendingTerminalLaunchRequest: TerminalLaunchRequest?
     /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
@@ -866,7 +861,6 @@ final class MobileAppState: ObservableObject {
 
     func saveClientSettings() {
         let payload = ClientSettings(
-            customCommands: customCommands,
             workspaceShortcuts: workspaceShortcuts,
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
@@ -4222,9 +4216,7 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
-        pendingCustomCommand = ""
-        pendingCustomCommandIcon = ""
-        pendingCustomCommandName = ""
+        pendingTerminalLaunchRequest = nil
         // 驱动共享壳层进入 connecting 相位
         let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
         feedTerminalShell(.createTerminal(command: nil, icon: nil, name: nil), context: ctx)
@@ -4233,23 +4225,26 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    /// 创建终端并在就绪后自动执行命令
-    func createTerminalWithCommand(
+    /// 创建终端并在就绪后应用预填充参数。
+    func createTerminal(
         project: String,
         workspace: String,
-        command: String,
-        icon: String? = nil,
-        name: String? = nil
+        launchRequest: TerminalLaunchRequest
     ) {
-        pendingCustomCommand = command
-        pendingCustomCommandIcon = icon ?? ""
-        pendingCustomCommandName = name ?? ""
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
+        pendingTerminalLaunchRequest = launchRequest
         // 驱动共享壳层进入 connecting 相位
         let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
-        feedTerminalShell(.createTerminal(command: command, icon: icon, name: name), context: ctx)
+        feedTerminalShell(
+            .createTerminal(
+                command: launchRequest.command,
+                icon: launchRequest.icon,
+                name: launchRequest.title
+            ),
+            context: ctx
+        )
         if isTerminalViewReady {
             fireTermCreate()
         }
@@ -4265,9 +4260,7 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = termId
-        pendingCustomCommand = ""
-        pendingCustomCommandIcon = ""
-        pendingCustomCommandName = ""
+        pendingTerminalLaunchRequest = nil
         // 驱动共享壳层进入 connecting 相位
         let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
         feedTerminalShell(.attachTerminal(termId: termId), context: ctx)
@@ -4289,22 +4282,18 @@ final class MobileAppState: ObservableObject {
 
         if !attachId.isEmpty {
             // 附着已有终端
-            pendingCustomCommand = ""
-            pendingCustomCommandIcon = ""
-            pendingCustomCommandName = ""
+            pendingTerminalLaunchRequest = nil
             terminalSessionStore.recordAttachRequest(termId: attachId)
             wsClient.requestTermAttach(termId: attachId)
         } else {
             // 创建新终端，携带展示信息供 Core 持久化
-            let name: String? = pendingCustomCommandName.isEmpty ? nil : pendingCustomCommandName
-            let icon: String? = pendingCustomCommandIcon.isEmpty ? nil : pendingCustomCommandIcon
             wsClient.requestTermCreate(
                 project: project,
                 workspace: workspace,
                 cols: terminalCols,
                 rows: terminalRows,
-                name: name,
-                icon: icon
+                name: pendingTerminalLaunchRequest?.title,
+                icon: pendingTerminalLaunchRequest?.icon
             )
         }
     }
@@ -4446,9 +4435,7 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = ""
         pendingTermWorkspace = ""
         pendingAttachTermId = ""
-        pendingCustomCommand = ""
-        pendingCustomCommandIcon = ""
-        pendingCustomCommandName = ""
+        pendingTerminalLaunchRequest = nil
         isTerminalViewReady = false
         pendingOutputChunks.removeAll()
         terminalSink = nil
@@ -4558,7 +4545,6 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onClientSettingsResult = { [weak self] settings in
             guard let self else { return }
-            self.customCommands = settings.customCommands
             self.workspaceShortcuts = settings.workspaceShortcuts
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
@@ -6375,4 +6361,3 @@ extension MobileAppState {
         }
     }
 }
-

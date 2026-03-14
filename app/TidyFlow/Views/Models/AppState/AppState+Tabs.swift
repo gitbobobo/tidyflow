@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 extension AppState {
     // MARK: - Tab Helpers
@@ -309,19 +310,17 @@ extension AppState {
         appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }
 
-    func addTerminalTab(workspaceKey: String) {
-        addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
-    }
-
-    /// 创建终端并执行自定义命令
-    func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
+    func addTerminalTab(
+        workspaceKey: String,
+        launchRequest: TerminalLaunchRequest = TerminalLaunchRequest()
+    ) {
         let newTab = TabModel(
             id: UUID(),
-            title: command.name,
+            title: launchRequest.title ?? "Terminal",
             kind: .terminal,
             workspaceKey: workspaceKey,
-            payload: command.command,
-            commandIcon: command.icon
+            payload: launchRequest.command ?? "",
+            commandIcon: launchRequest.icon
         )
         appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }

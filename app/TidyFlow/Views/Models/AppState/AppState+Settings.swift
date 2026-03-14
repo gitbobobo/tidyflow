@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 extension AppState {
     // MARK: - 设置页面
@@ -114,26 +115,6 @@ extension AppState {
         wsClient.requestNodeUnpairPeer(peerNodeID: peerNodeID)
     }
 
-    /// 添加自定义命令
-    func addCustomCommand(_ command: CustomCommand) {
-        clientSettings.customCommands.append(command)
-        saveClientSettings()
-    }
-
-    /// 更新自定义命令
-    func updateCustomCommand(_ command: CustomCommand) {
-        if let index = clientSettings.customCommands.firstIndex(where: { $0.id == command.id }) {
-            clientSettings.customCommands[index] = command
-            saveClientSettings()
-        }
-    }
-
-    /// 删除自定义命令
-    func deleteCustomCommand(id: String) {
-        clientSettings.customCommands.removeAll { $0.id == id }
-        saveClientSettings()
-    }
-
     // MARK: - 项目命令管理
 
     /// 保存项目命令配置
@@ -194,13 +175,14 @@ extension AppState {
         // 交互式命令：新建终端 Tab 执行（前台任务）
         if command.interactive {
             guard let globalKey = currentGlobalWorkspaceKey else { return }
-            let customCmd = CustomCommand(
-                id: command.id,
-                name: command.name,
-                icon: command.icon,
-                command: command.command
+            addTerminalTab(
+                workspaceKey: globalKey,
+                launchRequest: TerminalLaunchRequest(
+                    title: command.name,
+                    icon: command.icon,
+                    command: command.command
+                )
             )
-            addTerminalWithCustomCommand(workspaceKey: globalKey, command: customCmd)
             return
         }
 

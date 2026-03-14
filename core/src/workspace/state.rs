@@ -66,15 +66,6 @@ pub struct ProjectCommand {
     pub interactive: bool,
 }
 
-/// 自定义终端命令
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomCommand {
-    pub id: String,
-    pub name: String,
-    pub icon: String, // SF Symbol 名称或自定义图标路径
-    pub command: String,
-}
-
 /// Evolution 阶段代理模型选择
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionModelSelection {
@@ -153,8 +144,6 @@ pub struct WorkflowTemplate {
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
-    #[serde(default)]
-    pub custom_commands: Vec<CustomCommand>,
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     #[serde(default)]
     pub workspace_shortcuts: HashMap<String, String>,
@@ -556,7 +545,6 @@ mod tests {
     #[test]
     fn client_settings_should_ignore_removed_implement_profiles_field() {
         let parsed: ClientSettings = serde_json::from_value(serde_json::json!({
-            "custom_commands": [],
             "workspace_shortcuts": {},
             "evolution_implement_agent_profiles": {
                 "general": { "ai_tool": "codex" },
@@ -566,7 +554,6 @@ mod tests {
         }))
         .expect("deserialize client settings should succeed");
 
-        assert!(parsed.custom_commands.is_empty());
         assert!(parsed.workspace_shortcuts.is_empty());
     }
 
@@ -600,7 +587,6 @@ mod tests {
         let state = AppState::default();
         assert_eq!(state.version, 1);
         assert!(state.projects.is_empty());
-        assert!(state.client_settings.custom_commands.is_empty());
         assert!(state.remote_api_keys.is_empty());
     }
 
@@ -687,12 +673,6 @@ mod tests {
     #[test]
     fn client_settings_and_related_models_roundtrip() {
         let mut settings = ClientSettings::default();
-        settings.custom_commands.push(CustomCommand {
-            id: "cmd-1".to_string(),
-            name: "Test Command".to_string(),
-            icon: "terminal".to_string(),
-            command: "echo test".to_string(),
-        });
         settings
             .workspace_shortcuts
             .insert("1".to_string(), "project/workspace".to_string());
@@ -707,7 +687,6 @@ mod tests {
             }],
         );
 
-        assert_eq!(settings.custom_commands.len(), 1);
         assert_eq!(
             settings.workspace_shortcuts.get("1"),
             Some(&"project/workspace".to_string())

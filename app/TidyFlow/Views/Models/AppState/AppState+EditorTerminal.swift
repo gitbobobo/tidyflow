@@ -1,16 +1,16 @@
 import Foundation
+import TidyFlowShared
 
 extension AppState {
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)
     func spawnTerminalWithCommand(workspaceKey: String, command: String) {
-        let newTab = TabModel(
-            id: UUID(),
-            title: "AI Resolve",
-            kind: .terminal,
+        addTerminalTab(
             workspaceKey: workspaceKey,
-            payload: command
+            launchRequest: TerminalLaunchRequest(
+                title: "AI Resolve",
+                command: command
+            )
         )
-        appendAndActivateTab(newTab, workspaceKey: workspaceKey)
     }
     
     func addEditorTab(workspaceKey: String, path: String, line: Int? = nil) {

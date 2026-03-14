@@ -180,50 +180,20 @@ private struct BottomPanelCategoryButton: View {
     }
 }
 
-// MARK: - 新建终端按钮（支持自定义命令下拉菜单）
+// MARK: - 新建终端按钮
 
 struct NewTerminalButton: View {
     @EnvironmentObject var appState: AppState
     let globalKey: String
 
     var body: some View {
-        if appState.clientSettings.customCommands.isEmpty {
-            Button(action: {
-                appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
-            }) {
-                BottomPanelAccessoryIconLabel(systemName: "plus")
-            }
-            .buttonStyle(BottomPanelAccessoryButtonStyle())
-            .help("tab.newTerminal.tooltip".localized)
-        } else {
-            Menu {
-                Button(action: {
-                    appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
-                }) {
-                    Label("tab.newTerminal".localized, systemImage: "terminal")
-                }
-
-                Divider()
-
-                ForEach(appState.clientSettings.customCommands) { command in
-                    Button(action: {
-                        appState.addTerminalWithCustomCommand(workspaceKey: globalKey, command: command)
-                    }) {
-                        Label {
-                            Text(command.name)
-                        } icon: {
-                            CommandMenuIcon(iconName: command.icon)
-                        }
-                    }
-                }
-            } label: {
-                BottomPanelAccessoryIconLabel(systemName: "plus")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("tab.newTerminal.tooltip".localized)
+        Button(action: {
+            appState.addTerminalTab(workspaceKey: globalKey)
+        }) {
+            BottomPanelAccessoryIconLabel(systemName: "plus")
         }
+        .buttonStyle(BottomPanelAccessoryButtonStyle())
+        .help("tab.newTerminal.tooltip".localized)
     }
 }
 
@@ -266,28 +236,5 @@ private struct BottomPanelAccessoryButtonBody: View {
             .onHover { hovering in
                 isHovered = hovering
             }
-    }
-}
-
-// MARK: - 菜单图标视图
-
-struct CommandMenuIcon: View {
-    let iconName: String
-
-    private let menuIconSize: CGFloat = 16
-
-    var body: some View {
-        Group {
-            if iconName.hasPrefix("brand:") {
-                let brandName = String(iconName.dropFirst(6))
-                if let brand = BrandIcon(rawValue: brandName) {
-                    FixedSizeAssetImage(name: brand.assetName, targetSize: menuIconSize)
-                }
-            } else if iconName.hasPrefix("custom:") {
-                Image(systemName: "terminal")
-            } else {
-                Image(systemName: iconName)
-            }
-        }
     }
 }

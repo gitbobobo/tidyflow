@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 pub enum SettingsRequest {
     GetClientSettings,
     SaveClientSettings {
-        custom_commands: Vec<super::CustomCommandInfo>,
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(default)]
@@ -35,7 +34,6 @@ pub enum SettingsRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SettingsResponse {
     ClientSettingsResult {
-        custom_commands: Vec<super::CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,

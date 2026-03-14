@@ -354,11 +354,12 @@ extension MobileAppState {
 
     func handleTermCreated(_ result: TermCreatedResult) {
         switchToTerminal(termId: result.termId)
+        let launchRequest = pendingTerminalLaunchRequest
         terminalSessionStore.handleTermCreated(
             result: result,
-            pendingCommandIcon: pendingCustomCommandIcon.isEmpty ? nil : pendingCustomCommandIcon,
-            pendingCommandName: pendingCustomCommandName.isEmpty ? nil : pendingCustomCommandName,
-            pendingCommand: pendingCustomCommand.isEmpty ? nil : pendingCustomCommand,
+            pendingCommandIcon: launchRequest?.icon,
+            pendingCommandName: launchRequest?.title,
+            pendingCommand: launchRequest?.command,
             makeKey: globalWorkspaceKey(project:workspace:)
         )
         workspaceTerminalOpenTime = terminalSessionStore.workspaceOpenTime
@@ -374,16 +375,14 @@ extension MobileAppState {
         )
         terminalSink?.focusTerminal()
         wsClient.requestTermList()
-        let cmd = pendingCustomCommand
+        let cmd = launchRequest?.command ?? ""
         if !cmd.isEmpty {
             let termId = result.termId
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.wsClient.sendTerminalInput(cmd + "\n", termId: termId)
             }
         }
-        pendingCustomCommand = ""
-        pendingCustomCommandIcon = ""
-        pendingCustomCommandName = ""
+        pendingTerminalLaunchRequest = nil
     }
 
     func handleTermAttached(_ result: TermAttachedResult) {

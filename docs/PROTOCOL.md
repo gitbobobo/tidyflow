@@ -380,7 +380,6 @@ idle → entering → active ⇄ resuming
   - macOS 使用 `UserDefaults`
   - iOS 使用本地存储（不经 Core 同步）
 - 保留并继续同步：
-  - `custom_commands`
   - `workspace_shortcuts`
   - `merge_ai_agent`
   - `fixed_port`

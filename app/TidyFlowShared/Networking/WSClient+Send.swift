@@ -642,7 +642,6 @@ private struct GetClientSettingsRequest: TypedWSRequest {
 
 private struct SaveClientSettingsRequest: TypedWSRequest {
     public var action: String { "save_client_settings" }
-    public let customCommands: [CustomCommandPayload]
     public let workspaceShortcuts: [String: String]
     public let mergeAIAgent: String?
     public let fixedPort: Int
@@ -652,13 +651,6 @@ private struct SaveClientSettingsRequest: TypedWSRequest {
     public let evolutionDefaultProfiles: [EvolutionStageProfilePayload]
     public let workspaceTodos: [String: [WorkspaceTodoPayload]]
     public let keybindings: [KeybindingPayload]
-
-    public struct CustomCommandPayload: Encodable {
-        let id: String
-        let name: String
-        let icon: String
-        let command: String
-    }
 
     public struct WorkspaceTodoPayload: Encodable {
         let id: String
@@ -717,7 +709,6 @@ private struct SaveClientSettingsRequest: TypedWSRequest {
     }
 
     public enum CodingKeys: String, CodingKey {
-        case customCommands = "custom_commands"
         case workspaceShortcuts = "workspace_shortcuts"
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
@@ -1663,14 +1654,6 @@ extension WSClient {
     /// 保存客户端设置
     public func requestSaveClientSettings(settings: ClientSettings) {
         let payload = SaveClientSettingsRequest(
-            customCommands: settings.customCommands.map { cmd in
-                SaveClientSettingsRequest.CustomCommandPayload(
-                    id: cmd.id,
-                    name: cmd.name,
-                    icon: cmd.icon,
-                    command: cmd.command
-                )
-            },
             workspaceShortcuts: settings.workspaceShortcuts,
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
