@@ -65,16 +65,16 @@ extension AppState {
         }
 
         // 新路径：按领域 handler 绑定，替代大量 onXxx 闭包接线
-        let gitHandler = AppStateGitMessageHandlerAdapter(appState: self)
-        let projectHandler = AppStateProjectMessageHandlerAdapter(appState: self)
-        let fileHandler = AppStateFileMessageHandlerAdapter(appState: self)
+        let gitHandler = AppStateGitMessageHandlerAdapter(target: self)
+        let projectHandler = AppStateProjectMessageHandlerAdapter(target: self)
+        let fileHandler = AppStateFileMessageHandlerAdapter(target: self)
         let settingsHandler = AppStateSettingsMessageHandlerAdapter(appState: self)
-        let nodeHandler = AppStateNodeMessageHandlerAdapter(appState: self)
-        let terminalHandler = AppStateTerminalMessageHandlerAdapter(appState: self)
-        let aiHandler = AppStateAIMessageHandlerAdapter(appState: self)
-        let evidenceHandler = AppStateEvidenceMessageHandlerAdapter(appState: self)
-        let evolutionHandler = AppStateEvolutionMessageHandlerAdapter(appState: self)
-        let errorHandler = AppStateErrorMessageHandlerAdapter(appState: self)
+        let nodeHandler = AppStateNodeMessageHandlerAdapter(target: self)
+        let terminalHandler = AppStateTerminalMessageHandlerAdapter(target: self)
+        let aiHandler = AppStateAIMessageHandlerAdapter(target: self)
+        let evidenceHandler = AppStateEvidenceMessageHandlerAdapter(target: self)
+        let evolutionHandler = AppStateEvolutionMessageHandlerAdapter(target: self)
+        let errorHandler = AppStateErrorMessageHandlerAdapter(target: self)
         wsGitMessageHandler = gitHandler
         wsProjectMessageHandler = projectHandler
         wsFileMessageHandler = fileHandler

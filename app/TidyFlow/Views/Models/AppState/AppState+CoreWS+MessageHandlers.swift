@@ -1,4 +1,5 @@
 import Foundation
+import TidyFlowShared
 
 private func reconcileDiscoveryPairingState(
     items: [NodeDiscoveryItemV2],
@@ -18,117 +19,113 @@ private func reconcileDiscoveryPairingState(
     }
 }
 
-final class AppStateGitMessageHandlerAdapter: GitMessageHandler {
-    weak var appState: AppState?
+// MARK: - macOS 领域消息处理适配器
+// 各领域 adapter 继承共享骨架 WeakTargetMessageAdapter<AppState>，
+// 统一弱引用持有与主线程调度，仅保留领域差异与状态写入映射。
+// Settings 领域保持独立，不使用共享骨架。
 
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    func handleGitDiffResult(_ result: GitDiffResult) { appState?.gitCache.handleGitDiffResult(result) }
-    func handleGitStatusResult(_ result: GitStatusResult) { appState?.gitCache.handleGitStatusResult(result) }
-    func handleGitLogResult(_ result: GitLogResult) { appState?.gitCache.handleGitLogResult(result) }
-    func handleGitShowResult(_ result: GitShowResult) { appState?.gitCache.handleGitShowResult(result) }
-    func handleGitOpResult(_ result: GitOpResult) { appState?.gitCache.handleGitOpResult(result) }
-    func handleGitBranchesResult(_ result: GitBranchesResult) { appState?.gitCache.handleGitBranchesResult(result) }
-    func handleGitCommitResult(_ result: GitCommitResult) { appState?.gitCache.handleGitCommitResult(result) }
-    func handleGitRebaseResult(_ result: GitRebaseResult) { appState?.gitCache.handleGitRebaseResult(result) }
-    func handleGitOpStatusResult(_ result: GitOpStatusResult) { appState?.gitCache.handleGitOpStatusResult(result) }
-    func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) { appState?.gitCache.handleGitMergeToDefaultResult(result) }
-    func handleGitIntegrationStatusResult(_ result: GitIntegrationStatusResult) { appState?.gitCache.handleGitIntegrationStatusResult(result) }
-    func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) { appState?.gitCache.handleGitRebaseOntoDefaultResult(result) }
-    func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) { appState?.gitCache.handleGitResetIntegrationWorktreeResult(result) }
+final class AppStateGitMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, GitMessageHandler {
+    func handleGitDiffResult(_ result: GitDiffResult) { dispatchToTarget { $0.gitCache.handleGitDiffResult(result) } }
+    func handleGitStatusResult(_ result: GitStatusResult) { dispatchToTarget { $0.gitCache.handleGitStatusResult(result) } }
+    func handleGitLogResult(_ result: GitLogResult) { dispatchToTarget { $0.gitCache.handleGitLogResult(result) } }
+    func handleGitShowResult(_ result: GitShowResult) { dispatchToTarget { $0.gitCache.handleGitShowResult(result) } }
+    func handleGitOpResult(_ result: GitOpResult) { dispatchToTarget { $0.gitCache.handleGitOpResult(result) } }
+    func handleGitBranchesResult(_ result: GitBranchesResult) { dispatchToTarget { $0.gitCache.handleGitBranchesResult(result) } }
+    func handleGitCommitResult(_ result: GitCommitResult) { dispatchToTarget { $0.gitCache.handleGitCommitResult(result) } }
+    func handleGitRebaseResult(_ result: GitRebaseResult) { dispatchToTarget { $0.gitCache.handleGitRebaseResult(result) } }
+    func handleGitOpStatusResult(_ result: GitOpStatusResult) { dispatchToTarget { $0.gitCache.handleGitOpStatusResult(result) } }
+    func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) { dispatchToTarget { $0.gitCache.handleGitMergeToDefaultResult(result) } }
+    func handleGitIntegrationStatusResult(_ result: GitIntegrationStatusResult) { dispatchToTarget { $0.gitCache.handleGitIntegrationStatusResult(result) } }
+    func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) { dispatchToTarget { $0.gitCache.handleGitRebaseOntoDefaultResult(result) } }
+    func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) { dispatchToTarget { $0.gitCache.handleGitResetIntegrationWorktreeResult(result) } }
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {
-        appState?.gitCache.applyGitInput(.gitStatusChanged, project: notification.project, workspace: notification.workspace)
+        dispatchToTarget { $0.gitCache.applyGitInput(.gitStatusChanged, project: notification.project, workspace: notification.workspace) }
     }
-    func handleGitAIMergeResult(_ result: GitAIMergeResult) { appState?.handleGitAIMergeResult(result) }
+    func handleGitAIMergeResult(_ result: GitAIMergeResult) { dispatchToTarget { $0.handleGitAIMergeResult(result) } }
     // v1.40: 冲突向导
-    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { appState?.gitCache.handleGitConflictDetailResult(result) }
-    func handleGitConflictActionResult(_ result: GitConflictActionResult) { appState?.gitCache.handleGitConflictActionResult(result) }
+    func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { dispatchToTarget { $0.gitCache.handleGitConflictDetailResult(result) } }
+    func handleGitConflictActionResult(_ result: GitConflictActionResult) { dispatchToTarget { $0.gitCache.handleGitConflictActionResult(result) } }
 }
 
-final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    func handleProjectsList(_ result: ProjectsListResult) { appState?.handleProjectsList(result) }
-    func handleWorkspacesList(_ result: WorkspacesListResult) { appState?.handleWorkspacesList(result) }
-    func handleProjectImported(_ result: ProjectImportedResult) { appState?.handleProjectImported(result) }
-    func handleWorkspaceCreated(_ result: WorkspaceCreatedResult) { appState?.handleWorkspaceCreated(result) }
-    func handleProjectRemoved(_ result: ProjectRemovedResult) { appState?.handleProjectRemoved(result) }
-    func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) { appState?.handleWorkspaceRemoved(result) }
+final class AppStateProjectMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, ProjectMessageHandler {
+    func handleProjectsList(_ result: ProjectsListResult) { dispatchToTarget { $0.handleProjectsList(result) } }
+    func handleWorkspacesList(_ result: WorkspacesListResult) { dispatchToTarget { $0.handleWorkspacesList(result) } }
+    func handleProjectImported(_ result: ProjectImportedResult) { dispatchToTarget { $0.handleProjectImported(result) } }
+    func handleWorkspaceCreated(_ result: WorkspaceCreatedResult) { dispatchToTarget { $0.handleWorkspaceCreated(result) } }
+    func handleProjectRemoved(_ result: ProjectRemovedResult) { dispatchToTarget { $0.handleProjectRemoved(result) } }
+    func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) { dispatchToTarget { $0.handleWorkspaceRemoved(result) } }
     func handleProjectCommandsSaved(_ project: String, _ ok: Bool, _ message: String?) {
         if !ok {
             TFLog.app.warning("项目命令保存失败: \(message ?? "未知错误", privacy: .public)")
         }
     }
     func handleProjectCommandStarted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {
-        appState?.handleProjectCommandStarted(project: project, workspace: workspace, commandId: commandId, taskId: taskId)
+        dispatchToTarget { $0.handleProjectCommandStarted(project: project, workspace: workspace, commandId: commandId, taskId: taskId) }
     }
     func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?) {
-        appState?.handleProjectCommandCompleted(
-            project: project,
-            workspace: workspace,
-            commandId: commandId,
-            taskId: taskId,
-            ok: ok,
-            message: message
-        )
+        dispatchToTarget {
+            $0.handleProjectCommandCompleted(
+                project: project,
+                workspace: workspace,
+                commandId: commandId,
+                taskId: taskId,
+                ok: ok,
+                message: message
+            )
+        }
     }
     func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {
-        appState?.handleProjectCommandCancelled(
-            project: project,
-            workspace: workspace,
-            commandId: commandId,
-            taskId: taskId
-        )
+        dispatchToTarget {
+            $0.handleProjectCommandCancelled(
+                project: project,
+                workspace: workspace,
+                commandId: commandId,
+                taskId: taskId
+            )
+        }
     }
     func handleProjectCommandOutput(_ taskId: String, _ line: String) {
-        appState?.handleProjectCommandOutput(taskId: taskId, line: line)
+        dispatchToTarget { $0.handleProjectCommandOutput(taskId: taskId, line: line) }
     }
     // v1.40: 工作流模板管理
-    func handleTemplatesList(_ result: TemplatesListResult) { appState?.handleTemplatesList(result) }
-    func handleTemplateSaved(_ result: TemplateSavedResult) { appState?.handleTemplateSaved(result) }
-    func handleTemplateDeleted(_ result: TemplateDeletedResult) { appState?.handleTemplateDeleted(result) }
-    func handleTemplateImported(_ result: TemplateImportedResult) { appState?.handleTemplateImported(result) }
-    func handleTemplateExported(_ result: TemplateExportedResult) { appState?.handleTemplateExported(result) }
+    func handleTemplatesList(_ result: TemplatesListResult) { dispatchToTarget { $0.handleTemplatesList(result) } }
+    func handleTemplateSaved(_ result: TemplateSavedResult) { dispatchToTarget { $0.handleTemplateSaved(result) } }
+    func handleTemplateDeleted(_ result: TemplateDeletedResult) { dispatchToTarget { $0.handleTemplateDeleted(result) } }
+    func handleTemplateImported(_ result: TemplateImportedResult) { dispatchToTarget { $0.handleTemplateImported(result) } }
+    func handleTemplateExported(_ result: TemplateExportedResult) { dispatchToTarget { $0.handleTemplateExported(result) } }
 }
 
-final class AppStateFileMessageHandlerAdapter: FileMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    func handleFileReadResult(_ result: FileReadResult) { appState?.handleFileReadResult(result) }
-    func handleFileIndexResult(_ result: FileIndexResult) { appState?.handleFileIndexResult(result) }
-    func handleFileListResult(_ result: FileListResult) { appState?.handleFileListResult(result) }
-    func handleFileRenameResult(_ result: FileRenameResult) { appState?.handleFileRenameResult(result) }
-    func handleFileDeleteResult(_ result: FileDeleteResult) { appState?.handleFileDeleteResult(result) }
-    func handleFileCopyResult(_ result: FileCopyResult) { appState?.handleFileCopyResult(result) }
-    func handleFileMoveResult(_ result: FileMoveResult) { appState?.handleFileMoveResult(result) }
-    func handleFileWriteResult(_ result: FileWriteResult) { appState?.handleFileWriteResult(result) }
+final class AppStateFileMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, FileMessageHandler {
+    func handleFileReadResult(_ result: FileReadResult) { dispatchToTarget { $0.handleFileReadResult(result) } }
+    func handleFileIndexResult(_ result: FileIndexResult) { dispatchToTarget { $0.handleFileIndexResult(result) } }
+    func handleFileListResult(_ result: FileListResult) { dispatchToTarget { $0.handleFileListResult(result) } }
+    func handleFileRenameResult(_ result: FileRenameResult) { dispatchToTarget { $0.handleFileRenameResult(result) } }
+    func handleFileDeleteResult(_ result: FileDeleteResult) { dispatchToTarget { $0.handleFileDeleteResult(result) } }
+    func handleFileCopyResult(_ result: FileCopyResult) { dispatchToTarget { $0.handleFileCopyResult(result) } }
+    func handleFileMoveResult(_ result: FileMoveResult) { dispatchToTarget { $0.handleFileMoveResult(result) } }
+    func handleFileWriteResult(_ result: FileWriteResult) { dispatchToTarget { $0.handleFileWriteResult(result) } }
     func handleFileChanged(_ notification: FileChangedNotification) {
-        appState?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
-        appState?.notifyEditorFileChanged(notification: notification)
+        dispatchToTarget { appState in
+            appState.invalidateFileCache(project: notification.project, workspace: notification.workspace)
+            appState.notifyEditorFileChanged(notification: notification)
+        }
     }
     func handleWatchSubscribed(_ result: WatchSubscribedResult) {
-        let globalKey = appState?.globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
-        if let key = globalKey {
-            appState?.fileCache.onWatchSubscribed(globalKey: key)
+        dispatchToTarget { appState in
+            let globalKey = appState.globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+            appState.fileCache.onWatchSubscribed(globalKey: globalKey)
         }
     }
     func handleWatchUnsubscribed() {
-        if let key = appState?.currentGlobalWorkspaceKey {
-            appState?.fileCache.onWatchUnsubscribed(globalKey: key)
+        dispatchToTarget { appState in
+            if let key = appState.currentGlobalWorkspaceKey {
+                appState.fileCache.onWatchUnsubscribed(globalKey: key)
+            }
         }
     }
 }
 
+/// Settings 领域保持独立，不使用共享骨架（不纳入本轮共享抽象）。
 final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     weak var appState: AppState?
 
@@ -158,209 +155,172 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     }
 }
 
-final class AppStateNodeMessageHandlerAdapter: NodeMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
+final class AppStateNodeMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, NodeMessageHandler {
     func handleNodeSelfUpdated(_ identity: NodeSelfInfoV2) {
-        appState?.nodeSelfInfo = identity
-        appState?.recordServerNodeProfile(
-            nodeName: identity.nodeName,
-            discoveryEnabled: identity.discoveryEnabled
-        )
+        dispatchToTarget { appState in
+            appState.nodeSelfInfo = identity
+            appState.recordServerNodeProfile(
+                nodeName: identity.nodeName,
+                discoveryEnabled: identity.discoveryEnabled
+            )
+        }
     }
 
     func handleNodeDiscoveryUpdated(_ items: [NodeDiscoveryItemV2]) {
-        guard let appState else { return }
-        appState.nodeDiscoveryItems = reconcileDiscoveryPairingState(
-            items: items,
-            peers: appState.nodeNetworkPeers
-        )
+        dispatchToTarget { appState in
+            appState.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+                items: items,
+                peers: appState.nodeNetworkPeers
+            )
+        }
     }
 
     func handleNodeNetworkUpdated(_ snapshot: NodeNetworkSnapshotV2) {
-        if appState?.nodePairingInFlight == true {
-            TFLog.app.info(
-                "配对期间收到节点网络更新: peers=\(snapshot.peers.count, privacy: .public), self=\(snapshot.identity.nodeID, privacy: .public)"
+        dispatchToTarget { appState in
+            if appState.nodePairingInFlight == true {
+                TFLog.app.info(
+                    "配对期间收到节点网络更新: peers=\(snapshot.peers.count, privacy: .public), self=\(snapshot.identity.nodeID, privacy: .public)"
+                )
+            }
+            appState.nodeSelfInfo = snapshot.identity
+            appState.nodeNetworkPeers = snapshot.peers
+            appState.nodeActiveLocks = snapshot.activeLocks
+            appState.nodeDiscoveryItems = reconcileDiscoveryPairingState(
+                items: appState.nodeDiscoveryItems,
+                peers: snapshot.peers
+            )
+            appState.recordServerNodeProfile(
+                nodeName: snapshot.identity.nodeName,
+                discoveryEnabled: snapshot.identity.discoveryEnabled
             )
         }
-        appState?.nodeSelfInfo = snapshot.identity
-        appState?.nodeNetworkPeers = snapshot.peers
-        appState?.nodeActiveLocks = snapshot.activeLocks
-        appState?.nodeDiscoveryItems = reconcileDiscoveryPairingState(
-            items: appState?.nodeDiscoveryItems ?? [],
-            peers: snapshot.peers
-        )
-        appState?.recordServerNodeProfile(
-            nodeName: snapshot.identity.nodeName,
-            discoveryEnabled: snapshot.identity.discoveryEnabled
-        )
     }
 
     func handleNodePairingResult(_ result: NodePairingResultV2) {
-        if result.ok {
-            TFLog.app.info(
-                "收到节点配对结果: ok=true, peer=\(result.peer?.peerNodeID ?? "nil", privacy: .public)"
-            )
-        } else {
-            TFLog.app.warning(
-                "收到节点配对结果: ok=false, message=\(result.message ?? "未知错误", privacy: .public)"
-            )
-        }
-        appState?.nodeLastPairingResult = result
-        appState?.nodePairingInFlight = false
-        if result.ok {
-            appState?.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
-            appState?.wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+        dispatchToTarget { appState in
+            if result.ok {
+                TFLog.app.info(
+                    "收到节点配对结果: ok=true, peer=\(result.peer?.peerNodeID ?? "nil", privacy: .public)"
+                )
+            } else {
+                TFLog.app.warning(
+                    "收到节点配对结果: ok=false, message=\(result.message ?? "未知错误", privacy: .public)"
+                )
+            }
+            appState.nodeLastPairingResult = result
+            appState.nodePairingInFlight = false
+            if result.ok {
+                appState.wsClient.requestNodeNetwork(cacheMode: .forceRefresh)
+                appState.wsClient.requestNodeDiscovery(cacheMode: .forceRefresh)
+            }
         }
     }
 
     func handleNodePeerStatus(peerNodeID: String, status: String, lastSeenAtUnix: UInt64?) {
-        guard let appState else { return }
-        appState.nodeNetworkPeers = appState.nodeNetworkPeers.map { peer in
-            guard peer.peerNodeID == peerNodeID else { return peer }
-            return NodePeerInfoV2(
-                peerNodeID: peer.peerNodeID,
-                peerName: peer.peerName,
-                addresses: peer.addresses,
-                port: peer.port,
-                trustSource: peer.trustSource,
-                introducedBy: peer.introducedBy,
-                lastSeenAtUnix: lastSeenAtUnix ?? peer.lastSeenAtUnix,
-                status: status,
-                authToken: peer.authToken
-            )
+        dispatchToTarget { appState in
+            appState.nodeNetworkPeers = appState.nodeNetworkPeers.map { peer in
+                guard peer.peerNodeID == peerNodeID else { return peer }
+                return NodePeerInfoV2(
+                    peerNodeID: peer.peerNodeID,
+                    peerName: peer.peerName,
+                    addresses: peer.addresses,
+                    port: peer.port,
+                    trustSource: peer.trustSource,
+                    introducedBy: peer.introducedBy,
+                    lastSeenAtUnix: lastSeenAtUnix ?? peer.lastSeenAtUnix,
+                    status: status,
+                    authToken: peer.authToken
+                )
+            }
         }
     }
 }
 
-final class AppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
+final class AppStateTerminalMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, TerminalMessageHandler {
     func handleTerminalOutput(_ termId: String?, _ bytes: [UInt8]) {
-        appState?.handleTerminalOutput(termId: termId, bytes: bytes)
+        dispatchToTarget { $0.handleTerminalOutput(termId: termId, bytes: bytes) }
     }
 
     func handleTerminalExit(_ termId: String?, _ code: Int) {
-        appState?.handleTerminalExit(termId: termId, code: code)
+        dispatchToTarget { $0.handleTerminalExit(termId: termId, code: code) }
     }
 
     func handleTermCreated(_ result: TermCreatedResult) {
-        appState?.handleTermCreated(result)
+        dispatchToTarget { $0.handleTermCreated(result) }
     }
 
     func handleTermAttached(_ result: TermAttachedResult) {
-        appState?.handleTermAttached(result)
+        dispatchToTarget { $0.handleTermAttached(result) }
     }
 
     func handleTermList(_ result: TermListResult) {
-        appState?.updateRemoteTerminals(from: result.items)
+        dispatchToTarget { $0.updateRemoteTerminals(from: result.items) }
     }
 
     func handleTermClosed(_ termId: String) {
-        appState?.handleTermClosed(termId)
+        dispatchToTarget { $0.handleTermClosed(termId) }
     }
 
     func handleRemoteTermChanged() {
-        appState?.refreshRemoteTerminals()
+        dispatchToTarget { $0.refreshRemoteTerminals() }
     }
 }
 
-final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    /// WSClient 在解码队列回调协议方法；这里统一切回主线程，避免 UI 状态跨线程写入。
-    private func dispatchToMain(_ action: @escaping (AppState) -> Void) {
-        DispatchQueue.main.async { [weak self] in
-            guard let appState = self?.appState else { return }
-            action(appState)
-        }
-    }
-
-    func handleAITaskCancelled(_ result: AITaskCancelled) { dispatchToMain { $0.handleAITaskCancelled(result) } }
-    func handleAISessionStarted(_ ev: AISessionStartedV2) { dispatchToMain { $0.handleAISessionStarted(ev) } }
-    func handleAISessionList(_ ev: AISessionListV2) { dispatchToMain { $0.handleAISessionList(ev) } }
-    func handleAISessionMessages(_ ev: AISessionMessagesV2) { dispatchToMain { $0.handleAISessionMessages(ev) } }
-    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { dispatchToMain { $0.handleAISessionMessagesUpdate(ev) } }
-    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { dispatchToMain { $0.handleAISessionStatusResult(ev) } }
-    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { dispatchToMain { $0.handleAISessionStatusUpdate(ev) } }
-    func handleAIChatDone(_ ev: AIChatDoneV2) { dispatchToMain { $0.handleAIChatDone(ev) } }
-    func handleAIChatPending(_ ev: AIChatPendingV2) { dispatchToMain { $0.handleAIChatPending(ev) } }
-    func handleAIChatError(_ ev: AIChatErrorV2) { dispatchToMain { $0.handleAIChatError(ev) } }
-    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { dispatchToMain { $0.handleAIQuestionAsked(ev) } }
-    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { dispatchToMain { $0.handleAIQuestionCleared(ev) } }
-    func handleAIProviderList(_ ev: AIProviderListResult) { dispatchToMain { $0.handleAIProviderList(ev) } }
-    func handleAIAgentList(_ ev: AIAgentListResult) { dispatchToMain { $0.handleAIAgentList(ev) } }
-    func handleAISlashCommands(_ ev: AISlashCommandsResult) { dispatchToMain { $0.handleAISlashCommands(ev) } }
-    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { dispatchToMain { $0.handleAISlashCommandsUpdate(ev) } }
-    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { dispatchToMain { $0.handleAISessionConfigOptions(ev) } }
-    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) { dispatchToMain { $0.handleAISessionSubscribeAck(ev) } }
-    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { dispatchToMain { $0.handleAISessionRenameResult(ev) } }
-    func handleAICodeReviewResult(_ ev: AICodeReviewResult) { dispatchToMain { $0.handleAICodeReviewResult(ev) } }
-    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) { dispatchToMain { $0.handleAICodeCompletionChunk(ev) } }
-    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) { dispatchToMain { $0.handleAICodeCompletionDone(ev) } }
+final class AppStateAIMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, AIMessageHandler {
+    func handleAITaskCancelled(_ result: AITaskCancelled) { dispatchToTarget { $0.handleAITaskCancelled(result) } }
+    func handleAISessionStarted(_ ev: AISessionStartedV2) { dispatchToTarget { $0.handleAISessionStarted(ev) } }
+    func handleAISessionList(_ ev: AISessionListV2) { dispatchToTarget { $0.handleAISessionList(ev) } }
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) { dispatchToTarget { $0.handleAISessionMessages(ev) } }
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { dispatchToTarget { $0.handleAISessionMessagesUpdate(ev) } }
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { dispatchToTarget { $0.handleAISessionStatusResult(ev) } }
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { dispatchToTarget { $0.handleAISessionStatusUpdate(ev) } }
+    func handleAIChatDone(_ ev: AIChatDoneV2) { dispatchToTarget { $0.handleAIChatDone(ev) } }
+    func handleAIChatPending(_ ev: AIChatPendingV2) { dispatchToTarget { $0.handleAIChatPending(ev) } }
+    func handleAIChatError(_ ev: AIChatErrorV2) { dispatchToTarget { $0.handleAIChatError(ev) } }
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { dispatchToTarget { $0.handleAIQuestionAsked(ev) } }
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { dispatchToTarget { $0.handleAIQuestionCleared(ev) } }
+    func handleAIProviderList(_ ev: AIProviderListResult) { dispatchToTarget { $0.handleAIProviderList(ev) } }
+    func handleAIAgentList(_ ev: AIAgentListResult) { dispatchToTarget { $0.handleAIAgentList(ev) } }
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) { dispatchToTarget { $0.handleAISlashCommands(ev) } }
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { dispatchToTarget { $0.handleAISlashCommandsUpdate(ev) } }
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { dispatchToTarget { $0.handleAISessionConfigOptions(ev) } }
+    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) { dispatchToTarget { $0.handleAISessionSubscribeAck(ev) } }
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { dispatchToTarget { $0.handleAISessionRenameResult(ev) } }
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult) { dispatchToTarget { $0.handleAICodeReviewResult(ev) } }
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) { dispatchToTarget { $0.handleAICodeCompletionChunk(ev) } }
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) { dispatchToTarget { $0.handleAICodeCompletionDone(ev) } }
 }
 
-final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
+final class AppStateEvolutionMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, EvolutionMessageHandler {
+    func handleEvolutionPulse() { dispatchToTarget { $0.handleEvolutionPulse() } }
+    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) { dispatchToTarget { $0.handleEvolutionWorkspaceStatusEvent(ev) } }
+    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { dispatchToTarget { $0.handleEvolutionSnapshot(snapshot) } }
+    func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) { dispatchToTarget { $0.handleEvolutionCycleUpdated(ev) } }
+    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { dispatchToTarget { $0.handleEvolutionAgentProfile(ev) } }
+    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { dispatchToTarget { $0.handleEvolutionBlockingRequired(ev) } }
+    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { dispatchToTarget { $0.handleEvolutionBlockersUpdated(ev) } }
+    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {
+        dispatchToTarget { $0.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles) }
     }
-
-    func handleEvolutionPulse() { appState?.handleEvolutionPulse() }
-    func handleEvolutionWorkspaceStatusEvent(_ ev: EvolutionWorkspaceStatusEventV2) { appState?.handleEvolutionWorkspaceStatusEvent(ev) }
-    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { appState?.handleEvolutionSnapshot(snapshot) }
-    func handleEvolutionCycleUpdated(_ ev: EvoCycleUpdatedV2) { appState?.handleEvolutionCycleUpdated(ev) }
-    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
-    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }
-    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
-    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) { appState?.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles) }
-    func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult) { appState?.handleEvoAutoCommitResult(result) }
+    func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult) { dispatchToTarget { $0.handleEvoAutoCommitResult(result) } }
     func handleEvolutionError(_ error: CoreError) {
-        appState?.handleEvolutionError(error.message, project: error.project, workspace: error.workspace)
+        // macOS 桌面端映射：解构 CoreError 为独立参数
+        dispatchToTarget { $0.handleEvolutionError(error.message, project: error.project, workspace: error.workspace) }
     }
 }
 
-final class AppStateEvidenceMessageHandlerAdapter: EvidenceMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) { appState?.handleEvidenceSnapshot(snapshot) }
-    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) { appState?.handleEvidenceRebuildPrompt(prompt) }
-    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) { appState?.handleEvidenceItemChunk(chunk) }
+final class AppStateEvidenceMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, EvidenceMessageHandler {
+    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) { dispatchToTarget { $0.handleEvidenceSnapshot(snapshot) } }
+    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) { dispatchToTarget { $0.handleEvidenceRebuildPrompt(prompt) } }
+    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) { dispatchToTarget { $0.handleEvidenceItemChunk(chunk) } }
 }
 
-final class AppStateErrorMessageHandlerAdapter: ErrorMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
+final class AppStateErrorMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, ErrorMessageHandler {
     func handleClientError(_ message: String) {
-        Task { @MainActor [weak appState] in
-            appState?.handleClientErrorMessage(message)
-        }
+        dispatchToTarget { $0.handleClientErrorMessage(message) }
     }
 
     func handleCoreError(_ error: CoreError) {
-        Task { @MainActor [weak appState] in
-            appState?.handleCoreError(error)
-        }
+        dispatchToTarget { $0.handleCoreError(error) }
     }
 }

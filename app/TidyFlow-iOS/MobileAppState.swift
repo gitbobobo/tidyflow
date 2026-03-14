@@ -4566,15 +4566,15 @@ final class MobileAppState: ObservableObject {
         }
 
         // 按领域 handler 绑定，替代大量 onXxx 闭包接线（与 macOS AppState+CoreWS+WSClientBinder 对称）
-        let gitHandler = MobileAppStateGitMessageHandlerAdapter(appState: self)
-        let projectHandler = MobileAppStateProjectMessageHandlerAdapter(appState: self)
-        let fileHandler = MobileAppStateFileMessageHandlerAdapter(appState: self)
-        let terminalHandler = MobileAppStateTerminalMessageHandlerAdapter(appState: self)
-        let aiHandler = MobileAppStateAIMessageHandlerAdapter(appState: self)
-        let evolutionHandler = MobileAppStateEvolutionMessageHandlerAdapter(appState: self)
-        let nodeHandler = MobileAppStateNodeMessageHandlerAdapter(appState: self)
-        let evidenceHandler = MobileAppStateEvidenceMessageHandlerAdapter(appState: self)
-        let errorHandler = MobileAppStateErrorMessageHandlerAdapter(appState: self)
+        let gitHandler = MobileAppStateGitMessageHandlerAdapter(target: self)
+        let projectHandler = MobileAppStateProjectMessageHandlerAdapter(target: self)
+        let fileHandler = MobileAppStateFileMessageHandlerAdapter(target: self)
+        let terminalHandler = MobileAppStateTerminalMessageHandlerAdapter(target: self)
+        let aiHandler = MobileAppStateAIMessageHandlerAdapter(target: self)
+        let evolutionHandler = MobileAppStateEvolutionMessageHandlerAdapter(target: self)
+        let nodeHandler = MobileAppStateNodeMessageHandlerAdapter(target: self)
+        let evidenceHandler = MobileAppStateEvidenceMessageHandlerAdapter(target: self)
+        let errorHandler = MobileAppStateErrorMessageHandlerAdapter(target: self)
 
         _gitHandlerAdapter = gitHandler
         _projectHandlerAdapter = projectHandler
@@ -6034,101 +6034,3 @@ extension MobileAppState {
     }
 }
 
-// MARK: - MobileAppStateAIMessageHandlerAdapter
-
-/// iOS 端 AI 消息处理适配器，与 macOS AppStateAIMessageHandlerAdapter 对称。
-/// 持有对 MobileAppState 的弱引用，由 wsClient.aiMessageHandler 统一分发事件。
-/// 所有 AI 消息经此单一入口路由，确保 macOS/iOS 共享相同的消息边界与协议语义。
-final class MobileAppStateAIMessageHandlerAdapter: AIMessageHandler {
-    weak var appState: MobileAppState?
-
-    init(appState: MobileAppState) {
-        self.appState = appState
-    }
-
-    /// WSClient 在解码队列回调协议方法；这里统一切回主线程，避免 UI 状态跨线程写入。
-    private func dispatchToMain(_ action: @escaping @MainActor (MobileAppState) -> Void) {
-        DispatchQueue.main.async { [weak self] in
-            guard let appState = self?.appState else { return }
-            MainActor.assumeIsolated {
-                action(appState)
-            }
-        }
-    }
-
-    func handleAITaskCancelled(_ result: AITaskCancelled) {
-        dispatchToMain { $0.handleAITaskCancelled(result) }
-    }
-
-    func handleAISessionStarted(_ ev: AISessionStartedV2) {
-        dispatchToMain { $0.handleAISessionStarted(ev) }
-    }
-
-    func handleAISessionList(_ ev: AISessionListV2) {
-        dispatchToMain { $0.handleAISessionList(ev) }
-    }
-
-    func handleAISessionMessages(_ ev: AISessionMessagesV2) {
-        dispatchToMain { $0.handleAISessionMessages(ev) }
-    }
-
-    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
-        dispatchToMain { $0.handleAISessionMessagesUpdate(ev) }
-    }
-
-    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
-        dispatchToMain { $0.handleAISessionStatusResult(ev) }
-    }
-
-    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
-        dispatchToMain { $0.handleAISessionStatusUpdate(ev) }
-    }
-
-    func handleAIChatDone(_ ev: AIChatDoneV2) {
-        dispatchToMain { $0.handleAIChatDone(ev) }
-    }
-
-    func handleAIChatError(_ ev: AIChatErrorV2) {
-        dispatchToMain { $0.handleAIChatError(ev) }
-    }
-
-    func handleAIProviderList(_ ev: AIProviderListResult) {
-        dispatchToMain { $0.handleAIProviderList(ev) }
-    }
-
-    func handleAIAgentList(_ ev: AIAgentListResult) {
-        dispatchToMain { $0.handleAIAgentList(ev) }
-    }
-
-    func handleAISlashCommands(_ ev: AISlashCommandsResult) {
-        dispatchToMain { $0.handleAISlashCommands(ev) }
-    }
-
-    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {
-        dispatchToMain { $0.handleAISlashCommandsUpdate(ev) }
-    }
-
-    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {
-        dispatchToMain { $0.handleAISessionConfigOptions(ev) }
-    }
-
-    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {
-        dispatchToMain { $0.handleAIQuestionAsked(ev) }
-    }
-
-    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {
-        dispatchToMain { $0.handleAIQuestionCleared(ev) }
-    }
-
-    func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
-        dispatchToMain { $0.handleAISessionRenameResult(ev) }
-    }
-
-    func handleAISessionSubscribeAck(_ ev: AISessionSubscribeAck) {
-        dispatchToMain { $0.handleAISessionSubscribeAck(ev) }
-    }
-
-    func handleAIContextSnapshotUpdated(_ json: [String: Any]) {
-        dispatchToMain { $0.handleAIContextSnapshotUpdated(json) }
-    }
-}

@@ -29,10 +29,12 @@
 		SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01016 /* CoordinatorSnapshotApplier.swift */; };
 		SHR02017 /* EvolutionControlSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01017 /* EvolutionControlSemantics.swift */; };
 		SHR02018 /* SharedTerminalShellDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01018 /* SharedTerminalShellDriver.swift */; };
+		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
 		GWSD0201 /* GitWorkspaceStateDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = GWSD0101 /* GitWorkspaceStateDriver.swift */; };
 		CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */; };
 		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
 		CCST0001 /* CoordinatorStateCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCST0011 /* CoordinatorStateCacheTests.swift */; };
+		WTMA0001 /* WeakTargetMessageAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WTMA0011 /* WeakTargetMessageAdapterTests.swift */; };
 		WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WPBT0011 /* WorkspaceProjectionBridgeTests.swift */; };
 		SHR03001 /* TidyFlowShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SHR00005 /* TidyFlowShared.framework */; };
 		SHR03002 /* SharedProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR0100A /* SharedProtocolModelsTests.swift */; };
@@ -370,9 +372,11 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01017 /* EvolutionControlSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionControlSemantics.swift; sourceTree = "<group>"; };
 		SHR01018 /* SharedTerminalShellDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTerminalShellDriver.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
+		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
 		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
 		CCST0011 /* CoordinatorStateCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCacheTests.swift; sourceTree = "<group>"; };
+		WTMA0011 /* WeakTargetMessageAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeakTargetMessageAdapterTests.swift; sourceTree = "<group>"; };
 		WPBT0011 /* WorkspaceProjectionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceProjectionBridgeTests.swift; sourceTree = "<group>"; };
 
 		0C7853A8D54BE247818D1333 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -689,6 +693,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01017 /* EvolutionControlSemantics.swift */,
 				SHR01018 /* SharedTerminalShellDriver.swift */,
 				GWSD0101 /* GitWorkspaceStateDriver.swift */,
+				MHA00101 /* MessageHandlerAdapter.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -944,7 +949,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 				SHR0100B /* SharedNetworkAbstractionTests.swift */,
 				WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */,
 				CCST0011 /* CoordinatorStateCacheTests.swift */,
-				CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */,
+				WTMA0011 /* WeakTargetMessageAdapterTests.swift */,
 				WPBT0011 /* WorkspaceProjectionBridgeTests.swift */,
 				TSAC0011 /* AIChatStreamCoalescerTests.swift */,
 				TSMS0011 /* StreamingMarkdownRenderSchedulerTests.swift */,
@@ -1542,7 +1547,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR03003 /* SharedNetworkAbstractionTests.swift in Sources */,
 				WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */,
 				CCST0001 /* CoordinatorStateCacheTests.swift in Sources */,
-				CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */,
+				WTMA0001 /* WeakTargetMessageAdapterTests.swift in Sources */,
 				WPBT0001 /* WorkspaceProjectionBridgeTests.swift in Sources */,
 				TSAC0001 /* AIChatStreamCoalescerTests.swift in Sources */,
 				TSMS0001 /* StreamingMarkdownRenderSchedulerTests.swift in Sources */,
@@ -1589,6 +1594,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02017 /* EvolutionControlSemantics.swift in Sources */,
 				SHR02018 /* SharedTerminalShellDriver.swift in Sources */,
 				GWSD0201 /* GitWorkspaceStateDriver.swift in Sources */,
+				MHA00201 /* MessageHandlerAdapter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
