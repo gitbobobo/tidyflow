@@ -1058,7 +1058,11 @@ struct NativeCodeEditorView: NSViewRepresentable {
             guard let result = editorStore.undoEdit(documentKey: docKey, currentText: textView.string) else { return }
             context.coordinator.isProgrammaticTextUpdate = true
             textView.string = result.text
-            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            // 恢复多选区
+            let nsRanges = result.selections.regions.map {
+                NSValue(range: NSRange(location: $0.location, length: $0.length))
+            }
+            textView.setSelectedRanges(nsRanges, affinity: .downstream, stillSelecting: false)
             context.coordinator.isProgrammaticTextUpdate = false
             context.coordinator.parent.text = result.text
             context.coordinator.applySyntaxHighlighting(to: textView)
@@ -1071,7 +1075,11 @@ struct NativeCodeEditorView: NSViewRepresentable {
             guard let result = editorStore.redoEdit(documentKey: docKey, currentText: textView.string) else { return }
             context.coordinator.isProgrammaticTextUpdate = true
             textView.string = result.text
-            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            // 恢复多选区
+            let nsRanges = result.selections.regions.map {
+                NSValue(range: NSRange(location: $0.location, length: $0.length))
+            }
+            textView.setSelectedRanges(nsRanges, affinity: .downstream, stillSelecting: false)
             context.coordinator.isProgrammaticTextUpdate = false
             context.coordinator.parent.text = result.text
             context.coordinator.applySyntaxHighlighting(to: textView)
@@ -1222,58 +1230,141 @@ struct NativeCodeEditorView: NSViewRepresentable {
 
         /// 拦截文本变更前记录共享编辑命令。
         /// 用户编辑走此路径入栈；程序化回放（undo/redo 写回）由 isProgrammaticTextUpdate 旗标跳过。
+        /// 支持 NSTextView 多选区：为每个选区生成原子 mutation，构建批量命令。
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard !isProgrammaticTextUpdate, !isApplyingHighlight else { return true }
             guard let docKey = parent.documentKey,
                   let replacement = replacementString else { return true }
 
             let currentText = textView.string
-            let selectedRange = textView.selectedRange()
-            let replacedText = (currentText as NSString).substring(with: affectedCharRange)
 
-            let command = EditorEditCommand(
-                mutation: EditorTextMutation(
-                    rangeLocation: affectedCharRange.location,
-                    rangeLength: affectedCharRange.length,
-                    replacementText: replacement
-                ),
-                beforeSelection: EditorSelectionSnapshot(
-                    location: selectedRange.location,
-                    length: selectedRange.length
-                ),
-                afterSelection: EditorSelectionSnapshot(
-                    location: affectedCharRange.location + (replacement as NSString).length,
-                    length: 0
-                ),
-                timestamp: Date(),
-                replacedText: replacedText
-            )
+            // 读取当前所有选区，构建多选区编辑命令
+            let selectedRanges = textView.selectedRanges.map { $0.rangeValue }
 
-            let result = parent.editorStore.recordEdit(
-                currentText: currentText,
-                command: command,
-                documentKey: docKey
-            )
+            // 如果只有一个选区，走简单路径
+            if selectedRanges.count <= 1 {
+                let selectedRange = textView.selectedRange()
+                let replacedText = (currentText as NSString).substring(with: affectedCharRange)
 
-            // 程序化写回新文本和选区
-            isProgrammaticTextUpdate = true
-            textView.string = result.text
-            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
-            isProgrammaticTextUpdate = false
+                let command = EditorEditCommand(
+                    mutation: EditorTextMutation(
+                        rangeLocation: affectedCharRange.location,
+                        rangeLength: affectedCharRange.length,
+                        replacementText: replacement
+                    ),
+                    beforeSelection: EditorSelectionSnapshot(
+                        location: selectedRange.location,
+                        length: selectedRange.length
+                    ),
+                    afterSelection: EditorSelectionSnapshot(
+                        location: affectedCharRange.location + (replacement as NSString).length,
+                        length: 0
+                    ),
+                    timestamp: Date(),
+                    replacedText: replacedText
+                )
 
-            // 更新 binding 和状态
-            parent.text = result.text
+                let result = parent.editorStore.recordEdit(
+                    currentText: currentText,
+                    command: command,
+                    documentKey: docKey
+                )
 
-            // 编辑时自动展开包含光标位置的已折叠区域
-            if let snapshot = lastStructureSnapshot {
-                let cursorLine = lineNumber(for: result.selection.location, in: result.text)
-                var foldState = parent.editorStore.foldingState(for: docKey)
-                let beforeCount = foldState.collapsedRegionIDs.count
-                foldState.expandRegions(containingLine: cursorLine, in: snapshot)
-                if foldState.collapsedRegionIDs.count != beforeCount {
-                    parent.editorStore.updateFoldingState(foldState, for: docKey)
+                isProgrammaticTextUpdate = true
+                textView.string = result.text
+                let primarySel = result.selections.primarySnapshot
+                textView.setSelectedRange(NSRange(location: primarySel.location, length: primarySel.length))
+                isProgrammaticTextUpdate = false
+
+                parent.text = result.text
+
+                if let snapshot = lastStructureSnapshot {
+                    let cursorLine = lineNumber(for: primarySel.location, in: result.text)
+                    var foldState = parent.editorStore.foldingState(for: docKey)
+                    let beforeCount = foldState.collapsedRegionIDs.count
+                    foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                    if foldState.collapsedRegionIDs.count != beforeCount {
+                        parent.editorStore.updateFoldingState(foldState, for: docKey)
+                    }
+                    parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
                 }
-                parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
+            } else {
+                // 多选区：为每个选区生成 mutation（NSTextView 对多选区编辑会对
+                // 每个选区分别调用 shouldChangeTextIn，这里处理批量场景的首次调用）
+                let nsText = currentText as NSString
+                let replacementLen = (replacement as NSString).length
+
+                // 构建 before/after 选区集合
+                var beforeRegions: [EditorSelectionRegion] = []
+                var afterRegions: [EditorSelectionRegion] = []
+                var mutations: [EditorTextMutation] = []
+                var replacedTexts: [String] = []
+
+                // 按降序处理以正确计算 after 位置
+                let sortedRanges = selectedRanges.sorted { $0.location > $1.location }
+                var offsetAccum = 0
+
+                for (idx, range) in sortedRanges.enumerated() {
+                    let isPrimary = (idx == sortedRanges.count - 1) // 最低位置的为主选区
+                    beforeRegions.append(EditorSelectionRegion(
+                        location: range.location, length: range.length, isPrimary: isPrimary
+                    ))
+                    let replaced = nsText.substring(with: range)
+                    mutations.append(EditorTextMutation(
+                        rangeLocation: range.location,
+                        rangeLength: range.length,
+                        replacementText: replacement
+                    ))
+                    replacedTexts.append(replaced)
+                }
+
+                // 计算 after 选区：按升序累计偏移
+                let ascRanges = selectedRanges.sorted { $0.location < $1.location }
+                offsetAccum = 0
+                for (idx, range) in ascRanges.enumerated() {
+                    let isPrimary = (idx == 0)
+                    let newLoc = range.location + offsetAccum + replacementLen
+                    afterRegions.append(EditorSelectionRegion(
+                        location: newLoc, length: 0, isPrimary: isPrimary
+                    ))
+                    offsetAccum += replacementLen - range.length
+                }
+
+                let command = EditorEditCommand(
+                    mutations: mutations,
+                    beforeSelections: EditorSelectionSet(regions: beforeRegions),
+                    afterSelections: EditorSelectionSet(regions: afterRegions),
+                    timestamp: Date(),
+                    replacedTexts: replacedTexts
+                )
+
+                let result = parent.editorStore.recordEdit(
+                    currentText: currentText,
+                    command: command,
+                    documentKey: docKey
+                )
+
+                isProgrammaticTextUpdate = true
+                textView.string = result.text
+                let nsRanges = result.selections.regions.map {
+                    NSValue(range: NSRange(location: $0.location, length: $0.length))
+                }
+                textView.setSelectedRanges(nsRanges, affinity: .downstream, stillSelecting: false)
+                isProgrammaticTextUpdate = false
+
+                parent.text = result.text
+
+                if let snapshot = lastStructureSnapshot {
+                    let primarySel = result.selections.primarySnapshot
+                    let cursorLine = lineNumber(for: primarySel.location, in: result.text)
+                    var foldState = parent.editorStore.foldingState(for: docKey)
+                    let beforeCount = foldState.collapsedRegionIDs.count
+                    foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                    if foldState.collapsedRegionIDs.count != beforeCount {
+                        parent.editorStore.updateFoldingState(foldState, for: docKey)
+                    }
+                    parent.editorStore.updateCurrentLine(cursorLine, for: docKey)
+                }
             }
 
             // 重新应用高亮和折叠
@@ -1732,7 +1823,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
                     location: textView.selectedRange().location,
                     length: textView.selectedRange().length
                 ),
-                afterSelection: result.selection,
+                afterSelection: result.selections.primarySnapshot,
                 timestamp: Date(),
                 replacedText: (currentText as NSString).substring(with: state.replacementRange)
             )
@@ -1745,7 +1836,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
             // 写回文本和选区
             isProgrammaticTextUpdate = true
             textView.string = result.text
-            textView.setSelectedRange(NSRange(location: result.selection.location, length: result.selection.length))
+            let primarySel = result.selections.primarySnapshot
+            textView.setSelectedRange(NSRange(location: primarySel.location, length: primarySel.length))
             isProgrammaticTextUpdate = false
 
             parent.text = result.text
