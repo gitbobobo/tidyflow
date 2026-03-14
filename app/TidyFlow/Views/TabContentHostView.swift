@@ -1079,11 +1079,13 @@ struct NativeCodeEditorView: NSViewRepresentable {
             // 文本变化时重新应用高亮和折叠
             context.coordinator.applySyntaxHighlighting(to: textView)
             context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
         } else {
             // 文本未变，但检查主题是否变化（深浅色切换）
             context.coordinator.applyHighlightingIfThemeChanged(to: textView)
             // 检查折叠状态是否被外部更新（如状态容器中的 toggle）
             context.coordinator.applyFoldingProjectionIfNeeded(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
 
         // 处理行跳转
@@ -1139,6 +1141,13 @@ struct NativeCodeEditorView: NSViewRepresentable {
         /// 上次应用的 gutter 缓存键（内容指纹、折叠数、当前行、断点数）
         private var lastGutterCacheKey: (Int, Int, Int?, Int)?
 
+        // MARK: - 括号/引号匹配覆盖层
+
+        /// 匹配高亮覆盖层（轻量子视图，仅绘制配对分隔符的背景/描边）
+        private var pairMatchOverlays: [NSView] = []
+        /// 上次匹配快照缓存键（内容指纹、选区位置、主题）
+        private var lastPairMatchCacheKey: (Int, Int, EditorSyntaxTheme)?
+
         init(parent: NativeCodeEditorView) {
             self.parent = parent
         }
@@ -1165,6 +1174,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
             // 用户输入后异步重算高亮和折叠
             applySyntaxHighlighting(to: textView)
             applyFoldingProjection(to: textView)
+            refreshPairMatchOverlay(textView: textView)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -1179,6 +1189,8 @@ struct NativeCodeEditorView: NSViewRepresentable {
                 // 仅当前行变化时刷新 gutter（无需重新分析结构）
                 updateGutterOverlayIfNeeded(textView: textView)
             }
+            // 选区变化时刷新括号/引号匹配覆盖层
+            refreshPairMatchOverlay(textView: textView)
         }
 
         /// 计算字符偏移对应的行号（0-based）
@@ -1417,6 +1429,95 @@ struct NativeCodeEditorView: NSViewRepresentable {
                 if ch == "\n" { currentLine += 1 }
             }
             return text.count
+        }
+
+        // MARK: - 括号/引号匹配覆盖层
+
+        /// 刷新括号/引号匹配覆盖层
+        func refreshPairMatchOverlay(textView: UndoTrackingTextView) {
+            guard let filePath = parent.filePath else {
+                clearPairMatchOverlay()
+                return
+            }
+            let text = textView.string
+            let selection = textView.selectedRange()
+            let theme = currentTheme()
+            let fingerprint = EditorSyntaxFingerprint.compute(text)
+
+            // 缓存命中则跳过
+            let cacheKey = (fingerprint, selection.location, theme)
+            if let last = lastPairMatchCacheKey,
+               last.0 == cacheKey.0,
+               last.1 == cacheKey.1,
+               last.2 == cacheKey.2,
+               selection.length == 0 {
+                return
+            }
+            lastPairMatchCacheKey = cacheKey
+
+            let snapshot = EditorPairMatcher.match(
+                filePath: filePath,
+                text: text,
+                selectionLocation: selection.location,
+                selectionLength: selection.length
+            )
+
+            // 清空旧覆盖层
+            clearPairMatchOverlay()
+
+            guard snapshot.state != .inactive, !snapshot.highlights.isEmpty else { return }
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+
+            let isDark = theme == .systemDark
+
+            for highlight in snapshot.highlights {
+                let range = NSRange(location: highlight.location, length: highlight.length)
+                guard range.location + range.length <= (textView.string as NSString).length else { continue }
+
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+
+                // 偏移到 textContainerInset + textContainerOrigin
+                let adjustedRect = NSRect(
+                    x: rect.origin.x + textView.textContainerInset.width + textView.textContainerOrigin.x,
+                    y: rect.origin.y + textView.textContainerInset.height,
+                    width: max(rect.width, 7),
+                    height: rect.height
+                )
+
+                let overlayView = NSView(frame: adjustedRect)
+                overlayView.wantsLayer = true
+
+                switch highlight.role {
+                case .activeDelimiter, .pairedDelimiter:
+                    // 匹配成功：低饱和强调背景
+                    overlayView.layer?.backgroundColor = isDark
+                        ? NSColor(calibratedRed: 0.4, green: 0.6, blue: 0.8, alpha: 0.25).cgColor
+                        : NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.7, alpha: 0.15).cgColor
+                    overlayView.layer?.cornerRadius = 2
+                case .mismatchDelimiter:
+                    // 不匹配：错误描边
+                    overlayView.layer?.backgroundColor = NSColor.clear.cgColor
+                    overlayView.layer?.borderColor = isDark
+                        ? NSColor(calibratedRed: 0.9, green: 0.3, blue: 0.3, alpha: 0.7).cgColor
+                        : NSColor(calibratedRed: 0.8, green: 0.2, blue: 0.2, alpha: 0.6).cgColor
+                    overlayView.layer?.borderWidth = 1
+                    overlayView.layer?.cornerRadius = 2
+                }
+
+                textView.addSubview(overlayView)
+                pairMatchOverlays.append(overlayView)
+            }
+        }
+
+        /// 清空匹配覆盖层
+        func clearPairMatchOverlay() {
+            for view in pairMatchOverlays {
+                view.removeFromSuperview()
+            }
+            pairMatchOverlays.removeAll()
+            lastPairMatchCacheKey = nil
         }
     }
 }
