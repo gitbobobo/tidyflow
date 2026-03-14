@@ -491,17 +491,23 @@ public final class EditorAutocompleteEngine {
     }
 
     /// 解析光标位置的标识符 token
+    ///
+    /// 只有光标位于标识符尾部（文本末尾且前一字符为标识符字符）或标识符内部时才返回 token。
+    /// 光标在空白、换行、制表、分隔符等非标识符字符上时，不向左借用相邻 token。
     func currentIdentifierToken(in nsText: NSString, at cursorLocation: Int) -> IdentifierTokenInfo? {
         guard cursorLocation >= 0, cursorLocation <= nsText.length else { return nil }
         guard nsText.length > 0 else { return nil }
 
         var probe = cursorLocation
         if probe == nsText.length {
+            // 光标在文本末尾：检查前一字符是否为标识符字符
             guard probe > 0, isIdentifierContinue(nsText.character(at: probe - 1)) else { return nil }
             probe -= 1
-        } else if !isIdentifierContinue(nsText.character(at: probe)) {
-            guard probe > 0, isIdentifierContinue(nsText.character(at: probe - 1)) else { return nil }
-            probe -= 1
+        } else if isIdentifierContinue(nsText.character(at: probe)) {
+            // 光标在标识符字符上（中部或起始场景，后续由 cursorAtEnd 检查过滤）
+        } else {
+            // 光标在非标识符字符上（空白、分隔符等）：不回借左侧 token
+            return nil
         }
 
         // 向前扫描标识符字符
@@ -561,21 +567,79 @@ public final class EditorAutocompleteEngine {
 
     // MARK: - 注释/字符串检测
 
-    /// 判断光标位置是否在注释或字符串内部（基于高亮运行片段）
+    /// 判断光标位置是否在注释或字符串内部（单一词法上下文扫描路径）。
+    ///
+    /// 自动触发抑制与 replacementRange 决策使用同一份上下文事实，
+    /// 不再依赖 `EditorSyntaxLexer.tokenize` 与兜底扫描的双轨判定。
     func isInsideCommentOrString(text: String, cursorLocation: Int, language: EditorSyntaxLanguage) -> Bool {
-        // 使用词法分析来检查光标处的语义角色
-        guard language != .plainText else { return false }
-        guard let runs = try? EditorSyntaxLexer.tokenize(text: text, language: language) else { return false }
+        guard language != .plainText, language != .markdown else { return false }
 
-        for run in runs {
-            let runEnd = run.location + run.length
-            if cursorLocation > run.location && cursorLocation <= runEnd {
-                if run.role == .comment || run.role == .string {
-                    return true
+        let nsText = text as NSString
+        let limit = min(max(cursorLocation, 0), nsText.length)
+        var offset = 0
+        var inLineComment = false
+        var blockCommentDepth = 0
+        var stringDelimiter: String?
+
+        while offset < limit {
+            if inLineComment {
+                if matchesToken("\n", in: nsText, at: offset) {
+                    inLineComment = false
                 }
+                offset += 1
+                continue
             }
+
+            if blockCommentDepth > 0 {
+                if supportsNestedBlockComments(for: language),
+                   matchesToken("/*", in: nsText, at: offset) {
+                    blockCommentDepth += 1
+                    offset += 2
+                    continue
+                }
+                if matchesToken("*/", in: nsText, at: offset) {
+                    blockCommentDepth -= 1
+                    offset += 2
+                    continue
+                }
+                offset += 1
+                continue
+            }
+
+            if let delimiter = stringDelimiter {
+                if matchesToken(delimiter, in: nsText, at: offset),
+                   delimiter.count > 1 || !isEscaped(in: nsText, at: offset) {
+                    offset += delimiter.utf16.count
+                    stringDelimiter = nil
+                    continue
+                }
+                offset += 1
+                continue
+            }
+
+            if let lineCommentToken = lineCommentToken(for: language),
+               matchesToken(lineCommentToken, in: nsText, at: offset) {
+                inLineComment = true
+                offset += lineCommentToken.utf16.count
+                continue
+            }
+
+            if supportsBlockComments(for: language), matchesToken("/*", in: nsText, at: offset) {
+                blockCommentDepth = 1
+                offset += 2
+                continue
+            }
+
+            if let delimiter = startingStringDelimiter(in: nsText, at: offset, language: language) {
+                stringDelimiter = delimiter
+                offset += delimiter.utf16.count
+                continue
+            }
+
+            offset += 1
         }
-        return isInsideUnterminatedCommentOrString(text: text, cursorLocation: cursorLocation, language: language)
+
+        return inLineComment || blockCommentDepth > 0 || stringDelimiter != nil
     }
 
     // MARK: - 候选构建
@@ -697,12 +761,41 @@ public final class EditorAutocompleteEngine {
 
         items = sortCandidates(items, prefix: "", cursorLocation: cursorLocation)
 
-        // 截断
+        // 保留三类来源的智能截断：确保每类至少保留 1 条（若该类有候选）
         if items.count > EditorAutocompleteConstants.maxResultCount {
-            items = Array(items.prefix(EditorAutocompleteConstants.maxResultCount))
+            items = truncatePreservingCategories(items, maxCount: EditorAutocompleteConstants.maxResultCount)
         }
 
         return items
+    }
+
+    /// 截断候选列表，确保每类来源（若有候选）至少保留 1 条。
+    /// 优先保留文档标识符（documentSymbol），其次关键字，最后模板。
+    private func truncatePreservingCategories(
+        _ items: [EditorAutocompleteItem],
+        maxCount: Int
+    ) -> [EditorAutocompleteItem] {
+        let allKinds: [EditorAutocompleteItemKind] = [.documentSymbol, .languageKeyword, .languageTemplate]
+        var reserved: [EditorAutocompleteItem] = []
+        var reservedIndices = Set<Int>()
+
+        // 每类至少保留 1 条
+        for kind in allKinds {
+            if let idx = items.firstIndex(where: { $0.kind == kind }) {
+                reserved.append(items[idx])
+                reservedIndices.insert(idx)
+            }
+        }
+
+        // 剩余配额按原排序填充
+        var result = reserved
+        for (idx, item) in items.enumerated() {
+            guard result.count < maxCount else { break }
+            if reservedIndices.contains(idx) { continue }
+            result.append(item)
+        }
+
+        return result
     }
 
     // MARK: - 排序
@@ -739,95 +832,22 @@ public final class EditorAutocompleteEngine {
         }
     }
 
-    private func isInsideUnterminatedCommentOrString(
-        text: String,
-        cursorLocation: Int,
-        language: EditorSyntaxLanguage
-    ) -> Bool {
-        let nsText = text as NSString
-        let limit = min(max(cursorLocation, 0), nsText.length)
-        var offset = 0
-        var inLineComment = false
-        var blockCommentDepth = 0
-        var stringDelimiter: String?
-
-        while offset < limit {
-            if inLineComment {
-                if matchesToken("\n", in: nsText, at: offset) {
-                    inLineComment = false
-                }
-                offset += 1
-                continue
-            }
-
-            if blockCommentDepth > 0 {
-                if supportsNestedBlockComments(for: language),
-                   matchesToken("/*", in: nsText, at: offset) {
-                    blockCommentDepth += 1
-                    offset += 2
-                    continue
-                }
-                if matchesToken("*/", in: nsText, at: offset) {
-                    blockCommentDepth -= 1
-                    offset += 2
-                    continue
-                }
-                offset += 1
-                continue
-            }
-
-            if let delimiter = stringDelimiter {
-                if matchesToken(delimiter, in: nsText, at: offset),
-                   delimiter.count > 1 || !isEscaped(in: nsText, at: offset) {
-                    offset += delimiter.utf16.count
-                    stringDelimiter = nil
-                    continue
-                }
-                offset += 1
-                continue
-            }
-
-            if let lineCommentToken = lineCommentToken(for: language),
-               matchesToken(lineCommentToken, in: nsText, at: offset) {
-                inLineComment = true
-                offset += lineCommentToken.utf16.count
-                continue
-            }
-
-            if supportsBlockComments(for: language), matchesToken("/*", in: nsText, at: offset) {
-                blockCommentDepth = 1
-                offset += 2
-                continue
-            }
-
-            if let delimiter = startingStringDelimiter(in: nsText, at: offset, language: language) {
-                stringDelimiter = delimiter
-                offset += delimiter.utf16.count
-                continue
-            }
-
-            offset += 1
-        }
-
-        return inLineComment || blockCommentDepth > 0 || stringDelimiter != nil
-    }
-
     private func lineCommentToken(for language: EditorSyntaxLanguage) -> String? {
         switch language {
-        case .swift, .rust, .javascript, .typescript, .json:
+        case .swift, .rust, .javascript, .typescript:
             return "//"
         case .python:
             return "#"
-        case .markdown, .plainText:
+        case .json, .markdown, .plainText:
             return nil
         }
     }
 
     private func supportsBlockComments(for language: EditorSyntaxLanguage) -> Bool {
         switch language {
-        case .swift, .rust, .javascript, .typescript, .json:
+        case .swift, .rust, .javascript, .typescript:
             return true
-        case .python, .markdown, .plainText:
+        case .python, .json, .markdown, .plainText:
             return false
         }
     }

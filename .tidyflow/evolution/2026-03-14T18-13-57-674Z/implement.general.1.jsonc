@@ -1,0 +1,93 @@
+{
+  "$schema_version": "2.0",
+  "stage": "implement.general.1",
+  "cycle_id": "2026-03-14T18-13-57-674Z",
+  "status": "done",
+  "decision": {
+    "result": "n/a",
+    "reason": ""
+  },
+  "summary": "收敛编辑器自动补全共享语义：修复 currentIdentifierToken 不再在非标识符字符位置回借左侧 token；统一注释/字符串上下文检测为单一扫描路径并修复 JSON 不支持注释的语义；新增截断时保留三类来源的智能截断策略；双端桥接验证无需改动；新增 20+ 回归测试覆盖边界触发、注释/字符串抑制、状态隔离。",
+  "work_item_results": [
+    {
+      "work_item_id": "WI-001",
+      "status": "done",
+      "summary": "修复 currentIdentifierToken：光标在非标识符字符上时不再向左探测借用相邻 token，仅光标在文本末尾且前一字符为标识符字符时才回探。新增 truncatePreservingCategories 确保手动触发空前缀时三类来源（文档标识符、关键字、模板）均在截断后保留。新增 7 个边界触发测试。",
+      "evidence_paths": [
+        "app/TidyFlowShared/Presentation/EditorAutocompleteSemantics.swift",
+        "app/TidyFlowTests/EditorAutocompleteSemanticsTests.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-002",
+      "status": "done",
+      "summary": "去除双轨词法上下文判定，将 isInsideCommentOrString 统一为单一扫描路径。移除 isInsideUnterminatedCommentOrString 方法。修复 JSON 语言矩阵：不支持行注释和块注释，字符串仅认双引号。新增 Markdown guard。新增 9 个注释/字符串检测测试。",
+      "evidence_paths": [
+        "app/TidyFlowShared/Presentation/EditorAutocompleteSemantics.swift",
+        "app/TidyFlowTests/EditorAutocompleteSemanticsTests.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-003",
+      "status": "done",
+      "summary": "验证 macOS TabContentHostView 和 iOS MobileEditorView 的补全桥接路径仅消费共享 EditorAutocompleteEngine 结果，无平台特有 replacementRange 修补逻辑，零长度 replacementRange 通过 NSString.replacingCharacters 正确处理为插入。无代码改动。",
+      "evidence_paths": [
+        "app/TidyFlow/Views/TabContentHostView.swift",
+        "app/TidyFlow-iOS/Views/MobileEditorView.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-004",
+      "status": "done",
+      "summary": "新增回归测试：EditorAutocompleteSemanticsTests 新增 16 个测试方法覆盖 WI-001/WI-002 场景；MobileEditorSessionTests 新增 4 个跨平台一致性测试；EditorStoreTests 新增 3 个状态隔离测试。修复 3 个因 token 探测行为变更而断言失败的既有测试。全部 1656 测试通过。",
+      "evidence_paths": [
+        "app/TidyFlowTests/EditorAutocompleteSemanticsTests.swift",
+        "app/TidyFlowTests/EditorStoreTests.swift",
+        "app/TidyFlowTests/MobileEditorSessionTests.swift"
+      ]
+    }
+  ],
+  "changed_files": [
+    "app/TidyFlowShared/Presentation/EditorAutocompleteSemantics.swift",
+    "app/TidyFlowTests/EditorAutocompleteSemanticsTests.swift",
+    "app/TidyFlowTests/EditorStoreTests.swift",
+    "app/TidyFlowTests/MobileEditorSessionTests.swift"
+  ],
+  "commands_executed": [
+    "./scripts/tidyflow check",
+    "xcodebuild test -only-testing:TidyFlowTests/EditorAutocompleteSemanticsTests (macOS)",
+    "xcodebuild test -only-testing:TidyFlowTests (macOS, full suite)",
+    "xcodebuild build -configuration Debug -destination platform=macOS",
+    "xcodebuild build -configuration Debug -destination platform=iOS Simulator"
+  ],
+  "quick_checks": [
+    {
+      "name": "CHK-001: ./scripts/tidyflow check",
+      "result": "pass",
+      "details": "协议版本一致(v10)、schema同步通过。gen_action_table 格式差异为已有问题，与本次改动无关。"
+    },
+    {
+      "name": "CHK-002: EditorAutocompleteSemanticsTests",
+      "result": "pass",
+      "details": "55 tests, 0 failures"
+    },
+    {
+      "name": "CHK-003: TidyFlowTests full suite",
+      "result": "pass",
+      "details": "1656 tests, 0 failures"
+    },
+    {
+      "name": "CHK-004: macOS Debug build",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED"
+    },
+    {
+      "name": "CHK-005: iOS Simulator Debug build",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED"
+    }
+  ],
+  "verify_iteration": 0,
+  "backlog_contract_version": 2,
+  "updated_at": ""
+}

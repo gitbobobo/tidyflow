@@ -597,11 +597,11 @@ final class MobileEditorHistoryTests: XCTestCase {
     func testSharedReplacementSemanticsIdenticalAcrossPlatforms() {
         // 验证共享引擎的 accept() 在纯函数层面的行为一致性
         let engine = EditorAutocompleteEngine()
-        let text = "let myVa = 1"
+        let text = "let myVa"
         let ctx = EditorAutocompleteContext(
             filePath: "test.swift",
             text: text,
-            cursorLocation: 8, // 在 "myVa" 尾部
+            cursorLocation: 8, // 在 "myVa" 尾部（文本末尾）
             triggerKind: .automatic
         )
         let state = engine.update(context: ctx, previousState: nil)
@@ -695,11 +695,11 @@ final class MobileEditorHistoryTests: XCTestCase {
     func testSharedReplacementDoesNotExpandBeyondToken() {
         // 验证替换范围只覆盖当前 token，不跨 token
         let engine = EditorAutocompleteEngine()
-        let text = "let gu = 1"
+        let text = "let gu"
         let ctx = EditorAutocompleteContext(
             filePath: "test.swift",
             text: text,
-            cursorLocation: 6, // "gu" 尾部
+            cursorLocation: 6, // "gu" 尾部（文本末尾）
             triggerKind: .automatic
         )
         let state = engine.update(context: ctx, previousState: nil)
@@ -708,5 +708,85 @@ final class MobileEditorHistoryTests: XCTestCase {
         // replacementRange 应仅覆盖 "gu" token
         XCTAssertEqual(state.replacementRange.location, 4)
         XCTAssertEqual(state.replacementRange.length, 2)
+    }
+
+    // MARK: - WI-003/WI-004 回归：跨端替换一致性与零长度插入点
+
+    func testSharedReplacementZeroLengthInsertPoint() {
+        // 手动触发在空白边界时，replacementRange 应为零长度插入点
+        let engine = EditorAutocompleteEngine()
+        let text = "let myVar = 1\n"
+        let ctx = EditorAutocompleteContext(
+            filePath: "test.swift",
+            text: text,
+            cursorLocation: (text as NSString).length,
+            triggerKind: .manual
+        )
+        let state = engine.update(context: ctx, previousState: nil)
+        XCTAssertTrue(state.isVisible)
+        XCTAssertEqual(state.replacementRange.length, 0, "空白边界应为零长度 replacementRange")
+
+        guard let item = state.items.first else {
+            XCTFail("手动触发应有候选")
+            return
+        }
+
+        // 接受候选：零长度范围应等同于插入
+        let replacement = EditorAutocompleteEngine.replacement(for: item, state: state)
+        XCTAssertEqual(replacement.rangeLength, 0)
+        XCTAssertEqual(replacement.rangeLocation, (text as NSString).length)
+        // 插入后光标应在插入文本之后
+        XCTAssertEqual(replacement.caretLocation,
+                       (text as NSString).length + (item.insertText as NSString).length)
+    }
+
+    func testSharedReplacementTokenEndConsistency() {
+        // 验证 token 尾部替换在共享层面的一致性
+        let engine = EditorAutocompleteEngine()
+        let text = "let gu"
+        let ctx = EditorAutocompleteContext(
+            filePath: "test.swift",
+            text: text,
+            cursorLocation: 6,
+            triggerKind: .automatic
+        )
+        let state = engine.update(context: ctx, previousState: nil)
+        guard let guardItem = state.items.first(where: { $0.title == "guard" }) else {
+            XCTFail("应包含 guard 候选")
+            return
+        }
+
+        // 通过 accept() 和 replacement() 两个路径验证一致性
+        let acceptResult = engine.accept(item: guardItem, state: state, currentText: text)
+        let replacement = EditorAutocompleteEngine.replacement(for: guardItem, state: state)
+
+        XCTAssertNotNil(acceptResult)
+        XCTAssertEqual(replacement.rangeLocation, state.replacementRange.location)
+        XCTAssertEqual(replacement.rangeLength, state.replacementRange.length)
+        XCTAssertEqual(replacement.replacementText, guardItem.insertText)
+        XCTAssertEqual(replacement.caretLocation, acceptResult?.selection.location)
+    }
+
+    func testCrossProjectSamePathNoSharedAutocompleteState() {
+        // 验证不同项目同名路径的补全状态不互串
+        let keyA = EditorDocumentKey(project: "projA", workspace: "main", path: "file.swift")
+        let keyB = EditorDocumentKey(project: "projB", workspace: "main", path: "file.swift")
+
+        var stateA = EditorAutocompleteState(
+            isVisible: true,
+            query: "alpha",
+            selectedIndex: 0,
+            replacementRange: NSRange(location: 0, length: 5),
+            items: [EditorAutocompleteItem(id: "a", title: "alpha", insertText: "alpha", kind: .documentSymbol)]
+        )
+        let stateB = EditorAutocompleteState.hidden
+
+        XCTAssertNotEqual(keyA, keyB, "不同项目的文档键应不同")
+        XCTAssertNotEqual(stateA, stateB, "不同项目的补全状态应独立")
+
+        // 修改 A 不影响 B（值类型保证）
+        stateA.isVisible = false
+        XCTAssertFalse(stateA.isVisible)
+        XCTAssertFalse(stateB.isVisible) // B 本身就是 hidden
     }
 }

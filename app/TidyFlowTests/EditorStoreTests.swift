@@ -727,5 +727,71 @@ final class EditorStoreTests: XCTestCase {
         // 迁移后旧 key 和新 key 的补全状态都应为空（补全不迁移，直接清除）
         XCTAssertFalse(store.autocompleteState(for: oldKey).isVisible)
     }
+
+    // MARK: - WI-004 回归：跨项目同名路径补全状态隔离
+
+    func testAutocompleteStateIsolatedBetweenProjects() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "projA", workspace: "main", path: "file.swift")
+        let docB = EditorDocumentKey(project: "projB", workspace: "main", path: "file.swift")
+
+        store.updateAutocompleteState(
+            EditorAutocompleteState(isVisible: true, query: "alpha", items: [
+                EditorAutocompleteItem(id: "a", title: "alpha", insertText: "alpha", kind: .documentSymbol),
+            ]),
+            for: docA
+        )
+
+        XCTAssertTrue(store.autocompleteState(for: docA).isVisible)
+        XCTAssertFalse(store.autocompleteState(for: docB).isVisible,
+                        "不同项目同名路径的补全状态应隔离")
+    }
+
+    func testReleaseWorkspaceDoesNotAffectOtherProject() {
+        let store = makeStore()
+        let docA = EditorDocumentKey(project: "projA", workspace: "main", path: "file.swift")
+        let docB = EditorDocumentKey(project: "projB", workspace: "main", path: "file.swift")
+
+        for docKey in [docA, docB] {
+            store.updateAutocompleteState(
+                EditorAutocompleteState(isVisible: true, query: "test"),
+                for: docKey
+            )
+        }
+
+        // 释放 projA:main
+        store.releaseAllDocumentSessions(workspaceKey: "projA:main")
+
+        XCTAssertFalse(store.autocompleteState(for: docA).isVisible,
+                        "释放工作区应清除对应补全状态")
+        XCTAssertTrue(store.autocompleteState(for: docB).isVisible,
+                       "其他项目的补全状态不应受影响")
+    }
+
+    func testApplyAcceptedAutocompleteZeroLengthRange() {
+        let store = makeStore()
+        let docKey = EditorDocumentKey(project: "proj", workspace: "main", path: "f.swift")
+
+        // 设置零长度 replacementRange（手动触发空白边界场景）
+        let state = EditorAutocompleteState(
+            isVisible: true,
+            query: "",
+            selectedIndex: 0,
+            replacementRange: NSRange(location: 14, length: 0),
+            items: [
+                EditorAutocompleteItem(id: "kw-guard", title: "guard", insertText: "guard", kind: .languageKeyword),
+            ]
+        )
+        store.updateAutocompleteState(state, for: docKey)
+
+        let result = store.applyAcceptedAutocomplete(
+            state.items[0],
+            for: docKey,
+            currentText: "let myVar = 1\n"
+        )
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.text, "let myVar = 1\nguard", "零长度范围应为纯插入")
+        XCTAssertEqual(result?.selection.location, 19) // 14 + "guard".count
+    }
 }
 #endif
