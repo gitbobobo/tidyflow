@@ -209,6 +209,13 @@ prepare_perf_fixture_evidence_context() {
 EOF
 }
 
+find_latest_fixture_evidence_log() {
+    local run_id="${1:?run_id required}"
+    local scenario_path="${2:?scenario_path required}"
+    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e/$run_id"
+    find "$evidence_root" -path "*/$scenario_path/*.log" -type f -print 2>/dev/null | sort | tail -n 1
+}
+
 write_perf_evidence_json() {
     local scenario_id="${1:?scenario_id required}"
     local source_log="${2:?source_log required}"
@@ -254,10 +261,18 @@ assert_distinct_perf_evidence_outputs() {
         "$perf_dir/apple-evolution-panel-fixture-oslog.log"
         "$perf_dir/apple-chat-stream-workspace-switch-fixture-oslog.log"
         "$perf_dir/apple-evolution-panel-multi-workspace-fixture-oslog.log"
+        "$perf_dir/apple-terminal-output-fixture-oslog.log"
+        "$perf_dir/apple-terminal-output-multi-workspace-fixture-oslog.log"
+        "$perf_dir/apple-git-panel-fixture-oslog.log"
+        "$perf_dir/apple-git-panel-multi-workspace-fixture-oslog.log"
         "$perf_dir/ios-ai-chat-stream.json"
         "$perf_dir/evolution-panel.json"
         "$perf_dir/ios-ai-chat-workspace-switch.json"
         "$perf_dir/evolution-multi-workspace.json"
+        "$perf_dir/terminal-output.json"
+        "$perf_dir/terminal-output-multi-workspace.json"
+        "$perf_dir/git-panel.json"
+        "$perf_dir/git-panel-multi-workspace.json"
     )
     local file
     for file in "${required_files[@]}"; do
@@ -266,6 +281,45 @@ assert_distinct_perf_evidence_outputs() {
             return 1
         fi
     done
+}
+
+run_apple_perf_fixture_batch() {
+    local perf_dir="$PROJECT_ROOT/build/perf"
+    local derived_data="$PROJECT_ROOT/build/perf-fixture"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
+    local xcode_log="$perf_dir/apple-perf-fixture-batch-xcodebuild.log"
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+
+    mkdir -p "$perf_dir"
+    rm -f "$xcode_log"
+    prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
+
+    echo "[tidyflow] 运行 Apple 性能 fixture 批次（8 个场景，iOS Simulator）..."
+    EVIDENCE_RUN_ID="$evidence_run_id" \
+    CYCLE_RUN_ID="$evidence_run_id" \
+    TF_E2E_RUN_ID="$evidence_run_id" \
+    UI_TEST_MODE=1 \
+    xcodebuild \
+        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+        -scheme TidyFlow \
+        -configuration Debug \
+        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+        -derivedDataPath "$derived_data" \
+        SKIP_CORE_BUILD=1 \
+        UI_TEST_MODE=1 \
+        test \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_WS_SWITCH_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_MULTI_WS_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_TERMINAL_OUTPUT_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_TERMINAL_MULTI_WS_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_GIT_PANEL_PERF_FIXTURE_IPHONE \
+        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_GIT_PANEL_MULTI_WS_PERF_FIXTURE_IPHONE \
+        -skip-testing:TidyFlowTests \
+        | tee "$xcode_log"
 }
 
 run_apple_chat_perf_fixture() {
@@ -280,7 +334,6 @@ run_apple_chat_perf_fixture() {
     local tail_flush_file="$perf_dir/apple-${scenario_slug}-fixture-tail-flush.log"
     local memory_file="$perf_dir/apple-${scenario_slug}-fixture-memory.log"
     local scenario_json="$perf_dir/ios-ai-chat-stream.json"
-    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e"
     local fixture_evidence_log=""
     local simulator_name="iPhone 16"
     local simulator_os="18.6"
@@ -290,33 +343,31 @@ run_apple_chat_perf_fixture() {
     rm -f "$xcode_log" "$oslog_file" "$hotspot_file" "$tail_flush_file" "$memory_file" "$scenario_json"
     prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
 
-    echo "[tidyflow] 运行 Apple 聊天流式 fixture（iOS Simulator）..."
-    EVIDENCE_RUN_ID="$evidence_run_id" \
-    CYCLE_RUN_ID="$evidence_run_id" \
-    TF_E2E_RUN_ID="$evidence_run_id" \
-    TF_PERF_SCENARIO=stream_heavy \
-    TF_PERF_CHAT_SCENARIO=stream_heavy \
-    UI_TEST_MODE=1 \
-    xcodebuild \
-        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
-        -scheme TidyFlow \
-        -configuration Debug \
-        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
-        -derivedDataPath "$derived_data" \
-        SKIP_CORE_BUILD=1 \
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple 聊天流式 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
         TF_PERF_SCENARIO=stream_heavy \
         TF_PERF_CHAT_SCENARIO=stream_heavy \
         UI_TEST_MODE=1 \
-        test \
-        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_PERF_FIXTURE_IPHONE \
-        -skip-testing:TidyFlowTests \
-        | tee "$xcode_log"
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=stream_heavy \
+            TF_PERF_CHAT_SCENARIO=stream_heavy \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log"
+    fi
 
-    fixture_evidence_log="$(
-        find "$evidence_root/$evidence_run_id" -path '*/ac-chat-perf-fixture/*.log' -type f -print 2>/dev/null \
-            | xargs ls -t 2>/dev/null \
-            | head -n 1
-    )"
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-chat-perf-fixture")"
     if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
         echo "[tidyflow] 未找到 Apple 聊天 fixture 证据日志"
         return 1
@@ -371,7 +422,6 @@ run_apple_evolution_perf_fixture() {
     local tier_change_file="$perf_dir/apple-evolution-panel-fixture-tier-change.log"
     local memory_file="$perf_dir/apple-evolution-panel-fixture-memory.log"
     local scenario_json="$perf_dir/evolution-panel.json"
-    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e"
     local fixture_evidence_log=""
     local simulator_name="iPhone 16"
     local simulator_os="18.6"
@@ -380,31 +430,29 @@ run_apple_evolution_perf_fixture() {
     rm -f "$xcode_log" "$oslog_file" "$recompute_file" "$tier_change_file" "$memory_file" "$scenario_json"
     prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
 
-    echo "[tidyflow] 运行 Apple Evolution 面板 fixture（iOS Simulator）..."
-    EVIDENCE_RUN_ID="$evidence_run_id" \
-    CYCLE_RUN_ID="$evidence_run_id" \
-    TF_E2E_RUN_ID="$evidence_run_id" \
-    TF_PERF_SCENARIO=evolution_panel \
-    UI_TEST_MODE=1 \
-    xcodebuild \
-        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
-        -scheme TidyFlow \
-        -configuration Debug \
-        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
-        -derivedDataPath "$derived_data" \
-        SKIP_CORE_BUILD=1 \
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple Evolution 面板 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
         TF_PERF_SCENARIO=evolution_panel \
         UI_TEST_MODE=1 \
-        test \
-        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_PERF_FIXTURE_IPHONE \
-        -skip-testing:TidyFlowTests \
-        | tee "$xcode_log"
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=evolution_panel \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log"
+    fi
 
-    fixture_evidence_log="$(
-        find "$evidence_root/$evidence_run_id" -path '*/ac-evolution-perf-fixture/*.log' -type f -print 2>/dev/null \
-            | xargs ls -t 2>/dev/null \
-            | head -n 1
-    )"
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-evolution-perf-fixture")"
     if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
         echo "[tidyflow] 未找到 Apple Evolution fixture 证据日志"
         return 1
@@ -444,7 +492,6 @@ run_apple_chat_workspace_switch_perf_fixture() {
     local perf_dir="$PROJECT_ROOT/build/perf"
     local scenario_slug="chat-stream-workspace-switch"
     local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
-    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e"
     local evidence_run_id
     evidence_run_id="$(resolve_perf_fixture_run_id)"
     local derived_data="$PROJECT_ROOT/build/perf-fixture"
@@ -457,34 +504,32 @@ run_apple_chat_workspace_switch_perf_fixture() {
     rm -f "$xcode_log" "$oslog_file" "$scenario_json"
     prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
 
-    echo "[tidyflow] 运行 Apple 聊天工作区切换 fixture（iOS Simulator）..."
-    EVIDENCE_RUN_ID="$evidence_run_id" \
-    CYCLE_RUN_ID="$evidence_run_id" \
-    TF_E2E_RUN_ID="$evidence_run_id" \
-    TF_PERF_SCENARIO=chat_stream_workspace_switch \
-    TF_PERF_CHAT_SCENARIO=chat_stream_workspace_switch \
-    UI_TEST_MODE=1 \
-    xcodebuild \
-        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
-        -scheme TidyFlow \
-        -configuration Debug \
-        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
-        -derivedDataPath "$derived_data" \
-        SKIP_CORE_BUILD=1 \
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple 聊天工作区切换 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
         TF_PERF_SCENARIO=chat_stream_workspace_switch \
         TF_PERF_CHAT_SCENARIO=chat_stream_workspace_switch \
         UI_TEST_MODE=1 \
-        test \
-        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_WS_SWITCH_PERF_FIXTURE_IPHONE \
-        -skip-testing:TidyFlowTests \
-        | tee "$xcode_log" || true
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=chat_stream_workspace_switch \
+            TF_PERF_CHAT_SCENARIO=chat_stream_workspace_switch \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_CHAT_WS_SWITCH_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
 
     local fixture_evidence_log=""
-    fixture_evidence_log="$(
-        find "$evidence_root/$evidence_run_id" -path '*/ac-chat-ws-switch-perf-fixture/*.log' -type f -print 2>/dev/null \
-            | xargs ls -t 2>/dev/null \
-            | head -n 1
-    )"
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-chat-ws-switch-perf-fixture")"
     if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
         echo "[tidyflow] 未找到 Apple 聊天工作区切换 fixture 证据日志"
         return 1
@@ -508,7 +553,6 @@ run_apple_evolution_multi_workspace_perf_fixture() {
     local perf_dir="$PROJECT_ROOT/build/perf"
     local scenario_slug="evolution-panel-multi-workspace"
     local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
-    local evidence_root="$PROJECT_ROOT/.tidyflow/evidence/iphone/e2e"
     local evidence_run_id
     evidence_run_id="$(resolve_perf_fixture_run_id)"
     local derived_data="$PROJECT_ROOT/build/perf-fixture"
@@ -521,32 +565,30 @@ run_apple_evolution_multi_workspace_perf_fixture() {
     rm -f "$xcode_log" "$oslog_file" "$scenario_json"
     prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
 
-    echo "[tidyflow] 运行 Apple Evolution 多工作区 fixture（iOS Simulator）..."
-    EVIDENCE_RUN_ID="$evidence_run_id" \
-    CYCLE_RUN_ID="$evidence_run_id" \
-    TF_E2E_RUN_ID="$evidence_run_id" \
-    TF_PERF_SCENARIO=evolution_panel_multi_workspace \
-    UI_TEST_MODE=1 \
-    xcodebuild \
-        -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
-        -scheme TidyFlow \
-        -configuration Debug \
-        -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
-        -derivedDataPath "$derived_data" \
-        SKIP_CORE_BUILD=1 \
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple Evolution 多工作区 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
         TF_PERF_SCENARIO=evolution_panel_multi_workspace \
         UI_TEST_MODE=1 \
-        test \
-        -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_MULTI_WS_PERF_FIXTURE_IPHONE \
-        -skip-testing:TidyFlowTests \
-        | tee "$xcode_log" || true
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=evolution_panel_multi_workspace \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_EVOLUTION_MULTI_WS_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
 
     local fixture_evidence_log=""
-    fixture_evidence_log="$(
-        find "$evidence_root/$evidence_run_id" -path '*/ac-evolution-multi-ws-perf-fixture/*.log' -type f -print 2>/dev/null \
-            | xargs ls -t 2>/dev/null \
-            | head -n 1
-    )"
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-evolution-multi-ws-perf-fixture")"
     if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
         echo "[tidyflow] 未找到 Apple Evolution 多工作区 fixture 证据日志"
         return 1
@@ -566,21 +608,282 @@ run_apple_evolution_multi_workspace_perf_fixture() {
     return 0
 }
 
-# run_apple_client_perf_regression: 依次执行四个独立场景的 fixture，运行 Apple 客户端比较器
+# run_apple_terminal_output_perf_fixture: 执行终端输出刷新性能 fixture
+run_apple_terminal_output_perf_fixture() {
+    local perf_dir="$PROJECT_ROOT/build/perf"
+    local scenario_slug="terminal-output"
+    local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
+    local derived_data="$PROJECT_ROOT/build/perf-fixture"
+    local xcode_log="$perf_dir/apple-${scenario_slug}-fixture-xcodebuild.log"
+    local scenario_json="$perf_dir/terminal-output.json"
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+
+    mkdir -p "$perf_dir"
+    rm -f "$xcode_log" "$oslog_file" "$scenario_json"
+    prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
+
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple 终端输出 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
+        TF_PERF_SCENARIO=terminal_output \
+        UI_TEST_MODE=1 \
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=terminal_output \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_TERMINAL_OUTPUT_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
+
+    local fixture_evidence_log=""
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-terminal-output-perf-fixture")"
+    if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
+        echo "[tidyflow] 未找到 Apple 终端输出 fixture 证据日志"
+        return 1
+    fi
+
+    cp "$fixture_evidence_log" "$oslog_file"
+    write_perf_evidence_json "terminal_output" "$oslog_file" "$scenario_json"
+
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush' "缺少 terminal_flush_event 证据键" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*scenario=terminal_output' "terminal_flush_event 缺少 scenario 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*surface=terminal_output' "terminal_flush_event 缺少 surface 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*project=' "terminal_flush_event 缺少 project 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*workspace=' "terminal_flush_event 缺少 workspace 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*workspace_context=' "terminal_flush_event 缺少 workspace_context 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'terminal_flush_event=terminal_output_flush.*term_id=' "terminal_flush_event 缺少 term_id 字段" || return 1
+    echo "[tidyflow] Apple 终端输出 fixture 通过 (run_id=$evidence_run_id)"
+    return 0
+}
+
+# run_apple_terminal_multi_workspace_perf_fixture: 执行终端多工作区性能 fixture
+run_apple_terminal_multi_workspace_perf_fixture() {
+    local perf_dir="$PROJECT_ROOT/build/perf"
+    local scenario_slug="terminal-output-multi-workspace"
+    local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
+    local derived_data="$PROJECT_ROOT/build/perf-fixture"
+    local xcode_log="$perf_dir/apple-${scenario_slug}-fixture-xcodebuild.log"
+    local scenario_json="$perf_dir/terminal-output-multi-workspace.json"
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+
+    mkdir -p "$perf_dir"
+    rm -f "$xcode_log" "$oslog_file" "$scenario_json"
+    prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
+
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple 终端多工作区 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
+        TF_PERF_SCENARIO=terminal_output_multi_workspace \
+        UI_TEST_MODE=1 \
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=terminal_output_multi_workspace \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_TERMINAL_MULTI_WS_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
+
+    local fixture_evidence_log=""
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-terminal-multi-ws-perf-fixture")"
+    if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
+        echo "[tidyflow] 未找到 Apple 终端多工作区 fixture 证据日志"
+        return 1
+    fi
+
+    cp "$fixture_evidence_log" "$oslog_file"
+    write_perf_evidence_json "terminal_output_multi_workspace" "$oslog_file" "$scenario_json"
+
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample' "缺少 multi_workspace_event 证据键" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*project=' "multi_workspace_event 缺少 project 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*workspace=' "multi_workspace_event 缺少 workspace 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*scenario=' "multi_workspace_event 缺少 scenario 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*surface=' "multi_workspace_event 缺少 surface 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*workspace_context=' "multi_workspace_event 缺少 workspace_context 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=terminal_multi_workspace_sample.*term_id=' "multi_workspace_event 缺少 term_id 字段" || return 1
+    echo "[tidyflow] Apple 终端多工作区 fixture 通过 (run_id=$evidence_run_id)"
+    return 0
+}
+
+# run_apple_git_panel_perf_fixture: 执行 Git 面板投影性能 fixture
+run_apple_git_panel_perf_fixture() {
+    local perf_dir="$PROJECT_ROOT/build/perf"
+    local scenario_slug="git-panel"
+    local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
+    local derived_data="$PROJECT_ROOT/build/perf-fixture"
+    local xcode_log="$perf_dir/apple-${scenario_slug}-fixture-xcodebuild.log"
+    local scenario_json="$perf_dir/git-panel.json"
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+
+    mkdir -p "$perf_dir"
+    rm -f "$xcode_log" "$oslog_file" "$scenario_json"
+    prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
+
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple Git 面板 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
+        TF_PERF_SCENARIO=git_panel \
+        UI_TEST_MODE=1 \
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=git_panel \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_GIT_PANEL_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
+
+    local fixture_evidence_log=""
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-git-panel-perf-fixture")"
+    if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
+        echo "[tidyflow] 未找到 Apple Git 面板 fixture 证据日志"
+        return 1
+    fi
+
+    cp "$fixture_evidence_log" "$oslog_file"
+    write_perf_evidence_json "git_panel" "$oslog_file" "$scenario_json"
+
+    assert_log_contains_field "$oslog_file" 'git_panel_projection_event=git_panel_projection' "缺少 git_panel_projection_event 证据键" || return 1
+    assert_log_contains_field "$oslog_file" 'git_panel_projection_event=git_panel_projection.*workspace_context=' "git_panel_projection_event 缺少 workspace_context 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*staged_count=' "gitPanelProjection 缺少 staged_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*unstaged_count=' "gitPanelProjection 缺少 unstaged_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*untracked_count=' "gitPanelProjection 缺少 untracked_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*item_count=' "gitPanelProjection 缺少 item_count 字段" || return 1
+    echo "[tidyflow] Apple Git 面板 fixture 通过 (run_id=$evidence_run_id)"
+    return 0
+}
+
+# run_apple_git_panel_multi_workspace_perf_fixture: 执行 Git 面板多工作区性能 fixture
+run_apple_git_panel_multi_workspace_perf_fixture() {
+    local perf_dir="$PROJECT_ROOT/build/perf"
+    local scenario_slug="git-panel-multi-workspace"
+    local oslog_file="$perf_dir/apple-${scenario_slug}-fixture-oslog.log"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
+    local derived_data="$PROJECT_ROOT/build/perf-fixture"
+    local xcode_log="$perf_dir/apple-${scenario_slug}-fixture-xcodebuild.log"
+    local scenario_json="$perf_dir/git-panel-multi-workspace.json"
+    local simulator_name="iPhone 16"
+    local simulator_os="18.6"
+
+    mkdir -p "$perf_dir"
+    rm -f "$xcode_log" "$oslog_file" "$scenario_json"
+    prepare_perf_fixture_evidence_context "iphone" "$evidence_run_id"
+
+    if [[ "${TF_APPLE_PERF_SKIP_XCODEBUILD:-0}" != "1" ]]; then
+        echo "[tidyflow] 运行 Apple Git 面板多工作区 fixture（iOS Simulator）..."
+        EVIDENCE_RUN_ID="$evidence_run_id" \
+        CYCLE_RUN_ID="$evidence_run_id" \
+        TF_E2E_RUN_ID="$evidence_run_id" \
+        TF_PERF_SCENARIO=git_panel_multi_workspace \
+        UI_TEST_MODE=1 \
+        xcodebuild \
+            -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$simulator_name,OS=$simulator_os" \
+            -derivedDataPath "$derived_data" \
+            SKIP_CORE_BUILD=1 \
+            TF_PERF_SCENARIO=git_panel_multi_workspace \
+            UI_TEST_MODE=1 \
+            test \
+            -only-testing:TidyFlowE2ETests/TidyFlowE2ETests/testAC_GIT_PANEL_MULTI_WS_PERF_FIXTURE_IPHONE \
+            -skip-testing:TidyFlowTests \
+            | tee "$xcode_log" || true
+    fi
+
+    local fixture_evidence_log=""
+    fixture_evidence_log="$(find_latest_fixture_evidence_log "$evidence_run_id" "ac-git-panel-multi-ws-perf-fixture")"
+    if [[ -z "$fixture_evidence_log" || ! -f "$fixture_evidence_log" ]]; then
+        echo "[tidyflow] 未找到 Apple Git 面板多工作区 fixture 证据日志"
+        return 1
+    fi
+
+    cp "$fixture_evidence_log" "$oslog_file"
+    write_perf_evidence_json "git_panel_multi_workspace" "$oslog_file" "$scenario_json"
+
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample' "缺少 multi_workspace_event 证据键" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample.*project=' "multi_workspace_event 缺少 project 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample.*workspace=' "multi_workspace_event 缺少 workspace 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample.*scenario=' "multi_workspace_event 缺少 scenario 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample.*surface=' "multi_workspace_event 缺少 surface 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'multi_workspace_event=git_panel_multi_workspace_sample.*workspace_context=' "multi_workspace_event 缺少 workspace_context 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*staged_count=' "gitPanelProjection 缺少 staged_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*unstaged_count=' "gitPanelProjection 缺少 unstaged_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*untracked_count=' "gitPanelProjection 缺少 untracked_count 字段" || return 1
+    assert_log_contains_field "$oslog_file" 'perf gitPanelProjection.*item_count=' "gitPanelProjection 缺少 item_count 字段" || return 1
+    echo "[tidyflow] Apple Git 面板多工作区 fixture 通过 (run_id=$evidence_run_id)"
+    return 0
+}
+
+# run_apple_client_perf_regression: 依次执行八个独立场景的 fixture，运行 Apple 客户端比较器
 # WI-002: 每个场景必须产出独立证据文件，不允许从基础场景派生
 run_apple_client_perf_regression() {
     local perf_dir="$PROJECT_ROOT/build/perf"
     local report="$perf_dir/apple-client-regression-report.json"
+    local evidence_run_id
+    evidence_run_id="$(resolve_perf_fixture_run_id)"
     mkdir -p "$perf_dir"
 
-    echo "[tidyflow] === Apple 客户端性能基线回归（4 个独立场景） ==="
+    echo "[tidyflow] === Apple 客户端性能基线回归（8 个独立场景） ==="
+
+    export EVIDENCE_RUN_ID="$evidence_run_id"
+    export CYCLE_RUN_ID="$evidence_run_id"
+    export TF_E2E_RUN_ID="$evidence_run_id"
+
+    local batch_ok=0
+    if run_apple_perf_fixture_batch; then
+        batch_ok=1
+    else
+        echo "[tidyflow] Apple 性能 fixture 批次执行失败" >&2
+    fi
 
     local chat_ok=0
     local evolution_ok=0
     local chat_ws_switch_ok=0
     local evolution_multi_ws_ok=0
+    local terminal_ok=0
+    local terminal_multi_ws_ok=0
+    local git_panel_ok=0
+    local git_panel_multi_ws_ok=0
 
-    echo "[tidyflow] [1/4] 聊天流式 fixture..."
+    export TF_APPLE_PERF_SKIP_XCODEBUILD=1
+
+    echo "[tidyflow] [1/8] 聊天流式 fixture..."
     if run_apple_chat_perf_fixture; then
         chat_ok=1
         echo "[tidyflow] 聊天 fixture: pass"
@@ -588,7 +891,7 @@ run_apple_client_perf_regression() {
         echo "[tidyflow] 聊天 fixture: fail" >&2
     fi
 
-    echo "[tidyflow] [2/4] Evolution 面板 fixture..."
+    echo "[tidyflow] [2/8] Evolution 面板 fixture..."
     if run_apple_evolution_perf_fixture; then
         evolution_ok=1
         echo "[tidyflow] Evolution fixture: pass"
@@ -596,7 +899,7 @@ run_apple_client_perf_regression() {
         echo "[tidyflow] Evolution fixture: fail" >&2
     fi
 
-    echo "[tidyflow] [3/4] 聊天流式工作区切换 fixture..."
+    echo "[tidyflow] [3/8] 聊天流式工作区切换 fixture..."
     if run_apple_chat_workspace_switch_perf_fixture; then
         chat_ws_switch_ok=1
         echo "[tidyflow] 聊天工作区切换 fixture: pass"
@@ -604,13 +907,50 @@ run_apple_client_perf_regression() {
         echo "[tidyflow] 聊天工作区切换 fixture: fail（缺少真实证据）" >&2
     fi
 
-    echo "[tidyflow] [4/4] Evolution 多工作区 fixture..."
+    echo "[tidyflow] [4/8] Evolution 多工作区 fixture..."
     if run_apple_evolution_multi_workspace_perf_fixture; then
         evolution_multi_ws_ok=1
         echo "[tidyflow] Evolution 多工作区 fixture: pass"
     else
         echo "[tidyflow] Evolution 多工作区 fixture: fail（缺少真实证据）" >&2
     fi
+
+    echo "[tidyflow] [5/8] 终端输出 fixture..."
+    if run_apple_terminal_output_perf_fixture; then
+        terminal_ok=1
+        echo "[tidyflow] 终端 fixture: pass"
+    else
+        echo "[tidyflow] 终端 fixture: fail" >&2
+    fi
+
+    echo "[tidyflow] [6/8] 终端多工作区 fixture..."
+    if run_apple_terminal_multi_workspace_perf_fixture; then
+        terminal_multi_ws_ok=1
+        echo "[tidyflow] 终端多工作区 fixture: pass"
+    else
+        echo "[tidyflow] 终端多工作区 fixture: fail（缺少真实证据）" >&2
+    fi
+
+    echo "[tidyflow] [7/8] Git 面板 fixture..."
+    if run_apple_git_panel_perf_fixture; then
+        git_panel_ok=1
+        echo "[tidyflow] Git 面板 fixture: pass"
+    else
+        echo "[tidyflow] Git 面板 fixture: fail" >&2
+    fi
+
+    echo "[tidyflow] [8/8] Git 面板多工作区 fixture..."
+    if run_apple_git_panel_multi_workspace_perf_fixture; then
+        git_panel_multi_ws_ok=1
+        echo "[tidyflow] Git 面板多工作区 fixture: pass"
+    else
+        echo "[tidyflow] Git 面板多工作区 fixture: fail（缺少真实证据）" >&2
+    fi
+
+    unset TF_APPLE_PERF_SKIP_XCODEBUILD
+    unset EVIDENCE_RUN_ID
+    unset CYCLE_RUN_ID
+    unset TF_E2E_RUN_ID
 
     assert_distinct_perf_evidence_outputs || return 1
 
@@ -627,8 +967,8 @@ run_apple_client_perf_regression() {
 
     echo "[tidyflow] Apple 客户端性能报告: $report"
 
-    if [[ $chat_ok -eq 0 || $evolution_ok -eq 0 || $chat_ws_switch_ok -eq 0 || $evolution_multi_ws_ok -eq 0 || $comparator_exit -ne 0 ]]; then
-        echo "[tidyflow] Apple 客户端性能回归: fail（chat=$chat_ok evolution=$evolution_ok chat_ws=$chat_ws_switch_ok evo_multi=$evolution_multi_ws_ok comparator=$comparator_exit）" >&2
+    if [[ $batch_ok -eq 0 || $chat_ok -eq 0 || $evolution_ok -eq 0 || $chat_ws_switch_ok -eq 0 || $evolution_multi_ws_ok -eq 0 || $terminal_ok -eq 0 || $terminal_multi_ws_ok -eq 0 || $git_panel_ok -eq 0 || $git_panel_multi_ws_ok -eq 0 || $comparator_exit -ne 0 ]]; then
+        echo "[tidyflow] Apple 客户端性能回归: fail（batch=$batch_ok chat=$chat_ok evolution=$evolution_ok chat_ws=$chat_ws_switch_ok evo_multi=$evolution_multi_ws_ok terminal=$terminal_ok terminal_multi=$terminal_multi_ws_ok git=$git_panel_ok git_multi=$git_panel_multi_ws_ok comparator=$comparator_exit）" >&2
         return 1
     fi
     echo "[tidyflow] Apple 客户端性能回归: pass"
