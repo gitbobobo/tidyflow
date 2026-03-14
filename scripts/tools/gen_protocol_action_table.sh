@@ -45,6 +45,33 @@ trim() {
     echo "$1" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g'
 }
 
+write_rule_array() {
+    local name="$1"
+    local rules_file="$2"
+    local line_count
+    local first_line
+    local single_line
+
+    line_count="$(wc -l < "$rules_file" | tr -d ' ')"
+    if [ "$line_count" -eq 1 ]; then
+        first_line="$(sed -n '1p' "$rules_file")"
+        first_line="$(printf '%s' "$first_line" | sed -E 's/^[[:space:]]+//')"
+        first_line="${first_line%,}"
+        single_line="pub const ${name}: &[(&str, &str)] = &[${first_line}];"
+        if [ "${#single_line}" -le 100 ]; then
+            printf '%s\n\n' "$single_line"
+            return
+        fi
+    fi
+
+    cat <<EOF
+pub const ${name}: &[(&str, &str)] = &[
+$(cat "$rules_file")
+];
+
+EOF
+}
+
 line_no=0
 while IFS= read -r line || [ -n "$line" ]; do
     line_no=$((line_no + 1))
@@ -84,19 +111,13 @@ cat > "$generated" <<EOF
 
 EOF
 
+{
+    write_rule_array "EXACT_RULES" "$exact_rules"
+    write_rule_array "PREFIX_RULES" "$prefix_rules"
+    write_rule_array "CONTAINS_RULES" "$contains_rules"
+} >> "$generated"
+
 cat >> "$generated" <<EOF
-pub const EXACT_RULES: &[(&str, &str)] = &[
-$(cat "$exact_rules")
-];
-
-pub const PREFIX_RULES: &[(&str, &str)] = &[
-$(cat "$prefix_rules")
-];
-
-pub const CONTAINS_RULES: &[(&str, &str)] = &[
-$(cat "$contains_rules")
-];
-
 /// 根据规则表判断 action 是否属于给定 domain。
 pub fn matches_action_domain(domain: &str, action: &str) -> bool {
     if EXACT_RULES
