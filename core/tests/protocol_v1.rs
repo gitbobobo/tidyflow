@@ -15,6 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
+use tempfile::TempDir;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -153,6 +154,7 @@ impl Drop for ServerGuard {
 }
 
 const TIMEOUT_SECS: u64 = 2;
+const WATCH_TEST_TIMEOUT_SECS: u64 = 5;
 
 /// 服务端响应包络（与 Core 协议结构对应）
 #[derive(Debug, Clone, Deserialize)]
@@ -272,6 +274,81 @@ async fn connect_to_server(
         )
     })?;
     Ok(ws_stream.split())
+}
+
+fn init_watch_test_repo() -> TempDir {
+    let repo_dir = tempfile::tempdir().expect("创建临时仓库目录失败");
+
+    let init = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("执行 git init 失败");
+    assert!(
+        init.status.success(),
+        "git init 失败: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let user_name = Command::new("git")
+        .args(["config", "user.name", "TidyFlow Test"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("配置 git user.name 失败");
+    assert!(
+        user_name.status.success(),
+        "git config user.name 失败: {}",
+        String::from_utf8_lossy(&user_name.stderr)
+    );
+
+    let user_email = Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("配置 git user.email 失败");
+    assert!(
+        user_email.status.success(),
+        "git config user.email 失败: {}",
+        String::from_utf8_lossy(&user_email.stderr)
+    );
+
+    std::fs::write(repo_dir.path().join("README.md"), "watch test repo\n")
+        .expect("写入测试文件失败");
+
+    let add = Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("执行 git add 失败");
+    assert!(
+        add.status.success(),
+        "git add 失败: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let commit = Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("执行 git commit 失败");
+    assert!(
+        commit.status.success(),
+        "git commit 失败: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+
+    let remote = Command::new("git")
+        .args(["remote", "add", "origin", "https://example.com/tidyflow/watch-test.git"])
+        .current_dir(repo_dir.path())
+        .output()
+        .expect("执行 git remote add 失败");
+    assert!(
+        remote.status.success(),
+        "git remote add 失败: {}",
+        String::from_utf8_lossy(&remote.stderr)
+    );
+
+    repo_dir
 }
 
 // ============================================================================
@@ -530,58 +607,92 @@ async fn test_kill_terminal() {
 async fn test_watch_subscribe_unsubscribe() {
     let server = ServerGuard::start().expect("启动服务器失败");
     let port = server.port();
+    let repo_dir = init_watch_test_repo();
+    let project_name = format!("fsm-test-{}", uuid::Uuid::new_v4().simple());
 
     let (mut write, mut read) = connect_to_server(port).await.expect("Failed to connect");
     let _ = wait_for_action(&mut read, "hello").await;
 
-    // 先创建项目
+    // 先导入项目，再创建工作空间，确保 watch_subscribe 使用当前协议下真实存在的上下文
     let msg = encode_client_message(
         "project",
-        "create_project",
+        "import_project",
         json!({
-            "name": "fsm_test_project",
-            "root_path": "/tmp"
+            "name": project_name,
+            "path": repo_dir.path()
         }),
     );
     write.send(Message::Binary(msg)).await.unwrap();
-    // 等待项目创建结果（可能是 result 或 error）
-    let _ = recv_envelope(&mut read).await;
+
+    let imported = timeout(
+        Duration::from_secs(WATCH_TEST_TIMEOUT_SECS),
+        wait_for_action(&mut read, "project_imported"),
+    )
+    .await
+    .expect("等待 project_imported 超时")
+    .expect("未收到 project_imported");
+    assert_eq!(imported.domain, "project");
+    assert_eq!(imported.kind, "result");
+
+    let msg = encode_client_message(
+        "project",
+        "create_workspace",
+        json!({
+            "project": project_name
+        }),
+    );
+    write.send(Message::Binary(msg)).await.unwrap();
+
+    let workspace_created = timeout(
+        Duration::from_secs(WATCH_TEST_TIMEOUT_SECS),
+        wait_for_action(&mut read, "workspace_created"),
+    )
+    .await
+    .expect("等待 workspace_created 超时")
+    .expect("未收到 workspace_created");
+    let workspace_name = workspace_created.payload["workspace"]["name"]
+        .as_str()
+        .expect("workspace_created 缺少 workspace.name")
+        .to_string();
 
     // 订阅文件监控
     let msg = encode_client_message(
         "file",
         "watch_subscribe",
         json!({
-            "project": "fsm_test_project",
-            "workspace": "default"
+            "project": project_name,
+            "workspace": workspace_name
         }),
     );
     write.send(Message::Binary(msg)).await.unwrap();
 
-    let env = wait_for_action(&mut read, "watch_subscribed").await;
-    if let Some(env) = env {
-        assert_eq!(env.domain, "file");
-        assert_eq!(env.kind, "result");
-        assert!(env.payload["project"].is_string());
-        assert!(env.payload["workspace"].is_string());
-        println!(
-            "  ✓ Watch subscribed: project={}, workspace={}",
-            env.payload["project"], env.payload["workspace"]
-        );
-    } else {
-        // 如果项目不存在，可能收到 error
-        println!("  ⓘ Watch subscribe 未返回（项目可能不存在），跳过");
-    }
+    let env = timeout(
+        Duration::from_secs(WATCH_TEST_TIMEOUT_SECS),
+        wait_for_action(&mut read, "watch_subscribed"),
+    )
+    .await
+    .expect("等待 watch_subscribed 超时")
+    .expect("未收到 watch_subscribed");
+    assert_eq!(env.domain, "file");
+    assert_eq!(env.kind, "result");
+    assert_eq!(env.payload["project"], project_name);
+    assert_eq!(env.payload["workspace"], workspace_name);
+    println!(
+        "  ✓ Watch subscribed: project={}, workspace={}",
+        env.payload["project"], env.payload["workspace"]
+    );
 
     // 退订
     let msg = encode_client_message("file", "watch_unsubscribe", json!({}));
     write.send(Message::Binary(msg)).await.unwrap();
 
-    let env = wait_for_action(&mut read, "watch_unsubscribed").await;
-    if let Some(env) = env {
-        assert_eq!(env.domain, "file");
-        println!("  ✓ Watch unsubscribed");
-    } else {
-        println!("  ⓘ Watch unsubscribe 未返回，跳过");
-    }
+    let env = timeout(
+        Duration::from_secs(WATCH_TEST_TIMEOUT_SECS),
+        wait_for_action(&mut read, "watch_unsubscribed"),
+    )
+    .await
+    .expect("等待 watch_unsubscribed 超时")
+    .expect("未收到 watch_unsubscribed");
+    assert_eq!(env.domain, "file");
+    println!("  ✓ Watch unsubscribed");
 }
