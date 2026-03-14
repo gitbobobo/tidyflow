@@ -21,6 +21,7 @@ enum MobileRoute: Hashable {
     case evolution(project: String, workspace: String)
     case evidence(project: String, workspace: String)
     case workspaceDiff(project: String, workspace: String, path: String, mode: String)
+    case workspaceEditor(project: String, workspace: String, path: String)
 }
 
 @main
@@ -117,6 +118,13 @@ struct TidyFlowiOSApp: App {
                                     initialMode: mode
                                 )
                                 .environmentObject(appState)
+                            case .workspaceEditor(let project, let workspace, let path):
+                                MobileEditorView(
+                                    appState: appState,
+                                    project: project,
+                                    workspace: workspace,
+                                    path: path
+                                )
                             }
                         }
                 }

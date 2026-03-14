@@ -4840,8 +4840,8 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 共享编辑器会话接口（iOS 适配层）
     //
-    // iOS 本轮不承诺完整编辑器 UI，但必须接入与 macOS 相同的共享文档会话类型与命令接口。
-    // 后续补 UI 时无需再定义另一套 dirty/undo/find 语义。
+    // 与 macOS EditorStore 使用相同的 EditorDocumentSession 类型和共享状态变换辅助 API。
+    // MobileAppState 是 iOS 端文档会话的唯一真源。
 
     /// 编辑器文档缓存（与 macOS EditorStore 使用相同的 EditorDocumentSession 类型）
     @Published var editorDocumentsByWorkspace: [String: [String: EditorDocumentSession]] = [:]
@@ -4849,22 +4849,86 @@ final class MobileAppState: ObservableObject {
     /// 按文档记录的查找替换状态
     @Published var editorFindReplaceStateByDocument: [EditorDocumentKey: EditorFindReplaceState] = [:]
 
+    /// 正在进行的编辑器文件读取请求
+    var pendingEditorFileReadRequests: Set<EditorRequestKey> = []
+    /// 正在进行的编辑器文件保存请求
+    var pendingEditorFileWriteRequests: Set<EditorRequestKey> = []
+
+    /// 编辑器撤销回调（documentKey）——由 MobileEditorView 注册
+    var onEditorUndo: ((EditorDocumentKey) -> Void)?
+    /// 编辑器重做回调（documentKey）——由 MobileEditorView 注册
+    var onEditorRedo: ((EditorDocumentKey) -> Void)?
+
+    /// 编辑器未保存确认弹窗展示控制
+    @Published var showEditorUnsavedAlert: Bool = false
+    /// 当前挂起的编辑器关闭请求
+    var pendingEditorCloseRequest: DocumentCloseRequest?
+
     /// 获取指定文档会话
     func getEditorDocument(globalWorkspaceKey: String, path: String) -> EditorDocumentSession? {
         editorDocumentsByWorkspace[globalWorkspaceKey]?[path]
     }
 
-    /// 请求指定文档撤销（空实现，等待 iOS 编辑器 UI 落地）
+    /// 打开编辑器文档（发起读取请求）
+    func openEditorDocument(project: String, workspace: String, path: String, force: Bool = false) {
+        let globalKey = globalWorkspaceKey(project: project, workspace: workspace)
+        var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+        if !force, let existing = workspaceDocs[path], existing.loadStatus == .ready {
+            return
+        }
+        let docKey = EditorDocumentKey(project: project, workspace: workspace, path: path)
+        workspaceDocs[path] = .loading(key: docKey)
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        let key = EditorRequestKey(project: project, workspace: workspace, path: path)
+        pendingEditorFileReadRequests.insert(key)
+        wsClient.requestFileRead(
+            project: project,
+            workspace: workspace,
+            path: path,
+            cacheMode: force ? .forceRefresh : .default
+        )
+    }
+
+    /// 重新加载编辑器文档
+    func reloadEditorDocument(project: String, workspace: String, path: String) {
+        openEditorDocument(project: project, workspace: workspace, path: path, force: true)
+    }
+
+    /// 更新编辑器文档内容（用户编辑文本时调用）
+    func updateEditorDocumentContent(globalWorkspaceKey: String, path: String, content: String) {
+        guard var workspaceDocs = editorDocumentsByWorkspace[globalWorkspaceKey],
+              var doc = workspaceDocs[path] else { return }
+        doc.applyContentEdit(content)
+        workspaceDocs[path] = doc
+        editorDocumentsByWorkspace[globalWorkspaceKey] = workspaceDocs
+    }
+
+    /// 保存指定文档
+    func saveDocument(documentKey: EditorDocumentKey) {
+        let globalKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
+        guard let doc = getEditorDocument(globalWorkspaceKey: globalKey, path: documentKey.path) else { return }
+        guard isConnected else {
+            errorMessage = "连接已断开"
+            return
+        }
+        let key = EditorRequestKey(project: documentKey.project, workspace: documentKey.workspace, path: documentKey.path)
+        pendingEditorFileWriteRequests.insert(key)
+        let data = Data(doc.content.utf8)
+        wsClient.requestFileWrite(project: documentKey.project, workspace: documentKey.workspace, path: documentKey.path, content: data)
+    }
+
+    /// 请求指定文档撤销（转发到编辑器视图注册的回调）
     func requestUndo(documentKey: EditorDocumentKey) {
-        // iOS 编辑器 UI 未落地，空实现占位
+        onEditorUndo?(documentKey)
     }
 
-    /// 请求指定文档重做（空实现，等待 iOS 编辑器 UI 落地）
+    /// 请求指定文档重做（转发到编辑器视图注册的回调）
     func requestRedo(documentKey: EditorDocumentKey) {
-        // iOS 编辑器 UI 未落地，空实现占位
+        onEditorRedo?(documentKey)
     }
 
-    /// 展示指定文档的查找替换面板（空实现，等待 iOS 编辑器 UI 落地）
+    /// 展示指定文档的查找替换面板
     func presentFindReplace(documentKey: EditorDocumentKey) {
         var state = editorFindReplaceStateByDocument[documentKey] ?? EditorFindReplaceState()
         state.isVisible = true
@@ -4878,15 +4942,56 @@ final class MobileAppState: ObservableObject {
         editorFindReplaceStateByDocument[documentKey] = state
     }
 
-    /// 保存指定文档（空实现，等待 iOS 编辑器 UI 落地）
-    func saveDocument(documentKey: EditorDocumentKey) {
-        // iOS 编辑器 UI 未落地，空实现占位
+    /// 获取指定文档的查找替换状态
+    func findReplaceState(for documentKey: EditorDocumentKey) -> EditorFindReplaceState {
+        editorFindReplaceStateByDocument[documentKey] ?? EditorFindReplaceState()
+    }
+
+    /// 更新指定文档的查找替换状态
+    func updateFindReplaceState(_ state: EditorFindReplaceState, for documentKey: EditorDocumentKey) {
+        editorFindReplaceStateByDocument[documentKey] = state
+    }
+
+    /// 释放指定文档的会话状态（关闭文档时调用）
+    func releaseEditorDocumentSession(globalWorkspaceKey: String, path: String) {
+        if let docKey = EditorDocumentKey(globalWorkspaceKey: globalWorkspaceKey, path: path) {
+            editorFindReplaceStateByDocument.removeValue(forKey: docKey)
+        }
+        editorDocumentsByWorkspace[globalWorkspaceKey]?.removeValue(forKey: path)
     }
 
     /// 指定工作区内是否存在未保存的文档
     func hasDirtyDocuments(workspaceKey: String) -> Bool {
         guard let docs = editorDocumentsByWorkspace[workspaceKey] else { return false }
         return docs.values.contains { $0.isDirty }
+    }
+
+    /// 处理编辑器文件读取结果
+    func handleEditorFileReadResult(_ result: FileReadResult) {
+        let content = String(decoding: result.content, as: UTF8.self)
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        let docKey = EditorDocumentKey(project: result.project, workspace: result.workspace, path: result.path)
+        var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+        var session = EditorDocumentSession(key: docKey)
+        session.applyLoadSuccess(content: content)
+        workspaceDocs[result.path] = session
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+    }
+
+    /// 处理编辑器文件保存结果
+    func handleEditorFileWriteResult(_ result: FileWriteResult) {
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        if result.success {
+            if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+               var doc = workspaceDocs[result.path] {
+                doc.applySaveSuccess()
+                workspaceDocs[result.path] = doc
+                editorDocumentsByWorkspace[globalKey] = workspaceDocs
+            }
+            refreshExplorer(project: result.project, workspace: result.workspace)
+        } else {
+            errorMessage = "保存失败：\(result.path)"
+        }
     }
 
     // MARK: - 文件工作区相位（统一状态机）
@@ -6071,6 +6176,20 @@ extension MobileAppState {
                 isAILoadingAgents = false
             }
         case let .fileRead(project, workspace, path):
+            // 编辑器文件读取失败
+            let editorKey = EditorRequestKey(project: project, workspace: workspace, path: path)
+            if pendingEditorFileReadRequests.contains(editorKey) {
+                pendingEditorFileReadRequests.remove(editorKey)
+                let globalKey = globalWorkspaceKey(project: project, workspace: workspace)
+                let docKey = EditorDocumentKey(project: project, workspace: workspace, path: path)
+                var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+                workspaceDocs[path] = EditorDocumentSession(
+                    key: docKey,
+                    loadStatus: .error(failure.message ?? "读取失败")
+                )
+                editorDocumentsByWorkspace[globalKey] = workspaceDocs
+            }
+
             if let pending = pendingExplorerPreviewRequest,
                pending.project == project,
                pending.workspace == workspace,

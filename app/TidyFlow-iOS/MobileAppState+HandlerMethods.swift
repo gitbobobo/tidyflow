@@ -226,7 +226,7 @@ extension MobileAppState {
     // MARK: - File
 
     func handleFileReadResult(_ result: FileReadResult) {
-        // 计划文档预览分流
+        // 1. 计划文档预览分流
         if let pendingPath = pendingPlanDocumentReadPath, pendingPath == result.path {
             pendingPlanDocumentReadPath = nil
             evolutionPlanDocumentLoading = false
@@ -245,6 +245,15 @@ extension MobileAppState {
             return
         }
 
+        // 2. 编辑器文档读取分流
+        let editorKey = EditorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
+        if pendingEditorFileReadRequests.contains(editorKey) {
+            pendingEditorFileReadRequests.remove(editorKey)
+            handleEditorFileReadResult(result)
+            return
+        }
+
+        // 3. 资源预览读取
         guard let pending = pendingExplorerPreviewRequest else { return }
         guard pending.project == result.project,
               pending.workspace == result.workspace,
@@ -306,6 +315,15 @@ extension MobileAppState {
     }
 
     func handleFileWriteResult(_ result: FileWriteResult) {
+        // 编辑器文件保存分流
+        let editorKey = EditorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
+        if pendingEditorFileWriteRequests.contains(editorKey) {
+            pendingEditorFileWriteRequests.remove(editorKey)
+            handleEditorFileWriteResult(result)
+            return
+        }
+
+        // 普通文件写入（新建文件等）
         if result.success {
             refreshExplorer(project: result.project, workspace: result.workspace)
         } else {

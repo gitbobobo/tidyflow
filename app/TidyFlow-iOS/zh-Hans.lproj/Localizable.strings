@@ -1,0 +1,65 @@
+/* ============================================
+   TidyFlow iOS 中文本地化 — 编辑器
+   ============================================ */
+
+/* 编辑器 - 导航与工具栏 */
+"editor.back" = "返回";
+"editor.save" = "保存文件";
+"editor.save.hint.dirty" = "保存当前编辑的更改";
+"editor.save.hint.clean" = "文件无需保存";
+
+/* 编辑器 - 状态条 */
+"editor.status.saving" = "保存中…";
+"editor.status.saved" = "已保存";
+"editor.status.modified" = "已修改";
+"editor.status.diskChanged" = "磁盘已变更";
+"editor.status.deleted" = "已删除";
+"editor.status.filePath" = "文件路径：%@";
+
+/* 编辑器 - 保存中无障碍 */
+"editor.a11y.saving" = "正在保存文件";
+"editor.a11y.modified" = "文件已修改，尚未保存";
+"editor.a11y.saved" = "文件已保存";
+"editor.a11y.diskChanged" = "文件在磁盘上被其他程序修改";
+"editor.a11y.diskDeleted" = "文件已从磁盘上被删除";
+
+/* 编辑器 - 冲突提示条 */
+"editor.conflict.changed" = "文件已在磁盘上被修改";
+"editor.conflict.deleted" = "文件已从磁盘删除";
+"editor.conflict.reload" = "重新加载";
+"editor.conflict.reload.hint" = "从磁盘重新加载文件内容";
+
+/* 编辑器 - 空态与错误态 */
+"editor.loading" = "正在读取文件…";
+"editor.opening" = "正在打开文件…";
+"editor.error.title" = "无法打开文件";
+
+/* 编辑器 - 查找替换 */
+"editor.find.placeholder" = "查找";
+"editor.replace.placeholder" = "替换";
+"editor.find.caseSensitive.on" = "区分大小写：已开启";
+"editor.find.caseSensitive.off" = "区分大小写：已关闭";
+"editor.find.caseSensitive.hint" = "切换区分大小写";
+"editor.find.regex.on" = "正则表达式：已开启";
+"editor.find.regex.off" = "正则表达式：已关闭";
+"editor.find.regex.hint" = "切换正则表达式匹配";
+"editor.find.noMatch" = "无匹配结果";
+"editor.find.previous" = "上一个匹配";
+"editor.find.next" = "下一个匹配";
+"editor.find.close" = "关闭查找替换";
+"editor.replace.current" = "替换当前匹配";
+"editor.replace.current.hint" = "将当前匹配替换为指定文本";
+"editor.replace.all" = "替换全部匹配";
+"editor.replace.all.hint" = "将所有匹配替换为指定文本";
+"editor.find.regexError" = "正则表达式错误：%@";
+
+/* 编辑器 - 未保存确认 */
+"editor.unsaved.title" = "未保存的更改";
+"editor.unsaved.saveAndClose" = "保存并关闭";
+"editor.unsaved.discard" = "放弃更改";
+"editor.unsaved.cancel" = "取消";
+"editor.unsaved.message" = "文件「%@」有未保存的更改，是否保存？";
+
+/* 资源管理器 - 无障碍 */
+"explorer.a11y.openEditor" = "打开文件进行编辑";
+"explorer.a11y.toggleDir" = "展开或收起文件夹";

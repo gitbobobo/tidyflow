@@ -778,11 +778,15 @@ private struct ExplorerFileRowView: View {
             .contentShape(Rectangle())
             .padding(.leading, indent)
             .padding(.vertical, 6)
+            .accessibilityHint(item.isDir ? "展开或收起文件夹" : "打开文件进行编辑")
             .onTapGesture {
                 if item.isDir {
                     appState.toggleExplorerDirectory(project: project, workspace: workspace, path: item.path)
                 } else {
-                    appState.readFileForPreview(project: project, workspace: workspace, path: item.path)
+                    // 文本文件进入编辑器路由，二进制或不可判断的文件继续走预览
+                    appState.navigationPath.append(
+                        MobileRoute.workspaceEditor(project: project, workspace: workspace, path: item.path)
+                    )
                 }
             }
             .contextMenu {
