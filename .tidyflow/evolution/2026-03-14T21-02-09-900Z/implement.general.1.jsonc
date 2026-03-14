@@ -1,0 +1,147 @@
+{
+  "$schema_version": "2.0",
+  "stage": "implement.general.1",
+  "cycle_id": "2026-03-14T21-02-09-900Z",
+  "status": "done",
+  "decision": {
+    "result": "n/a",
+    "reason": ""
+  },
+  "summary": "完成全局文件内容搜索全栈实现：Core 搜索接口与结果模型（WI-001）、TidyFlowShared 共享语义层与 HTTP 接入（WI-002）、macOS 全局搜索面板（WI-003）、iOS 工作区搜索页面（WI-004）、协议文档与测试矩阵（WI-005）。所有搜索状态按 project:workspace 二元组隔离，复用现有 HTTPQueryCache 和 fileWorkspace 缓存失效策略。额外修复了 ProjectsSidebarView 未加入 Sources build phase 的预存构建问题。",
+  "work_item_results": [
+    {
+      "work_item_id": "WI-001",
+      "status": "done",
+      "summary": "Core 新增文件内容搜索：协议类型 FileContentSearchMatchRange/Item/Result，search_file_contents() 复用忽略策略，HTTP 端点 GET /files/search，硬截断 1000 结果/5000 文件",
+      "evidence_paths": [
+        "core/src/server/protocol/file.rs",
+        "core/src/server/protocol/mod.rs",
+        "core/src/server/file_index.rs",
+        "core/src/application/file.rs",
+        "core/src/server/handlers/file/query.rs",
+        "core/src/server/ws/http_api/file.rs",
+        "core/src/server/ws/http_api/mod.rs",
+        "core/src/server/ws/transport/bootstrap/router.rs"
+      ]
+    },
+    {
+      "work_item_id": "WI-002",
+      "status": "done",
+      "summary": "TidyFlowShared 共享搜索语义层：DTO 类型、GlobalSearchState/Section/Match/Query 语义模型、WSClient.requestFileContentSearch()、fileWorkspace 缓存失效扩展、HTTPQueryCache 30s 过期",
+      "evidence_paths": [
+        "app/TidyFlowShared/Protocol/FileProtocolModels.swift",
+        "app/TidyFlowShared/Protocol/MessageHandlerProtocols.swift",
+        "app/TidyFlowShared/Networking/HTTPQueryCache.swift",
+        "app/TidyFlowShared/Networking/WSClient.swift",
+        "app/TidyFlowShared/Networking/WSClient+Send.swift",
+        "app/TidyFlowShared/Networking/WSClient+Receive+DomainCore.swift",
+        "app/TidyFlowShared/Presentation/GlobalSearchSemantics.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-003",
+      "status": "done",
+      "summary": "macOS 搜索 Inspector 替换：GlobalSearchPanelView 替代占位视图，支持查询输入/范围切换/加载态/结果列表/预览片段/点击跳转编辑器，状态按 project:workspace 隔离",
+      "evidence_paths": [
+        "app/TidyFlow/Views/RightToolPanelView.swift",
+        "app/TidyFlow/Views/Models/AppState/AppState.swift",
+        "app/TidyFlow/Views/Models/AppState/AppState+Search.swift",
+        "app/TidyFlow/Views/Models/AppState/AppState+CoreWS+MessageHandlers.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-004",
+      "status": "done",
+      "summary": "iOS 工作区搜索页面：MobileRoute.workspaceSearch 路由、MobileSearchView 完整搜索 UI、MobileAppState 搜索状态管理、WorkspaceDetailView 搜索入口、MobileAppState+MessageHandlers 分发",
+      "evidence_paths": [
+        "app/TidyFlow-iOS/TidyFlowiOSApp.swift",
+        "app/TidyFlow-iOS/MobileAppState.swift",
+        "app/TidyFlow-iOS/MobileAppState+MessageHandlers.swift",
+        "app/TidyFlow-iOS/Views/WorkspaceDetailView.swift",
+        "app/TidyFlow-iOS/Views/MobileSearchView.swift"
+      ]
+    },
+    {
+      "work_item_id": "WI-005",
+      "status": "done",
+      "summary": "协议文档同步与测试矩阵：domains.yaml file 域扩展、README.md 搜索章节、PROTOCOL.md 搜索协议章节；Core 9 项搜索定向测试全通过；Swift GlobalSearchSemanticsTests 覆盖状态/高亮/分组/隔离",
+      "evidence_paths": [
+        "schema/protocol/v7/domains.yaml",
+        "schema/protocol/v7/README.md",
+        "docs/PROTOCOL.md",
+        "core/tests/file_content_search.rs",
+        "app/TidyFlowTests/GlobalSearchSemanticsTests.swift"
+      ]
+    }
+  ],
+  "changed_files": [
+    "core/src/server/protocol/file.rs",
+    "core/src/server/protocol/mod.rs",
+    "core/src/server/file_index.rs",
+    "core/src/application/file.rs",
+    "core/src/server/handlers/file/query.rs",
+    "core/src/server/ws/http_api/file.rs",
+    "core/src/server/ws/http_api/mod.rs",
+    "core/src/server/ws/transport/bootstrap/router.rs",
+    "app/TidyFlowShared/Protocol/FileProtocolModels.swift",
+    "app/TidyFlowShared/Protocol/MessageHandlerProtocols.swift",
+    "app/TidyFlowShared/Networking/HTTPQueryCache.swift",
+    "app/TidyFlowShared/Networking/WSClient.swift",
+    "app/TidyFlowShared/Networking/WSClient+Send.swift",
+    "app/TidyFlowShared/Networking/WSClient+Receive+DomainCore.swift",
+    "app/TidyFlowShared/Presentation/GlobalSearchSemantics.swift",
+    "app/TidyFlow/Views/RightToolPanelView.swift",
+    "app/TidyFlow/Views/Models/AppState/AppState.swift",
+    "app/TidyFlow/Views/Models/AppState/AppState+Search.swift",
+    "app/TidyFlow/Views/Models/AppState/AppState+CoreWS+MessageHandlers.swift",
+    "app/TidyFlow-iOS/TidyFlowiOSApp.swift",
+    "app/TidyFlow-iOS/MobileAppState.swift",
+    "app/TidyFlow-iOS/MobileAppState+MessageHandlers.swift",
+    "app/TidyFlow-iOS/Views/WorkspaceDetailView.swift",
+    "app/TidyFlow-iOS/Views/MobileSearchView.swift",
+    "schema/protocol/v7/domains.yaml",
+    "schema/protocol/v7/README.md",
+    "docs/PROTOCOL.md",
+    "core/tests/file_content_search.rs",
+    "app/TidyFlowTests/GlobalSearchSemanticsTests.swift",
+    "app/TidyFlow.xcodeproj/project.pbxproj"
+  ],
+  "commands_executed": [
+    "cargo build --manifest-path core/Cargo.toml",
+    "cargo test --manifest-path core/Cargo.toml",
+    "cargo test --manifest-path core/Cargo.toml --test file_content_search",
+    "./scripts/tidyflow check",
+    "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=macOS' -derivedDataPath build SKIP_CORE_BUILD=1 build",
+    "xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -derivedDataPath build SKIP_CORE_BUILD=1 build"
+  ],
+  "quick_checks": [
+    {
+      "name": "./scripts/tidyflow check",
+      "result": "pass",
+      "details": "协议版本一致(v10)、schema/core/app domain 同步、action_table 同步、app/core 版本一致(1.3.0)"
+    },
+    {
+      "name": "cargo test --manifest-path core/Cargo.toml",
+      "result": "pass",
+      "details": "8 passed, 0 failed, 1 ignored（term_io 忽略为已知）"
+    },
+    {
+      "name": "cargo test --manifest-path core/Cargo.toml --test file_content_search",
+      "result": "pass",
+      "details": "9 项搜索定向测试全部通过：基础搜索、大小写敏感、二进制过滤、忽略目录、空查询、无匹配、上下文行、匹配范围、工作区隔离"
+    },
+    {
+      "name": "xcodebuild macOS build",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED（修复 ProjectsSidebarView 未加入 Sources build phase 后通过）"
+    },
+    {
+      "name": "xcodebuild iOS Simulator build",
+      "result": "pass",
+      "details": "BUILD SUCCEEDED"
+    }
+  ],
+  "verify_iteration": 0,
+  "backlog_contract_version": 2,
+  "updated_at": ""
+}
