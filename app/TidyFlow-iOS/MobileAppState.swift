@@ -4726,6 +4726,11 @@ final class MobileAppState: ObservableObject {
         editorDocumentsByWorkspace[globalWorkspaceKey]?[path]
     }
 
+    /// 更新编辑器文档的选区集合
+    func updateEditorSelectionSet(_ selectionSet: EditorSelectionSet, globalWorkspaceKey: String, path: String) {
+        editorDocumentsByWorkspace[globalWorkspaceKey]?[path]?.selectionSet = selectionSet
+    }
+
     /// 打开编辑器文档（发起读取请求）
     func openEditorDocument(project: String, workspace: String, path: String, force: Bool = false) {
         let globalKey = globalWorkspaceKey(project: project, workspace: workspace)
@@ -4976,13 +4981,14 @@ final class MobileAppState: ObservableObject {
         editorAutocompleteStateByDocument[documentKey] = .hidden
     }
 
-    /// 接受候选后，通过共享 replacement 规则返回新文本与新选区。
+    /// 接受候选后，通过共享 replacement 规则返回新文本与新选区集合。
     /// 平台桥接层调用此方法获取结果后写回编辑器。
+    /// 自动补全只作用于主选区，接受补全后清空附加选区。
     func applyAcceptedAutocomplete(
         _ item: EditorAutocompleteItem,
         for documentKey: EditorDocumentKey,
         currentText: String
-    ) -> (text: String, selection: EditorSelectionSnapshot)? {
+    ) -> (text: String, selections: EditorSelectionSet)? {
         let state = autocompleteState(for: documentKey)
         let replacement = EditorAutocompleteEngine.replacement(for: item, state: state)
 
@@ -4995,12 +5001,12 @@ final class MobileAppState: ObservableObject {
         }
 
         let newText = nsText.replacingCharacters(in: range, with: replacement.replacementText)
-        let selection = EditorSelectionSnapshot(location: replacement.caretLocation, length: 0)
+        let selections = EditorSelectionSet.single(location: replacement.caretLocation, length: 0)
 
         // 重置补全状态
         resetAutocompleteState(for: documentKey)
 
-        return (text: newText, selection: selection)
+        return (text: newText, selections: selections)
     }
 
     /// 释放指定工作区下所有文档的自动补全状态

@@ -592,6 +592,10 @@ enum EditorSyntaxColorMapIOS {
 class EditorAutocompleteTextView: UITextView {
     /// 补全快捷键回调（返回 true 表示已处理）
     var onAutocompleteKeyDown: ((UIKeyCommand) -> Bool)?
+    /// 多选区命令回调：添加下一个匹配选区
+    var onAddNextMatchSelection: (() -> Void)?
+    /// 多选区命令回调：清空附加选区
+    var onClearAdditionalSelections: (() -> Void)?
 
     override var keyCommands: [UIKeyCommand]? {
         var commands = super.keyCommands ?? []
@@ -631,6 +635,18 @@ class EditorAutocompleteTextView: UITextView {
             modifierFlags: [],
             action: #selector(handleAutocompleteKey(_:))
         ))
+        // Cmd+D: 添加下一个匹配选区（多光标）
+        commands.append(UIKeyCommand(
+            input: "d",
+            modifierFlags: .command,
+            action: #selector(handleAddNextMatchSelection)
+        ))
+        // Cmd+Shift+D: 清空附加选区
+        commands.append(UIKeyCommand(
+            input: "d",
+            modifierFlags: [.command, .shift],
+            action: #selector(handleClearAdditionalSelections)
+        ))
         return commands
     }
 
@@ -645,6 +661,14 @@ class EditorAutocompleteTextView: UITextView {
         } else if command.input == "\r" {
             insertText("\n")
         }
+    }
+
+    @objc private func handleAddNextMatchSelection() {
+        onAddNextMatchSelection?()
+    }
+
+    @objc private func handleClearAdditionalSelections() {
+        onClearAdditionalSelections?()
     }
 }
 
@@ -711,6 +735,59 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             default:
                 return false
             }
+        }
+
+        // 多选区硬件键盘命令
+        textView.onAddNextMatchSelection = { [weak textView] in
+            guard let textView = textView else { return }
+            let coordinator = context.coordinator
+            let currentText = textView.text ?? ""
+            let nsText = currentText as NSString
+            let range = textView.selectedRange
+
+            // 需要选中文本才能查找下一个匹配
+            guard range.length > 0 else { return }
+            let selectedWord = nsText.substring(with: range)
+            let searchStart = range.location + range.length
+            let searchRange = NSRange(location: searchStart, length: nsText.length - searchStart)
+            var foundRange = nsText.range(of: selectedWord, options: [], range: searchRange)
+
+            // 如果后面没找到，从头开始搜索（环绕）
+            if foundRange.location == NSNotFound {
+                let wrapRange = NSRange(location: 0, length: range.location)
+                foundRange = nsText.range(of: selectedWord, options: [], range: wrapRange)
+            }
+            guard foundRange.location != NSNotFound else { return }
+
+            // 读取当前选区集合，添加新找到的选区
+            let gwk = coordinator.parent.globalWorkspaceKey
+            let p = coordinator.parent.path
+            let existingSet = coordinator.parent.appState.getEditorDocument(
+                globalWorkspaceKey: gwk, path: p
+            )?.selectionSet ?? .single(location: range.location, length: range.length)
+
+            var regions = existingSet.regions
+            regions.append(EditorSelectionRegion(
+                location: foundRange.location,
+                length: foundRange.length,
+                isPrimary: false
+            ))
+            coordinator.parent.appState.updateEditorSelectionSet(
+                EditorSelectionSet(regions: regions).normalized(),
+                globalWorkspaceKey: gwk,
+                path: p
+            )
+        }
+
+        textView.onClearAdditionalSelections = { [weak textView] in
+            guard let textView = textView else { return }
+            let coordinator = context.coordinator
+            let primaryRange = textView.selectedRange
+            coordinator.parent.appState.updateEditorSelectionSet(
+                .single(location: primaryRange.location, length: primaryRange.length),
+                globalWorkspaceKey: coordinator.parent.globalWorkspaceKey,
+                path: coordinator.parent.path
+            )
         }
 
         // 设置键盘辅助栏
@@ -783,6 +860,12 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         accessory.onAutocomplete = { [weak textView] in
             guard let textView = textView else { return }
             context.coordinator.triggerManualAutocomplete(textView: textView)
+        }
+        accessory.onAddNextMatchSelection = { [weak textView] in
+            (textView as? EditorAutocompleteTextView)?.onAddNextMatchSelection?()
+        }
+        accessory.onClearAdditionalSelections = { [weak textView] in
+            (textView as? EditorAutocompleteTextView)?.onClearAdditionalSelections?()
         }
         textView.inputAccessoryView = accessory
         context.coordinator.accessoryView = accessory
@@ -941,25 +1024,116 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             guard !isProgrammaticTextUpdate, !isApplyingHighlight else { return true }
 
             let currentText = textView.text ?? ""
+            let nsText = currentText as NSString
             let selectedRange = textView.selectedRange
-            let replacedText = (currentText as NSString).substring(with: range)
+
+            // 读取共享选区集合，判断是否有附加选区
+            let existingSet = parent.appState.getEditorDocument(
+                globalWorkspaceKey: parent.globalWorkspaceKey,
+                path: parent.path
+            )?.selectionSet
+
+            let additionalRegions = existingSet?.regions.filter { !$0.isPrimary } ?? []
+
+            if additionalRegions.isEmpty {
+                // 单选区路径：保持原有行为
+                let replacedText = nsText.substring(with: range)
+                let command = EditorEditCommand(
+                    mutation: EditorTextMutation(
+                        rangeLocation: range.location,
+                        rangeLength: range.length,
+                        replacementText: text
+                    ),
+                    beforeSelection: EditorSelectionSnapshot(
+                        location: selectedRange.location,
+                        length: selectedRange.length
+                    ),
+                    afterSelection: EditorSelectionSnapshot(
+                        location: range.location + (text as NSString).length,
+                        length: 0
+                    ),
+                    timestamp: Date(),
+                    replacedText: replacedText
+                )
+
+                let result = parent.appState.recordEditorEdit(
+                    currentText: currentText,
+                    command: command,
+                    documentKey: parent.documentKey
+                )
+
+                isProgrammaticTextUpdate = true
+                textView.text = result.text
+                let maxLen = (result.text as NSString).length
+                textView.selectedRange = NSRange(
+                    location: min(result.selection.location, maxLen),
+                    length: 0
+                )
+                isProgrammaticTextUpdate = false
+
+                parent.appState.updateEditorDocumentContent(
+                    globalWorkspaceKey: parent.globalWorkspaceKey,
+                    path: parent.path,
+                    content: result.text
+                )
+
+                accessoryView?.canUndo = result.canUndo
+                accessoryView?.canRedo = result.canRedo
+
+                if let snapshot = lastStructureSnapshot {
+                    let cursorLine = lineNumber(for: result.selection.location, in: result.text)
+                    var foldState = parent.appState.foldingState(for: parent.documentKey)
+                    let beforeCount = foldState.collapsedRegionIDs.count
+                    foldState.expandRegions(containingLine: cursorLine, in: snapshot)
+                    if foldState.collapsedRegionIDs.count != beforeCount {
+                        parent.appState.updateFoldingState(foldState, for: parent.documentKey)
+                    }
+                    parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
+                }
+
+                applySyntaxHighlighting(to: textView, filePath: parent.path)
+                applyFoldingProjection(to: textView)
+                refreshPairMatchOverlay(textView: textView)
+                refreshAutocompleteState(textView: textView, triggerKind: .automatic)
+
+                return false
+            }
+
+            // 多选区路径：将同一编辑操作广播到所有选区
+            let allRegions = existingSet!.regions
+            let replacementLen = (text as NSString).length
+
+            // 按位置降序排列，以便从后往前应用不会影响前面的偏移
+            let sortedRegions = allRegions.sorted { $0.location > $1.location }
+
+            var mutations: [EditorTextMutation] = []
+            var replacedTexts: [String] = []
+            var beforeRegions: [EditorSelectionRegion] = []
+            var afterRegions: [EditorSelectionRegion] = []
+
+            for region in sortedRegions {
+                let mutRange = NSRange(location: region.location, length: region.length)
+                let replaced = nsText.substring(with: mutRange)
+                mutations.append(EditorTextMutation(
+                    rangeLocation: region.location,
+                    rangeLength: region.length,
+                    replacementText: text
+                ))
+                replacedTexts.append(replaced)
+                beforeRegions.append(region)
+                afterRegions.append(EditorSelectionRegion(
+                    location: region.location + replacementLen,
+                    length: 0,
+                    isPrimary: region.isPrimary
+                ))
+            }
 
             let command = EditorEditCommand(
-                mutation: EditorTextMutation(
-                    rangeLocation: range.location,
-                    rangeLength: range.length,
-                    replacementText: text
-                ),
-                beforeSelection: EditorSelectionSnapshot(
-                    location: selectedRange.location,
-                    length: selectedRange.length
-                ),
-                afterSelection: EditorSelectionSnapshot(
-                    location: range.location + (text as NSString).length,
-                    length: 0
-                ),
+                mutations: mutations,
+                beforeSelections: EditorSelectionSet(regions: beforeRegions),
+                afterSelections: EditorSelectionSet(regions: afterRegions),
                 timestamp: Date(),
-                replacedText: replacedText
+                replacedTexts: replacedTexts
             )
 
             let result = parent.appState.recordEditorEdit(
@@ -968,30 +1142,34 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 documentKey: parent.documentKey
             )
 
-            // 程序化写回新文本和选区
             isProgrammaticTextUpdate = true
             textView.text = result.text
             let maxLen = (result.text as NSString).length
+            let primarySel = result.selections.primarySelection
             textView.selectedRange = NSRange(
-                location: min(result.selection.location, maxLen),
+                location: min(primarySel.location, maxLen),
                 length: 0
             )
             isProgrammaticTextUpdate = false
 
-            // 更新状态
+            // 回写选区集合到共享状态
+            parent.appState.updateEditorSelectionSet(
+                result.selections,
+                globalWorkspaceKey: parent.globalWorkspaceKey,
+                path: parent.path
+            )
+
             parent.appState.updateEditorDocumentContent(
                 globalWorkspaceKey: parent.globalWorkspaceKey,
                 path: parent.path,
                 content: result.text
             )
 
-            // 更新辅助栏状态
             accessoryView?.canUndo = result.canUndo
             accessoryView?.canRedo = result.canRedo
 
-            // 编辑时自动展开包含光标位置的已折叠区域
             if let snapshot = lastStructureSnapshot {
-                let cursorLine = lineNumber(for: result.selection.location, in: result.text)
+                let cursorLine = lineNumber(for: primarySel.location, in: result.text)
                 var foldState = parent.appState.foldingState(for: parent.documentKey)
                 let beforeCount = foldState.collapsedRegionIDs.count
                 foldState.expandRegions(containingLine: cursorLine, in: snapshot)
@@ -1001,12 +1179,9 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                 parent.appState.updateCurrentLine(cursorLine, for: parent.documentKey)
             }
 
-            // 重新应用高亮和折叠
             applySyntaxHighlighting(to: textView, filePath: parent.path)
             applyFoldingProjection(to: textView)
             refreshPairMatchOverlay(textView: textView)
-
-            // 刷新补全状态
             refreshAutocompleteState(textView: textView, triggerKind: .automatic)
 
             return false
@@ -1440,7 +1615,7 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                     location: textView.selectedRange.location,
                     length: textView.selectedRange.length
                 ),
-                afterSelection: result.selection,
+                afterSelection: result.selections.primarySnapshot,
                 timestamp: Date(),
                 replacedText: (currentText as NSString).substring(with: state.replacementRange)
             )
@@ -1454,8 +1629,9 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             isProgrammaticTextUpdate = true
             textView.text = result.text
             let maxLen = (result.text as NSString).length
+            let primarySel = result.selections.primarySnapshot
             textView.selectedRange = NSRange(
-                location: min(result.selection.location, maxLen),
+                location: min(primarySel.location, maxLen),
                 length: 0
             )
             isProgrammaticTextUpdate = false

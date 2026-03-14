@@ -13,6 +13,10 @@ final class EditorInputAccessoryView: UIView {
     var onDismissKeyboard: (() -> Void)?
     /// 点击补全按钮回调
     var onAutocomplete: (() -> Void)?
+    /// 添加下一个匹配选区（多光标）
+    var onAddNextMatchSelection: (() -> Void)?
+    /// 清空附加选区（回到单光标）
+    var onClearAdditionalSelections: (() -> Void)?
 
     /// 当前撤销/重做是否可用（由外部更新，驱动按钮禁用态）
     var canUndo: Bool = false { didSet { updateButtonStates() } }
