@@ -797,9 +797,6 @@ mod tests {
 
         // proj-y 仍然不一致（没被修复）
         let recheck_y = check_workspace_consistency(states.get(&id_y.global_key()).unwrap());
-        assert!(
-            !recheck_y.is_consistent,
-            "proj-y 不应被 proj-x 的恢复影响"
-        );
+        assert!(!recheck_y.is_consistent, "proj-y 不应被 proj-x 的恢复影响");
     }
 }

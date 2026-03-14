@@ -436,8 +436,7 @@ mod tests {
 
     #[test]
     fn recovery_info_active_cooldown_future_resume() {
-        let future = (Utc::now() + chrono::Duration::hours(1))
-            .to_rfc3339();
+        let future = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
         let info = EvolutionRecoveryInfo {
             phase: EvolutionRecoveryPhase::Recovering,
             strategy: EvolutionRecoveryStrategy::WaitRateLimit,
@@ -454,8 +453,7 @@ mod tests {
 
     #[test]
     fn recovery_info_active_cooldown_past_resume() {
-        let past = (Utc::now() - chrono::Duration::hours(1))
-            .to_rfc3339();
+        let past = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         let info = EvolutionRecoveryInfo {
             phase: EvolutionRecoveryPhase::Recovering,
             strategy: EvolutionRecoveryStrategy::WaitRateLimit,
@@ -472,8 +470,7 @@ mod tests {
 
     #[test]
     fn recovery_info_active_cooldown_degraded_until() {
-        let future = (Utc::now() + chrono::Duration::hours(1))
-            .to_rfc3339();
+        let future = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
         let info = EvolutionRecoveryInfo {
             phase: EvolutionRecoveryPhase::Degraded,
             strategy: EvolutionRecoveryStrategy::DeferWorkspace,

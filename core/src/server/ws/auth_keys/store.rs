@@ -45,7 +45,9 @@ pub(in crate::server::ws) fn new_api_key_registry(
     }
 }
 
-pub(in crate::server::ws) fn list_api_key_payloads(registry: &RemoteAPIKeyRegistry) -> Vec<APIKeyPayload> {
+pub(in crate::server::ws) fn list_api_key_payloads(
+    registry: &RemoteAPIKeyRegistry,
+) -> Vec<APIKeyPayload> {
     let mut items: Vec<_> = registry
         .keys_by_id
         .values()
@@ -98,7 +100,9 @@ pub(in crate::server::ws) fn create_api_key_entry(
     registry
         .key_ids_by_value
         .insert(entry.api_key.clone(), entry.key_id.clone());
-    registry.keys_by_id.insert(entry.key_id.clone(), entry.clone());
+    registry
+        .keys_by_id
+        .insert(entry.key_id.clone(), entry.clone());
     Ok(entry)
 }
 

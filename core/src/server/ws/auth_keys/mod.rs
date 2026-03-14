@@ -8,6 +8,4 @@ pub(in crate::server::ws) use handlers::{
     create_api_key_handler, delete_api_key_handler, list_api_keys_handler,
 };
 pub(in crate::server::ws) use model::{SharedRemoteAPIKeyRegistry, WsAuthQuery};
-pub(in crate::server::ws) use store::{
-    new_api_key_registry, touch_api_key_last_used,
-};
+pub(in crate::server::ws) use store::{new_api_key_registry, touch_api_key_last_used};

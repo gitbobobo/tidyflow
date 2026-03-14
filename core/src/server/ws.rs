@@ -4,10 +4,10 @@ use tracing::debug;
 
 use crate::server::protocol::ServerMessage;
 
+mod auth_keys;
 mod connection;
 mod dispatch;
 mod http_api;
-mod auth_keys;
 mod request_scope;
 mod server_runtime;
 mod terminal;

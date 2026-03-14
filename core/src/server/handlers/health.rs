@@ -87,8 +87,11 @@ pub fn query_analysis_summary(
         crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, retry_count);
     let aggregates = crate::server::perf::build_observation_aggregates(cache_hit_ratios);
     let anomalies = crate::server::perf::build_predictive_anomalies(&aggregates);
-    let recommendations =
-        crate::server::perf::build_scheduling_recommendations(&aggregates, max_parallel, running_count);
+    let recommendations = crate::server::perf::build_scheduling_recommendations(
+        &aggregates,
+        max_parallel,
+        running_count,
+    );
     crate::server::perf::build_analysis_summary(
         project,
         workspace,

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use super::common::ApiError;
-use crate::server::context::{TaskBroadcastEvent, send_task_broadcast_event};
+use crate::server::context::{send_task_broadcast_event, TaskBroadcastEvent};
 use crate::server::protocol::ServerMessage;
 
 #[derive(Debug, Deserialize)]
@@ -138,7 +138,10 @@ pub(in crate::server::ws) async fn node_pair_unregister_handler(
         return Err(ApiError::Internal("node runtime unavailable".to_string()));
     };
     info!("received node pair unregister request");
-    match runtime.unregister_peer_by_auth_token(payload.auth_token.trim()).await {
+    match runtime
+        .unregister_peer_by_auth_token(payload.auth_token.trim())
+        .await
+    {
         Ok(peer_node_id) => {
             broadcast_node_network_updated(&ctx, &runtime).await;
             info!(peer_node_id = %peer_node_id, "node pair unregister completed and network update broadcasted");
@@ -290,10 +293,7 @@ mod tests {
         )
         .await
         .expect("handler should succeed");
-        let token = response
-            .0
-            .auth_token
-            .expect("valid pair_key → auth_token");
+        let token = response.0.auth_token.expect("valid pair_key → auth_token");
         assert!(token.starts_with("tfn_"), "auth token prefix");
         // 验证 token 绑定到 requester_node_id
         assert!(
@@ -514,10 +514,7 @@ mod tests {
         )
         .await
         .expect("self handler should succeed");
-        let issued_token = self_response
-            .0
-            .auth_token
-            .expect("should have auth_token");
+        let issued_token = self_response.0.auth_token.expect("should have auth_token");
 
         // 注册 peer
         let _ = node_pair_register_handler(

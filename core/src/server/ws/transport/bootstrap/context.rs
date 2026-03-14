@@ -116,10 +116,7 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let ai_state = build_shared_ai_state();
 
     // 注册内置健康探针（含终端恢复状态检测，WI-003）
-    crate::server::health::register_builtin_probes(
-        shared_state.clone(),
-        terminal_registry.clone(),
-    );
+    crate::server::health::register_builtin_probes(shared_state.clone(), terminal_registry.clone());
 
     // 启动时加载待恢复的终端元数据，标记其恢复阶段（WI-003）
     match state_store.load_terminal_recovery_entries().await {
@@ -160,9 +157,11 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
         terminal_registry,
         scrollback_tx,
         expected_ws_token,
-        api_key_registry: Arc::new(Mutex::new(crate::server::ws::auth_keys::new_api_key_registry(
-            &shared_state.read().await.remote_api_keys,
-        ))),
+        api_key_registry: Arc::new(Mutex::new(
+            crate::server::ws::auth_keys::new_api_key_registry(
+                &shared_state.read().await.remote_api_keys,
+            ),
+        )),
         remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
         remote_connection_registry: Arc::new(Mutex::new(RemoteConnectionRegistry::new())),
         task_broadcast_tx,

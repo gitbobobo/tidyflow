@@ -17,8 +17,8 @@ use super::state::{
     AppState, ClientSettings, EvolutionModelSelection, EvolutionStageProfile, KeybindingConfig,
     NodeAuthTokenEntry, NodeDiscoverySettings, NodeIdentity, PairedNodeEntry, Project,
     ProjectCommand, RemoteAPIKeyEntry, SetupResultSummary, StateError, TemplateCommand,
-    WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus, WorkspaceTodoItem,
-    WorkspaceTerminalRecoveryEntry,
+    WorkflowTemplate, Workspace, WorkspaceRecoveryMeta, WorkspaceStatus,
+    WorkspaceTerminalRecoveryEntry, WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "2";
@@ -977,7 +977,10 @@ impl StateStore {
             .bind(&peer.auth_token)
             .bind(&peer.trust_source)
             .bind(peer.introduced_by.clone())
-            .bind(peer.last_seen_at_unix.and_then(|value| i64::try_from(value).ok()))
+            .bind(
+                peer.last_seen_at_unix
+                    .and_then(|value| i64::try_from(value).ok()),
+            )
             .bind(&peer.status)
             .execute(&mut *tx)
             .await
@@ -997,7 +1000,11 @@ impl StateStore {
             .bind(&token.token)
             .bind(token.peer_node_id.clone())
             .bind(i64::try_from(token.created_at_unix).unwrap_or(0))
-            .bind(token.last_used_at_unix.and_then(|value| i64::try_from(value).ok()))
+            .bind(
+                token
+                    .last_used_at_unix
+                    .and_then(|value| i64::try_from(value).ok()),
+            )
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
@@ -1465,12 +1472,14 @@ impl StateStore {
             .map_err(|e| StateError::WriteError(e.to_string()))?;
 
         for entry in entries {
-            sqlx::query(r#"
+            sqlx::query(
+                r#"
                 INSERT INTO terminal_recovery
                     (term_id, project, workspace, workspace_path, cwd, shell, name, icon,
                      recovery_state, failed_reason, recorded_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#)
+            "#,
+            )
             .bind(&entry.term_id)
             .bind(project)
             .bind(workspace)
@@ -1507,8 +1516,7 @@ impl StateStore {
         let mut result = Vec::new();
         for row in rows {
             let recorded_at_str: String = row.try_get("recorded_at").unwrap_or_default();
-            let recorded_at = parse_rfc3339_utc(&recorded_at_str)
-                .unwrap_or_else(chrono::Utc::now);
+            let recorded_at = parse_rfc3339_utc(&recorded_at_str).unwrap_or_else(chrono::Utc::now);
             let project: String = row.try_get("project").unwrap_or_default();
             let workspace: String = row.try_get("workspace").unwrap_or_default();
             let entry = WorkspaceTerminalRecoveryEntry {
@@ -1518,7 +1526,9 @@ impl StateStore {
                 shell: row.try_get("shell").unwrap_or_default(),
                 name: row.try_get("name").ok().flatten(),
                 icon: row.try_get("icon").ok().flatten(),
-                recovery_state: row.try_get("recovery_state").unwrap_or_else(|_| "pending".to_string()),
+                recovery_state: row
+                    .try_get("recovery_state")
+                    .unwrap_or_else(|_| "pending".to_string()),
                 failed_reason: row.try_get("failed_reason").ok().flatten(),
                 recorded_at,
             };
@@ -1772,7 +1782,10 @@ mod tests {
         .await
         .expect("legacy custom_commands table should be created");
 
-        store.init_schema().await.expect("schema init should succeed");
+        store
+            .init_schema()
+            .await
+            .expect("schema init should succeed");
 
         let row = sqlx::query(
             "SELECT COUNT(1) AS count FROM sqlite_master WHERE type = 'table' AND name = 'custom_commands'",

@@ -17,12 +17,12 @@ use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::server::context::SharedAppState;
-use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::server::protocol::health::{
     HealthContext, HealthIncident, IncidentRecoverability, IncidentSeverity, IncidentSource,
     RepairActionKind, RepairActionRequest, RepairAuditEntry, RepairOutcome, SystemHealthSnapshot,
     SystemHealthStatus,
 };
+use crate::server::terminal_registry::SharedTerminalRegistry;
 
 // ============================================================================
 // 时间工具

@@ -456,9 +456,7 @@ pub fn aggregate_workspace_ai_domain_state(
         let active_tool_name = running_entry
             .map(|e| e.ai_tool.clone())
             .filter(|s| !s.is_empty());
-        let running_updated_at = running_entry
-            .map(|e| e.updated_at_ms)
-            .unwrap_or(now_ms);
+        let running_updated_at = running_entry.map(|e| e.updated_at_ms).unwrap_or(now_ms);
         return AiDomainState {
             phase,
             active_session_count: active_count,

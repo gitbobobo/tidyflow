@@ -13,8 +13,8 @@ static EVOLUTION_MANAGER: OnceLock<Arc<EvolutionManager>> = OnceLock::new();
 
 mod blocker;
 mod broadcast;
-mod coordination;
 mod consts;
+mod coordination;
 mod manager_persistence;
 mod manager_stage;
 mod manager_worker;

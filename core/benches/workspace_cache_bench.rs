@@ -252,8 +252,7 @@ fn bench_ai_context_query(c: &mut Criterion) {
     group.bench_function("adapter_fallback_cold_start", |b| {
         b.iter(|| {
             let pct = runtime.block_on(async {
-                let harness =
-                    AiContextTestHarness::new(&cold_db_path, cold_adapter.clone()).await;
+                let harness = AiContextTestHarness::new(&cold_db_path, cold_adapter.clone()).await;
                 harness
                     .read_context(
                         "project-c",

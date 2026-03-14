@@ -82,15 +82,17 @@ fn prune_integration_queue(
     workspaces: &std::collections::HashMap<String, WorkspaceRunState>,
     project: &str,
 ) {
-    project_state.pending_integration_queue.retain(|queued_key| {
-        let Some(entry) = workspaces.get(queued_key) else {
-            return false;
-        };
-        entry.project == project
-            && !is_default_workspace(&entry.workspace)
-            && !is_terminal_workspace_status(&entry.status)
-            && entry.current_stage == "integration"
-    });
+    project_state
+        .pending_integration_queue
+        .retain(|queued_key| {
+            let Some(entry) = workspaces.get(queued_key) else {
+                return false;
+            };
+            entry.project == project
+                && !is_default_workspace(&entry.workspace)
+                && !is_terminal_workspace_status(&entry.status)
+                && entry.current_stage == "integration"
+        });
 }
 
 fn refresh_active_direction_summaries(
@@ -117,10 +119,9 @@ fn refresh_active_direction_summaries(
     }
 }
 
-fn project_has_pending_or_running_integration(
-    project_state: &ProjectCoordinationState,
-) -> bool {
-    project_state.integration_lock_owner.is_some() || !project_state.pending_integration_queue.is_empty()
+fn project_has_pending_or_running_integration(project_state: &ProjectCoordinationState) -> bool {
+    project_state.integration_lock_owner.is_some()
+        || !project_state.pending_integration_queue.is_empty()
 }
 
 fn default_workspace_running(
@@ -135,7 +136,8 @@ fn default_workspace_running(
 }
 
 fn queue_index(queue: &VecDeque<String>, key: &str) -> Option<u32> {
-    queue.iter()
+    queue
+        .iter()
         .position(|queued| queued == key)
         .map(|idx| idx as u32)
 }
@@ -198,11 +200,7 @@ impl EvolutionManager {
         };
         let mut state = self.state.lock().await;
         let workspaces_snapshot = state.workspaces.clone();
-        let Some(project) = state
-            .workspaces
-            .get(key)
-            .map(|entry| entry.project.clone())
-        else {
+        let Some(project) = state.workspaces.get(key).map(|entry| entry.project.clone()) else {
             return;
         };
         if let Some(project_state) = state.project_coordination.get_mut(&project) {
@@ -216,7 +214,9 @@ impl EvolutionManager {
             {
                 project_state.integration_lock_owner = None;
             }
-            project_state.pending_integration_queue.retain(|queued| queued != key);
+            project_state
+                .pending_integration_queue
+                .retain(|queued| queued != key);
             refresh_active_direction_summaries(project_state, &workspaces_snapshot, &project);
         }
         if let Some(entry) = state.workspaces.get_mut(key) {
@@ -308,7 +308,9 @@ impl EvolutionManager {
         } else {
             None
         };
-        let network_lock_result = if let Some(repo_coordination_key) = repo_coordination_key.as_deref() {
+        let network_lock_result = if let Some(repo_coordination_key) =
+            repo_coordination_key.as_deref()
+        {
             if let Some(runtime) = crate::server::node::maybe_runtime() {
                 match runtime
                     .try_acquire_network_lock(
@@ -450,11 +452,14 @@ impl EvolutionManager {
 
         if current_stage == "integration" && !is_default_workspace(&workspace) {
             if project_state.integration_lock_owner.as_deref() != Some(key)
-                && !project_state.pending_integration_queue.iter().any(|queued| queued == key)
+                && !project_state
+                    .pending_integration_queue
+                    .iter()
+                    .any(|queued| queued == key)
             {
                 project_state
-                .pending_integration_queue
-                .push_back(key.to_string());
+                    .pending_integration_queue
+                    .push_back(key.to_string());
             }
 
             if project_state.integration_lock_owner.as_deref() == Some(key) {
@@ -533,7 +538,12 @@ impl EvolutionManager {
             }
 
             project_state.integration_lock_owner = Some(key.to_string());
-            if project_state.pending_integration_queue.front().map(|v| v == key).unwrap_or(false) {
+            if project_state
+                .pending_integration_queue
+                .front()
+                .map(|v| v == key)
+                .unwrap_or(false)
+            {
                 project_state.pending_integration_queue.pop_front();
             }
             if let Some(entry) = state.workspaces.get_mut(key) {
@@ -552,7 +562,9 @@ impl EvolutionManager {
             return CoordinationGateResult::Ready;
         }
 
-        if is_default_workspace(&workspace) && project_has_pending_or_running_integration(project_state) {
+        if is_default_workspace(&workspace)
+            && project_has_pending_or_running_integration(project_state)
+        {
             let peer = project_state
                 .integration_lock_owner
                 .as_deref()

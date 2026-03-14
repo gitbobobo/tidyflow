@@ -139,11 +139,7 @@ pub(super) fn profile_for_stage(
     stage: &str,
 ) -> EvolutionStageProfileInfo {
     let normalized = stage_profile_stage(stage).unwrap_or_else(|| stage.trim().to_string());
-    if let Some(profile) = profiles
-        .iter()
-        .find(|p| p.stage == normalized)
-        .cloned()
-    {
+    if let Some(profile) = profiles.iter().find(|p| p.stage == normalized).cloned() {
         return profile;
     }
     if normalized == "sync" {

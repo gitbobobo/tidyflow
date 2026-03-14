@@ -1217,8 +1217,12 @@ pub fn build_analysis_summaries_for_snapshot(
     let mut summaries: Vec<EvolutionAnalysisSummary> = workspace_items
         .iter()
         .map(|(project, workspace, cycle_id, retry_count)| {
-            let gate =
-                crate::server::health::evaluate_gate_decision(project, workspace, cycle_id, *retry_count);
+            let gate = crate::server::health::evaluate_gate_decision(
+                project,
+                workspace,
+                cycle_id,
+                *retry_count,
+            );
             build_analysis_summary(
                 project,
                 workspace,
@@ -1952,10 +1956,16 @@ pub fn build_performance_diagnoses(
                     reason: PerformanceDiagnosisReason::TerminalOutputFlushLatencyHigh,
                     summary: format!(
                         "[{}/{}:{}] 终端输出刷新 p95={}ms，超过临界阈值 {}ms",
-                        client.project, client.workspace, client.client_instance_id,
-                        term_flush_p95, TERMINAL_OUTPUT_FLUSH_LATENCY_CRITICAL_MS
+                        client.project,
+                        client.workspace,
+                        client.client_instance_id,
+                        term_flush_p95,
+                        TERMINAL_OUTPUT_FLUSH_LATENCY_CRITICAL_MS
                     ),
-                    evidence: vec![format!("client.terminal_output_flush.p95_ms={}", term_flush_p95)],
+                    evidence: vec![format!(
+                        "client.terminal_output_flush.p95_ms={}",
+                        term_flush_p95
+                    )],
                     recommended_action: "检查终端输出批次大小和渲染管线吞吐量".to_string(),
                     context: ctx.clone(),
                     client_instance_id: Some(client.client_instance_id.clone()),
@@ -1972,10 +1982,16 @@ pub fn build_performance_diagnoses(
                     reason: PerformanceDiagnosisReason::TerminalOutputFlushLatencyHigh,
                     summary: format!(
                         "[{}/{}:{}] 终端输出刷新 p95={}ms，超过警告阈值 {}ms",
-                        client.project, client.workspace, client.client_instance_id,
-                        term_flush_p95, TERMINAL_OUTPUT_FLUSH_LATENCY_WARNING_MS
+                        client.project,
+                        client.workspace,
+                        client.client_instance_id,
+                        term_flush_p95,
+                        TERMINAL_OUTPUT_FLUSH_LATENCY_WARNING_MS
                     ),
-                    evidence: vec![format!("client.terminal_output_flush.p95_ms={}", term_flush_p95)],
+                    evidence: vec![format!(
+                        "client.terminal_output_flush.p95_ms={}",
+                        term_flush_p95
+                    )],
                     recommended_action: "监控终端输出刷新延迟趋势".to_string(),
                     context: ctx.clone(),
                     client_instance_id: Some(client.client_instance_id.clone()),
@@ -1998,10 +2014,16 @@ pub fn build_performance_diagnoses(
                     reason: PerformanceDiagnosisReason::GitPanelProjectionLatencyHigh,
                     summary: format!(
                         "[{}/{}:{}] Git 面板投影重算 p95={}ms，超过临界阈值 {}ms",
-                        client.project, client.workspace, client.client_instance_id,
-                        git_proj_p95, GIT_PANEL_PROJECTION_LATENCY_CRITICAL_MS
+                        client.project,
+                        client.workspace,
+                        client.client_instance_id,
+                        git_proj_p95,
+                        GIT_PANEL_PROJECTION_LATENCY_CRITICAL_MS
                     ),
-                    evidence: vec![format!("client.git_panel_projection.p95_ms={}", git_proj_p95)],
+                    evidence: vec![format!(
+                        "client.git_panel_projection.p95_ms={}",
+                        git_proj_p95
+                    )],
                     recommended_action: "检查 Git 状态条目数量和投影构建逻辑".to_string(),
                     context: ctx.clone(),
                     client_instance_id: Some(client.client_instance_id.clone()),
@@ -2018,10 +2040,16 @@ pub fn build_performance_diagnoses(
                     reason: PerformanceDiagnosisReason::GitPanelProjectionLatencyHigh,
                     summary: format!(
                         "[{}/{}:{}] Git 面板投影重算 p95={}ms，超过警告阈值 {}ms",
-                        client.project, client.workspace, client.client_instance_id,
-                        git_proj_p95, GIT_PANEL_PROJECTION_LATENCY_WARNING_MS
+                        client.project,
+                        client.workspace,
+                        client.client_instance_id,
+                        git_proj_p95,
+                        GIT_PANEL_PROJECTION_LATENCY_WARNING_MS
                     ),
-                    evidence: vec![format!("client.git_panel_projection.p95_ms={}", git_proj_p95)],
+                    evidence: vec![format!(
+                        "client.git_panel_projection.p95_ms={}",
+                        git_proj_p95
+                    )],
                     recommended_action: "监控 Git 面板投影重算延迟趋势".to_string(),
                     context: ctx.clone(),
                     client_instance_id: Some(client.client_instance_id.clone()),
@@ -2347,12 +2375,8 @@ mod analysis_tests {
 
     #[test]
     fn summaries_for_snapshot_empty_items_returns_empty() {
-        let summaries = build_analysis_summaries_for_snapshot(
-            &[],
-            &std::collections::HashMap::new(),
-            4,
-            0,
-        );
+        let summaries =
+            build_analysis_summaries_for_snapshot(&[], &std::collections::HashMap::new(), 4, 0);
         assert!(summaries.is_empty(), "无工作区条目应返回空摘要列表");
     }
 
@@ -2380,12 +2404,8 @@ mod analysis_tests {
             ("projA", "wsB", "cycle-1", 0),
             ("projA", "wsA", "cycle-1", 0),
         ];
-        let summaries = build_analysis_summaries_for_snapshot(
-            &items,
-            &std::collections::HashMap::new(),
-            4,
-            0,
-        );
+        let summaries =
+            build_analysis_summaries_for_snapshot(&items, &std::collections::HashMap::new(), 4, 0);
         assert_eq!(summaries.len(), 3);
         // 应按 (project, workspace, cycle_id) 升序排列
         assert_eq!(summaries[0].project, "projA");

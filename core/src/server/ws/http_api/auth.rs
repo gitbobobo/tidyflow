@@ -73,18 +73,17 @@ pub(in crate::server::ws) async fn ensure_http_authorized(
                 });
             }
 
-            let Some(key_info) =
-                crate::server::ws::auth_keys::authorize_token(
-                    ctx.expected_ws_token.as_deref(),
-                    Some(token),
-                    &crate::server::ws::auth_keys::WsAuthQuery {
-                        token: Some(token.to_string()),
-                        client_id: client_id.clone(),
-                        device_name: device_name.clone(),
-                    },
-                    &ctx.api_key_registry,
-                )
-                .await
+            let Some(key_info) = crate::server::ws::auth_keys::authorize_token(
+                ctx.expected_ws_token.as_deref(),
+                Some(token),
+                &crate::server::ws::auth_keys::WsAuthQuery {
+                    token: Some(token.to_string()),
+                    client_id: client_id.clone(),
+                    device_name: device_name.clone(),
+                },
+                &ctx.api_key_registry,
+            )
+            .await
             else {
                 return Err(ApiError::Unauthorized);
             };

@@ -54,7 +54,11 @@ pub async fn handle_node_message(
             .await?;
             Ok(true)
         }
-        ClientMessage::NodePairPeer { host, port, pair_key } => {
+        ClientMessage::NodePairPeer {
+            host,
+            port,
+            pair_key,
+        } => {
             info!(
                 target_host = %host,
                 target_port = %port,
@@ -95,7 +99,9 @@ pub async fn handle_node_message(
                     info!("starting post-pair background network refresh");
                     match runtime.refresh_network().await {
                         Ok(()) => info!("post-pair background network refresh completed"),
-                        Err(err) => warn!(error = %err, "post-pair background network refresh failed"),
+                        Err(err) => {
+                            warn!(error = %err, "post-pair background network refresh failed")
+                        }
                     }
                 });
             }

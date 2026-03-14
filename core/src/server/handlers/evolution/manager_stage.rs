@@ -21,6 +21,7 @@ use crate::server::handlers::ai::{
 use crate::server::protocol::ai::AiSessionOrigin;
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
+use super::consts::base_stages_for_workspace;
 use super::consts::{
     implement_stage_name, parse_implement_stage_instance, parse_reimplement_stage_instance,
     parse_verify_stage_instance, reimplement_stage_name, stage_artifact_file, verify_stage_name,
@@ -31,7 +32,6 @@ use super::utils::{
     cycle_dir_path, inject_stage_artifact_updated_at, read_json, read_text,
     sanitize_validation_attempt, sanitize_validation_attempts, write_json, write_jsonc_text,
 };
-use super::consts::base_stages_for_workspace;
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS};
 
 const VALIDATION_REMINDER_MAX_RETRIES: u32 = 3;
@@ -3022,9 +3022,17 @@ impl EvolutionManager {
             &stage_sync,
             STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION,
         ));
-        report.capture(ensure_stage_field_matches("sync.jsonc", &stage_sync, "sync"));
+        report.capture(ensure_stage_field_matches(
+            "sync.jsonc",
+            &stage_sync,
+            "sync",
+        ));
         if let Some(ctx) = validation_ctx {
-            report.capture(ensure_cycle_id_matches("sync.jsonc", &stage_sync, &ctx.cycle_id));
+            report.capture(ensure_cycle_id_matches(
+                "sync.jsonc",
+                &stage_sync,
+                &ctx.cycle_id,
+            ));
             report.capture(ensure_artifact_freshness(
                 "sync.jsonc",
                 &stage_sync,
@@ -3037,13 +3045,21 @@ impl EvolutionManager {
                 Err(err) => report.push(err),
             }
             match git_repo_has_in_progress_operation(workspace_root) {
-                Ok(true) => report.push("sync 阶段结束后仓库仍存在未完成的 rebase/merge/cherry-pick 状态"),
+                Ok(true) => {
+                    report.push("sync 阶段结束后仓库仍存在未完成的 rebase/merge/cherry-pick 状态")
+                }
                 Ok(false) => {}
                 Err(err) => report.push(err),
             }
         }
 
-        for key in ["summary", "remote_url", "default_branch", "sync_result", "updated_at"] {
+        for key in [
+            "summary",
+            "remote_url",
+            "default_branch",
+            "sync_result",
+            "updated_at",
+        ] {
             match stage_sync.get(key) {
                 Some(value) => match value.as_str() {
                     Some(text) if !text.trim().is_empty() => {}
@@ -3689,8 +3705,10 @@ impl EvolutionManager {
     }
 
     fn supports_validation_reminder(stage: &str) -> bool {
-        matches!(stage, "direction" | "plan" | "auto_commit" | "sync" | "integration")
-            || is_runtime_verify_stage(stage)
+        matches!(
+            stage,
+            "direction" | "plan" | "auto_commit" | "sync" | "integration"
+        ) || is_runtime_verify_stage(stage)
             || is_runtime_implement_stage(stage)
             || is_runtime_reimplement_stage(stage)
     }
@@ -4665,7 +4683,8 @@ impl EvolutionManager {
             .await
             .ok();
         if matches!(stage, "direction" | "sync" | "integration") {
-            self.release_project_coordination(key, Some(stage), ctx).await;
+            self.release_project_coordination(key, Some(stage), ctx)
+                .await;
         }
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "system").await;
@@ -5593,7 +5612,10 @@ impl EvolutionManager {
                 return false;
             }
         }
-        if !matches!(stage, "sync" | "integration") && stage_changed.is_none() && stage != "auto_commit" {
+        if !matches!(stage, "sync" | "integration")
+            && stage_changed.is_none()
+            && stage != "auto_commit"
+        {
             warn!(
                 "evolution after_stage_success no stage_changed emitted: key={}, stage={}, verify_pass={}",
                 key, stage, verify_pass
@@ -5742,7 +5764,8 @@ impl EvolutionManager {
         }
 
         if matches!(stage, "direction" | "sync" | "integration") {
-            self.release_project_coordination(key, Some(stage), ctx).await;
+            self.release_project_coordination(key, Some(stage), ctx)
+                .await;
         }
         if let Err(err) = self.persist_cycle_file(key).await {
             warn!(
@@ -5809,7 +5832,8 @@ impl EvolutionManager {
 
         if let Some((project, workspace, cycle_id, current_stage)) = maybe {
             if matches!(current_stage.as_str(), "direction" | "sync" | "integration") {
-                self.release_project_coordination(key, Some(&current_stage), ctx).await;
+                self.release_project_coordination(key, Some(&current_stage), ctx)
+                    .await;
             }
             self.persist_cycle_file(key).await.ok();
             self.broadcast(
@@ -5896,7 +5920,8 @@ impl EvolutionManager {
 
         if let Some((project, workspace, cycle_id, current_stage)) = maybe {
             if matches!(current_stage.as_str(), "direction" | "sync" | "integration") {
-                self.release_project_coordination(key, Some(&current_stage), ctx).await;
+                self.release_project_coordination(key, Some(&current_stage), ctx)
+                    .await;
             }
             // WI-004: 结构化错误日志落盘，包含 cycle_id、error_code、message
             log_evolution_error(&cycle_id, "system", code, &normalized_err);
@@ -9390,7 +9415,9 @@ mod tests {
         }
         // 项目无 remote_url → 无 repo_coordination_key
         let app_state: SharedAppState = Arc::new(RwLock::new(app_state_with_project_and_remote(
-            "proj-nokey", "default", None,
+            "proj-nokey",
+            "default",
+            None,
         )));
         let ctx = make_handler_context_with_state(app_state).await;
         assert!(
@@ -9487,11 +9514,7 @@ mod tests {
             }
             // 添加 paired peer
             let peer_id = "sync-full-peer";
-            if !state
-                .paired_nodes
-                .iter()
-                .any(|p| p.peer_node_id == peer_id)
-            {
+            if !state.paired_nodes.iter().any(|p| p.peer_node_id == peer_id) {
                 state
                     .paired_nodes
                     .push(crate::workspace::state::PairedNodeEntry {

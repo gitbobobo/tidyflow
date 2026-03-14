@@ -34,15 +34,15 @@ async fn main() -> anyhow::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, &json)?;
-        eprintln!(
-            "[hotspot_perf_guard] 测量结果已写入: {}",
-            path.display()
-        );
+        eprintln!("[hotspot_perf_guard] 测量结果已写入: {}", path.display());
     } else {
         println!("{}", json);
     }
 
-    eprintln!("[hotspot_perf_guard] 完成，共 {} 个场景", measurements.scenarios.len());
+    eprintln!(
+        "[hotspot_perf_guard] 完成，共 {} 个场景",
+        measurements.scenarios.len()
+    );
     Ok(())
 }
 

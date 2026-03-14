@@ -277,7 +277,10 @@ mod tests {
         let state = app_state.read().await;
         assert_eq!(state.client_settings.fixed_port, 48111);
         assert!(state.client_settings.remote_access_enabled);
-        assert_eq!(state.client_settings.node_name.as_deref(), Some("demo-node"));
+        assert_eq!(
+            state.client_settings.node_name.as_deref(),
+            Some("demo-node")
+        );
         assert!(state.client_settings.node_discovery_enabled);
         assert_eq!(
             state

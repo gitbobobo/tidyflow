@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
 use mdns_sd::{DaemonEvent, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -272,8 +272,7 @@ impl NodeRuntime {
         {
             let mut state = self.app_state.write().await;
             if let Some(entry) = state.node_auth_tokens.iter_mut().find(|entry| {
-                entry.token == token
-                    && entry.peer_node_id.as_deref() == Some(expected_peer_node_id)
+                entry.token == token && entry.peer_node_id.as_deref() == Some(expected_peer_node_id)
             }) {
                 entry.last_used_at_unix = Some(now_unix_ts());
                 matched = true;
@@ -426,8 +425,8 @@ impl NodeRuntime {
             pair_key_len = pair_key.trim().len(),
             "starting node pairing handshake"
         );
-        let requester_node_id = url::form_urlencoded::byte_serialize(self_info.node_id.as_bytes())
-            .collect::<String>();
+        let requester_node_id =
+            url::form_urlencoded::byte_serialize(self_info.node_id.as_bytes()).collect::<String>();
         let url = format!(
             "http://{}:{}/api/v1/node/self?pair_key={}&requester_node_id={}",
             host.trim(),
@@ -1259,8 +1258,9 @@ pub fn now_unix_ts() -> u64 {
 /// 仅用于测试：初始化全局 NodeRuntime（不启动后台 mDNS 等任务）
 #[cfg(test)]
 pub async fn init_test_runtime() -> Arc<NodeRuntime> {
-    let app_state: SharedAppState =
-        Arc::new(tokio::sync::RwLock::new(crate::workspace::state::AppState::default()));
+    let app_state: SharedAppState = Arc::new(tokio::sync::RwLock::new(
+        crate::workspace::state::AppState::default(),
+    ));
     let (save_tx, _) = tokio::sync::mpsc::channel(8);
     let runtime = NODE_RUNTIME
         .get_or_init(|| Arc::new(NodeRuntime::new(app_state, save_tx, "0.0.0.0".to_string())))
@@ -1280,33 +1280,29 @@ impl NodeRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        DISCOVERY_SERVICE_TYPE, DiscoverySnapshot, NodePairUnregisterHttpRequest,
-        NodeRuntime, NodeSelfHttpResponse, PairPeerIdentityPayload,
         build_discovery_advertisement, discovery_hostname, is_loopback_bind_addr,
-        map_resolved_service_to_discovered_node, select_discovery_host,
+        map_resolved_service_to_discovered_node, select_discovery_host, DiscoverySnapshot,
+        NodePairUnregisterHttpRequest, NodeRuntime, NodeSelfHttpResponse, PairPeerIdentityPayload,
+        DISCOVERY_SERVICE_TYPE,
     };
     use crate::server::protocol::{NodeSelfInfo, PROTOCOL_VERSION};
     use crate::workspace::state::AppState;
     use axum::{
-        Json, Router,
         http::StatusCode,
         routing::{get, post},
+        Json, Router,
     };
     use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpListener;
-    use tokio::sync::{RwLock, mpsc};
+    use tokio::sync::{mpsc, RwLock};
 
     fn test_runtime() -> Arc<NodeRuntime> {
         let app_state = Arc::new(RwLock::new(AppState::default()));
         let (save_tx, _save_rx) = mpsc::channel(8);
-        Arc::new(NodeRuntime::new(
-            app_state,
-            save_tx,
-            "0.0.0.0".to_string(),
-        ))
+        Arc::new(NodeRuntime::new(app_state, save_tx, "0.0.0.0".to_string()))
     }
 
     async fn spawn_test_server(router: Router) -> (u16, tokio::task::JoinHandle<()>) {
@@ -1416,11 +1412,9 @@ mod tests {
         )
         .unwrap()
         .as_resolved_service();
-        assert!(
-            map_resolved_service_to_discovered_node(&resolved, "self")
-                .unwrap()
-                .is_none()
-        );
+        assert!(map_resolved_service_to_discovered_node(&resolved, "self")
+            .unwrap()
+            .is_none());
 
         let properties = HashMap::from([
             ("node_id".to_string(), "node-2".to_string()),
@@ -1437,11 +1431,9 @@ mod tests {
         )
         .unwrap()
         .as_resolved_service();
-        assert!(
-            map_resolved_service_to_discovered_node(&resolved, "self")
-                .unwrap()
-                .is_none()
-        );
+        assert!(map_resolved_service_to_discovered_node(&resolved, "self")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -1548,7 +1540,10 @@ mod tests {
         assert_eq!(snapshot.peers[0].peer_node_id, "peer-a");
         assert_eq!(snapshot.peers[0].addresses, vec!["192.168.31.113"]);
         assert_eq!(snapshot.peers[0].port, 8439);
-        assert_eq!(snapshot.peers[0].auth_token.as_deref(), Some("remote-token"));
+        assert_eq!(
+            snapshot.peers[0].auth_token.as_deref(),
+            Some("remote-token")
+        );
         assert_eq!(peer.addresses, vec!["192.168.31.113"]);
         assert_eq!(peer.port, 8439);
     }
@@ -1556,7 +1551,9 @@ mod tests {
     #[tokio::test]
     async fn pair_peer_should_not_persist_locally_when_remote_register_fails() {
         let runtime = test_runtime();
-        runtime.set_server_endpoint("0.0.0.0".to_string(), 3439).await;
+        runtime
+            .set_server_endpoint("0.0.0.0".to_string(), 3439)
+            .await;
 
         let router = Router::new()
             .route(
@@ -1593,12 +1590,10 @@ mod tests {
         handle.abort();
 
         assert!(result.is_err());
-        assert!(
-            result
-                .err()
-                .unwrap()
-                .contains("对端登记失败: register failed")
-        );
+        assert!(result
+            .err()
+            .unwrap()
+            .contains("对端登记失败: register failed"));
         let snapshot = runtime.list_network_snapshot(true).await;
         assert!(snapshot.peers.is_empty());
     }
@@ -1608,14 +1603,16 @@ mod tests {
         let runtime = test_runtime();
         let router = Router::new().route(
             "/api/v1/node/pair/unregister",
-            post(|Json(_payload): Json<NodePairUnregisterHttpRequest>| async {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "message": "remote unavailable",
-                    })),
-                )
-            }),
+            post(
+                |Json(_payload): Json<NodePairUnregisterHttpRequest>| async {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "message": "remote unavailable",
+                        })),
+                    )
+                },
+            ),
         );
         let (port, handle) = spawn_test_server(router).await;
 

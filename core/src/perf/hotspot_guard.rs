@@ -428,8 +428,9 @@ impl AiContextTestHarness {
             return hit.context_remaining_percent;
         }
 
-        if let Some(snapshot_pct) =
-            self.load_snapshot(project, workspace, ai_tool, session_id).await
+        if let Some(snapshot_pct) = self
+            .load_snapshot(project, workspace, ai_tool, session_id)
+            .await
         {
             self.runtime_cache
                 .lock()
@@ -444,8 +445,15 @@ impl AiContextTestHarness {
             .expect("lock runtime cache")
             .insert(cache_key, AiContextCacheEntry::new(adapter_pct));
         if let Some(pct) = adapter_pct {
-            self.seed_session(project, workspace, ai_tool, directory, session_id, Some(pct))
-                .await;
+            self.seed_session(
+                project,
+                workspace,
+                ai_tool,
+                directory,
+                session_id,
+                Some(pct),
+            )
+            .await;
         }
         adapter_pct
     }
@@ -470,9 +478,13 @@ impl AiContextTestHarness {
         .await
         .expect("failed to fetch context snapshot");
 
-        row.and_then(|r| r.try_get::<Option<String>, _>("context_snapshot_json").ok().flatten())
-            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-            .and_then(|v| v.get("context_remaining_percent").and_then(|v| v.as_f64()))
+        row.and_then(|r| {
+            r.try_get::<Option<String>, _>("context_snapshot_json")
+                .ok()
+                .flatten()
+        })
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|v| v.get("context_remaining_percent").and_then(|v| v.as_f64()))
     }
 }
 
@@ -604,9 +616,8 @@ fn measure_git_status_same_workspace_name_isolation() -> ScenarioMeasurement {
         || {
             let snap_a = WorkspaceCacheSnapshot::from_counters("project_a", "ws1", root_a);
             let snap_b = WorkspaceCacheSnapshot::from_counters("project_b", "ws1", root_b);
-            let isolated = std::hint::black_box(
-                snap_a.file_cache.item_count != snap_b.file_cache.item_count,
-            );
+            let isolated =
+                std::hint::black_box(snap_a.file_cache.item_count != snap_b.file_cache.item_count);
             std::hint::black_box(isolated);
         },
         100,
@@ -683,8 +694,7 @@ async fn measure_ai_context_persistent_snapshot_warm_start() -> ScenarioMeasurem
 
     // 预置快照数据
     {
-        let setup_harness =
-            AiContextTestHarness::new(&warm_db_path, FakeAiAdapter::new(&[])).await;
+        let setup_harness = AiContextTestHarness::new(&warm_db_path, FakeAiAdapter::new(&[])).await;
         setup_harness
             .seed_session(
                 "project-b",
@@ -700,8 +710,7 @@ async fn measure_ai_context_persistent_snapshot_warm_start() -> ScenarioMeasurem
     // 每次迭代创建新 harness（测量从快照加载的完整冷启动路径）
     let (avg_ns, iters) = measure_async(
         || async {
-            let h =
-                AiContextTestHarness::new(&warm_db_path, FakeAiAdapter::new(&[])).await;
+            let h = AiContextTestHarness::new(&warm_db_path, FakeAiAdapter::new(&[])).await;
             let pct = h
                 .read_context(
                     "project-b",
@@ -856,7 +865,10 @@ fn measure_git_status_high_load_same_name_cross_project_isolation() -> ScenarioM
     for (i, root) in roots.iter().enumerate() {
         cache_metrics::clear_metrics_for_path(root.as_str());
         for j in 0..50u64 {
-            cache_metrics::record_file_cache_rebuild(root.as_str(), ((i + 1) * 100 + j as usize) as usize);
+            cache_metrics::record_file_cache_rebuild(
+                root.as_str(),
+                ((i + 1) * 100 + j as usize) as usize,
+            );
         }
         for _ in 0..200u64 {
             cache_metrics::record_file_cache_hit(root.as_str());
@@ -871,13 +883,17 @@ fn measure_git_status_high_load_same_name_cross_project_isolation() -> ScenarioM
                 .iter()
                 .zip(project_names.iter())
                 .map(|(root, proj)| {
-                    WorkspaceCacheSnapshot::from_counters(proj.as_str(), workspace_name, root.as_str())
+                    WorkspaceCacheSnapshot::from_counters(
+                        proj.as_str(),
+                        workspace_name,
+                        root.as_str(),
+                    )
                 })
                 .collect();
             // 验证同名工作区跨项目的指标不相同（隔离断言不退化）
-            let all_distinct = snaps.windows(2).all(|pair| {
-                pair[0].file_cache.item_count != pair[1].file_cache.item_count
-            });
+            let all_distinct = snaps
+                .windows(2)
+                .all(|pair| pair[0].file_cache.item_count != pair[1].file_cache.item_count);
             std::hint::black_box(all_distinct);
         },
         30,
@@ -900,10 +916,30 @@ async fn measure_ai_context_high_load_rebuild_pressure() -> ScenarioMeasurement 
 
     // 构造 8 个工作区，每对使用相同 session_id 来模拟高并发命中场景
     let workspaces: Vec<(&str, &str, &str, &str)> = vec![
-        ("proj-hl-0", "ws-0", "/tmp/hotspot/hl/proj-hl-0/ws-0", "sess-hl"),
-        ("proj-hl-1", "ws-0", "/tmp/hotspot/hl/proj-hl-1/ws-0", "sess-hl"),
-        ("proj-hl-2", "ws-1", "/tmp/hotspot/hl/proj-hl-2/ws-1", "sess-hl"),
-        ("proj-hl-3", "ws-1", "/tmp/hotspot/hl/proj-hl-3/ws-1", "sess-hl"),
+        (
+            "proj-hl-0",
+            "ws-0",
+            "/tmp/hotspot/hl/proj-hl-0/ws-0",
+            "sess-hl",
+        ),
+        (
+            "proj-hl-1",
+            "ws-0",
+            "/tmp/hotspot/hl/proj-hl-1/ws-0",
+            "sess-hl",
+        ),
+        (
+            "proj-hl-2",
+            "ws-1",
+            "/tmp/hotspot/hl/proj-hl-2/ws-1",
+            "sess-hl",
+        ),
+        (
+            "proj-hl-3",
+            "ws-1",
+            "/tmp/hotspot/hl/proj-hl-3/ws-1",
+            "sess-hl",
+        ),
     ];
 
     // 构建 adapter：使用 root_path 而非 (proj, sess) 键，FakeAiAdapter 按 (root, sess) 索引
@@ -946,7 +982,9 @@ async fn measure_ai_context_high_load_rebuild_pressure() -> ScenarioMeasurement 
         sample_count: iters,
         projects: 4,
         workspaces_per_project: 1,
-        notes: Some("4 工作区高缓存命中率+高负载并发读取，验证 AI 上下文热路径在高负载下的基线".to_string()),
+        notes: Some(
+            "4 工作区高缓存命中率+高负载并发读取，验证 AI 上下文热路径在高负载下的基线".to_string(),
+        ),
     }
 }
 
@@ -994,8 +1032,8 @@ mod tests {
 
     #[test]
     fn hotspot_perf_baseline_parse_and_validate_schema() {
-        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("benches/baselines/hotspot_regression.json");
+        let baseline_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/baselines/hotspot_regression.json");
         let content = std::fs::read_to_string(&baseline_path)
             .unwrap_or_else(|_| panic!("baseline 文件不存在: {:?}", baseline_path));
         let value: serde_json::Value =
@@ -1012,8 +1050,8 @@ mod tests {
 
     #[test]
     fn hotspot_perf_baseline_contains_all_10_scenario_ids() {
-        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("benches/baselines/hotspot_regression.json");
+        let baseline_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/baselines/hotspot_regression.json");
         let content = std::fs::read_to_string(&baseline_path).expect("读取基线文件失败");
         let value: serde_json::Value = serde_json::from_str(&content).unwrap();
         let scenarios = value["scenarios"].as_array().unwrap();
@@ -1043,8 +1081,8 @@ mod tests {
 
     #[test]
     fn hotspot_perf_baseline_no_duplicate_scenario_ids() {
-        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("benches/baselines/hotspot_regression.json");
+        let baseline_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/baselines/hotspot_regression.json");
         let content = std::fs::read_to_string(&baseline_path).expect("读取基线文件失败");
         let value: serde_json::Value = serde_json::from_str(&content).unwrap();
         let scenarios = value["scenarios"].as_array().unwrap();
@@ -1058,8 +1096,8 @@ mod tests {
 
     #[test]
     fn hotspot_perf_baseline_all_scenarios_have_required_fields() {
-        let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("benches/baselines/hotspot_regression.json");
+        let baseline_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/baselines/hotspot_regression.json");
         let content = std::fs::read_to_string(&baseline_path).expect("读取基线文件失败");
         let value: serde_json::Value = serde_json::from_str(&content).unwrap();
         let scenarios = value["scenarios"].as_array().unwrap();
@@ -1072,7 +1110,11 @@ mod tests {
                 "{}: 缺少 workload_kind",
                 id
             );
-            assert!(s["baseline_ns"].as_u64().is_some(), "{}: 缺少 baseline_ns", id);
+            assert!(
+                s["baseline_ns"].as_u64().is_some(),
+                "{}: 缺少 baseline_ns",
+                id
+            );
             assert!(
                 s["warn_ratio_limit"].as_f64().is_some(),
                 "{}: 缺少 warn_ratio_limit",
@@ -1100,7 +1142,11 @@ mod tests {
         let warn_ratio: f64 = 2.0;
         let measured: u64 = 2100;
         let ratio = measured as f64 / baseline_ns as f64;
-        assert!(ratio > warn_ratio, "超过 warn 倍率应触发 warn，ratio={}", ratio);
+        assert!(
+            ratio > warn_ratio,
+            "超过 warn 倍率应触发 warn，ratio={}",
+            ratio
+        );
     }
 
     #[test]
@@ -1110,7 +1156,11 @@ mod tests {
         let fail_ratio: f64 = 5.0;
         let measured: u64 = 6000;
         let ratio = measured as f64 / baseline_ns as f64;
-        assert!(ratio > fail_ratio, "超过 fail 倍率应触发 fail，ratio={}", ratio);
+        assert!(
+            ratio > fail_ratio,
+            "超过 fail 倍率应触发 fail，ratio={}",
+            ratio
+        );
     }
 
     #[test]

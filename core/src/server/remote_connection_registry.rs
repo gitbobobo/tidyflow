@@ -36,17 +36,14 @@ impl RemoteConnectionRegistry {
     ) {
         self.key_by_conn
             .insert(conn_id.to_string(), key_id.to_string());
-        self.by_key
-            .entry(key_id.to_string())
-            .or_default()
-            .insert(
-                conn_id.to_string(),
-                RemoteConnectionControl {
-                    conn_id: conn_id.to_string(),
-                    subscriber_id: subscriber_id.to_string(),
-                    shutdown_tx,
-                },
-            );
+        self.by_key.entry(key_id.to_string()).or_default().insert(
+            conn_id.to_string(),
+            RemoteConnectionControl {
+                conn_id: conn_id.to_string(),
+                subscriber_id: subscriber_id.to_string(),
+                shutdown_tx,
+            },
+        );
     }
 
     pub fn unregister(&mut self, conn_id: &str) {

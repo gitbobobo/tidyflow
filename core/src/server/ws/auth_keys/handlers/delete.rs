@@ -55,7 +55,10 @@ pub(in crate::server::ws) async fn delete_api_key_handler(
 
     (
         StatusCode::OK,
-        Json(APIKeyDeleteResponse { ok: true, deleted: 1 }),
+        Json(APIKeyDeleteResponse {
+            ok: true,
+            deleted: 1,
+        }),
     )
         .into_response()
 }

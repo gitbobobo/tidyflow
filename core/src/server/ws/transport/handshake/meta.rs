@@ -11,7 +11,11 @@ pub(in crate::server::ws) async fn build_connection_meta(
     api_key_registry: &crate::server::ws::auth_keys::SharedRemoteAPIKeyRegistry,
 ) -> ConnectionMeta {
     let conn_id = Uuid::new_v4().to_string();
-    let provided_token = query.token.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let provided_token = query
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let client_id = query
         .client_id
         .as_deref()

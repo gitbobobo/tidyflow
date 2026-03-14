@@ -8,8 +8,8 @@ use super::consts::{
 };
 use super::coordination::CoordinationGateResult;
 use super::types::{
-    classify_failure, EvolutionFailureDiagnosisCode, EvolutionRecoveryInfo,
-    EvolutionRecoveryPhase, EvolutionRecoveryStrategy,
+    classify_failure, EvolutionFailureDiagnosisCode, EvolutionRecoveryInfo, EvolutionRecoveryPhase,
+    EvolutionRecoveryStrategy,
 };
 use super::EvolutionManager;
 use crate::ai::AiMessage;
@@ -372,7 +372,8 @@ impl EvolutionManager {
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "system").await;
         self.broadcast_scheduler(ctx).await;
-        self.emit_recovery_health_incident(key, project, workspace).await;
+        self.emit_recovery_health_incident(key, project, workspace)
+            .await;
 
         warn!(
             "evolution stage rate limited: key={}, stage={}, resume_at={}, error={}",
@@ -579,9 +580,13 @@ impl EvolutionManager {
                 CoordinationGateResult::Ready => {}
                 CoordinationGateResult::Wait => {
                     self.persist_cycle_file(&key).await.ok();
-                    self.broadcast_cycle_update(&key, &ctx, "orchestrator").await;
+                    self.broadcast_cycle_update(&key, &ctx, "orchestrator")
+                        .await;
                     self.broadcast_scheduler(&ctx).await;
-                    sleep(Duration::from_millis(self.coordination_wait_slice_ms().await)).await;
+                    sleep(Duration::from_millis(
+                        self.coordination_wait_slice_ms().await,
+                    ))
+                    .await;
                     continue;
                 }
                 CoordinationGateResult::Missing => return,
@@ -818,7 +823,9 @@ impl EvolutionManager {
             crate::server::perf::build_observation_aggregates(&std::collections::HashMap::new());
 
         // 查找当前 (project, workspace) 的聚合
-        let ws_aggregate = aggregates.iter().find(|a| a.project == project && a.workspace == workspace);
+        let ws_aggregate = aggregates
+            .iter()
+            .find(|a| a.project == project && a.workspace == workspace);
         let Some(agg) = ws_aggregate else {
             return;
         };
@@ -841,7 +848,12 @@ impl EvolutionManager {
                 return;
             };
             // 只在工作区未处于活跃恢复中时应用降级
-            if entry.recovery.as_ref().map(|r| r.phase == EvolutionRecoveryPhase::Recovering).unwrap_or(false) {
+            if entry
+                .recovery
+                .as_ref()
+                .map(|r| r.phase == EvolutionRecoveryPhase::Recovering)
+                .unwrap_or(false)
+            {
                 return;
             }
             entry.recovery = Some(EvolutionRecoveryInfo {
@@ -865,7 +877,8 @@ impl EvolutionManager {
         }
 
         // 写入降级 health incident
-        self.emit_recovery_health_incident(key, project, workspace).await;
+        self.emit_recovery_health_incident(key, project, workspace)
+            .await;
 
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "system").await;
@@ -878,12 +891,7 @@ impl EvolutionManager {
     }
 
     /// 根据当前恢复状态发射健康 incident
-    async fn emit_recovery_health_incident(
-        &self,
-        key: &str,
-        project: &str,
-        workspace: &str,
-    ) {
+    async fn emit_recovery_health_incident(&self, key: &str, project: &str, workspace: &str) {
         let recovery = {
             let state = self.state.lock().await;
             state.workspaces.get(key).and_then(|e| e.recovery.clone())
@@ -905,7 +913,11 @@ impl EvolutionManager {
                     format!(
                         "Evolution {}: {}",
                         recovery.phase.as_str(),
-                        recovery.diagnosis_summary.chars().take(100).collect::<String>()
+                        recovery
+                            .diagnosis_summary
+                            .chars()
+                            .take(100)
+                            .collect::<String>()
                     ),
                     crate::server::protocol::health::IncidentSeverity::Warning,
                     ctx,
@@ -928,7 +940,11 @@ impl EvolutionManager {
                     format!("evo_critical:{}", recovery.diagnosis_code.as_str()),
                     format!(
                         "Evolution failed: {}",
-                        recovery.diagnosis_summary.chars().take(100).collect::<String>()
+                        recovery
+                            .diagnosis_summary
+                            .chars()
+                            .take(100)
+                            .collect::<String>()
                     ),
                     severity,
                     ctx,

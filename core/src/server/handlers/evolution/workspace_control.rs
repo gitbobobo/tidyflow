@@ -1316,8 +1316,8 @@ mod tests {
 mod scheduling_tests {
     use super::{apply_system_scheduling_recommendations, compute_global_pressure};
     use crate::server::protocol::health::{
-        HealthContext, SchedulingRecommendation, SchedulingRecommendationKind,
-        ResourcePressureLevel,
+        HealthContext, ResourcePressureLevel, SchedulingRecommendation,
+        SchedulingRecommendationKind,
     };
 
     fn make_system_rec(
@@ -1413,8 +1413,18 @@ mod scheduling_tests {
     fn reduce_wins_over_increase_when_both_present() {
         let now_ms = 1_000_000u64;
         let recs = vec![
-            make_system_rec(SchedulingRecommendationKind::ReduceConcurrency, 2, now_ms, 3_600_000),
-            make_system_rec(SchedulingRecommendationKind::IncreaseConcurrency, 8, now_ms, 3_600_000),
+            make_system_rec(
+                SchedulingRecommendationKind::ReduceConcurrency,
+                2,
+                now_ms,
+                3_600_000,
+            ),
+            make_system_rec(
+                SchedulingRecommendationKind::IncreaseConcurrency,
+                8,
+                now_ms,
+                3_600_000,
+            ),
         ];
         let result = apply_system_scheduling_recommendations(&recs, now_ms);
         assert_eq!(result, Some(2), "同时存在时应取更保守的 ReduceConcurrency");
@@ -1430,10 +1440,7 @@ mod scheduling_tests {
             now_ms,
         )];
         let result = apply_system_scheduling_recommendations(&recs, now_ms);
-        assert_eq!(
-            result, None,
-            "工作区级建议不应影响系统级并发，应返回 None"
-        );
+        assert_eq!(result, None, "工作区级建议不应影响系统级并发，应返回 None");
     }
 
     #[test]
