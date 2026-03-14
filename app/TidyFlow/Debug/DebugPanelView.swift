@@ -344,6 +344,14 @@ struct DebugPanelView: View {
                                 Text("  msg_tail_flush p95:").foregroundColor(.secondary)
                                 LatencyWindowLabel(window: client.aiMessageTailFlush)
                             }
+                            GridRow {
+                                Text("  terminal_flush p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.terminalOutputFlush)
+                            }
+                            GridRow {
+                                Text("  git_projection p95:").foregroundColor(.secondary)
+                                LatencyWindowLabel(window: client.gitPanelProjection)
+                            }
                         }
                     }
                     .padding(.bottom, 4)

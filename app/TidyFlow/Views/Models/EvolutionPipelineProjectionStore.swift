@@ -138,6 +138,35 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     }
 }
 
+struct PipelineTimelineEntry: Identifiable, Equatable {
+    let id: String
+    let stage: String
+    let agent: String
+    let toolCallCount: Int
+    let completedAt: String
+    let aiToolName: String
+    /// 运行时长（秒）
+    let durationSeconds: TimeInterval
+
+    init(
+        id: String,
+        stage: String,
+        agent: String,
+        toolCallCount: Int,
+        completedAt: String,
+        aiToolName: String = "",
+        durationSeconds: TimeInterval = 0
+    ) {
+        self.id = id
+        self.stage = stage
+        self.agent = agent
+        self.toolCallCount = toolCallCount
+        self.completedAt = completedAt
+        self.aiToolName = aiToolName
+        self.durationSeconds = durationSeconds
+    }
+}
+
 struct PipelineStandbyAgent: Equatable {
     let stage: String
     let isLoopable: Bool

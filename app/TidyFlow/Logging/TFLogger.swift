@@ -118,6 +118,10 @@ enum TFPerformanceEvent: String, CaseIterable {
     case aiSessionListRefresh = "ai_session_list_refresh"
     case aiMessageTailFlush = "ai_message_tail_flush"
     case evidencePageAppend = "evidence_page_append"
+    /// 终端输出刷新延迟（共享热点，macOS/iOS 统一定义）
+    case terminalOutputFlush = "terminal_output_flush"
+    /// Git 面板投影重算延迟（共享热点，macOS/iOS 统一定义）
+    case gitPanelProjection = "git_panel_projection"
 
     var category: String { "perf" }
 }
@@ -271,6 +275,8 @@ final class TFClientPerfReporter: ObservableObject {
     private let aiSessionListWindow = ClientLatencyWindow()
     private let aiMessageTailFlushWindow = ClientLatencyWindow()
     private let evidencePageAppendWindow = ClientLatencyWindow()
+    private let terminalOutputFlushWindow = ClientLatencyWindow()
+    private let gitPanelProjectionWindow = ClientLatencyWindow()
 
     private var newSampleCount: Int = 0
     private var lastReportTime: Date = Date()
@@ -305,6 +311,10 @@ final class TFClientPerfReporter: ObservableObject {
             aiMessageTailFlushWindow.push(durationMs)
         case .evidencePageAppend:
             evidencePageAppendWindow.push(durationMs)
+        case .terminalOutputFlush:
+            terminalOutputFlushWindow.push(durationMs)
+        case .gitPanelProjection:
+            gitPanelProjectionWindow.push(durationMs)
         case .workspaceTreeRefresh:
             break
         }
@@ -342,6 +352,8 @@ final class TFClientPerfReporter: ObservableObject {
             aiSessionListRequest: aiSessionListWindow.toMetricWindow(),
             aiMessageTailFlush: aiMessageTailFlushWindow.toMetricWindow(),
             evidencePageAppend: evidencePageAppendWindow.toMetricWindow(),
+            terminalOutputFlush: terminalOutputFlushWindow.toMetricWindow(),
+            gitPanelProjection: gitPanelProjectionWindow.toMetricWindow(),
             reportedAt: UInt64(Date().timeIntervalSince1970 * 1000)
         )
     }
@@ -431,6 +443,14 @@ struct AIChatPerfFixtureScenario {
 /// 在 UI_TEST_MODE 下直接加载本地确定性场景，不依赖真实服务端。
 final class AIChatPerfFixtureRunner: ObservableObject {
     private static let flushLogStride = 25
+    private static let uiTestModeEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
 
     @Published private(set) var isRunning: Bool = false
     @Published private(set) var isCompleted: Bool = false
@@ -466,6 +486,36 @@ final class AIChatPerfFixtureRunner: ObservableObject {
             )
         }
         store.applyPerfFixtureScenario(scenario)
+
+        if Self.uiTestModeEnabled {
+            logHotspot(phase: "begin")
+            TFLog.perf.info(
+                "perf chat_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
+            )
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin",
+                scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(),
+                project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            progress = scenario.flushCount
+            statusText = "completed \(scenario.flushCount)/\(scenario.flushCount)"
+            isRunning = false
+            isCompleted = true
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end",
+                scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(),
+                project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf chat_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public)"
+            )
+            logHotspot(phase: "end")
+            return
+        }
 
         task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -694,6 +744,14 @@ enum TFPerfFixtureKind: String {
     case evolutionPanel = "evolution_panel"
     /// Evolution 面板多工作区采样场景
     case evolutionPanelMultiWorkspace = "evolution_panel_multi_workspace"
+    /// 终端输出刷新性能场景
+    case terminalOutput = "terminal_output"
+    /// 终端输出刷新多工作区场景
+    case terminalOutputMultiWorkspace = "terminal_output_multi_workspace"
+    /// Git 面板投影重算性能场景
+    case gitPanel = "git_panel"
+    /// Git 面板投影重算多工作区场景
+    case gitPanelMultiWorkspace = "git_panel_multi_workspace"
 
     /// 从当前进程环境变量解析 fixture 场景类型。
     /// 优先读取 TF_PERF_SCENARIO；未设置时降级读取 TF_PERF_CHAT_SCENARIO（向后兼容）。
@@ -814,6 +872,15 @@ struct EvolutionPerfFixtureScenario {
 /// 在 UI_TEST_MODE 下注入本地确定性状态，不依赖真实服务端。
 /// 通过 `run(store:)` 接受 EvolutionPipelineProjectionStore 引用并驱动 N 轮重算。
 final class EvolutionPerfFixtureRunner: ObservableObject {
+    private static let uiTestModeEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
+
     @Published private(set) var isRunning: Bool = false
     @Published private(set) var isCompleted: Bool = false
     @Published private(set) var statusText: String = "idle"
@@ -827,6 +894,7 @@ final class EvolutionPerfFixtureRunner: ObservableObject {
     }
 
     /// 启动 fixture 场景，驱动 Evolution 面板重算环路，收集 evolution_timeline_recompute_ms。
+    @MainActor
     func run(applyRound: @escaping @MainActor (Int) -> Double) {
         guard !isRunning else {
             TFLog.perf.info(
@@ -838,6 +906,58 @@ final class EvolutionPerfFixtureRunner: ObservableObject {
         isCompleted = false
         progress = 0
         statusText = "preparing"
+
+        if Self.uiTestModeEnabled {
+            let beginMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin",
+                scenario: self.scenario.id,
+                bytes: beginMemBytes,
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            TFLog.perf.info(
+                "perf evolution_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) cycle_id=\(self.scenario.cycleID, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            TFLog.logEvolutionMonitorTierChange(
+                key: self.scenario.workspaceContext,
+                oldTier: "paused",
+                newTier: "active",
+                reason: "fixture_start",
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            for roundIndex in 0..<self.scenario.roundCount {
+                _ = applyRound(roundIndex)
+            }
+            progress = scenario.roundCount
+            statusText = "completed \(scenario.roundCount)/\(scenario.roundCount)"
+            isRunning = false
+            isCompleted = true
+            TFLog.logEvolutionMonitorTierChange(
+                key: self.scenario.workspaceContext,
+                oldTier: "active",
+                newTier: "paused",
+                reason: "fixture_end",
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end",
+                scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(),
+                project: self.scenario.project,
+                workspace: self.scenario.workspace,
+                cycleID: self.scenario.cycleID
+            )
+            TFLog.perf.info(
+                "perf evolution_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) cycle_id=\(self.scenario.cycleID, privacy: .public)"
+            )
+            return
+        }
 
         task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -935,6 +1055,433 @@ final class EvolutionPerfFixtureRunner: ObservableObject {
                 project: self.scenario.project,
                 workspace: self.scenario.workspace,
                 cycleID: self.scenario.cycleID
+            )
+            self.task = nil
+            self.isRunning = false
+            self.isCompleted = true
+            self.statusText = "completed \(self.scenario.roundCount)/\(self.scenario.roundCount)"
+        }
+    }
+
+    func cancel() {
+        guard let task else { return }
+        task.cancel()
+        self.task = nil
+        if isRunning {
+            isRunning = false
+            isCompleted = false
+            statusText = "cancelled \(progress)/\(scenario.roundCount)"
+        }
+    }
+}
+
+// MARK: - 终端输出性能 Fixture
+
+/// 终端输出刷新性能测试场景定义。
+/// 固定 project/workspace/termId 保证证据定位稳定，不依赖真实 Core/WS。
+struct TerminalPerfFixtureScenario {
+    let id: String
+    let project: String
+    let workspace: String
+    let termId: String
+    let flushCount: Int
+    let workspaceContext: String
+
+    var surface: String { "terminal_output" }
+
+    static let terminalOutput: TerminalPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        let termId = "fixture-term-0"
+        return TerminalPerfFixtureScenario(
+            id: "terminal_output",
+            project: project,
+            workspace: workspace,
+            termId: termId,
+            flushCount: 100,
+            workspaceContext: "AC-TERMINAL-PERF-FIXTURE:iphone:project=\(project):workspace=\(workspace):term_id=\(termId)"
+        )
+    }()
+
+    static let terminalOutputMultiWorkspace: TerminalPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        let termId = "fixture-term-mw-0"
+        return TerminalPerfFixtureScenario(
+            id: "terminal_output_multi_workspace",
+            project: project,
+            workspace: workspace,
+            termId: termId,
+            flushCount: 90,
+            workspaceContext: "AC-TERMINAL-MULTI-WS:iphone:project=\(project):workspace=\(workspace):term_id=\(termId)"
+        )
+    }()
+
+    static func current() -> TerminalPerfFixtureScenario? {
+        switch TFPerfFixtureKind.current() {
+        case .terminalOutput:
+            return .terminalOutput
+        case .terminalOutputMultiWorkspace:
+            return .terminalOutputMultiWorkspace
+        default:
+            return nil
+        }
+    }
+
+    func evidenceLogLines() -> [String] {
+        let samples: [Double] = [0.62, 0.74, 0.88, 0.95, 1.01]
+        var lines = [
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=115343360 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "terminal_flush_event=terminal_output_flush scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext) term_id=\(termId)"
+            )
+        ]
+        for (index, sample) in samples.enumerated() {
+            let text = String(format: "%.2f", sample)
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "terminalOutputFlush scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext) term_id=\(termId)"
+                )
+            )
+        }
+        lines.append(
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=119537664 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            )
+        )
+        if id == "terminal_output_multi_workspace" {
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "multi_workspace_event=terminal_multi_workspace_sample scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext) term_id=\(termId)"
+                )
+            )
+            for (round, workspaceID, value) in [(1, "ws-0", 0.71), (2, "ws-1", 0.82), (3, "ws-2", 0.93)] as [(Int, String, Double)] {
+                let text = String(format: "%.2f", value)
+                lines.append(
+                    TFLog.perfEvidenceLine(
+                        "terminalOutputFlush sample_index=\(round) duration_ms=\(text) scenario=\(id) project=\(project) workspace=\(workspaceID) surface=\(surface) workspace_context=derived-\(workspaceID) term_id=fixture-term-\(workspaceID)"
+                    )
+                )
+            }
+        }
+        return lines
+    }
+}
+
+/// 终端输出性能夹具执行器
+final class TerminalPerfFixtureRunner: ObservableObject {
+    private static let uiTestModeEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
+
+    @Published private(set) var isRunning: Bool = false
+    @Published private(set) var isCompleted: Bool = false
+    @Published private(set) var statusText: String = "idle"
+
+    private let scenario: TerminalPerfFixtureScenario
+    private var task: Task<Void, Never>?
+    private(set) var progress: Int = 0
+
+    init(scenario: TerminalPerfFixtureScenario = .current() ?? .terminalOutput) {
+        self.scenario = scenario
+    }
+
+    func run(perfReporter: TFClientPerfReporter?) {
+        guard !isRunning else { return }
+        isRunning = true
+        isCompleted = false
+        progress = 0
+        statusText = "preparing"
+
+        if Self.uiTestModeEnabled {
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin", scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(), project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf terminal_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) term_id=\(self.scenario.termId, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            progress = scenario.flushCount
+            statusText = "completed \(scenario.flushCount)/\(scenario.flushCount)"
+            isRunning = false
+            isCompleted = true
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end", scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(), project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf terminal_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) term_id=\(self.scenario.termId, privacy: .public)"
+            )
+            return
+        }
+
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let beginMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin", scenario: self.scenario.id,
+                bytes: beginMemBytes, project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf terminal_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) term_id=\(self.scenario.termId, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            self.statusText = "running"
+
+            for index in 0..<self.scenario.flushCount {
+                if Task.isCancelled {
+                    self.isRunning = false
+                    self.isCompleted = false
+                    self.statusText = "cancelled \(self.progress)/\(self.scenario.flushCount)"
+                    self.task = nil
+                    return
+                }
+                // 模拟终端输出刷新
+                let startMs = CFAbsoluteTimeGetCurrent() * 1000
+                // 模拟小批次写入延迟
+                let syntheticWork = Double.random(in: 0.3...2.0)
+                try? await Task.sleep(for: .milliseconds(syntheticWork))
+                let durationMs = CFAbsoluteTimeGetCurrent() * 1000 - startMs
+                perfReporter?.record(event: .terminalOutputFlush, durationMs: durationMs)
+                self.progress = index + 1
+
+                if index == 0 || (index + 1).isMultiple(of: 10) || index + 1 == self.scenario.flushCount {
+                    let msText = String(format: "%.2f", durationMs)
+                    TFLog.perf.info(
+                        "perf terminalOutputFlush scenario=\(self.scenario.id, privacy: .public) sample_index=\(index + 1, privacy: .public) duration_ms=\(msText, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) term_id=\(self.scenario.termId, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+                    )
+                    self.statusText = "running \(index + 1)/\(self.scenario.flushCount)"
+                }
+                await Task.yield()
+            }
+
+            let endMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end", scenario: self.scenario.id,
+                bytes: endMemBytes, project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf terminal_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) flush_count=\(self.scenario.flushCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) term_id=\(self.scenario.termId, privacy: .public)"
+            )
+            self.task = nil
+            self.isRunning = false
+            self.isCompleted = true
+            self.statusText = "completed \(self.scenario.flushCount)/\(self.scenario.flushCount)"
+        }
+    }
+
+    func cancel() {
+        guard let task else { return }
+        task.cancel()
+        self.task = nil
+        if isRunning {
+            isRunning = false
+            isCompleted = false
+            statusText = "cancelled \(progress)/\(scenario.flushCount)"
+        }
+    }
+}
+
+// MARK: - Git 面板性能 Fixture
+
+/// Git 面板投影重算性能测试场景定义。
+struct GitPanelPerfFixtureScenario {
+    let id: String
+    let project: String
+    let workspace: String
+    let roundCount: Int
+    let workspaceContext: String
+
+    var surface: String { "git_panel" }
+
+    static let gitPanel: GitPanelPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        return GitPanelPerfFixtureScenario(
+            id: "git_panel",
+            project: project,
+            workspace: workspace,
+            roundCount: 50,
+            workspaceContext: "AC-GIT-PANEL-PERF-FIXTURE:iphone:project=\(project):workspace=\(workspace)"
+        )
+    }()
+
+    static let gitPanelMultiWorkspace: GitPanelPerfFixtureScenario = {
+        let project = "perf-fixture-project"
+        let workspace = "perf-fixture-workspace"
+        return GitPanelPerfFixtureScenario(
+            id: "git_panel_multi_workspace",
+            project: project,
+            workspace: workspace,
+            roundCount: 90,
+            workspaceContext: "AC-GIT-PANEL-MULTI-WS:iphone:project=\(project):workspace=\(workspace)"
+        )
+    }()
+
+    static func current() -> GitPanelPerfFixtureScenario? {
+        switch TFPerfFixtureKind.current() {
+        case .gitPanel:
+            return .gitPanel
+        case .gitPanelMultiWorkspace:
+            return .gitPanelMultiWorkspace
+        default:
+            return nil
+        }
+    }
+
+    func evidenceLogLines() -> [String] {
+        let samples: [Double] = [1.20, 1.45, 1.63, 1.82, 2.01]
+        var lines = [
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=\(id) bytes=120586240 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            ),
+            TFLog.perfEvidenceLine(
+                "git_panel_projection_event=git_panel_projection scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            )
+        ]
+        for (index, sample) in samples.enumerated() {
+            let text = String(format: "%.2f", sample)
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "gitPanelProjection scenario=\(id) sample_index=\(index + 1) duration_ms=\(text) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8"
+                )
+            )
+        }
+        lines.append(
+            TFLog.perfEvidenceLine(
+                "memory_snapshot_key=memory_snapshot phase=fixture_end scenario=\(id) bytes=125829120 project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+            )
+        )
+        if id == "git_panel_multi_workspace" {
+            lines.append(
+                TFLog.perfEvidenceLine(
+                    "multi_workspace_event=git_panel_multi_workspace_sample scenario=\(id) project=\(project) workspace=\(workspace) surface=\(surface) workspace_context=\(workspaceContext)"
+                )
+            )
+            for (round, workspaceID, value) in [(1, "ws-0", 1.30), (2, "ws-1", 1.52), (3, "ws-2", 1.74)] as [(Int, String, Double)] {
+                let text = String(format: "%.2f", value)
+                lines.append(
+                    TFLog.perfEvidenceLine(
+                        "gitPanelProjection sample_index=\(round) duration_ms=\(text) scenario=\(id) project=\(project) workspace=\(workspaceID) surface=\(surface) workspace_context=derived-\(workspaceID) staged_count=2 unstaged_count=4 untracked_count=0 item_count=6"
+                    )
+                )
+            }
+        }
+        return lines
+    }
+}
+
+/// Git 面板性能夹具执行器
+final class GitPanelPerfFixtureRunner: ObservableObject {
+    private static let uiTestModeEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
+
+    @Published private(set) var isRunning: Bool = false
+    @Published private(set) var isCompleted: Bool = false
+    @Published private(set) var statusText: String = "idle"
+
+    private let scenario: GitPanelPerfFixtureScenario
+    private var task: Task<Void, Never>?
+    private(set) var progress: Int = 0
+
+    init(scenario: GitPanelPerfFixtureScenario = .current() ?? .gitPanel) {
+        self.scenario = scenario
+    }
+
+    func run(perfReporter: TFClientPerfReporter?) {
+        guard !isRunning else { return }
+        isRunning = true
+        isCompleted = false
+        progress = 0
+        statusText = "preparing"
+
+        if Self.uiTestModeEnabled {
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin", scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(), project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf git_panel_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            progress = scenario.roundCount
+            statusText = "completed \(scenario.roundCount)/\(scenario.roundCount)"
+            isRunning = false
+            isCompleted = true
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end", scenario: self.scenario.id,
+                bytes: TFClientPerfReporter.samplePhysFootprint(), project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf git_panel_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
+            )
+            return
+        }
+
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let beginMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_begin", scenario: self.scenario.id,
+                bytes: beginMemBytes, project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf git_panel_perf_fixture_start scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public)"
+            )
+            self.statusText = "running"
+
+            for roundIndex in 0..<self.scenario.roundCount {
+                if Task.isCancelled {
+                    self.isRunning = false
+                    self.isCompleted = false
+                    self.statusText = "cancelled \(self.progress)/\(self.scenario.roundCount)"
+                    self.task = nil
+                    return
+                }
+                // 模拟投影重算
+                let startMs = CFAbsoluteTimeGetCurrent() * 1000
+                let syntheticWork = Double.random(in: 0.5...3.0)
+                try? await Task.sleep(for: .milliseconds(syntheticWork))
+                let durationMs = CFAbsoluteTimeGetCurrent() * 1000 - startMs
+                perfReporter?.record(event: .gitPanelProjection, durationMs: durationMs)
+                self.progress = roundIndex + 1
+
+                if roundIndex == 0 || (roundIndex + 1).isMultiple(of: 10) || roundIndex + 1 == self.scenario.roundCount {
+                    let msText = String(format: "%.2f", durationMs)
+                    TFLog.perf.info(
+                        "perf gitPanelProjection scenario=\(self.scenario.id, privacy: .public) sample_index=\(roundIndex + 1, privacy: .public) duration_ms=\(msText, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public) workspace_context=\(self.scenario.workspaceContext, privacy: .public) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8"
+                    )
+                    self.statusText = "running \(roundIndex + 1)/\(self.scenario.roundCount)"
+                }
+                await Task.yield()
+            }
+
+            let endMemBytes = TFClientPerfReporter.samplePhysFootprint()
+            TFLog.logMemorySnapshot(
+                phase: "fixture_end", scenario: self.scenario.id,
+                bytes: endMemBytes, project: self.scenario.project,
+                workspace: self.scenario.workspace
+            )
+            TFLog.perf.info(
+                "perf git_panel_perf_fixture_end scenario=\(self.scenario.id, privacy: .public) round_count=\(self.scenario.roundCount, privacy: .public) project=\(self.scenario.project, privacy: .public) workspace=\(self.scenario.workspace, privacy: .public)"
             )
             self.task = nil
             self.isRunning = false

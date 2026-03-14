@@ -122,6 +122,18 @@ final class GitWorkspaceProjectionStore {
 
     @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
 
+    private func parseWorkspaceIdentity(from workspaceKey: String?) -> (project: String, workspace: String) {
+        guard let workspaceKey, !workspaceKey.isEmpty else { return ("", "") }
+        let parts = workspaceKey.components(separatedBy: "/")
+        guard let project = parts.first else { return ("", "") }
+        let workspace = parts.dropFirst().joined(separator: "/")
+        return (project, workspace)
+    }
+
+    private func workspaceContext(project: String, workspace: String) -> String {
+        "git_panel:project=\(project):workspace=\(workspace)"
+    }
+
     #if os(macOS)
     @ObservationIgnored private weak var boundMacAppState: AppState?
     @ObservationIgnored private weak var boundGitCache: GitCacheState?
@@ -201,10 +213,46 @@ final class GitWorkspaceProjectionStore {
     }
     #endif
 
+    private var perfReporter: TFClientPerfReporter? {
+        #if os(macOS)
+        if let reporter = boundMacAppState?.perfReporter {
+            return reporter
+        }
+        #endif
+        #if os(iOS)
+        if let reporter = boundMobileAppState?.perfReporter {
+            return reporter
+        }
+        #endif
+        return nil
+    }
+
     @discardableResult
     func updateProjection(_ next: GitWorkspaceProjection) -> Bool {
         guard projection != next else { return false }
+        let startMs = CFAbsoluteTimeGetCurrent() * 1000
         projection = next
+        let durationMs = CFAbsoluteTimeGetCurrent() * 1000 - startMs
+        // 共享性能热点：git_panel_projection 延迟记录
+        let identity = parseWorkspaceIdentity(from: next.workspaceKey)
+        let itemCount = next.stagedCount + next.unstagedCount + next.untrackedCount
+        TFLog.logPerfSample(
+            event: TFPerformanceEvent.gitPanelProjection.rawValue,
+            durationMs: durationMs,
+            project: identity.project,
+            workspace: identity.workspace,
+            surface: "git_panel",
+            scenario: "git_panel",
+            extra: [
+                "workspace_context": workspaceContext(project: identity.project, workspace: identity.workspace),
+                "staged_count": "\(next.stagedCount)",
+                "unstaged_count": "\(next.unstagedCount)",
+                "untracked_count": "\(next.untrackedCount)",
+                "item_count": "\(itemCount)"
+            ]
+        )
+        // 共享 Git 面板投影热点 —— 记录到性能上报窗口
+        perfReporter?.record(event: .gitPanelProjection, durationMs: durationMs)
         return true
     }
 }

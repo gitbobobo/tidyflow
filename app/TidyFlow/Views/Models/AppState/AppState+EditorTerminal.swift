@@ -667,6 +667,25 @@ extension AppState {
         TFLog.perf.debug(
             "terminal_output_flush_ms=\(costMs, privacy: .public) bytes=\(bytesToWrite.count, privacy: .public) pending_chunks=\(pendingChunks.count, privacy: .public)"
         )
+        let info = terminalSessionStore.displayInfo(for: termId)
+        let project = info?.project ?? selectedProjectName
+        let workspace = info?.workspace ?? (selectedWorkspaceKey ?? "")
+        TFLog.logPerfSample(
+            event: TFPerformanceEvent.terminalOutputFlush.rawValue,
+            durationMs: Double(costMs),
+            project: project,
+            workspace: workspace,
+            surface: "terminal_output",
+            scenario: "terminal_output",
+            extra: [
+                "bytes": "\(bytesToWrite.count)",
+                "pending_chunks": "\(pendingChunks.count)",
+                "term_id": termId,
+                "workspace_context": "terminal_output:project=\(project):workspace=\(workspace):term_id=\(termId)"
+            ]
+        )
+        // 共享终端输出刷新热点 —— 记录到性能上报窗口
+        perfReporter.record(event: .terminalOutputFlush, durationMs: Double(costMs))
     }
 
     private func enqueuePendingTerminalOutput(_ bytes: [UInt8], for termId: String) {
