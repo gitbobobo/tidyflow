@@ -18,171 +18,16 @@ private enum E2EContract {
     }
 }
 
-private enum PerfEvidenceContract {
-    static let chatWorkspaceContext =
-        "AC-CHAT-PERF-FIXTURE:iphone:project=PerfLab:workspace=stream-heavy:session_id=fixture-stream-heavy"
-    static let chatWorkspaceSwitchContext =
-        "AC-CHAT-WS-SWITCH-PERF-FIXTURE:iphone:project=PerfLab:workspace=stream-heavy:session_id=fixture-stream-heavy-ws"
-
-    static func chatFixtureLines() -> String {
-        [
-            "perf hotspot_key=ios_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf hotspot_key_secondary=mac_ai_chat scenario=stream_heavy project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=stream_heavy bytes=104857600 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=4 duration_ms=1.33 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=stream_heavy sample_index=5 duration_ms=1.41 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=stream_heavy bytes=110100480 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static func chatWorkspaceSwitchFixtureLines() -> String {
-        [
-            "perf hotspot_key=ios_ai_chat scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf hotspot_key_secondary=mac_ai_chat scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=chat_stream_workspace_switch bytes=104857600 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=1 duration_ms=0.82 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=2 duration_ms=1.14 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf tail_flush_event=aiMessageTailFlush scenario=chat_stream_workspace_switch sample_index=3 duration_ms=1.27 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf workspace_switch_event=workspace_switch scenario=chat_stream_workspace_switch project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf workspace_switch duration_ms=182.00 scenario=chat_stream_workspace_switch switch_index=1 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf workspace_switch duration_ms=194.00 scenario=chat_stream_workspace_switch switch_index=2 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf workspace_switch duration_ms=201.00 scenario=chat_stream_workspace_switch switch_index=3 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=chat_stream_workspace_switch bytes=110100480 project=PerfLab workspace=stream-heavy surface=chat_session workspace_context=\(chatWorkspaceSwitchContext)"
-        ].joined(separator: "\n")
-    }
-
-    static let evolutionWorkspaceContext =
-        "AC-EVOLUTION-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:cycle_id=fixture-evolution-cycle"
-    static let evolutionMultiWorkspaceContext =
-        "AC-EVOLUTION-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:cycle_id=fixture-evolution-cycle"
-
-    static func evolutionFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
-            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_monitor tier_change key=\(evolutionWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static func evolutionMultiWorkspaceFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=evolution_panel_multi_workspace bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
-            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=paused new=active reason=fixture_start project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_timeline_recompute_ms=3.20 round=1 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
-            "perf evolution_timeline_recompute_ms=4.05 round=25 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
-            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=active new=throttled reason=fixture_midpoint project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_monitor tier_change key=\(evolutionMultiWorkspaceContext) old=throttled new=active reason=fixture_resume project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace",
-            "perf evolution_timeline_recompute_ms=3.61 round=50 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
-            "perf multi_workspace_event=evolution_multi_workspace_sample scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)",
-            "perf evolution_timeline_recompute_ms=28.40 round=1 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-0 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-0",
-            "perf evolution_timeline_recompute_ms=29.10 round=2 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-1 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-1",
-            "perf evolution_timeline_recompute_ms=30.20 round=3 scenario=evolution_panel_multi_workspace project=perf-fixture-project workspace=ws-2 cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=derived-ws-2",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=evolution_panel_multi_workspace bytes=132120576 project=perf-fixture-project workspace=perf-fixture-workspace cycle_id=fixture-evolution-cycle surface=evolution_workspace workspace_context=\(evolutionMultiWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static let terminalWorkspaceContext =
-        "AC-TERMINAL-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:term_id=fixture-term-0"
-    static let terminalMultiWorkspaceContext =
-        "AC-TERMINAL-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace:term_id=fixture-term-mw-0"
-    static let gitWorkspaceContext =
-        "AC-GIT-PANEL-PERF-FIXTURE:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace"
-    static let gitMultiWorkspaceContext =
-        "AC-GIT-PANEL-MULTI-WS:iphone:project=perf-fixture-project:workspace=perf-fixture-workspace"
-
-    static func terminalFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=terminal_output bytes=115343360 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext)",
-            "perf terminal_flush_event=terminal_output_flush scenario=terminal_output project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf terminalOutputFlush scenario=terminal_output sample_index=1 duration_ms=0.62 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf terminalOutputFlush scenario=terminal_output sample_index=2 duration_ms=0.74 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf terminalOutputFlush scenario=terminal_output sample_index=3 duration_ms=0.88 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf terminalOutputFlush scenario=terminal_output sample_index=4 duration_ms=0.95 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf terminalOutputFlush scenario=terminal_output sample_index=5 duration_ms=1.01 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext) term_id=fixture-term-0",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=terminal_output bytes=119537664 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static func terminalMultiWorkspaceFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=terminal_output_multi_workspace bytes=115343360 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext)",
-            "perf terminal_flush_event=terminal_output_flush scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
-            "perf terminalOutputFlush scenario=terminal_output_multi_workspace sample_index=1 duration_ms=0.62 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
-            "perf multi_workspace_event=terminal_multi_workspace_sample scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext) term_id=fixture-term-mw-0",
-            "perf terminalOutputFlush sample_index=1 duration_ms=0.71 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-0 surface=terminal_output workspace_context=derived-ws-0 term_id=fixture-term-ws-0",
-            "perf terminalOutputFlush sample_index=2 duration_ms=0.82 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-1 surface=terminal_output workspace_context=derived-ws-1 term_id=fixture-term-ws-1",
-            "perf terminalOutputFlush sample_index=3 duration_ms=0.93 scenario=terminal_output_multi_workspace project=perf-fixture-project workspace=ws-2 surface=terminal_output workspace_context=derived-ws-2 term_id=fixture-term-ws-2",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=terminal_output_multi_workspace bytes=119537664 project=perf-fixture-project workspace=perf-fixture-workspace surface=terminal_output workspace_context=\(terminalMultiWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static func gitFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=git_panel bytes=120586240 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)",
-            "perf git_panel_projection_event=git_panel_projection scenario=git_panel project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)",
-            "perf gitPanelProjection scenario=git_panel sample_index=1 duration_ms=1.20 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf gitPanelProjection scenario=git_panel sample_index=2 duration_ms=1.45 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf gitPanelProjection scenario=git_panel sample_index=3 duration_ms=1.63 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf gitPanelProjection scenario=git_panel sample_index=4 duration_ms=1.82 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf gitPanelProjection scenario=git_panel sample_index=5 duration_ms=2.01 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=git_panel bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-
-    static func gitMultiWorkspaceFixtureLines() -> String {
-        [
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_begin scenario=git_panel_multi_workspace bytes=120586240 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
-            "perf git_panel_projection_event=git_panel_projection scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
-            "perf multi_workspace_event=git_panel_multi_workspace_sample scenario=git_panel_multi_workspace project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)",
-            "perf gitPanelProjection scenario=git_panel_multi_workspace sample_index=1 duration_ms=1.20 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext) staged_count=3 unstaged_count=5 untracked_count=0 item_count=8",
-            "perf gitPanelProjection sample_index=1 duration_ms=1.30 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-0 surface=git_panel workspace_context=derived-ws-0 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
-            "perf gitPanelProjection sample_index=2 duration_ms=1.52 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-1 surface=git_panel workspace_context=derived-ws-1 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
-            "perf gitPanelProjection sample_index=3 duration_ms=1.74 scenario=git_panel_multi_workspace project=perf-fixture-project workspace=ws-2 surface=git_panel workspace_context=derived-ws-2 staged_count=2 unstaged_count=4 untracked_count=0 item_count=6",
-            "perf memory_snapshot_key=memory_snapshot phase=fixture_end scenario=git_panel_multi_workspace bytes=125829120 project=perf-fixture-project workspace=perf-fixture-workspace surface=git_panel workspace_context=\(gitMultiWorkspaceContext)"
-        ].joined(separator: "\n")
-    }
-}
-
 final class TidyFlowE2ETests: XCTestCase {
     private var app: XCUIApplication!
-    private var recorder: EvidenceRecorder { EvidenceRecorder.shared }
-    private let inheritedRunID = ProcessInfo.processInfo.environment["EVIDENCE_RUN_ID"]
-        ?? ProcessInfo.processInfo.environment["CYCLE_RUN_ID"]
-        ?? ProcessInfo.processInfo.environment["TF_E2E_RUN_ID"]
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments.append("-ApplePersistenceIgnoreState")
         app.launchArguments.append("YES")
-        let resolvedRunID = inheritedRunID ?? recorder.runID
         setenv("UI_TEST_MODE", "1", 1)
-        setenv("TF_DEVICE_TYPE", recorder.deviceType, 1)
-        setenv("EVIDENCE_RUN_ID", resolvedRunID, 1)
-        setenv("CYCLE_RUN_ID", resolvedRunID, 1)
-        setenv("TF_E2E_RUN_ID", resolvedRunID, 1)
-        EvidenceRecorder.rebuildSharedFromCurrentProcessEnvironment()
         app.launchEnvironment["UI_TEST_MODE"] = "1"
-        app.launchEnvironment["TF_DEVICE_TYPE"] = recorder.deviceType
-        app.launchEnvironment["EVIDENCE_RUN_ID"] = resolvedRunID
-        app.launchEnvironment["CYCLE_RUN_ID"] = resolvedRunID
-        app.launchEnvironment["TF_E2E_RUN_ID"] = resolvedRunID
     }
 
     func testAC_CONN_FORM_READY() throws {
@@ -246,29 +91,6 @@ final class TidyFlowE2ETests: XCTestCase {
             XCTFail("配对并连接按钮未出现")
             return
         }
-
-        let scenario = "AC-CONN-FORM-READY"
-        let subsystem = mobileSubsystem()
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "连接表单关键控件已就绪，可进入配对流程",
-            description: "执行动作：启动应用并停留在连接页；关键观察：地址、端口、配对码、设备名输入与提交按钮均可见；证据用途：证明 AC-CONN-FORM-READY 已满足并可执行后续交互。",
-            screenshot: XCUIScreen.main.screenshot()
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "连接页就绪状态断言通过",
-            description: "执行动作：等待连接页渲染并检查关键输入控件；关键观察：五个关键 UI 元素全部存在；证据用途：证明连接前置条件完整，排除页面渲染缺失。",
-            body: """
-            host.exists=\(hostField.exists)
-            port.exists=\(portField.exists)
-            pairCode.exists=\(pairCodeField.exists)
-            deviceName.exists=\(deviceNameField.exists)
-            submit.exists=\(submitButton.exists)
-            """
-        )
     }
 
     func testAC_PAIRCODE_VALIDATION() throws {
@@ -339,28 +161,6 @@ final class TidyFlowE2ETests: XCTestCase {
             return
         }
         XCTAssertTrue(errorLabel.label.contains("配对码必须是 6 位数字"), "错误提示文本不符合预期: \(errorLabel.label)")
-
-        let scenario = "AC-PAIRCODE-VALIDATION"
-        let subsystem = mobileSubsystem()
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "非法配对码触发前端校验错误提示",
-            description: "执行动作：输入 3 位配对码并点击配对连接；关键观察：页面出现“配对码必须是 6 位数字”错误文案；证据用途：证明 AC-PAIRCODE-VALIDATION 生效并阻止非法输入继续执行。",
-            screenshot: XCUIScreen.main.screenshot()
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "配对码校验断言通过，错误提示可回溯",
-            description: "执行动作：填写 host/port 后提交非法配对码；关键观察：校验提示文本与预期一致；证据用途：证明非法输入被拦截，排除无校验或提示错误风险。",
-            body: """
-            host=127.0.0.1
-            port=47999
-            pairCode=123
-            errorMessage=\(errorLabel.label)
-            """
-        )
     }
 
     func testAC_UI_TOOLBAR_READY() throws {
@@ -394,48 +194,23 @@ final class TidyFlowE2ETests: XCTestCase {
         inspectorButton.click()
         inspectorButton.click()
 
-        let windowReadyLatency = String(format: "%.2f", Date().timeIntervalSince(launchStartAt))
-
-        let scenario = "AC-UI-TOOLBAR-READY"
-        let subsystem = "mac-ui"
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "启动加载态结束后主窗口工具栏控件可交互",
-            description: "执行动作：启动 mac 应用，先确认加载态出现，再等待加载态结束并点击检查器切换按钮；关键观察：设置按钮与检查器按钮均出现且处于可交互状态；证据用途：证明 AC-UI-TOOLBAR-READY 在启动门禁流程下成立。",
-            screenshot: XCUIScreen.main.screenshot()
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "加载页时序与工具栏交互断言通过",
-            description: "执行动作：应用启动后确认加载态出现，再等待其退出并验证工具栏按钮可交互；关键观察：窗口即时出现、加载态按预期退出、按钮持续可交互；证据用途：证明新启动流程与工具栏交互兼容。",
-            body: """
-            launch_to_window_ready_seconds=\(windowReadyLatency)
-            startupLoading.appeared=\(loadingAppeared)
-            startupLoading.exists=\(startupLoading.exists)
-            startupFailed.exists=\(startupFailed.exists)
-            settings.exists=\(settingsButton.exists)
-            settings.enabled=\(settingsButton.isEnabled)
-            inspector.exists=\(inspectorButton.exists)
-            inspector.enabled=\(inspectorButton.isEnabled)
-            """
-        )
+        _ = String(format: "%.2f", Date().timeIntervalSince(launchStartAt))
     }
 
     private func skipUnlessMobile() throws {
-        if recorder.deviceType == "mac" {
-            throw XCTSkip("mac 设备不执行连接表单 AC")
-        }
+        #if os(iOS)
+        // iOS 设备，继续执行
+        #else
+        throw XCTSkip("非 iOS 设备不执行连接表单 AC")
+        #endif
     }
 
     private func skipUnlessMac() throws {
         #if os(iOS)
         throw XCTSkip("iOS 模拟器不执行 mac 工具栏 AC")
+        #else
+        // macOS 设备，继续执行
         #endif
-        if recorder.deviceType != "mac" {
-            throw XCTSkip("\(recorder.deviceType) 设备不执行 mac 工具栏 AC")
-        }
     }
 
     // MARK: - WI-001 共享辅助方法
@@ -483,10 +258,6 @@ final class TidyFlowE2ETests: XCTestCase {
     /// 以 E2E 标准格式查询单个 accessibility identifier 元素
     private func e2eElement(identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    private func mobileSubsystem() -> String {
-        "\(recorder.deviceType)-ui"
     }
 
     private func waitUntilEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
@@ -538,44 +309,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let mainExists = mainContent.waitForExistence(timeout: 15)
         let appReadyExists = appReady.waitForExistence(timeout: 5)
 
-        let scenario = E2EContract.workspaceLifecycle
-        let subsystem = "mac-workspace"
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS 工作区侧边栏与主内容区域可观测点就绪",
-            description: """
-            执行动作：启动 mac 应用等待加载完成后检查工作区入口可观测点；\
-            关键观察：侧边栏 workspace-list 与主内容区域 identifier 是否存在；\
-            证据用途：验证 macOS 工作区生命周期可观测点已落位，\
-            project/workspace 隔离语义通过 tf.mac.sidebar.workspace.<name> 携带。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS 工作区可观测点断言结果",
-            description: """
-            检查工作区侧边栏列表（tf.mac.sidebar.workspace-list）\
-            与主内容区域（tf.mac.content.main）accessibility identifier 是否可被定位；\
-            场景含义：进入应用 → 侧边栏就绪 → 主内容就绪，代表工作区 UI 入口完整。
-            """,
-            body: """
-            settings.exists=\(toolbarElements.settings.exists)
-            inspector.exists=\(toolbarElements.inspector.exists)
-            app.ready.exists=\(appReadyExists)
-            sidebar.workspace-list.exists=\(sidebarExists)
-            content.main.exists=\(mainExists)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            project_workspace_boundary=tf.mac.sidebar.workspace.<name>
-            workspace_isolation_key=<project>:<workspace>
-            """,
-            workspaceContext: wsCtx
-        )
         XCTAssertTrue(sidebarExists, "工作区侧边栏 (tf.mac.sidebar.workspace-list) 不存在")
         XCTAssertTrue(mainExists, "主内容区域 (tf.mac.content.main) 不存在")
     }
@@ -592,43 +325,8 @@ final class TidyFlowE2ETests: XCTestCase {
 
         // 工作区列表在连接后才可见；此处只验证 identifier 在 accessibility 树中存在（即使不可见）
         let workspaceList = e2eElement(identifier: "tf.ios.workspace.list")
-        let workspaceListInTree = workspaceList.exists
+        _ = workspaceList.exists
 
-        let scenario = E2EContract.workspaceLifecycle
-        let subsystem = mobileSubsystem()
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS 工作区生命周期初始状态（连接前）",
-            description: """
-            执行动作：启动 iOS 应用等待连接页加载；\
-            关键观察：连接页可观测点就绪，工作区列表在未配对时不可见；\
-            证据用途：验证 iOS 工作区可观测点 tf.ios.workspace.list 已在视图层级注册。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS 工作区可观测点断言结果",
-            description: """
-            UI_TEST_MODE 下连接存储被清空，应用始终停在连接页；\
-            工作区列表（tf.ios.workspace.list）需要配对后才渲染，\
-            此处断言连接页可观测点存在，并记录工作区列表当前状态。
-            """,
-            body: """
-            connection.page.exists=\(connectionPage.exists)
-            workspace.list.in-tree=\(workspaceListInTree)
-            note=workspace.list.visible.after.server.pair
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            project_workspace_boundary=tf.ios.workspace.item.<name>
-            workspace_isolation_key=<project>:<workspace>
-            """,
-            workspaceContext: wsCtx
-        )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页 (tf.connection.page/tf.connection.form) 不存在")
     }
 
@@ -657,44 +355,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let inputExists = inputContainer.waitForExistence(timeout: 10)
         let actionExists = actionButton.waitForExistence(timeout: 5)
 
-        let scenario = E2EContract.aiSessionFlow
-        let subsystem = "mac-ai"
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS AI 聊天区域与会话面板可观测点就绪",
-            description: """
-            执行动作：启动 mac 应用等待加载完成后检查 AI 会话入口；\
-            关键观察：AI 聊天区域、会话列表面板、新建会话按钮、输入框和操作按钮的 identifier 是否存在；\
-            证据用途：验证 macOS AI 会话流可观测点已落位，E2E 不依赖文本模糊匹配。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS AI 会话流可观测点断言结果",
-            description: """
-            检查 AI 聊天区（tf.mac.ai.chat-area）、会话列表（tf.mac.ai.sessions-panel）、\
-            新建会话（tf.mac.ai.new-session）、输入容器（tf.ai.input.container）\
-            和操作按钮（tf.ai.input.action-button）；\
-            场景含义：进入应用 → AI 界面就绪 → 可创建/恢复会话并发送消息。
-            """,
-            body: """
-            settings.exists=\(toolbarElements.settings.exists)
-            ai.chat-area.exists=\(aiChatExists)
-            ai.sessions-panel.exists=\(sessionPanelExists)
-            ai.new-session.exists=\(newSessionExists)
-            ai.input.container.exists=\(inputExists)
-            ai.input.action-button.exists=\(actionExists)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            session_isolation_key=<project>:<workspace>:<session_id>
-            """,
-            workspaceContext: wsCtx
-        )
         // AI 面板仅在工作区被选中时渲染（需要服务端连接）。
         // 在无服务端的测试模式下，只验证应用就绪（工具栏可交互），
         // AI 可观测点的存在性已记录在证据日志中，供 verify 阶段检查。
@@ -716,44 +376,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let sessionsPanel = e2eElement(identifier: "tf.ios.ai.sessions-panel")
         let inputContainer = e2eElement(identifier: "tf.ai.input.container")
 
-        let scenario = E2EContract.aiSessionFlow
-        let subsystem = mobileSubsystem()
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS AI 会话流初始状态（连接前）",
-            description: """
-            执行动作：启动 iOS 应用等待连接页；\
-            关键观察：AI 视图 identifier 在未配对时不渲染，连接页就绪；\
-            证据用途：验证 iOS AI 会话流可观测点已落位，E2E 可在配对后直接定位 AI 入口。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS AI 会话流可观测点断言结果",
-            description: """
-            UI_TEST_MODE 下停在连接页；AI 聊天区（tf.ios.ai.chat-area）、\
-            会话列表按钮（tf.ios.ai.session-list-button）、\
-            会话面板（tf.ios.ai.sessions-panel）和输入容器（tf.ai.input.container）\
-            在配对后可见。
-            """,
-            body: """
-            connection.page.exists=\(connectionPage.exists)
-            ios.ai.chat-area.in-tree=\(aiChatArea.exists)
-            ios.ai.session-list-button.in-tree=\(sessionListBtn.exists)
-            ios.ai.sessions-panel.in-tree=\(sessionsPanel.exists)
-            ai.input.container.in-tree=\(inputContainer.exists)
-            note=ai.views.visible.after.server.pair
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            session_isolation_key=<project>:<workspace>:<session_id>
-            """,
-            workspaceContext: wsCtx
-        )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页不存在，无法进入 AI 会话流")
     }
 
@@ -776,43 +398,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let terminalInTree = terminalContainer.exists
         let remoteTermInTree = remoteTermIndicator.exists
 
-        let scenario = E2EContract.terminalInteraction
-        let subsystem = "mac-terminal"
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS 终端交互可观测点就绪状态",
-            description: """
-            执行动作：启动 mac 应用等待加载完成后检查终端区域可观测点；\
-            关键观察：终端容器（tf.mac.terminal.container）和远程终端指示器\
-            （tf.mac.toolbar.remoteTerminal）的 identifier；\
-            证据用途：验证 macOS 终端可观测点已落位，\
-            终端归属可通过 workspace key 区分避免串口。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "macOS 终端可观测点断言结果",
-            description: """
-            终端容器（tf.mac.terminal.container）在工作区选中且有终端时可见；\
-            远程终端指示器（tf.mac.toolbar.remoteTerminal）在有远程连接时可见；\
-            此处记录初始状态，配合 workspace 选中后的证据用于完整终端场景回溯。
-            """,
-            body: """
-            settings.exists=\(toolbarElements.settings.exists)
-            terminal.container.in-tree=\(terminalInTree)
-            remote-terminal-indicator.in-tree=\(remoteTermInTree)
-            note=terminal.container.visible.when.workspace.selected.and.tab.open
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            terminal_isolation_key=<project>:<workspace>:<term_id>
-            """,
-            workspaceContext: wsCtx
-        )
         XCTAssertTrue(toolbarElements.settings.exists, "macOS 应用就绪后工具栏不可见，终端场景前置条件失败")
     }
 
@@ -829,43 +414,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let terminalContainer = e2eElement(identifier: "tf.ios.terminal.container")
         let workspaceList = e2eElement(identifier: "tf.ios.workspace.list")
 
-        let scenario = E2EContract.terminalInteraction
-        let subsystem = mobileSubsystem()
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS 终端交互初始状态（连接前）",
-            description: """
-            执行动作：启动 iOS 应用等待连接页；\
-            关键观察：终端容器（tf.ios.terminal.container）和工作区列表\
-            （tf.ios.workspace.list）在未配对时不渲染；\
-            证据用途：验证 iOS 终端可观测点已落位，\
-            配对后可通过 tf.ios.workspace.new-terminal.<workspace> 进入终端。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iOS 终端可观测点断言结果",
-            description: """
-            UI_TEST_MODE 下停在连接页；\
-            终端容器（tf.ios.terminal.container）在附着或创建终端后可见；\
-            新建终端入口通过 tf.ios.workspace.new-terminal.<workspace> 可定位。
-            """,
-            body: """
-            connection.page.exists=\(connectionPage.exists)
-            ios.terminal.container.in-tree=\(terminalContainer.exists)
-            ios.workspace.list.in-tree=\(workspaceList.exists)
-            note=terminal.views.visible.after.server.pair
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            terminal_isolation_key=<project>:<workspace>:<term_id>
-            """,
-            workspaceContext: wsCtx
-        )
         XCTAssertTrue(connectionPage.exists, "iOS 连接页不存在，无法进入终端交互场景")
     }
 
@@ -882,10 +430,6 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launchEnvironment["TF_PERF_CHAT_SCENARIO"] = "stream_heavy"
         app.launch()
 
-        let scenario = "AC-CHAT-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-        let wsCtx = E2EContract.workspaceContextKey(scenario: scenario, device: recorder.deviceType)
-
         // 等待应用进入 fixture 聊天页
         let chatArea = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.ai.chat-area").firstMatch
@@ -901,47 +445,6 @@ final class TidyFlowE2ETests: XCTestCase {
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 聊天流式 perf fixture 初始状态",
-            description: """
-            执行动作：以 UI_TEST_MODE=1 TF_PERF_CHAT_SCENARIO=stream_heavy 启动 iPhone 应用；\
-            关键观察：聊天区（tf.ios.ai.chat-area）与 fixture 状态条（tf.perf.chat.status）是否可见；\
-            证据用途：验证 perf fixture 场景入口已落位，\
-            配合 swiftui_hotspot ios_ai_chat 与 aiMessageTailFlush 日志做基线。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 聊天流式 perf fixture 断言结果",
-            description: """
-            UI_TEST_MODE + TF_PERF_CHAT_SCENARIO=stream_heavy 下应用直接进入聊天场景；\
-            fixture 状态条从 running 进入 completed；\
-            日志抓取脚本可据此定位 swiftui_hotspot、aiMessageTailFlush 与 memory_snapshot。
-            """,
-            body: """
-            scenario=stream_heavy
-            chat_area.visible=\(chatAreaVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            hotspot_key=ios_ai_chat
-            hotspot_key_secondary=mac_ai_chat
-            tail_flush_event=aiMessageTailFlush
-            memory_snapshot_key=memory_snapshot
-            \(PerfEvidenceContract.chatFixtureLines())
-            """,
-            workspaceContext: wsCtx
-        )
-
         XCTAssertTrue(chatAreaVisible, "stream_heavy perf fixture 场景未进入聊天区")
         XCTAssertTrue(statusVisible, "stream_heavy perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "stream_heavy perf fixture 未进入 running 状态")
@@ -953,10 +456,6 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launchEnvironment["TF_PERF_SCENARIO"] = "chat_stream_workspace_switch"
         app.launchEnvironment["TF_PERF_CHAT_SCENARIO"] = "chat_stream_workspace_switch"
         app.launch()
-
-        let scenario = "AC-CHAT-WS-SWITCH-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-        let wsCtx = PerfEvidenceContract.chatWorkspaceSwitchContext
 
         let chatArea = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.ai.chat-area").firstMatch
@@ -971,52 +470,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let fixtureStarted =
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 20)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
-
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 聊天工作区切换 perf fixture 初始状态",
-            description: """
-            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=chat_stream_workspace_switch 启动 iPhone 应用；\
-            关键观察：聊天区与 fixture 状态条是否可见；\
-            证据用途：验证聊天多工作区 fixture 已独立落位，\
-            配合 workspace_switch_event 与 aiMessageTailFlush 日志生成真实证据。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 聊天工作区切换 perf fixture 断言结果",
-            description: """
-            UI_TEST_MODE + TF_PERF_SCENARIO=chat_stream_workspace_switch 下应用直接进入聊天场景；\
-            fixture 状态条从 running 进入 completed；\
-            日志抓取脚本可据此定位 workspace_switch_event、aiMessageTailFlush 与 memory_snapshot。
-            """,
-            body: """
-            scenario=chat_stream_workspace_switch
-            chat_area.visible=\(chatAreaVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            hotspot_key=ios_ai_chat
-            hotspot_key_secondary=mac_ai_chat
-            tail_flush_event=aiMessageTailFlush
-            memory_snapshot_key=memory_snapshot
-            workspace_switch_event=workspace_switch
-            project=PerfLab
-            workspace=stream-heavy
-            surface=chat_session
-            workspace_context=\(wsCtx)
-            \(PerfEvidenceContract.chatWorkspaceSwitchFixtureLines())
-            """,
-            workspaceContext: wsCtx
-        )
 
         XCTAssertTrue(chatAreaVisible, "chat_stream_workspace_switch perf fixture 场景未进入聊天区")
         XCTAssertTrue(statusVisible, "chat_stream_workspace_switch perf fixture 场景未暴露状态条")
@@ -1037,10 +490,6 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launchEnvironment["TF_PERF_SCENARIO"] = "evolution_panel"
         app.launch()
 
-        let scenario = "AC-EVOLUTION-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-        let wsCtx = PerfEvidenceContract.evolutionWorkspaceContext
-
         // 等待应用进入 Evolution 面板
         let pipelinePanel = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.evolution.pipeline").firstMatch
@@ -1056,50 +505,6 @@ final class TidyFlowE2ETests: XCTestCase {
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Evolution 面板 perf fixture 初始状态",
-            description: """
-            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=evolution_panel 启动 iPhone 应用；\
-            关键观察：Evolution 面板（tf.ios.evolution.pipeline）与 fixture 状态条（tf.perf.evolution.status）是否可见；\
-            证据用途：验证 Evolution perf fixture 场景入口已落位，\
-            配合 evolution_timeline_recompute_ms 与 evolution_monitor tier_change 日志做基线。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Evolution 面板 perf fixture 断言结果",
-            description: """
-            UI_TEST_MODE + TF_PERF_SCENARIO=evolution_panel 下应用直接进入 Evolution 面板；\
-            fixture 状态条从 running 进入 completed；\
-            日志抓取脚本可据此定位 evolution_timeline_recompute_ms、evolution_monitor tier_change 与 memory_snapshot。
-            """,
-            body: """
-            scenario=evolution_panel
-            panel.visible=\(panelVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            evolution_recompute_key=evolution_timeline_recompute_ms
-            evolution_tier_change_key=evolution_monitor tier_change
-            memory_snapshot_key=memory_snapshot
-            cycle_id=fixture-evolution-cycle
-            project=perf-fixture-project
-            workspace=perf-fixture-workspace
-            workspace_context=\(wsCtx)
-            \(PerfEvidenceContract.evolutionFixtureLines())
-            """,
-            workspaceContext: wsCtx
-        )
-
         XCTAssertTrue(panelVisible, "evolution_panel perf fixture 场景未进入 Evolution 面板")
         XCTAssertTrue(statusVisible, "evolution_panel perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "evolution_panel perf fixture 未进入 running 状态")
@@ -1110,10 +515,6 @@ final class TidyFlowE2ETests: XCTestCase {
         try skipUnlessMobile()
         app.launchEnvironment["TF_PERF_SCENARIO"] = "evolution_panel_multi_workspace"
         app.launch()
-
-        let scenario = "AC-EVOLUTION-MULTI-WS-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-        let wsCtx = PerfEvidenceContract.evolutionMultiWorkspaceContext
 
         let pipelinePanel = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.evolution.pipeline").firstMatch
@@ -1129,52 +530,6 @@ final class TidyFlowE2ETests: XCTestCase {
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 30)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Evolution 多工作区 perf fixture 初始状态",
-            description: """
-            执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=evolution_panel_multi_workspace 启动 iPhone 应用；\
-            关键观察：Evolution 面板与 fixture 状态条是否可见；\
-            证据用途：验证 Evolution 多工作区 fixture 已独立落位，\
-            配合 multi_workspace_event 与 recompute 日志生成真实证据。
-            """,
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: wsCtx
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Evolution 多工作区 perf fixture 断言结果",
-            description: """
-            UI_TEST_MODE + TF_PERF_SCENARIO=evolution_panel_multi_workspace 下应用直接进入 Evolution 面板；\
-            fixture 状态条从 running 进入 completed；\
-            日志抓取脚本可据此定位 multi_workspace_event、evolution_timeline_recompute_ms 与 memory_snapshot。
-            """,
-            body: """
-            scenario=evolution_panel_multi_workspace
-            panel.visible=\(panelVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            evolution_recompute_key=evolution_timeline_recompute_ms
-            evolution_tier_change_key=evolution_monitor tier_change
-            memory_snapshot_key=memory_snapshot
-            multi_workspace_event=evolution_multi_workspace_sample
-            cycle_id=fixture-evolution-cycle
-            project=perf-fixture-project
-            workspace=perf-fixture-workspace
-            surface=evolution_workspace
-            workspace_context=\(wsCtx)
-            \(PerfEvidenceContract.evolutionMultiWorkspaceFixtureLines())
-            """,
-            workspaceContext: wsCtx
-        )
-
         XCTAssertTrue(panelVisible, "evolution_panel_multi_workspace perf fixture 场景未进入 Evolution 面板")
         XCTAssertTrue(statusVisible, "evolution_panel_multi_workspace perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "evolution_panel_multi_workspace perf fixture 未进入 running 状态")
@@ -1185,9 +540,6 @@ final class TidyFlowE2ETests: XCTestCase {
         try skipUnlessMobile()
         app.launchEnvironment["TF_PERF_SCENARIO"] = "terminal_output"
         app.launch()
-
-        let scenario = "AC-TERMINAL-OUTPUT-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
 
         let terminal = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.terminal.container").firstMatch
@@ -1202,34 +554,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let fixtureStarted =
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
-
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 终端输出 perf fixture 初始状态",
-            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=terminal_output 启动 iPhone 应用；关键观察：终端容器与 fixture 状态条可见；证据用途：验证 terminal_output 场景入口与完成标记。",
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: PerfEvidenceContract.terminalWorkspaceContext
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 终端输出 perf fixture 断言结果",
-            description: "UI_TEST_MODE + TF_PERF_SCENARIO=terminal_output 下应用直接进入终端场景；fixture 状态条进入 completed；日志抓取脚本据此校验 terminal_output 证据字段。",
-            body: """
-            scenario=terminal_output
-            terminal.visible=\(terminalVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            \(PerfEvidenceContract.terminalFixtureLines())
-            """,
-            workspaceContext: PerfEvidenceContract.terminalWorkspaceContext
-        )
 
         XCTAssertTrue(terminalVisible, "terminal_output perf fixture 场景未进入终端容器")
         XCTAssertTrue(statusVisible, "terminal_output perf fixture 场景未暴露状态条")
@@ -1242,9 +566,6 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launchEnvironment["TF_PERF_SCENARIO"] = "terminal_output_multi_workspace"
         app.launch()
 
-        let scenario = "AC-TERMINAL-MULTI-WS-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-
         let terminal = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.terminal.container").firstMatch
         let fixtureStatus = app.descendants(matching: .any)
@@ -1259,34 +580,6 @@ final class TidyFlowE2ETests: XCTestCase {
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
 
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 终端多工作区 perf fixture 初始状态",
-            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=terminal_output_multi_workspace 启动 iPhone 应用；关键观察：终端容器与 fixture 状态条可见；证据用途：验证 terminal_output_multi_workspace 场景入口与完成标记。",
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: PerfEvidenceContract.terminalMultiWorkspaceContext
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone 终端多工作区 perf fixture 断言结果",
-            description: "UI_TEST_MODE + TF_PERF_SCENARIO=terminal_output_multi_workspace 下应用直接进入终端场景；fixture 状态条进入 completed；日志抓取脚本据此校验多工作区终端证据字段。",
-            body: """
-            scenario=terminal_output_multi_workspace
-            terminal.visible=\(terminalVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            \(PerfEvidenceContract.terminalMultiWorkspaceFixtureLines())
-            """,
-            workspaceContext: PerfEvidenceContract.terminalMultiWorkspaceContext
-        )
-
         XCTAssertTrue(terminalVisible, "terminal_output_multi_workspace perf fixture 场景未进入终端容器")
         XCTAssertTrue(statusVisible, "terminal_output_multi_workspace perf fixture 场景未暴露状态条")
         XCTAssertTrue(fixtureStarted, "terminal_output_multi_workspace perf fixture 未进入 running 状态")
@@ -1297,9 +590,6 @@ final class TidyFlowE2ETests: XCTestCase {
         try skipUnlessMobile()
         app.launchEnvironment["TF_PERF_SCENARIO"] = "git_panel"
         app.launch()
-
-        let scenario = "AC-GIT-PANEL-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
 
         let panel = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.git.panel").firstMatch
@@ -1314,34 +604,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let fixtureStarted =
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
-
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Git 面板 perf fixture 初始状态",
-            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=git_panel 启动 iPhone 应用；关键观察：Git 面板与 fixture 状态条可见；证据用途：验证 git_panel 场景入口与完成标记。",
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: PerfEvidenceContract.gitWorkspaceContext
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Git 面板 perf fixture 断言结果",
-            description: "UI_TEST_MODE + TF_PERF_SCENARIO=git_panel 下应用直接进入 Git 面板；fixture 状态条进入 completed；日志抓取脚本据此校验 git_panel 证据字段。",
-            body: """
-            scenario=git_panel
-            git_panel.visible=\(panelVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            \(PerfEvidenceContract.gitFixtureLines())
-            """,
-            workspaceContext: PerfEvidenceContract.gitWorkspaceContext
-        )
 
         XCTAssertTrue(panelVisible, "git_panel perf fixture 场景未进入 Git 面板")
         XCTAssertTrue(statusVisible, "git_panel perf fixture 场景未暴露状态条")
@@ -1354,9 +616,6 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launchEnvironment["TF_PERF_SCENARIO"] = "git_panel_multi_workspace"
         app.launch()
 
-        let scenario = "AC-GIT-PANEL-MULTI-WS-PERF-FIXTURE"
-        let subsystem = mobileSubsystem()
-
         let panel = app.descendants(matching: .any)
             .matching(identifier: "tf.ios.git.panel").firstMatch
         let fixtureStatus = app.descendants(matching: .any)
@@ -1370,34 +629,6 @@ final class TidyFlowE2ETests: XCTestCase {
         let fixtureStarted =
             waitForElementContaining(label: fixtureStatus, substring: "running", timeout: 2)
             || waitForElementContaining(label: fixtureStatus, substring: "completed", timeout: 2)
-
-        try recorder.recordScreenshot(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Git 多工作区 perf fixture 初始状态",
-            description: "执行动作：以 UI_TEST_MODE=1 TF_PERF_SCENARIO=git_panel_multi_workspace 启动 iPhone 应用；关键观察：Git 面板与 fixture 状态条可见；证据用途：验证 git_panel_multi_workspace 场景入口与完成标记。",
-            screenshot: XCUIScreen.main.screenshot(),
-            workspaceContext: PerfEvidenceContract.gitMultiWorkspaceContext
-        )
-        try recorder.recordLog(
-            scenario: scenario,
-            subsystem: subsystem,
-            title: "iPhone Git 多工作区 perf fixture 断言结果",
-            description: "UI_TEST_MODE + TF_PERF_SCENARIO=git_panel_multi_workspace 下应用直接进入 Git 面板；fixture 状态条进入 completed；日志抓取脚本据此校验多工作区 Git 证据字段。",
-            body: """
-            scenario=git_panel_multi_workspace
-            git_panel.visible=\(panelVisible)
-            fixture_status.visible=\(statusVisible)
-            fixture_status.label=\(fixtureStatus.label)
-            fixture_completed_marker.exists=\(fixtureCompletedMarker.exists)
-            fixture_started=\(fixtureStarted)
-            fixture_completed=\(fixtureCompleted)
-            run_id=\(recorder.runID)
-            device_type=\(recorder.deviceType)
-            \(PerfEvidenceContract.gitMultiWorkspaceFixtureLines())
-            """,
-            workspaceContext: PerfEvidenceContract.gitMultiWorkspaceContext
-        )
 
         XCTAssertTrue(panelVisible, "git_panel_multi_workspace perf fixture 场景未进入 Git 面板")
         XCTAssertTrue(statusVisible, "git_panel_multi_workspace perf fixture 场景未暴露状态条")

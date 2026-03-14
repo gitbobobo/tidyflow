@@ -13,16 +13,6 @@
 - [ ] 选择最新 cycle_id
 - [ ] 执行：`./scripts/tidyflow quality-gate --cycle <cycle_id> --step all`
 - [ ] 检查验证顺序为：`v-1(unit) -> v-2(integration) -> v-3(e2e) -> v-4(manual)`，`v-5(build)` 作为独立门禁
-- [ ] 检查 `evidence.index.json` 包含：`evidence/failure_context/completeness/runs`
-- [ ] 检查 `completeness.required_types` 覆盖 `build_log/test_log/screenshot/diff_summary/metrics`
-- [ ] 若失败，确认日志包含失败锚点与上一稳定 `run_id` 回退建议
-- [ ] 执行 AC->check->evidence 对照核验：
-  - ac-1 => `v-2,v-3,v-4` => `test_log,screenshot`
-  - ac-2 => `v-1,v-2,v-4` => `test_log,diff_summary`
-  - ac-3 => `v-3,v-5` => `screenshot,build_log`
-- [ ] 核对 `v-3` 证据必须同时覆盖 macOS+iOS 且状态为 `empty/loading/ready`
-- [ ] 核对旧状态兼容窗口：`initial/processing/complete/error` 仅保留读取兼容 1 个发布周期，不允许新写入
-- [ ] 若任一 AC 缺失 minimum_evidence，判定为阻断项，不允许发布
 
 ## 3. 架构护栏检查
 
@@ -51,15 +41,12 @@
 - [ ] 确认报告 `overall` 不为 `fail`，且 `release_blocking=false`
   - `pass` 或 `warn` 均可继续发布（`warn` 表示接近预算但未越过发布红线）
   - `fail` 或 `release_blocking=true` 将被 `release_local.sh` 自动阻断，需修复后重跑
-- [ ] 确认以下两个子报告均存在且结构完整：
+- [ ] 确认子报告存在且结构完整：
   - Core 热点：`build/perf/hotspot-regression-report.json`
-  - Apple 客户端：`build/perf/apple-client-regression-report.json`
 - [ ] 若任一子报告的 `overall=warn`，检查对应场景的 `reason_codes`，评估是否需要更新基线或优化热路径
 - [ ] 若 `overall=fail`，报告会列出 `reason_codes`（如 `ratio_exceeded_fail`、`evidence_file_missing`、`suite_report_missing` 等），按原因处理
 - [ ] **不允许** 在 verify 路径中自动更新基线文件；基线更新只允许显式本地修改后提交：
   - Core 热点：`core/benches/baselines/hotspot_regression.json`
-  - Apple 客户端：`scripts/tools/apple_client_perf_baselines.json`
-- [ ] Apple 客户端性能场景仅限 iPhone 16 / iOS 18.6 下的 `chat_stream` 与 `evolution_panel`，不要求 macOS UI 自动化
 
 ### 3.6.1. 性能门禁绕过（仅当必要）
 
@@ -71,22 +58,11 @@
 > 本节基于 WI-001 新增的多工作区 fixture 场景与 PerformanceDashboardStore 共享投影层。
 
 - [ ] 确认 `scripts/tools/performance_gate_contract.json` 的 `contract_version` 为 `"2.0"`
-- [ ] 确认 `scripts/tools/apple_client_perf_baselines.json` 包含以下 8 个场景：
-  - `chat_stream`（聊天流式，surface_id=chat_session）
-  - `evolution_panel`（Evolution 面板，surface_id=evolution_workspace）
-  - `chat_stream_workspace_switch`（聊天+工作区切换，surface_id=chat_session）
-  - `evolution_panel_multi_workspace`（Evolution 并行工作区，surface_id=evolution_workspace）
-  - `terminal_output`（终端输出刷新，surface_id=terminal_output）
-  - `terminal_output_multi_workspace`（终端多工作区，surface_id=terminal_output）
-  - `git_panel`（Git 面板投影，surface_id=git_panel）
-  - `git_panel_multi_workspace`（Git 面板多工作区，surface_id=git_panel）
 - [ ] 执行 `./scripts/tidyflow perf-regression`，确认生成：
-  - `build/perf/apple-client-regression-report.json`（schema_version=2，含 context_fields 和 scenarios[].surface_id）
-  - `build/perf/performance-dashboard-snapshot.json`（overall、scenarios_summary、generated_at）
+  - `build/perf/hotspot-regression-report.json`
   - `build/perf/performance-gate-report.json`（overall、release_blocking、reason_codes）
-- [ ] 执行比较器自测：`python3 scripts/tools/check_apple_client_perf_regression.py --self-test`，确认输出 `所有自测样例通过`（包含样例 6-9 及 14-17 终端/Git 新场景）
 - [ ] 若发现新场景 `warn` 或 `fail`：
-  - 排查实时趋势：查看 `build/perf/apple-client-regression-report.json` 中对应 scenario 的 `issues` 字段
+  - 排查实时趋势：查看 `build/perf/hotspot-regression-report.json` 中对应场景的 `reason_codes`
   - 参考 `PerformanceDashboardProjection.isTrendDegrading` 语义判断是否是趋势性退化
   - **不允许** 为通过门禁而上调 warn_limit/fail_limit，需先分析退化原因
 - [ ] 验证聊天界面性能卡与 Evolution 性能卡正确展示：

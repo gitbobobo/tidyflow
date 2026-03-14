@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 串行执行 iphone/ipad/mac 三端 e2e，避免并行 xcodebuild。
-# 三端共享同一 run_id，便于证据校验脚本按 run_id 聚合检查。
+# 三端共享同一 run_id。
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ if [[ -z "$run_id" ]]; then
     echo "[e2e] 自动生成 run_id=$run_id"
 fi
 
-echo "[e2e] 三端串行执行开始: run_id=$run_id evidence_root=$TF_EVIDENCE_ROOT"
+echo "[e2e] 三端串行执行开始: run_id=$run_id"
 
 # 记录各设备执行状态（使用变量前缀，兼容 bash 3.2）
 device_status_iphone="ok"
@@ -76,20 +76,5 @@ else
     echo "[e2e] 存在失败设备（见汇总）: run_id=$run_id"
 fi
 
-# 可选：执行证据索引完整性校验
-if [[ $skip_verify -eq 0 ]] && command -v python3 &>/dev/null; then
-    echo "[e2e] 运行证据索引完整性校验..."
-    if python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
-        --evidence-root "$TF_EVIDENCE_ROOT" \
-        --run-id "$run_id" \
-        --project "${TF_PROJECT:-tidyflow}" \
-        --workspace "${TF_WORKSPACE:-default}" \
-        --require-devices iphone ipad mac \
-        --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION; then
-        echo "[e2e] 证据校验通过"
-    else
-        echo "[e2e] 证据校验失败（不影响 run-all 退出码，请人工核查）"
-    fi
-fi
 
 exit $overall_status

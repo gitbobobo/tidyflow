@@ -88,19 +88,12 @@ esac
 echo "[e2e] device=$device run_id=$run_id"
 echo "[e2e] destination=$destination"
 echo "[e2e] SKIP_CORE_BUILD=$skip_core_build"
-echo "[e2e] evidence_root=$TF_EVIDENCE_ROOT"
-
-TF_EVIDENCE_ROOT="$TF_EVIDENCE_ROOT" \
-TF_E2E_RUN_ID="$run_id" \
-TF_DEVICE_TYPE="$device" \
-UI_TEST_MODE=1 \
 xcodebuild -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
     -scheme TidyFlow \
     -configuration Debug \
     -destination "$destination" \
     -derivedDataPath "$PROJECT_ROOT/build" \
     "SKIP_CORE_BUILD=$skip_core_build" \
-    "TF_EVIDENCE_ROOT=$TF_EVIDENCE_ROOT" \
     "TF_E2E_RUN_ID=$run_id" \
     "TF_DEVICE_TYPE=$device" \
     "UI_TEST_MODE=1" \

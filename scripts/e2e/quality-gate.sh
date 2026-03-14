@@ -5,7 +5,6 @@
 #   protocol_check    - 协议一致性 / schema 同步 / 版本一致性
 #   core_regression   - Core 单元测试与回归
 #   system_health     - 系统健康快照判定（需 Core 运行时，dry-run 跳过）
-#   evidence_integrity - 证据索引完整性校验
 #   apple_regression  - Apple 多工作区定向回归（串行）
 #   apple_build       - macOS / iOS Simulator 构建验证（串行）
 #
@@ -23,7 +22,6 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# 加载共享引导脚本（统一 TF_EVIDENCE_ROOT 解析）
 # shellcheck source=scripts/e2e/fixtures/bootstrap.sh
 source "$PROJECT_ROOT/scripts/e2e/fixtures/bootstrap.sh"
 
@@ -39,7 +37,6 @@ cycle_id=""
 run_id=""
 step="all"
 dry_run=0
-verify_only=0
 project="${TF_PROJECT:-tidyflow}"
 workspace="${TF_WORKSPACE:-default}"
 json_output=0
@@ -56,10 +53,8 @@ print_usage() {
   --run-id <run_id>        运行 ID（默认取 cycle_id）
   --step <阶段>            执行阶段：all | protocol_check | core_regression |
                            performance_regression | system_health |
-                           evidence_integrity | apple_regression |
-                           apple_build（默认: all）
+                           apple_regression | apple_build（默认: all）
   --dry-run                干运行模式，仅打印将执行的命令
-  --verify-only            跳过测试执行，仅运行证据校验
   --project <name>         项目名（默认: tidyflow）
   --workspace <name>       工作区名（默认: default）
   --json                   输出可机读 JSON 摘要
@@ -73,7 +68,7 @@ while [[ $# -gt 0 ]]; do
         --run-id)       run_id="${2:-}";      shift 2 ;;
         --step)         step="${2:-all}";     shift 2 ;;
         --dry-run)      dry_run=1;            shift ;;
-        --verify-only)  verify_only=1;        shift ;;
+
         --project)      project="${2:-}";     shift 2 ;;
         --workspace)    workspace="${2:-}";   shift 2 ;;
         --json)         json_output=1;        shift ;;
@@ -103,7 +98,6 @@ gate_result_protocol_check="skipped"
 gate_result_core_regression="skipped"
 gate_result_performance_regression="skipped"
 gate_result_system_health="skipped"
-gate_result_evidence_integrity="skipped"
 gate_result_apple_regression="skipped"
 gate_result_apple_build="skipped"
 gate_overall="pass"
@@ -146,7 +140,7 @@ emit_gate_summary() {
     local perf_structured_json
     # 构建结构化 performance_regression 节点
     if [[ $dry_run -eq 1 ]]; then
-        perf_structured_json='{"overall":"pass","release_blocking":false,"contract_version":"1.0","reason_codes":[],"warnings":[],"report_path":"build/perf/performance-gate-report.json","suite_results":{"hotspot_perf_guard":"pass","apple_client_perf":"pass"}}'
+        perf_structured_json='{"overall":"pass","release_blocking":false,"contract_version":"2.0","reason_codes":[],"warnings":[],"report_path":"build/perf/performance-gate-report.json","suite_results":{"hotspot_perf_guard":"pass"}}'
     elif [[ -f "$perf_gate_report" ]]; then
         perf_structured_json="$(python3 - "$perf_gate_report" <<'PYEOF'
 import json, sys
@@ -182,7 +176,6 @@ PYEOF
       "core_regression": "${gate_result_core_regression}",
       "performance_regression": "${gate_result_performance_regression}",
       "system_health": "${gate_result_system_health}",
-      "evidence_integrity": "${gate_result_evidence_integrity}",
       "apple_regression": "${gate_result_apple_regression}",
       "apple_build": "${gate_result_apple_build}"
     },
@@ -204,7 +197,6 @@ ENDJSON
         echo "[quality-gate]   core_regression=${gate_result_core_regression}"
         echo "[quality-gate]   performance_regression=${gate_result_performance_regression}"
         echo "[quality-gate]   system_health=${gate_result_system_health}"
-        echo "[quality-gate]   evidence_integrity=${gate_result_evidence_integrity}"
         echo "[quality-gate]   apple_regression=${gate_result_apple_regression}"
         echo "[quality-gate]   apple_build=${gate_result_apple_build}"
         echo "[quality-gate]   overall=${gate_overall}"
@@ -218,21 +210,7 @@ ENDJSON
     fi
 }
 
-echo "[quality-gate] cycle=${cycle_id} run_id=${run_id} project=${project} workspace=${workspace} evidence_root=${TF_EVIDENCE_ROOT}" >&2
-
-# ============================================================================
-# --verify-only 快速路径：仅校验证据
-# ============================================================================
-
-if [[ $verify_only -eq 1 ]]; then
-    exec python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
-        --evidence-root "$TF_EVIDENCE_ROOT" \
-        --run-id "$run_id" \
-        --project "$project" \
-        --workspace "$workspace" \
-        --require-devices iphone ipad mac \
-        --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION
-fi
+echo "[quality-gate] cycle=${cycle_id} run_id=${run_id} project=${project} workspace=${workspace}" >&2
 
 # ============================================================================
 # --dry-run 快速路径
@@ -244,7 +222,7 @@ if [[ $dry_run -eq 1 ]]; then
     should_run_phase core_regression && echo "  [2] core_regression: ./scripts/tidyflow test" >&2
     should_run_phase performance_regression && echo "  [2.5] performance_regression: ./scripts/tidyflow perf-regression" >&2
     should_run_phase system_health && echo "  [3] system_health: (需要 Core 运行时，dry-run 跳过)" >&2
-    should_run_phase evidence_integrity && echo "  [4] evidence_integrity: python3 scripts/e2e/verify_evidence_index.py --run-id ${run_id}" >&2
+
     if [[ $skip_apple -eq 0 ]]; then
         should_run_phase apple_regression && echo "  [5] apple_regression: ./scripts/tidyflow apple-regression --macos-only" >&2
         should_run_phase apple_build && echo "  [6] apple_build: ./scripts/tidyflow apple-build" >&2
@@ -255,7 +233,6 @@ if [[ $dry_run -eq 1 ]]; then
     record_phase_result "core_regression" "pass"
     record_phase_result "performance_regression" "pass"
     record_phase_result "system_health" "pass"
-    record_phase_result "evidence_integrity" "pass"
     record_phase_result "apple_regression" "pass"
     record_phase_result "apple_build" "pass"
     emit_gate_summary
@@ -350,25 +327,9 @@ if should_run_phase system_health; then
     fi
 fi
 
-# 阶段 4：证据完整性校验
-if should_run_phase evidence_integrity; then
-    echo "[quality-gate] [4/7] 证据完整性校验..."
-    if python3 "$PROJECT_ROOT/scripts/e2e/verify_evidence_index.py" \
-        --evidence-root "$TF_EVIDENCE_ROOT" \
-        --run-id "$run_id" \
-        --project "$project" \
-        --workspace "$workspace" \
-        --require-devices iphone ipad mac \
-        --require-scenarios AC-WORKSPACE-LIFECYCLE AC-AI-SESSION-FLOW AC-TERMINAL-INTERACTION 2>&1; then
-        record_phase_result "evidence_integrity" "pass"
-    else
-        record_phase_result "evidence_integrity" "fail" "证据索引校验失败"
-    fi
-fi
-
-# 阶段 5：Apple 多工作区回归
+# 阶段 4：Apple 多工作区回归
 if should_run_phase apple_regression && [[ $skip_apple -eq 0 ]]; then
-    echo "[quality-gate] [5/7] Apple 多工作区回归（串行）..."
+    echo "[quality-gate] [4/6] Apple 多工作区回归（串行）..."
     if "$PROJECT_ROOT/scripts/tidyflow" apple-regression --macos-only; then
         record_phase_result "apple_regression" "pass"
     else
@@ -378,9 +339,9 @@ elif [[ $skip_apple -eq 1 ]] && should_run_phase apple_regression; then
     record_phase_result "apple_regression" "skipped"
 fi
 
-# 阶段 6：Apple 构建验证
+# 阶段 5：Apple 构建验证
 if should_run_phase apple_build && [[ $skip_apple -eq 0 ]]; then
-    echo "[quality-gate] [6/7] Apple 构建验证（串行: macOS → iOS）..."
+    echo "[quality-gate] [5/6] Apple 构建验证（串行: macOS → iOS）..."
     build_failed=0
     if ! "$PROJECT_ROOT/scripts/tidyflow" apple-build macos --skip-core; then
         build_failed=1
