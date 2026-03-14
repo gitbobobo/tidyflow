@@ -1554,6 +1554,8 @@ TSST001 /* TerminalSessionStore.swift in Sources */,
 				UX100005 /* ProjectCommandsMenuView.swift in Sources */,
 				MDL000315 /* ProjectCommandModels.swift in Sources */,
 				6DC2CD6DD0EA09E6120CCC90 /* TerminalProtocolModels.swift in Sources */,
+			
+				UX100001 /* ProjectsSidebarView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
