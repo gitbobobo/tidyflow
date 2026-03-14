@@ -41,10 +41,12 @@
 		SHR02022 /* CoreWSURLBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01022 /* CoreWSURLBuilder.swift */; };
 		SHR02023 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01023 /* ClientSettingsModels.swift */; };
 		EDSS0002 /* EditorDocumentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSS0001 /* EditorDocumentSession.swift */; };
+		EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFRS0001 /* EditorFindReplaceSemantics.swift */; };
 		EDTST002 /* EditorDocumentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST001 /* EditorDocumentSessionTests.swift */; };
 		EDTST004 /* EditorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST003 /* EditorStoreTests.swift */; };
 		EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST005 /* EditorFindReplaceSemanticsTests.swift */; };
 		EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDTST007 /* EditorUnsavedProtectionTests.swift */; };
+		MEST0002 /* MobileEditorSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEST0001 /* MobileEditorSessionTests.swift */; };
 		SHRMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = SHRMGP02 /* MessagePacker */; };
 		TSTMGP01 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = TSTMGP02 /* MessagePacker */; };
 		MHA00201 /* MessageHandlerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = MHA00101 /* MessageHandlerAdapter.swift */; };
@@ -85,6 +87,8 @@
 		A866AA59997825F9AB6ECE6D /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */; };
 		MOB00023 /* TerminalInputAccessoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00013 /* TerminalInputAccessoryView.swift */; };
+		MEDV0002 /* MobileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEDV0001 /* MobileEditorView.swift */; };
+		EIAV0002 /* EditorInputAccessoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EIAV0001 /* EditorInputAccessoryView.swift */; };
 		MOB00024 /* MobileTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00014 /* MobileTerminalView.swift */; };
 		MOB00025 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00015 /* ConnectionView.swift */; };
 		MOB00026 /* ProjectListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00016 /* ProjectListView.swift */; };
@@ -389,6 +393,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01022 /* CoreWSURLBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoreWSURLBuilder.swift; sourceTree = "<group>"; };
 		SHR01023 /* ClientSettingsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClientSettingsModels.swift; sourceTree = "<group>"; };
 		EDSS0001 /* EditorDocumentSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorDocumentSession.swift; sourceTree = "<group>"; };
+		EFRS0001 /* EditorFindReplaceSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemantics.swift; sourceTree = "<group>"; };
 		GWSD0101 /* GitWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GitWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		MHA00101 /* MessageHandlerAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageHandlerAdapter.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
@@ -408,6 +413,8 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		2E667DE0A535A7448B3C8A7B /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TidyFlowiOSApp.swift; sourceTree = "<group>"; };
 		MOB00013 /* TerminalInputAccessoryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputAccessoryView.swift; sourceTree = "<group>"; };
+		MEDV0001 /* MobileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEditorView.swift; sourceTree = "<group>"; };
+		EIAV0001 /* EditorInputAccessoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorInputAccessoryView.swift; sourceTree = "<group>"; };
 		MOB00014 /* MobileTerminalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileTerminalView.swift; sourceTree = "<group>"; };
 		MOB00015 /* ConnectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		MOB00016 /* ProjectListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
@@ -507,6 +514,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		EDTST003 /* EditorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStoreTests.swift; sourceTree = "<group>"; };
 		EDTST005 /* EditorFindReplaceSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFindReplaceSemanticsTests.swift; sourceTree = "<group>"; };
 		EDTST007 /* EditorUnsavedProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUnsavedProtectionTests.swift; sourceTree = "<group>"; };
+		MEST0001 /* MobileEditorSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileEditorSessionTests.swift; sourceTree = "<group>"; };
 		TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatMessageVisibilitySemanticsTests.swift; sourceTree = "<group>"; };
 		TST10047 /* AIChatStageProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStageProjectionTests.swift; sourceTree = "<group>"; };
 		TST10049 /* EvolutionRecoveryModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionRecoveryModelTests.swift; sourceTree = "<group>"; };
@@ -719,6 +727,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				MHA00101 /* MessageHandlerAdapter.swift */,
 				SHR01023 /* ClientSettingsModels.swift */,
 				EDSS0001 /* EditorDocumentSession.swift */,
+				EFRS0001 /* EditorFindReplaceSemantics.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -859,6 +868,8 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				MOB00033 /* SwiftTermTerminalView.swift */,
 				MOB00043 /* MobileCommandIconView.swift */,
 				MOB00013 /* TerminalInputAccessoryView.swift */,
+				MEDV0001 /* MobileEditorView.swift */,
+				EIAV0001 /* EditorInputAccessoryView.swift */,
 				MOB00054 /* DisconnectBannerView.swift */,
 				MOB00056 /* MobileAIChatView.swift */,
 				MOB00058 /* MobileSessionListSheet.swift */,
@@ -958,6 +969,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 					EDTST003 /* EditorStoreTests.swift */,
 					EDTST005 /* EditorFindReplaceSemanticsTests.swift */,
 					EDTST007 /* EditorUnsavedProtectionTests.swift */,
+					MEST0001 /* MobileEditorSessionTests.swift */,
 					TST10045 /* AIChatMessageVisibilitySemanticsTests.swift */,
 					TST10047 /* AIChatStageProjectionTests.swift */,
 					TST10049 /* EvolutionRecoveryModelTests.swift */,
@@ -1345,6 +1357,8 @@ TSST011 /* TerminalSessionStore.swift */,
 				MOB00032 /* SavedConnection.swift in Sources */,
 				MOB00034 /* SwiftTermTerminalView.swift in Sources */,
 				MOB00023 /* TerminalInputAccessoryView.swift in Sources */,
+				MEDV0002 /* MobileEditorView.swift in Sources */,
+				EIAV0002 /* EditorInputAccessoryView.swift in Sources */,
 				MOB00024 /* MobileTerminalView.swift in Sources */,
 				MOB00025 /* ConnectionView.swift in Sources */,
 				MOB00026 /* ProjectListView.swift in Sources */,
@@ -1574,6 +1588,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				EDTST004 /* EditorStoreTests.swift in Sources */,
 				EDTST006 /* EditorFindReplaceSemanticsTests.swift in Sources */,
 				EDTST008 /* EditorUnsavedProtectionTests.swift in Sources */,
+				MEST0002 /* MobileEditorSessionTests.swift in Sources */,
 				TST10044 /* AIChatMessageVisibilitySemanticsTests.swift in Sources */,
 				TST10046 /* AIChatStageProjectionTests.swift in Sources */,
 				TST10048 /* EvolutionRecoveryModelTests.swift in Sources */,
@@ -1641,6 +1656,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02022 /* CoreWSURLBuilder.swift in Sources */,
 				SHR02023 /* ClientSettingsModels.swift in Sources */,
 				EDSS0002 /* EditorDocumentSession.swift in Sources */,
+				EFRS0002 /* EditorFindReplaceSemantics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1927,6 +1943,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"TidyFlowiOSApp.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
+					"MobileEditorView.swift",
+					"EditorInputAccessoryView.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",
@@ -2062,6 +2080,8 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					"TidyFlowiOSApp.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
+					"MobileEditorView.swift",
+					"EditorInputAccessoryView.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",
