@@ -428,8 +428,8 @@ struct TerminalStatusBar: View {
                 .font(.system(size: 11))
                 .foregroundColor(.green)
 
-            // Session info
-            switch terminalStore.terminalState {
+            // Session info — 从 AppState 派生的共享壳层相位读取
+            switch appState.terminalState {
             case .idle:
                 Text("Terminal")
                     .font(.system(size: 11, design: .monospaced))

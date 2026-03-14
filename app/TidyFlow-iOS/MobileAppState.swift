@@ -401,6 +401,9 @@ final class MobileAppState: ObservableObject {
     /// ACK 阈值（50KB），与 macOS 原生终端端保持一致
     private let termOutputAckThreshold = 50 * 1024
 
+    /// 共享终端壳层状态：按工作区隔离的终端选择、请求相位和副作用。
+    @Published var terminalShellState = SharedTerminalShellState()
+
     /// 共享终端会话存储：按 project/workspace/termId 隔离，统一管理展示信息、
     /// 置顶状态、attach/detach 请求时间和输出 ACK 计数，与 macOS 共享语义。
     let terminalSessionStore = TerminalSessionStore()
@@ -4193,6 +4196,9 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommand = ""
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
+        // 驱动共享壳层进入 connecting 相位
+        let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
+        feedTerminalShell(.createTerminal(command: nil, icon: nil, name: nil), context: ctx)
         if isTerminalViewReady {
             fireTermCreate()
         }
@@ -4212,6 +4218,9 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
+        // 驱动共享壳层进入 connecting 相位
+        let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
+        feedTerminalShell(.createTerminal(command: command, icon: icon, name: name), context: ctx)
         if isTerminalViewReady {
             fireTermCreate()
         }
@@ -4230,6 +4239,9 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommand = ""
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
+        // 驱动共享壳层进入 connecting 相位
+        let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
+        feedTerminalShell(.attachTerminal(termId: termId), context: ctx)
         if isTerminalViewReady {
             fireTermCreate()
         }
@@ -4288,6 +4300,13 @@ final class MobileAppState: ObservableObject {
             sink.resetTerminal()
             lastRenderedTermId = newId
         }
+
+        // 驱动共享壳层 select
+        if let info = terminalSessionStore.displayInfo(for: newId) {
+            let ctx = SharedTerminalShellContext(projectName: info.project, workspaceName: info.workspace)
+            feedTerminalShell(.selectTerminal(termId: newId), context: ctx)
+        }
+
         let switchCostMs = Int(Date().timeIntervalSince(switchStartedAt) * 1000)
         TFLog.app.info("perf.mobile.terminal.switch_ms=\(switchCostMs, privacy: .public)")
     }
@@ -4402,13 +4421,40 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
         isTerminalViewReady = false
-        terminalSessionStore.handleDisconnect()
         pendingOutputChunks.removeAll()
         terminalSink = nil
         lastRenderedTermId = ""
         setCtrlArmed(false)
-        // WI-002：断连时清除工作区终端 AI 状态，防止重连后展示过期状态
-        terminalAIStatusByWorkspaceKey.removeAll()
+    }
+
+    // MARK: - 共享终端壳层驱动辅助
+
+    /// 向共享终端壳层投递输入并应用状态迁移。
+    /// iOS 平台层只消费 effect descriptor，不在此方法外直接操作壳层状态。
+    func feedTerminalShell(
+        _ input: SharedTerminalShellInput,
+        context: SharedTerminalShellContext,
+        liveTermIds: [String]? = nil
+    ) {
+        let key = context.globalKey
+        let current = terminalShellState.state(for: key)
+        let live = liveTermIds ?? terminalsForWorkspace(
+            project: context.projectName,
+            workspace: context.workspaceName
+        ).map(\.termId)
+        let (next, _) = SharedTerminalShellDriver.reduce(
+            state: current,
+            input: input,
+            context: context,
+            liveTermIds: live
+        )
+        terminalShellState.workspaceStates[key] = next
+    }
+
+    /// 获取指定工作区的壳层状态
+    func shellStateForWorkspace(project: String, workspace: String) -> SharedTerminalShellWorkspaceState {
+        let key = "\(project):\(workspace)"
+        return terminalShellState.state(for: key)
     }
 
     // MARK: - WS 回调
@@ -4440,6 +4486,18 @@ final class MobileAppState: ObservableObject {
                 }
                 // 断连时清除协调层状态缓存，防止旧工作区协调状态残留到重连后的新会话
                 self.coordinatorStateCache.apply(.clear)
+
+                // 驱动所有工作区的共享终端壳层进入 disconnect
+                for key in self.terminalShellState.workspaceStates.keys {
+                    let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+                    if parts.count == 2 {
+                        let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+                        self.feedTerminalShell(.disconnect, context: ctx)
+                    }
+                }
+                // 断连时清除工作区终端 AI 状态
+                self.terminalAIStatusByWorkspaceKey.removeAll()
+                self.terminalSessionStore.handleDisconnect()
 
                 self.connectionMessage = "连接断开"
                 if let phase = ConnectionPhase.evaluateDisconnect(

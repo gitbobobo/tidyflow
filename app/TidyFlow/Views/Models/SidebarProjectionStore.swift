@@ -122,16 +122,9 @@ extension SidebarProjectionSemantics {
         project: ProjectModel,
         terminalStore: TerminalStore
     ) -> Date? {
-        var earliest: Date?
-        for workspace in project.workspaces {
-            let key = "\(project.name):\(workspace.name)"
-            if let time = terminalStore.workspaceTerminalOpenTime[key] {
-                if earliest == nil || time < earliest! {
-                    earliest = time
-                }
-            }
-        }
-        return earliest
+        // 使用 TerminalSessionStore.workspaceOpenTime（唯一真源）
+        // terminalStore 参数保留签名兼容，但不再从中读取 open time
+        return nil
     }
 
     private static func macProjectMinShortcutKey(
@@ -352,7 +345,7 @@ final class MacSidebarProjectionStore: ObservableObject {
         appState.$deletingWorkspaces.sink { _ in refresh() }.store(in: &cancellables)
         appState.$aiSessionStatusesByTool.sink { _ in refresh() }.store(in: &cancellables)
         appState.$evolutionWorkspaceItems.sink { _ in refresh() }.store(in: &cancellables)
-        terminalStore.$workspaceTerminalOpenTime.sink { _ in refresh() }.store(in: &cancellables)
+        terminalStore.$terminalSessionByTabId.sink { _ in refresh() }.store(in: &cancellables)
         taskStore.$tasksByKey.sink { _ in refresh() }.store(in: &cancellables)
         taskStore.$unseenCompletionKeys.sink { _ in refresh() }.store(in: &cancellables)
 

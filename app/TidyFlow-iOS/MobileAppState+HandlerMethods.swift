@@ -365,6 +365,10 @@ extension MobileAppState {
         )
         workspaceTerminalOpenTime = terminalSessionStore.workspaceOpenTime
 
+        // 驱动共享壳层：服务端已创建终端
+        let ctx = SharedTerminalShellContext(projectName: result.project, workspaceName: result.workspace)
+        feedTerminalShell(.serverTermCreated(termId: result.termId), context: ctx)
+
         wsClient.requestTermResize(
             termId: result.termId,
             cols: terminalCols,
@@ -390,6 +394,13 @@ extension MobileAppState {
             TFLog.app.info("perf.mobile.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
         }
         switchToTerminal(termId: result.termId)
+
+        // 驱动共享壳层：服务端已附着终端
+        if let info = terminalSessionStore.displayInfo(for: result.termId) {
+            let ctx = SharedTerminalShellContext(projectName: info.project, workspaceName: info.workspace)
+            feedTerminalShell(.serverTermAttached(termId: result.termId), context: ctx)
+        }
+
         if !result.scrollback.isEmpty {
             emitTerminalOutput(result.scrollback, termId: result.termId, shouldRender: true)
             if !result.termId.isEmpty {
@@ -412,12 +423,50 @@ extension MobileAppState {
             makeKey: globalWorkspaceKey(project:workspace:)
         )
         workspaceTerminalOpenTime = terminalSessionStore.workspaceOpenTime
+
+        // 驱动共享壳层 term_list 同步：按工作区分组，更新壳层的活跃终端列表
+        var byWorkspace: [String: [String]] = [:]
+        for item in result.items {
+            let key = globalWorkspaceKey(project: item.project, workspace: item.workspace)
+            byWorkspace[key, default: []].append(item.termId)
+        }
+        for (key, termIds) in byWorkspace {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+            feedTerminalShell(.reconcileLiveTerminals(liveTermIds: termIds), context: ctx, liveTermIds: termIds)
+        }
+        // 也对已消失的工作区进行 reconcile（所有终端已关闭的场景）
+        for key in terminalShellState.workspaceStates.keys where byWorkspace[key] == nil {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+            feedTerminalShell(.reconcileLiveTerminals(liveTermIds: []), context: ctx, liveTermIds: [])
+        }
     }
 
     func handleTermClosed(_ termId: String) {
         terminalSessionStore.handleTermClosed(termId: termId)
+
+        // 驱动共享壳层：终端已关闭
+        if let info = terminalSessionStore.displayInfo(for: termId) {
+            let ctx = SharedTerminalShellContext(projectName: info.project, workspaceName: info.workspace)
+            feedTerminalShell(.serverTermClosed(termId: termId), context: ctx)
+        }
+
         if currentTermId == termId {
-            currentTermId = ""
+            // 选中的终端被关闭：由共享壳层的 fallback 选择决定下一个
+            if let info = terminalSessionStore.displayInfo(for: termId) {
+                let key = globalWorkspaceKey(project: info.project, workspace: info.workspace)
+                let ws = terminalShellState.state(for: key)
+                if case .active(let nextId) = ws.selection {
+                    switchToTerminal(termId: nextId)
+                } else {
+                    currentTermId = ""
+                }
+            } else {
+                currentTermId = ""
+            }
         }
         wsClient.requestTermList()
     }

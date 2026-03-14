@@ -311,6 +311,10 @@ extension AppState {
         // 驱动共享终端生命周期：entering → active
         terminalSessionStore.beginCreate(project: result.project, workspace: result.workspace, termId: result.termId)
 
+        // 驱动共享壳层状态
+        let ctx = SharedTerminalShellContext(projectName: result.project, workspaceName: result.workspace)
+        feedTerminalShell(.serverTermCreated(termId: result.termId), context: ctx)
+
         // 通过共享终端存储记录 attach 请求时间
         terminalSessionStore.recordAttachRequest(termId: result.termId)
         wsClient.requestTermAttach(termId: result.termId)
@@ -327,7 +331,10 @@ extension AppState {
             let costMs = Int(rtt * 1000)
             TFLog.app.info("perf.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
         }
-        terminalState = .ready(sessionId: result.termId)
+        // 驱动共享壳层状态
+        let ctx = SharedTerminalShellContext(projectName: result.project, workspaceName: result.workspace)
+        feedTerminalShell(.serverTermAttached(termId: result.termId), context: ctx)
+
         if !result.scrollback.isEmpty {
             emitTerminalOutput(termId: result.termId, bytes: result.scrollback)
             wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
@@ -358,8 +365,7 @@ extension AppState {
 
     func handleTermClosed(_ termId: String) {
         if let tabId = terminalTabIdBySessionId.removeValue(forKey: termId) {
-            terminalSessionByTabId.removeValue(forKey: tabId)
-            staleTerminalTabs.remove(tabId)
+            terminalStore.terminalSessionByTabId.removeValue(forKey: tabId)
             clearPendingTerminalOutput(termId: termId)
             // 通过共享终端存储清理所有与该 termId 相关的追踪状态
             terminalSessionStore.handleTermClosed(termId: termId)
@@ -367,6 +373,13 @@ extension AppState {
                 if let index = tabs.firstIndex(where: { $0.id == tabId }) {
                     tabs[index].terminalSessionId = nil
                     workspaceTabs[globalKey] = tabs
+                    // 驱动共享壳层状态
+                    let parts = globalKey.split(separator: ":", maxSplits: 1).map(String.init)
+                    if parts.count == 2 {
+                        let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+                        let liveTermIds = liveTermIdsForWorkspace(globalKey: globalKey)
+                        feedTerminalShell(.serverTermClosed(termId: termId), context: ctx, liveTermIds: liveTermIds)
+                    }
                     break
                 }
             }
@@ -381,14 +394,20 @@ extension AppState {
         for (globalKey, var tabs) in workspaceTabs {
             if let index = tabs.firstIndex(where: { $0.terminalSessionId == termId }) {
                 let tabId = tabs[index].id
-                terminalSessionByTabId.removeValue(forKey: tabId)
-                staleTerminalTabs.remove(tabId)
+                terminalStore.terminalSessionByTabId.removeValue(forKey: tabId)
                 terminalTabIdBySessionId.removeValue(forKey: termId)
                 clearPendingTerminalOutput(termId: termId)
                 // 通过共享终端存储清理所有与该 termId 相关的追踪状态
                 terminalSessionStore.handleTermClosed(termId: termId)
                 tabs[index].terminalSessionId = nil
                 workspaceTabs[globalKey] = tabs
+                // 驱动共享壳层状态
+                let parts = globalKey.split(separator: ":", maxSplits: 1).map(String.init)
+                if parts.count == 2 {
+                    let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+                    let liveTermIds = liveTermIdsForWorkspace(globalKey: globalKey)
+                    feedTerminalShell(.serverTermClosed(termId: termId), context: ctx, liveTermIds: liveTermIds)
+                }
                 if terminalSinkTabId == tabId {
                     terminalSink?.resetTerminal()
                 }
@@ -400,28 +419,39 @@ extension AppState {
 
     /// Mark all terminal sessions as stale (on disconnect)
     func markAllTerminalSessionsStale() {
-        for tabId in terminalSessionByTabId.keys {
-            staleTerminalTabs.insert(tabId)
-        }
-        terminalSessionByTabId.removeAll()
+        terminalStore.terminalSessionByTabId.removeAll()
         terminalTabIdBySessionId.removeAll()
         // 通过共享终端存储清理断线时的追踪状态
         terminalSessionStore.handleDisconnect()
-        terminalState = .idle
+        // 驱动所有工作区的共享壳层进入 disconnect
+        for key in terminalShellState.workspaceStates.keys {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2 {
+                let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+                feedTerminalShell(.disconnect, context: ctx)
+            }
+        }
     }
 
-    /// 重连后附着当前工作区的 stale 终端会话。
+    /// 重连后附着当前工作区的终端会话。
     ///
     /// 严格按当前选中的 `(project, workspace)` 作用域执行，后台工作区的终端不会被错误恢复。
     /// 这是断线重连后终端恢复的唯一入口；不得在其他路径直接 requestTermAttach。
     func requestTerminalReattach() {
-        guard !staleTerminalTabs.isEmpty else { return }
         // 仅恢复当前选中工作区的终端，防止后台工作区被错误恢复
         guard let currentWorkspace = selectedWorkspaceKey, !currentWorkspace.isEmpty else { return }
         let currentKey = "\(selectedProjectName):\(currentWorkspace)"
         guard let tabs = workspaceTabs[currentKey] else { return }
 
-        for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
+        let needsReattach = tabs.filter { tab in
+            guard tab.kind == .terminal else { return false }
+            guard let sessionId = tab.terminalSessionId, !sessionId.isEmpty else { return false }
+            let phase = terminalSessionStore.lifecyclePhase(for: sessionId)
+            return phase == .resuming || phase == .recovering || phase == .idle
+        }
+        guard !needsReattach.isEmpty else { return }
+
+        for tab in needsReattach {
             guard let sessionId = tab.terminalSessionId, !sessionId.isEmpty else { continue }
             TFLog.app.info(
                 "终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public), workspace=\(currentKey, privacy: .public)"
@@ -458,14 +488,20 @@ extension AppState {
         }
     }
 
-    /// Check if a terminal tab needs respawn
+    /// Check if a terminal tab needs respawn (derived from lifecycle phase)
     func terminalNeedsRespawn(_ tabId: UUID) -> Bool {
-        return staleTerminalTabs.contains(tabId) || terminalSessionByTabId[tabId] == nil
+        guard let termId = terminalStore.terminalSessionByTabId[tabId] else { return true }
+        let phase = terminalSessionStore.lifecyclePhase(for: termId)
+        return phase == .resuming || phase == .recovering || phase == .idle
     }
 
-    /// Request terminal for current workspace (legacy, for status)
+    /// Request terminal for current workspace — 驱动共享壳层进入 connecting
     func requestTerminal() {
-        terminalState = .connecting
+        guard let key = currentGlobalWorkspaceKey else { return }
+        let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        let ctx = SharedTerminalShellContext(projectName: parts[0], workspaceName: parts[1])
+        feedTerminalShell(.createTerminal(command: nil, icon: nil, name: nil), context: ctx)
     }
 
     func ensureTerminalForTab(_ tab: TabModel) {
@@ -476,19 +512,23 @@ extension AppState {
         let project = parts[0]
         let workspace = parts[1]
 
-        if let termId = terminalSessionByTabId[tab.id], !termId.isEmpty {
+        if let termId = terminalStore.terminalSessionByTabId[tab.id], !termId.isEmpty {
             terminalTabIdBySessionId[termId] = tab.id
             // 通过共享终端存储记录 attach 请求时间
             terminalSessionStore.recordAttachRequest(termId: termId)
             wsClient.requestTermAttach(termId: termId)
-            requestTerminal()
+            // 驱动共享壳层
+            let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
+            feedTerminalShell(.attachTerminal(termId: termId), context: ctx)
             return
         }
 
         pendingSpawnTabs.insert(tab.id)
-        requestTerminal()
+        // 驱动共享壳层
+        let ctx = SharedTerminalShellContext(projectName: project, workspaceName: workspace)
         let icon = tab.commandIcon
         let name = (tab.kind == .terminal && !tab.title.isEmpty && tab.title != "Terminal") ? tab.title : nil
+        feedTerminalShell(.createTerminal(command: nil, icon: icon, name: name), context: ctx)
         wsClient.requestTermCreate(
             project: project,
             workspace: workspace,
@@ -553,24 +593,19 @@ extension AppState {
     #endif
 
     private func bindTermToTab(tabId: UUID, termId: String, globalKey: String) {
-        if let oldTermId = terminalSessionByTabId[tabId], oldTermId != termId {
+        if let oldTermId = terminalStore.terminalSessionByTabId[tabId], oldTermId != termId {
             terminalTabIdBySessionId.removeValue(forKey: oldTermId)
             // 通过共享终端存储清理旧 termId 的追踪状态
             terminalSessionStore.handleTermClosed(termId: oldTermId)
         }
         if let oldTabId = terminalTabIdBySessionId[termId], oldTabId != tabId {
-            terminalSessionByTabId.removeValue(forKey: oldTabId)
-            staleTerminalTabs.insert(oldTabId)
+            terminalStore.terminalSessionByTabId.removeValue(forKey: oldTabId)
         }
-        terminalSessionByTabId[tabId] = termId
+        terminalStore.terminalSessionByTabId[tabId] = termId
         terminalTabIdBySessionId[termId] = tabId
-        staleTerminalTabs.remove(tabId)
-        pendingSpawnTabs.remove(tabId)
+        terminalStore.pendingSpawnTabs.remove(tabId)
         // 通过共享终端存储记录工作区首次打开时间
         terminalSessionStore.recordWorkspaceOpenTimeIfNeeded(key: globalKey)
-        if workspaceTerminalOpenTime[globalKey] == nil {
-            workspaceTerminalOpenTime[globalKey] = Date()
-        }
         if var tabs = workspaceTabs[globalKey],
            let index = tabs.firstIndex(where: { $0.id == tabId }) {
             tabs[index].terminalSessionId = termId
@@ -717,5 +752,35 @@ extension AppState {
             workspaceTabs[globalKey] = tabs
             return
         }
+    }
+
+    // MARK: - 共享终端壳层驱动辅助
+
+    /// 向共享终端壳层投递输入并应用副作用。
+    /// macOS 平台层只消费 effect descriptor，不在此方法外直接操作壳层状态。
+    func feedTerminalShell(
+        _ input: SharedTerminalShellInput,
+        context: SharedTerminalShellContext,
+        liveTermIds: [String]? = nil
+    ) {
+        let key = context.globalKey
+        let current = terminalShellState.state(for: key)
+        let live = liveTermIds ?? self.liveTermIdsForWorkspace(globalKey: key)
+        let (next, _) = SharedTerminalShellDriver.reduce(
+            state: current,
+            input: input,
+            context: context,
+            liveTermIds: live
+        )
+        terminalShellState.workspaceStates[key] = next
+    }
+
+    /// 当前工作区所有活跃终端 ID（从 tab 映射获取）
+    func liveTermIdsForWorkspace(globalKey: String) -> [String] {
+        guard let tabs = workspaceTabs[globalKey] else { return [] }
+        return tabs.compactMap { tab -> String? in
+            guard tab.kind == .terminal else { return nil }
+            return terminalStore.terminalSessionByTabId[tab.id] ?? tab.terminalSessionId
+        }.filter { !$0.isEmpty }
     }
 }

@@ -28,6 +28,7 @@
 		SHR02015 /* SharedWorkspaceStateDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01015 /* SharedWorkspaceStateDriver.swift */; };
 		SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01016 /* CoordinatorSnapshotApplier.swift */; };
 		SHR02017 /* EvolutionControlSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01017 /* EvolutionControlSemantics.swift */; };
+		SHR02018 /* SharedTerminalShellDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = SHR01018 /* SharedTerminalShellDriver.swift */; };
 		CPWD0001 /* CrossPlatformWorkspaceStateDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */; };
 		WSSS0001 /* WorkspaceSharedStateSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */; };
 		CCST0001 /* CoordinatorStateCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCST0011 /* CoordinatorStateCacheTests.swift */; };
@@ -183,6 +184,7 @@ TSST001 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileR
 TSST002 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSST011 /* TerminalSessionStore.swift */; };
 TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSLT011 /* TerminalSessionSemanticLayerTests.swift */; };
 TSST003 /* TerminalSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TSST013 /* TerminalSessionStoreTests.swift */; };
+STSD003 /* SharedTerminalShellDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STSD013 /* SharedTerminalShellDriverTests.swift */; };
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TWIT011 /* TerminalWorkspaceIsolationTests.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
 		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
@@ -364,6 +366,7 @@ MOB00063 /* GitConflictWizardSheet.swift in Sources */ = {isa = PBXBuildFile; fi
 		SHR01015 /* SharedWorkspaceStateDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedWorkspaceStateDriver.swift; sourceTree = "<group>"; };
 		SHR01016 /* CoordinatorSnapshotApplier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CoordinatorSnapshotApplier.swift; sourceTree = "<group>"; };
 		SHR01017 /* EvolutionControlSemantics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EvolutionControlSemantics.swift; sourceTree = "<group>"; };
+		SHR01018 /* SharedTerminalShellDriver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedTerminalShellDriver.swift; sourceTree = "<group>"; };
 		CPWD0011 /* CrossPlatformWorkspaceStateDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformWorkspaceStateDriverTests.swift; sourceTree = "<group>"; };
 		WSSS0011 /* WorkspaceSharedStateSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSharedStateSemanticsTests.swift; sourceTree = "<group>"; };
 		CCST0011 /* CoordinatorStateCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorStateCacheTests.swift; sourceTree = "<group>"; };
@@ -531,6 +534,7 @@ TSS0011 /* TerminalSessionSemantics.swift */ = {isa = PBXFileReference; lastKnow
 TSST011 /* TerminalSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStore.swift; sourceTree = "<group>"; };
 TSLT011 /* TerminalSessionSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionSemanticLayerTests.swift; sourceTree = "<group>"; };
 TSST013 /* TerminalSessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStoreTests.swift; sourceTree = "<group>"; };
+STSD013 /* SharedTerminalShellDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTerminalShellDriverTests.swift; sourceTree = "<group>"; };
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWorkspaceIsolationTests.swift; sourceTree = "<group>"; };
 		CSEM0011 /* ConnectionSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemantics.swift; sourceTree = "<group>"; };
 		CSEM0013 /* ConnectionSemanticLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSemanticLayerTests.swift; sourceTree = "<group>"; };
@@ -679,6 +683,7 @@ TWIT011 /* TerminalWorkspaceIsolationTests.swift */ = {isa = PBXFileReference; l
 				SHR01015 /* SharedWorkspaceStateDriver.swift */,
 				SHR01016 /* CoordinatorSnapshotApplier.swift */,
 				SHR01017 /* EvolutionControlSemantics.swift */,
+				SHR01018 /* SharedTerminalShellDriver.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -913,6 +918,7 @@ WTS0013 /* WorkspaceTaskSemanticLayerTests.swift */,
 WTS0014 /* WorkspaceTaskQueueSemanticsTests.swift */,
 TSLT011 /* TerminalSessionSemanticLayerTests.swift */,
 TSST013 /* TerminalSessionStoreTests.swift */,
+STSD013 /* SharedTerminalShellDriverTests.swift */,
 TWIT011 /* TerminalWorkspaceIsolationTests.swift */,
 					WKS10011 /* WorkspaceKeySemanticsTests.swift */,
 					WCMT0011 /* WorkspaceCacheMetricsSemanticsTests.swift */,
@@ -1504,6 +1510,7 @@ CSEM0003 /* ConnectionSemanticLayerTests.swift in Sources */,
 WTS0006 /* WorkspaceTaskQueueSemanticsTests.swift in Sources */,
 TSLT001 /* TerminalSessionSemanticLayerTests.swift in Sources */,
 TSST003 /* TerminalSessionStoreTests.swift in Sources */,
+STSD003 /* SharedTerminalShellDriverTests.swift in Sources */,
 TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 					WKS10001 /* WorkspaceKeySemanticsTests.swift in Sources */,
 					WCMT0001 /* WorkspaceCacheMetricsSemanticsTests.swift in Sources */,
@@ -1573,6 +1580,7 @@ TWIT001 /* TerminalWorkspaceIsolationTests.swift in Sources */,
 				SHR02015 /* SharedWorkspaceStateDriver.swift in Sources */,
 				SHR02016 /* CoordinatorSnapshotApplier.swift in Sources */,
 				SHR02017 /* EvolutionControlSemantics.swift in Sources */,
+				SHR02018 /* SharedTerminalShellDriver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

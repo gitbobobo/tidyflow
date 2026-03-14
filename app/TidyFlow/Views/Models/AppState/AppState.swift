@@ -178,6 +178,10 @@ class AppState: ObservableObject {
     // 共享终端会话存储（按 project/workspace/termId 隔离，macOS/iOS 双端通用）
     let terminalSessionStore = TerminalSessionStore()
 
+    /// 共享终端壳层状态：按工作区隔离的终端选择、请求相位和副作用。
+    /// 所有壳层状态迁移通过 `feedTerminalShell(_:context:)` 触发。
+    var terminalShellState = SharedTerminalShellState()
+
     // 编辑器领域状态（独立 ObservableObject，减少编辑器状态变化对全局视图的影响）
     let editorStore = EditorStore()
 
@@ -606,10 +610,25 @@ class AppState: ObservableObject {
         set { editorStore.lastDiffNavigationContext = newValue }
     }
 
-    // 向后兼容：终端状态代理到 terminalStore
+    // 向后兼容：终端状态代理到 terminalStore 和共享壳层
+    /// 全局终端连接状态：从共享壳层当前工作区相位派生。
     var terminalState: TerminalState {
-        get { terminalStore.terminalState }
-        set { terminalStore.terminalState = newValue }
+        get {
+            guard let key = currentGlobalWorkspaceKey else { return .idle }
+            let ws = terminalShellState.state(for: key)
+            switch ws.phase {
+            case .idle: return .idle
+            case .connecting: return .connecting
+            case .ready:
+                if let termId = ws.selection.termId { return .ready(sessionId: termId) }
+                return .idle
+            case .error:
+                return .error(message: ws.lastError ?? "unknown")
+            }
+        }
+        set {
+            // 向后兼容写入：新代码应通过 feedTerminalShell 操作壳层
+        }
     }
     var terminalSessionByTabId: [UUID: String] {
         get { terminalStore.terminalSessionByTabId }
@@ -617,13 +636,26 @@ class AppState: ObservableObject {
     }
     /// SessionId → Tab 映射，避免终端输出路径每次线性扫描全部 Tab。
     var terminalTabIdBySessionId: [String: UUID] = [:]
+    /// 断连后标记为 stale 的终端 tab：从 TerminalSessionStore 生命周期派生。
     var staleTerminalTabs: Set<UUID> {
-        get { terminalStore.staleTerminalTabs }
-        set { terminalStore.staleTerminalTabs = newValue }
+        get {
+            var result = Set<UUID>()
+            for (tabId, termId) in terminalStore.terminalSessionByTabId {
+                let phase = terminalSessionStore.lifecyclePhase(for: termId)
+                if phase == .resuming || phase == .recovering || phase == .idle {
+                    result.insert(tabId)
+                }
+            }
+            return result
+        }
+        set {
+            // 向后兼容写入忽略：stale 由生命周期派生
+        }
     }
+    /// 工作区首次打开终端时间：代理到 TerminalSessionStore（唯一真源）。
     var workspaceTerminalOpenTime: [String: Date] {
-        get { terminalStore.workspaceTerminalOpenTime }
-        set { terminalStore.workspaceTerminalOpenTime = newValue }
+        get { terminalSessionStore.workspaceOpenTime }
+        set { terminalSessionStore.workspaceOpenTime = newValue }
     }
     var pendingSpawnTabs: Set<UUID> {
         get { terminalStore.pendingSpawnTabs }
