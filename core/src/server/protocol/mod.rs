@@ -5,6 +5,7 @@ pub mod action_table;
 pub mod ai;
 pub mod domain_table;
 pub mod file;
+pub mod formatting;
 pub mod git;
 pub mod health;
 pub mod node;
@@ -402,6 +403,9 @@ pub enum ClientMessage {
         /// 快捷键绑定配置；为 None 时保持服务端现值不变。
         #[serde(default)]
         keybindings: Option<Vec<KeybindingConfigInfo>>,
+        /// 语言级格式化配置；为 None 时保持服务端现值不变。
+        #[serde(default)]
+        editor_formatting_configs: Option<Vec<formatting::EditorFormattingLanguageConfig>>,
     },
 
     NodeUpdateProfile {
@@ -525,6 +529,26 @@ pub enum ClientMessage {
     ClipboardImageUpload {
         #[serde(with = "serde_bytes")]
         image_data: Vec<u8>,
+    },
+
+    // v1.43: 编辑器格式化
+    #[serde(rename = "file_format_capabilities_query")]
+    FileFormatCapabilitiesQuery {
+        project: String,
+        workspace: String,
+        path: String,
+    },
+    #[serde(rename = "file_format_execute")]
+    FileFormatExecute {
+        project: String,
+        workspace: String,
+        path: String,
+        scope: formatting::EditorFormatScope,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_start: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_end: Option<u32>,
     },
 
     // vNext: AI Chat（单 serve + x-opencode-directory 路由，结构化 message/part 流）
@@ -1248,6 +1272,8 @@ pub enum ServerMessage {
         workspace_todos: std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         keybindings: Vec<KeybindingConfigInfo>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        editor_formatting_configs: Vec<formatting::EditorFormattingLanguageConfig>,
     },
     ClientSettingsSaved {
         ok: bool,
@@ -1476,6 +1502,35 @@ pub enum ServerMessage {
     // v1.39: 剪贴板图片写入结果
     ClipboardImageSet {
         ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
+    // v1.43: 编辑器格式化结果
+    #[serde(rename = "file_format_capabilities_result")]
+    FileFormatCapabilitiesResult {
+        project: String,
+        workspace: String,
+        path: String,
+        language: String,
+        capabilities: Vec<formatting::EditorFormattingCapability>,
+    },
+    #[serde(rename = "file_format_result")]
+    FileFormatResult {
+        project: String,
+        workspace: String,
+        path: String,
+        formatted_text: String,
+        formatter_id: String,
+        scope: formatting::EditorFormatScope,
+        changed: bool,
+    },
+    #[serde(rename = "file_format_error")]
+    FileFormatError {
+        project: String,
+        workspace: String,
+        path: String,
+        error_code: formatting::EditorFormattingErrorCode,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },

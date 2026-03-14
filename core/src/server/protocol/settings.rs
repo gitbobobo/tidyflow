@@ -26,6 +26,8 @@ pub enum SettingsRequest {
         workspace_todos: Option<std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>>,
         #[serde(default)]
         keybindings: Option<Vec<super::KeybindingConfigInfo>>,
+        #[serde(default)]
+        editor_formatting_configs: Option<Vec<super::formatting::EditorFormattingLanguageConfig>>,
     },
 }
 
@@ -52,6 +54,8 @@ pub enum SettingsResponse {
         workspace_todos: std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         keybindings: Vec<super::KeybindingConfigInfo>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        editor_formatting_configs: Vec<super::formatting::EditorFormattingLanguageConfig>,
     },
     ClientSettingsSaved {
         ok: bool,

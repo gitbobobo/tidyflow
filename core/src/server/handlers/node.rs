@@ -35,6 +35,7 @@ pub async fn handle_node_message(
                     evolution_default_profiles: None,
                     workspace_todos: None,
                     keybindings: None,
+                    editor_formatting_configs: None,
                 },
             )
             .await;

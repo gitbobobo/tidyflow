@@ -468,6 +468,116 @@ idle → entering → active ⇄ resuming
 3. macOS 与 iOS 客户端共享同一组 `FileWorkspacePhase` 枚举定义（`TidyFlowShared`）。
 4. 文件操作的缓存失效、watcher 订阅/退订、错误恢复均通过相位迁移驱动，不在视图层自行拼装状态。
 
+## 编辑器格式化（v1.43）
+
+### 概述
+
+编辑器格式化功能允许客户端对指定文件触发代码格式化操作。格式化动作归属 `file` 域，
+使用 `file_format_` 前缀路由（由现有 `file_` 前缀规则覆盖）。
+协议类型定义：`core/src/server/protocol/formatting.rs`。
+
+### 作用域（`EditorFormatScope`）
+
+| 值 | 含义 |
+|---|---|
+| `document` | 整文档格式化 |
+| `selection` | 选区格式化 |
+
+### 错误码（`EditorFormattingErrorCode`）
+
+| 错误码 | 含义 |
+|---|---|
+| `unsupported_language` | 语言无对应格式化器 |
+| `tool_unavailable` | 格式化工具未安装或不在 PATH |
+| `unsupported_scope` | 当前格式化器不支持请求的作用域 |
+| `workspace_unavailable` | 工作区不可用（项目/工作区不存在） |
+| `execution_failed` | 格式化器执行失败（exit code 非零或超时） |
+| `invalid_request` | 请求参数无效 |
+
+### WS 动作
+
+#### `file_format_capabilities_query`（客户端 → Core）
+
+查询指定文件/语言可用的格式化器能力。
+
+| 字段 | 类型 | 必须 | 说明 |
+|---|---|---|---|
+| `project` | String | ✓ | 项目名称 |
+| `workspace` | String | ✓ | 工作区名称 |
+| `path` | String | ✓ | 文件相对路径 |
+
+响应：`file_format_capabilities_result`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `project` | String | 项目名称 |
+| `workspace` | String | 工作区名称 |
+| `path` | String | 文件路径 |
+| `language` | String | 检测到的语言标识 |
+| `capabilities` | `[EditorFormattingCapability]` | 可用格式化器列表 |
+
+`EditorFormattingCapability` 结构：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `formatter_id` | String | 格式化器唯一标识（如 `swift-format`、`rustfmt`） |
+| `language` | String | 对应语言标识 |
+| `supported_scopes` | `[EditorFormatScope]` | 支持的作用域列表 |
+
+#### `file_format_execute`（客户端 → Core）
+
+执行格式化。
+
+| 字段 | 类型 | 必须 | 说明 |
+|---|---|---|---|
+| `project` | String | ✓ | 项目名称 |
+| `workspace` | String | ✓ | 工作区名称 |
+| `path` | String | ✓ | 文件相对路径 |
+| `scope` | EditorFormatScope | ✓ | 格式化作用域 |
+| `text` | String | ✓ | 待格式化文本 |
+| `selection_start` | u32 | 条件 | 选区起始偏移（scope=selection 时必须） |
+| `selection_end` | u32 | 条件 | 选区结束偏移（scope=selection 时必须） |
+
+成功响应：`file_format_result`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `project` | String | 项目名称 |
+| `workspace` | String | 工作区名称 |
+| `path` | String | 文件路径 |
+| `formatted_text` | String | 格式化后的完整文本 |
+| `formatter_id` | String | 使用的格式化器 |
+| `scope` | EditorFormatScope | 实际使用的作用域 |
+| `changed` | bool | 文本是否有变化 |
+
+失败响应：`file_format_error`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `project` | String | 项目名称 |
+| `workspace` | String | 工作区名称 |
+| `path` | String | 文件路径 |
+| `error_code` | EditorFormattingErrorCode | 错误码 |
+| `message` | String? | 可选的错误详情 |
+
+### 语言级格式化配置（`EditorFormattingLanguageConfig`）
+
+通过 `save_client_settings` 持久化，字段 `editor_formatting_configs` 为可选数组。
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `language` | String | — | 语言标识 |
+| `preferred_formatter_id` | String? | null | 首选格式化器 ID |
+| `format_on_save` | bool | false | 保存时自动格式化 |
+| `allow_full_document_fallback` | bool | false | 选区不支持时是否回退整文档 |
+| `extra_args` | `[String]` | [] | 格式化器额外参数 |
+
+### 多工作区隔离约束
+
+- 格式化请求和结果携带 `project` / `workspace` 字段作为归属标识。
+- 来自其他工作区的格式化结果不允许覆盖当前激活工作区状态。
+- `editor_formatting_configs` 为全局设置，不按工作区隔离。
+
 ## 共享 AI 会话语义层（客户端实现约束）
 
 以下约束描述客户端如何统一处理 AI 会话标识与消息流，macOS 与 iOS 必须共享相同规则，不允许各自维护独立推导逻辑。

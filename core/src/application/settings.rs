@@ -3,7 +3,10 @@ use crate::server::protocol::{
     ai::ModelSelection, EvolutionStageProfileInfo, KeybindingConfigInfo, ServerMessage,
     WorkspaceTodoInfo,
 };
-use crate::workspace::state::{EvolutionStageProfile, KeybindingConfig, WorkspaceTodoItem};
+use crate::workspace::state::{
+    EvolutionStageProfile, KeybindingConfig, WorkspaceTodoItem,
+    EditorFormattingLanguageConfig as StateFormattingConfig,
+};
 use crate::workspace::state_store::StateStore;
 use chrono::Utc;
 
@@ -21,6 +24,9 @@ pub struct SaveClientSettingsParams {
     pub workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
     /// None: 保持现值；Some: 覆盖全部快捷键绑定。
     pub keybindings: Option<Vec<KeybindingConfigInfo>>,
+    /// None: 保持现值；Some: 覆盖语言级格式化配置。
+    pub editor_formatting_configs:
+        Option<Vec<crate::server::protocol::formatting::EditorFormattingLanguageConfig>>,
 }
 
 /// 读取客户端设置并转换为协议响应消息。
@@ -62,6 +68,9 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         evolution_agent_profiles,
         workspace_todos,
         keybindings,
+        editor_formatting_configs: to_protocol_formatting_configs(
+            &state.client_settings.editor_formatting_configs,
+        ),
     }
 }
 
@@ -108,6 +117,10 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
                 context: kb.context,
             })
             .collect();
+    }
+    if let Some(configs) = params.editor_formatting_configs {
+        state.client_settings.editor_formatting_configs =
+            from_protocol_formatting_configs(configs);
     }
 }
 
@@ -237,6 +250,36 @@ fn from_protocol_todos(input: Vec<WorkspaceTodoInfo>) -> Vec<WorkspaceTodoItem> 
         .collect()
 }
 
+fn to_protocol_formatting_configs(
+    input: &[StateFormattingConfig],
+) -> Vec<crate::server::protocol::formatting::EditorFormattingLanguageConfig> {
+    input
+        .iter()
+        .map(|c| crate::server::protocol::formatting::EditorFormattingLanguageConfig {
+            language: c.language.clone(),
+            preferred_formatter_id: c.preferred_formatter_id.clone(),
+            format_on_save: c.format_on_save,
+            allow_full_document_fallback: c.allow_full_document_fallback,
+            extra_args: c.extra_args.clone(),
+        })
+        .collect()
+}
+
+fn from_protocol_formatting_configs(
+    input: Vec<crate::server::protocol::formatting::EditorFormattingLanguageConfig>,
+) -> Vec<StateFormattingConfig> {
+    input
+        .into_iter()
+        .map(|c| StateFormattingConfig {
+            language: c.language,
+            preferred_formatter_id: c.preferred_formatter_id,
+            format_on_save: c.format_on_save,
+            allow_full_document_fallback: c.allow_full_document_fallback,
+            extra_args: c.extra_args,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +300,7 @@ mod tests {
             evolution_default_profiles: None,
             workspace_todos: None,
             keybindings: None,
+            editor_formatting_configs: None,
         }
     }
 

@@ -88,6 +88,17 @@ domains:
     required_boundary_fields:
       - project
       - workspace
+    # v1.43: 编辑器格式化
+    # file_format_capabilities_query — 查询指定文件/语言的格式化能力
+    # file_format_execute — 执行格式化
+    # file_format_capabilities_result / file_format_result / file_format_error — 格式化响应
+    ws_format_actions:
+      - file_format_capabilities_query
+      - file_format_execute
+    ws_format_events:
+      - file_format_capabilities_result
+      - file_format_result
+      - file_format_error
   - id: git
     action_rule: prefix("git_") | one_of("cancel_ai_task")
     http_read_endpoints:

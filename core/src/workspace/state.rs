@@ -141,6 +141,25 @@ pub struct WorkflowTemplate {
     pub builtin: bool,
 }
 
+/// 语言级格式化配置（持久化用）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EditorFormattingLanguageConfig {
+    /// 语言标识
+    pub language: String,
+    /// 首选格式化器 ID（为空时使用默认）
+    #[serde(default)]
+    pub preferred_formatter_id: Option<String>,
+    /// 保存时自动格式化
+    #[serde(default)]
+    pub format_on_save: bool,
+    /// 允许整文档回退
+    #[serde(default)]
+    pub allow_full_document_fallback: bool,
+    /// 格式化器额外参数
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
@@ -177,6 +196,9 @@ pub struct ClientSettings {
     /// 工作流模板
     #[serde(default)]
     pub templates: Vec<WorkflowTemplate>,
+    /// 语言级格式化配置
+    #[serde(default)]
+    pub editor_formatting_configs: Vec<EditorFormattingLanguageConfig>,
 }
 
 fn default_evolution_ai_tool() -> String {

@@ -55,3 +55,6 @@ prefix,evolution,evo_
 prefix,git,git_conflict_
 # v1.41: 系统健康诊断与自修复域
 prefix,health,health_
+# v1.43: 编辑器格式化（由 file_ 前缀规则覆盖）
+# file_format_capabilities_query → file domain
+# file_format_execute → file domain

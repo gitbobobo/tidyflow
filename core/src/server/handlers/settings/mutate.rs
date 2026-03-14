@@ -25,6 +25,7 @@ pub async fn handle_mutate_message(
             evolution_default_profiles,
             workspace_todos,
             keybindings,
+            editor_formatting_configs,
         } => {
             info!("SaveClientSettings request");
             save_client_settings(
@@ -39,6 +40,7 @@ pub async fn handle_mutate_message(
                     evolution_default_profiles: evolution_default_profiles.clone(),
                     workspace_todos: workspace_todos.clone(),
                     keybindings: keybindings.clone(),
+                    editor_formatting_configs: editor_formatting_configs.clone(),
                 },
             )
             .await;
