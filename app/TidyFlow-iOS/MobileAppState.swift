@@ -4759,6 +4759,8 @@ final class MobileAppState: ObservableObject {
     var onEditorUndo: ((EditorDocumentKey) -> Void)?
     /// 编辑器重做回调（documentKey）——由 MobileEditorView 注册
     var onEditorRedo: ((EditorDocumentKey) -> Void)?
+    /// 格式化结果已应用回调——由 MobileEditorView 注册，在文本变化后刷新视图
+    var onEditorFormatApplied: ((EditorDocumentKey) -> Void)?
 
     /// 编辑器未保存确认弹窗展示控制
     @Published var showEditorUnsavedAlert: Bool = false
@@ -4834,6 +4836,28 @@ final class MobileAppState: ObservableObject {
         onEditorRedo?(documentKey)
     }
 
+    /// 格式化指定文档（构建请求并发送 WS）
+    func formatDocument(documentKey: EditorDocumentKey) {
+        let globalKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
+        guard let session = getEditorDocument(globalWorkspaceKey: globalKey, path: documentKey.path),
+              session.loadStatus == .ready,
+              !session.formattingState.isFormatting else { return }
+
+        // 构建请求上下文
+        let request = EditorFormattingRequestBuilder.buildDocumentRequest(session: session)
+
+        // 标记格式化开始
+        if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+           var doc = workspaceDocs[documentKey.path] {
+            doc.markFormattingStarted()
+            workspaceDocs[documentKey.path] = doc
+            editorDocumentsByWorkspace[globalKey] = workspaceDocs
+        }
+
+        // 发送 WS 请求
+        wsClient.requestFileFormatExecute(context: request)
+    }
+
     // MARK: - 共享编辑历史方法
 
     /// 记录一次编辑命令到指定文档的共享历史栈
@@ -4903,7 +4927,7 @@ final class MobileAppState: ObservableObject {
     }
 
     /// 更新指定文档的撤销/重做能力状态
-    private func updateEditorUndoRedoState(canUndo: Bool, canRedo: Bool, documentKey: EditorDocumentKey) {
+    func updateEditorUndoRedoState(canUndo: Bool, canRedo: Bool, documentKey: EditorDocumentKey) {
         let wsKey = globalWorkspaceKey(project: documentKey.project, workspace: documentKey.workspace)
         guard var workspaceDocs = editorDocumentsByWorkspace[wsKey],
               var session = workspaceDocs[documentKey.path] else { return }

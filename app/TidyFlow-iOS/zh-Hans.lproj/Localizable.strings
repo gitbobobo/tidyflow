@@ -60,6 +60,13 @@
 "editor.unsaved.cancel" = "取消";
 "editor.unsaved.message" = "文件「%@」有未保存的更改，是否保存？";
 
+/* 编辑器 - 格式化 */
+"editor.format" = "格式化";
+"editor.format.unsupported" = "当前语言不支持格式化";
+"editor.format.inProgress" = "正在格式化...";
+"editor.format.success" = "格式化完成";
+"editor.format.error" = "格式化失败";
+
 /* 资源管理器 - 无障碍 */
 "explorer.a11y.openEditor" = "打开文件进行编辑";
 "explorer.a11y.toggleDir" = "展开或收起文件夹";

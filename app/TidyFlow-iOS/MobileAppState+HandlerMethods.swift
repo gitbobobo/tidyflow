@@ -331,6 +331,63 @@ extension MobileAppState {
         }
     }
 
+    // MARK: - File (格式化)
+
+    /// 处理 Core 返回的格式化能力查询结果
+    func handleFormatCapabilitiesResult(_ result: FileFormatCapabilitiesResult) {
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        guard var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+              var session = workspaceDocs[result.path] else { return }
+        session.updateFormattingCapabilities(result.capabilities)
+        workspaceDocs[result.path] = session
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+    }
+
+    /// 处理 Core 返回的格式化结果
+    func handleFormatResult(_ result: FileFormatResult) {
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        guard var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+              var session = workspaceDocs[result.path] else { return }
+
+        let docKey = session.key
+        let formattingResult = result.toFormattingResult()
+        let history = editorHistoryStateByDocument[docKey] ?? .empty
+
+        if let applyResult = EditorFormattingResultApplier.applyFormatResult(
+            result: formattingResult,
+            currentText: session.content,
+            currentSelections: session.selectionSet,
+            history: history
+        ) {
+            session.content = applyResult.text
+            session.selectionSet = applyResult.selections
+            session.isDirty = EditorDocumentSession.contentHash(applyResult.text) != session.baselineContentHash
+            session.canUndo = applyResult.canUndo
+            session.canRedo = applyResult.canRedo
+            editorHistoryStateByDocument[docKey] = applyResult.history
+            updateEditorUndoRedoState(canUndo: applyResult.canUndo, canRedo: applyResult.canRedo, documentKey: docKey)
+        }
+
+        session.markFormattingCompleted()
+        workspaceDocs[result.path] = session
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        // 通知编辑器视图刷新（格式化结果会改变文本，需要重新渲染）
+        onEditorFormatApplied?(docKey)
+    }
+
+    /// 处理 Core 返回的格式化错误
+    func handleFormatError(_ result: FileFormatErrorResult) {
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        guard var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+              var session = workspaceDocs[result.path] else { return }
+
+        let formattingError = result.toFormattingError()
+        session.markFormattingFailed(error: formattingError)
+        workspaceDocs[result.path] = session
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+    }
+
     // MARK: - Terminal
 
     func handleTerminalOutput(termId: String?, bytes: [UInt8]) {

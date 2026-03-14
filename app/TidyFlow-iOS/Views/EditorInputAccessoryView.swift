@@ -17,16 +17,23 @@ final class EditorInputAccessoryView: UIView {
     var onAddNextMatchSelection: (() -> Void)?
     /// 清空附加选区（回到单光标）
     var onClearAdditionalSelections: (() -> Void)?
+    /// 格式化当前文档
+    var onFormat: (() -> Void)?
 
     /// 当前撤销/重做是否可用（由外部更新，驱动按钮禁用态）
     var canUndo: Bool = false { didSet { updateButtonStates() } }
     var canRedo: Bool = false { didSet { updateButtonStates() } }
     /// 当前是否有补全候选（控制补全按钮高亮）
     var hasAutocompleteCandidates: Bool = false { didSet { updateButtonStates() } }
+    /// 当前文档是否支持格式化（控制格式化按钮可用态）
+    var canFormat: Bool = false { didSet { updateButtonStates() } }
+    /// 是否正在格式化（控制格式化按钮禁用态）
+    var isFormatting: Bool = false { didSet { updateButtonStates() } }
 
     private var undoButton: UIButton!
     private var redoButton: UIButton!
     private var autocompleteButton: UIButton!
+    private var formatButton: UIButton!
 
     override init(frame: CGRect) {
         super.init(frame: CGRect(x: 0, y: 0, width: frame.width, height: 44))
@@ -82,6 +89,7 @@ final class EditorInputAccessoryView: UIView {
         let saveBtn = makeButton(systemImage: "square.and.arrow.down", action: #selector(saveTapped))
         undoButton = makeButton(systemImage: "arrow.uturn.backward", action: #selector(undoTapped))
         redoButton = makeButton(systemImage: "arrow.uturn.forward", action: #selector(redoTapped))
+        formatButton = makeButton(systemImage: "wand.and.stars", action: #selector(formatTapped))
         autocompleteButton = makeButton(systemImage: "text.badge.star", action: #selector(autocompleteTapped))
         let findBtn = makeButton(systemImage: "magnifyingglass", action: #selector(findTapped))
         let prevBtn = makeButton(systemImage: "chevron.up", action: #selector(findPreviousTapped))
@@ -101,7 +109,7 @@ final class EditorInputAccessoryView: UIView {
         separator2.widthAnchor.constraint(equalToConstant: 1).isActive = true
         separator2.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
-        for btn in [saveBtn, undoButton!, redoButton!, separator, autocompleteButton!, separator2, findBtn, prevBtn, nextBtn] {
+        for btn in [saveBtn, undoButton!, redoButton!, separator, formatButton!, autocompleteButton!, separator2, findBtn, prevBtn, nextBtn] {
             stack.addArrangedSubview(btn)
         }
 
@@ -126,11 +134,15 @@ final class EditorInputAccessoryView: UIView {
         redoButton?.isEnabled = canRedo
         redoButton?.alpha = canRedo ? 1.0 : 0.3
         autocompleteButton?.tintColor = hasAutocompleteCandidates ? .systemBlue : .label
+        let formatEnabled = canFormat && !isFormatting
+        formatButton?.isEnabled = formatEnabled
+        formatButton?.alpha = formatEnabled ? 1.0 : 0.3
     }
 
     @objc private func saveTapped() { onSave?() }
     @objc private func undoTapped() { onUndo?() }
     @objc private func redoTapped() { onRedo?() }
+    @objc private func formatTapped() { onFormat?() }
     @objc private func autocompleteTapped() { onAutocomplete?() }
     @objc private func findTapped() { onToggleFind?() }
     @objc private func findPreviousTapped() { onFindPrevious?() }

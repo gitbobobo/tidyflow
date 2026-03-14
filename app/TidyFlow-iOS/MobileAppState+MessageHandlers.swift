@@ -82,6 +82,15 @@ final class MobileAppStateFileMessageHandlerAdapter: WeakTargetMessageAdapter<Mo
             state.setFileWorkspacePhase(.idle, for: key)
         }
     }
+    func handleFileFormatCapabilitiesResult(_ result: FileFormatCapabilitiesResult) {
+        dispatchToTarget { $0.handleFormatCapabilitiesResult(result) }
+    }
+    func handleFileFormatResult(_ result: FileFormatResult) {
+        dispatchToTarget { $0.handleFormatResult(result) }
+    }
+    func handleFileFormatError(_ result: FileFormatErrorResult) {
+        dispatchToTarget { $0.handleFormatError(result) }
+    }
 }
 
 final class MobileAppStateTerminalMessageHandlerAdapter: WeakTargetMessageAdapter<MobileAppState>, TerminalMessageHandler {

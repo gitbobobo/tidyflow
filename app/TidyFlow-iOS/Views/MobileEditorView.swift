@@ -649,9 +649,18 @@ class EditorAutocompleteTextView: UITextView {
     var onAddNextMatchSelection: (() -> Void)?
     /// 多选区命令回调：清空附加选区
     var onClearAdditionalSelections: (() -> Void)?
+    /// 格式化文档回调（Cmd+Shift+I）
+    var onFormatDocument: (() -> Void)?
 
     override var keyCommands: [UIKeyCommand]? {
         var commands = super.keyCommands ?? []
+        // Cmd+Shift+I: 格式化文档
+        commands.append(UIKeyCommand(
+            input: "i",
+            modifierFlags: [.command, .shift],
+            action: #selector(handleFormatKey(_:)),
+            discoverabilityTitle: NSLocalizedString("editor.format", comment: "")
+        ))
         // Ctrl-Space 手动触发
         commands.append(UIKeyCommand(
             input: " ",
@@ -723,6 +732,10 @@ class EditorAutocompleteTextView: UITextView {
     @objc private func handleClearAdditionalSelections() {
         onClearAdditionalSelections?()
     }
+
+    @objc private func handleFormatKey(_ command: UIKeyCommand) {
+        onFormatDocument?()
+    }
 }
 
 struct EditorTextViewWrapper: UIViewRepresentable {
@@ -750,6 +763,14 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         textView.keyboardDismissMode = .interactive
         textView.alwaysBounceVertical = true
         textView.backgroundColor = .systemBackground
+
+        // 硬件键盘格式化快捷键（Cmd+Shift+I）
+        textView.onFormatDocument = { [weak appState] in
+            guard let appState = appState else { return }
+            DispatchQueue.main.async {
+                appState.formatDocument(documentKey: self.documentKey)
+            }
+        }
 
         // 硬件键盘补全快捷键处理
         textView.onAutocompleteKeyDown = { [weak textView] command in
@@ -917,6 +938,12 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             guard let textView = textView else { return }
             context.coordinator.triggerManualAutocomplete(textView: textView)
         }
+        accessory.onFormat = { [weak appState] in
+            guard let appState = appState else { return }
+            DispatchQueue.main.async {
+                appState.formatDocument(documentKey: self.documentKey)
+            }
+        }
         accessory.onAddNextMatchSelection = { [weak textView] in
             (textView as? EditorAutocompleteTextView)?.onAddNextMatchSelection?()
         }
@@ -993,6 +1020,28 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             context.coordinator.refreshPairMatchOverlay(textView: textView)
         }
 
+        // 格式化结果回调：Core 格式化完成后文本已更新到 session，需同步到 UITextView
+        appState.onEditorFormatApplied = { [weak textView, weak appState] docKey in
+            guard let textView = textView, let appState = appState else { return }
+            guard docKey == self.documentKey else { return }
+            let globalKey = self.globalWorkspaceKey
+            guard let session = appState.getEditorDocument(globalWorkspaceKey: globalKey, path: self.path) else { return }
+            context.coordinator.isProgrammaticTextUpdate = true
+            textView.text = session.content
+            let maxLen = (session.content as NSString).length
+            let cursorLoc = session.selectionSet.primarySelection.location
+            textView.selectedRange = NSRange(
+                location: min(cursorLoc, maxLen),
+                length: 0
+            )
+            context.coordinator.isProgrammaticTextUpdate = false
+            context.coordinator.accessoryView?.canUndo = appState.editorCanUndo(documentKey: self.documentKey)
+            context.coordinator.accessoryView?.canRedo = appState.editorCanRedo(documentKey: self.documentKey)
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: self.path)
+            context.coordinator.applyFoldingProjection(to: textView)
+            context.coordinator.refreshPairMatchOverlay(textView: textView)
+        }
+
         // 注册 minimap 滚动到目标行的通知
         NotificationCenter.default.addObserver(
             forName: .editorMinimapScrollToLine,
@@ -1059,6 +1108,10 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         // 更新辅助栏的撤销/重做状态（来自共享历史能力）
         context.coordinator.accessoryView?.canUndo = appState.editorCanUndo(documentKey: documentKey)
         context.coordinator.accessoryView?.canRedo = appState.editorCanRedo(documentKey: documentKey)
+        // 更新辅助栏的格式化状态
+        let formattingState = session.formattingState
+        context.coordinator.accessoryView?.canFormat = !formattingState.supportedFormattingScopes.isEmpty
+        context.coordinator.accessoryView?.isFormatting = formattingState.isFormatting
         // 同步 minimap 回调
         context.coordinator.onMinimapProjectionUpdate = onMinimapProjectionUpdate
     }
