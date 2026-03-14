@@ -174,6 +174,8 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewPath: String?
     @Published var explorerPreviewContent: String = ""
     @Published var explorerPreviewError: String?
+    // 全局搜索状态（按 project/workspace 分桶）
+    @Published var globalSearchStates: [String: GlobalSearchState] = [:]
     /// 按 (project, workspace) 隔离的文件工作区相位（统一状态机）
     @Published private(set) var fileWorkspacePhases: [String: FileWorkspacePhase] = [:]
     @Published var mergeAIAgent: String?
@@ -877,6 +879,45 @@ final class MobileAppState: ObservableObject {
         if workspacesByProject[project] == nil {
             wsClient.requestListWorkspaces(project: project)
         }
+    }
+
+    // MARK: - 全局搜索
+
+    func performGlobalSearch(project: String, workspace: String, query: String, caseSensitive: Bool = false) {
+        let globalKey = globalWorkspaceKey(project: project, workspace: workspace)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            globalSearchStates[globalKey] = .empty()
+            return
+        }
+
+        var state = globalSearchStates[globalKey] ?? .empty()
+        state.query = GlobalSearchQuery(text: trimmed, caseSensitive: caseSensitive)
+        state.isLoading = true
+        state.error = nil
+        globalSearchStates[globalKey] = state
+
+        wsClient.requestFileContentSearch(
+            project: project,
+            workspace: workspace,
+            query: trimmed,
+            caseSensitive: caseSensitive,
+            cacheMode: .forceRefresh
+        )
+    }
+
+    func handleFileContentSearchResult(_ result: FileContentSearchResult) {
+        let globalKey = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        var state = globalSearchStates[globalKey] ?? .empty()
+        state.query = GlobalSearchQuery(text: result.query, caseSensitive: false)
+        state.isLoading = false
+        state.sections = GlobalSearchResultBuilder.buildSections(from: result)
+        state.totalMatches = result.totalMatches
+        state.truncated = result.truncated
+        state.searchDurationMs = result.searchDurationMs
+        state.error = nil
+        globalSearchStates[globalKey] = state
     }
 
     // MARK: - 资源管理器

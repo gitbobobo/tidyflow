@@ -65,6 +65,7 @@ final class MobileAppStateFileMessageHandlerAdapter: WeakTargetMessageAdapter<Mo
     func handleFileRenameResult(_ result: FileRenameResult) { dispatchToTarget { $0.handleFileRenameResult(result) } }
     func handleFileDeleteResult(_ result: FileDeleteResult) { dispatchToTarget { $0.handleFileDeleteResult(result) } }
     func handleFileWriteResult(_ result: FileWriteResult) { dispatchToTarget { $0.handleFileWriteResult(result) } }
+    func handleFileContentSearchResult(_ result: FileContentSearchResult) { dispatchToTarget { $0.handleFileContentSearchResult(result) } }
     func handleWatchSubscribed(_ result: WatchSubscribedResult) {
         dispatchToTarget { state in
             let key = state.globalWorkspaceKey(project: result.project, workspace: result.workspace)

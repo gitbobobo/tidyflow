@@ -58,6 +58,12 @@ struct WorkspaceDetailView: View {
                     .foregroundColor(.secondary)
             }
 
+            Section("搜索") {
+                NavigationLink(value: MobileRoute.workspaceSearch(project: project, workspace: workspace)) {
+                    Label("搜索文件内容", systemImage: "magnifyingglass")
+                }
+            }
+
             Section("活跃终端") {
                 if projection.terminals.isEmpty {
                     Text("暂无活跃终端")
