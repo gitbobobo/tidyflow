@@ -553,6 +553,41 @@ struct MobileEditorView: View {
 
 /// UIViewRepresentable 包装 UITextView，提供基础文本编辑功能。
 /// 使用系统原生长按选择、拖拽句柄、复制粘贴菜单和 undoManager。
+// MARK: - iOS 语法高亮颜色映射
+
+/// iOS 平台的语义角色到颜色映射。
+/// 集中管理，不散落在词法规则或视图代码中。
+enum EditorSyntaxColorMapIOS {
+    static func colors(for theme: EditorSyntaxTheme) -> [EditorSyntaxRole: UIColor] {
+        switch theme {
+        case .systemDark:
+            return [
+                .plain: UIColor(red: 0.84, green: 0.84, blue: 0.84, alpha: 1.0),
+                .keyword: UIColor(red: 0.99, green: 0.37, blue: 0.53, alpha: 1.0),
+                .type: UIColor(red: 0.35, green: 0.75, blue: 0.84, alpha: 1.0),
+                .string: UIColor(red: 0.99, green: 0.52, blue: 0.40, alpha: 1.0),
+                .number: UIColor(red: 0.82, green: 0.73, blue: 0.55, alpha: 1.0),
+                .comment: UIColor(red: 0.51, green: 0.55, blue: 0.59, alpha: 1.0),
+                .attribute: UIColor(red: 0.80, green: 0.58, blue: 0.93, alpha: 1.0),
+                .function: UIColor(red: 0.40, green: 0.78, blue: 0.47, alpha: 1.0),
+                .punctuation: UIColor(red: 0.67, green: 0.67, blue: 0.67, alpha: 1.0),
+            ]
+        case .systemLight:
+            return [
+                .plain: UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0),
+                .keyword: UIColor(red: 0.67, green: 0.05, blue: 0.33, alpha: 1.0),
+                .type: UIColor(red: 0.11, green: 0.40, blue: 0.59, alpha: 1.0),
+                .string: UIColor(red: 0.77, green: 0.20, blue: 0.13, alpha: 1.0),
+                .number: UIColor(red: 0.10, green: 0.35, blue: 0.58, alpha: 1.0),
+                .comment: UIColor(red: 0.42, green: 0.47, blue: 0.51, alpha: 1.0),
+                .attribute: UIColor(red: 0.50, green: 0.18, blue: 0.68, alpha: 1.0),
+                .function: UIColor(red: 0.20, green: 0.44, blue: 0.22, alpha: 1.0),
+                .punctuation: UIColor(red: 0.40, green: 0.40, blue: 0.40, alpha: 1.0),
+            ]
+        }
+    }
+}
+
 struct EditorTextViewWrapper: UIViewRepresentable {
     @ObservedObject var appState: MobileAppState
     let documentKey: EditorDocumentKey
@@ -622,6 +657,7 @@ struct EditorTextViewWrapper: UIViewRepresentable {
         // 仅在内容不同时更新（避免光标跳转）
         if textView.text != session.content {
             let selectedRange = textView.selectedRange
+            context.coordinator.isApplyingHighlight = true
             textView.text = session.content
             // 恢复光标位置（如果在有效范围内）
             let maxLocation = (textView.text as NSString).length
@@ -631,6 +667,12 @@ struct EditorTextViewWrapper: UIViewRepresentable {
                     length: 0
                 )
             }
+            context.coordinator.isApplyingHighlight = false
+            // 文本变化后重新应用高亮
+            context.coordinator.applySyntaxHighlighting(to: textView, filePath: path)
+        } else {
+            // 文本未变，检查主题变化
+            context.coordinator.applyHighlightingIfThemeChanged(to: textView, filePath: path)
         }
 
         // 更新辅助栏的撤销/重做状态
@@ -641,12 +683,20 @@ struct EditorTextViewWrapper: UIViewRepresentable {
     class Coordinator: NSObject, UITextViewDelegate {
         let parent: EditorTextViewWrapper
         weak var accessoryView: EditorInputAccessoryView?
+        private let highlighter = EditorSyntaxHighlighter()
+        /// 上次应用的高亮快照指纹
+        private var lastAppliedFingerprint: Int?
+        /// 上次应用的主题
+        private var lastAppliedTheme: EditorSyntaxTheme?
+        /// 标记当前是否正在程序性地更新属性（防止循环写回）
+        var isApplyingHighlight = false
 
         init(parent: EditorTextViewWrapper) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            guard !isApplyingHighlight else { return }
             parent.appState.updateEditorDocumentContent(
                 globalWorkspaceKey: parent.globalWorkspaceKey,
                 path: parent.path,
@@ -656,6 +706,100 @@ struct EditorTextViewWrapper: UIViewRepresentable {
             // 更新辅助栏撤销/重做状态
             accessoryView?.canUndo = textView.undoManager?.canUndo ?? false
             accessoryView?.canRedo = textView.undoManager?.canRedo ?? false
+
+            // 用户输入后重新应用高亮
+            applySyntaxHighlighting(to: textView, filePath: parent.path)
+        }
+
+        /// 检测当前系统主题
+        private func currentTheme(for textView: UITextView) -> EditorSyntaxTheme {
+            if textView.traitCollection.userInterfaceStyle == .dark {
+                return .systemDark
+            }
+            return .systemLight
+        }
+
+        /// 应用语法高亮到 UITextView
+        func applySyntaxHighlighting(to textView: UITextView, filePath: String) {
+            let text = textView.text ?? ""
+            guard !text.isEmpty else {
+                lastAppliedFingerprint = nil
+                lastAppliedTheme = nil
+                return
+            }
+
+            let theme = currentTheme(for: textView)
+            let snapshot = highlighter.highlight(filePath: filePath, text: text, theme: theme)
+
+            // 校验内容版本匹配
+            let currentText = textView.text ?? ""
+            let currentFingerprint = EditorSyntaxFingerprint.compute(currentText)
+            guard snapshot.contentFingerprint == currentFingerprint else { return }
+
+            // 跳过重复应用
+            if lastAppliedFingerprint == snapshot.contentFingerprint,
+               lastAppliedTheme == snapshot.theme {
+                return
+            }
+
+            applySnapshot(snapshot, to: textView, theme: theme)
+        }
+
+        /// 当主题变化时重新应用高亮
+        func applyHighlightingIfThemeChanged(to textView: UITextView, filePath: String) {
+            let theme = currentTheme(for: textView)
+            guard theme != lastAppliedTheme else { return }
+            let text = textView.text ?? ""
+            guard !text.isEmpty else { return }
+
+            let snapshot = highlighter.highlight(filePath: filePath, text: text, theme: theme)
+            let currentFingerprint = EditorSyntaxFingerprint.compute(textView.text ?? "")
+            guard snapshot.contentFingerprint == currentFingerprint else { return }
+
+            applySnapshot(snapshot, to: textView, theme: theme)
+        }
+
+        /// 将快照属性应用到 UITextView
+        private func applySnapshot(_ snapshot: EditorSyntaxSnapshot, to textView: UITextView, theme: EditorSyntaxTheme) {
+            let selectedRange = textView.selectedRange
+            let scrollOffset = textView.contentOffset
+            let font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+            let colorMap = EditorSyntaxColorMapIOS.colors(for: theme)
+
+            isApplyingHighlight = true
+
+            let attrText = NSMutableAttributedString(string: textView.text ?? "")
+            let fullRange = NSRange(location: 0, length: attrText.length)
+
+            // 设置默认属性
+            attrText.setAttributes([
+                .font: font,
+                .foregroundColor: colorMap[.plain] ?? UIColor.label,
+            ], range: fullRange)
+
+            // 逐条应用高亮
+            for run in snapshot.runs {
+                guard run.location + run.length <= attrText.length else { continue }
+                let color = colorMap[run.role] ?? colorMap[.plain] ?? UIColor.label
+                attrText.addAttributes([.foregroundColor: color], range: run.nsRange)
+            }
+
+            textView.attributedText = attrText
+
+            // 恢复选区和滚动位置
+            let maxLocation = (textView.text as NSString).length
+            if selectedRange.location <= maxLocation {
+                textView.selectedRange = NSRange(
+                    location: min(selectedRange.location, maxLocation),
+                    length: min(selectedRange.length, maxLocation - min(selectedRange.location, maxLocation))
+                )
+            }
+            textView.setContentOffset(scrollOffset, animated: false)
+
+            isApplyingHighlight = false
+
+            lastAppliedFingerprint = snapshot.contentFingerprint
+            lastAppliedTheme = theme
         }
     }
 }

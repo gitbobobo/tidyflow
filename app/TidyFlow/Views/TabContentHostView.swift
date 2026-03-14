@@ -511,7 +511,8 @@ struct NativeEditorContentView: View {
                                 text: textBinding,
                                 highlightedLine: $highlightedLine,
                                 documentKey: documentKey,
-                                editorStore: editorStore
+                                editorStore: editorStore,
+                                filePath: path
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .onAppear {
@@ -939,6 +940,41 @@ struct DiffToolbar: View {
 import AppKit
 import TidyFlowShared
 
+// MARK: - macOS 语法高亮颜色映射
+
+/// macOS 平台的语义角色到颜色映射。
+/// 集中管理，不散落在词法规则或视图代码中。
+enum EditorSyntaxColorMapMacOS {
+    static func colors(for theme: EditorSyntaxTheme) -> [EditorSyntaxRole: NSColor] {
+        switch theme {
+        case .systemDark:
+            return [
+                .plain: NSColor(red: 0.84, green: 0.84, blue: 0.84, alpha: 1.0),
+                .keyword: NSColor(red: 0.99, green: 0.37, blue: 0.53, alpha: 1.0),
+                .type: NSColor(red: 0.35, green: 0.75, blue: 0.84, alpha: 1.0),
+                .string: NSColor(red: 0.99, green: 0.52, blue: 0.40, alpha: 1.0),
+                .number: NSColor(red: 0.82, green: 0.73, blue: 0.55, alpha: 1.0),
+                .comment: NSColor(red: 0.51, green: 0.55, blue: 0.59, alpha: 1.0),
+                .attribute: NSColor(red: 0.80, green: 0.58, blue: 0.93, alpha: 1.0),
+                .function: NSColor(red: 0.40, green: 0.78, blue: 0.47, alpha: 1.0),
+                .punctuation: NSColor(red: 0.67, green: 0.67, blue: 0.67, alpha: 1.0),
+            ]
+        case .systemLight:
+            return [
+                .plain: NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0),
+                .keyword: NSColor(red: 0.67, green: 0.05, blue: 0.33, alpha: 1.0),
+                .type: NSColor(red: 0.11, green: 0.40, blue: 0.59, alpha: 1.0),
+                .string: NSColor(red: 0.77, green: 0.20, blue: 0.13, alpha: 1.0),
+                .number: NSColor(red: 0.10, green: 0.35, blue: 0.58, alpha: 1.0),
+                .comment: NSColor(red: 0.42, green: 0.47, blue: 0.51, alpha: 1.0),
+                .attribute: NSColor(red: 0.50, green: 0.18, blue: 0.68, alpha: 1.0),
+                .function: NSColor(red: 0.20, green: 0.44, blue: 0.22, alpha: 1.0),
+                .punctuation: NSColor(red: 0.40, green: 0.40, blue: 0.40, alpha: 1.0),
+            ]
+        }
+    }
+}
+
 /// NSViewRepresentable 包装的 NSTextView / NSScrollView 方案。
 /// 从原生 undoManager 驱动 canUndo/canRedo；支持程序化选区、行跳转和查找替换桥接。
 struct NativeCodeEditorView: NSViewRepresentable {
@@ -946,6 +982,7 @@ struct NativeCodeEditorView: NSViewRepresentable {
     @Binding var highlightedLine: Int?
     var documentKey: EditorDocumentKey?
     var editorStore: EditorStore
+    var filePath: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -987,11 +1024,12 @@ struct NativeCodeEditorView: NSViewRepresentable {
         // 设置初始文本
         textView.string = text
 
-        // 首次加载后自动聚焦
+        // 首次加载后自动聚焦并应用高亮
         DispatchQueue.main.async {
             scrollView.window?.makeFirstResponder(textView)
             textView.startObservingUndoManager()
             textView.reportUndoRedoState()
+            context.coordinator.applySyntaxHighlighting(to: textView)
         }
 
         return scrollView
@@ -1007,6 +1045,11 @@ struct NativeCodeEditorView: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selectedRanges
             textView.reportUndoRedoState()
+            // 文本变化时重新应用高亮
+            context.coordinator.applySyntaxHighlighting(to: textView)
+        } else {
+            // 文本未变，但检查主题是否变化（深浅色切换）
+            context.coordinator.applyHighlightingIfThemeChanged(to: textView)
         }
 
         // 处理行跳转
@@ -1033,6 +1076,13 @@ struct NativeCodeEditorView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeCodeEditorView
         weak var textView: UndoTrackingTextView?
+        private let highlighter = EditorSyntaxHighlighter()
+        /// 上次应用的高亮快照指纹，用于跳过重复应用
+        private var lastAppliedFingerprint: Int?
+        /// 上次应用的主题
+        private var lastAppliedTheme: EditorSyntaxTheme?
+        /// 标记当前是否正在程序性地更新属性（防止触发 textDidChange）
+        private var isApplyingHighlight = false
 
         init(parent: NativeCodeEditorView) {
             self.parent = parent
@@ -1040,8 +1090,94 @@ struct NativeCodeEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? UndoTrackingTextView else { return }
+            guard !isApplyingHighlight else { return }
             parent.text = textView.string
             textView.reportUndoRedoState()
+            // 用户输入后异步重算高亮
+            applySyntaxHighlighting(to: textView)
+        }
+
+        /// 检测当前系统主题
+        private func currentTheme() -> EditorSyntaxTheme {
+            if let appearance = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]),
+               appearance == .darkAqua {
+                return .systemDark
+            }
+            return .systemLight
+        }
+
+        /// 应用语法高亮到 NSTextView
+        func applySyntaxHighlighting(to textView: UndoTrackingTextView) {
+            guard let filePath = parent.filePath else { return }
+            let text = textView.string
+            guard !text.isEmpty else {
+                lastAppliedFingerprint = nil
+                lastAppliedTheme = nil
+                return
+            }
+
+            let theme = currentTheme()
+            let snapshot = highlighter.highlight(filePath: filePath, text: text, theme: theme)
+
+            // 校验内容版本匹配（防止旧结果回写）
+            let currentFingerprint = EditorSyntaxFingerprint.compute(textView.string)
+            guard snapshot.contentFingerprint == currentFingerprint else { return }
+
+            // 跳过重复应用
+            if lastAppliedFingerprint == snapshot.contentFingerprint,
+               lastAppliedTheme == snapshot.theme {
+                return
+            }
+
+            applySnapshot(snapshot, to: textView, theme: theme)
+        }
+
+        /// 当主题变化时重新应用高亮（不重算词法）
+        func applyHighlightingIfThemeChanged(to textView: UndoTrackingTextView) {
+            let theme = currentTheme()
+            guard theme != lastAppliedTheme else { return }
+            guard let filePath = parent.filePath else { return }
+            let text = textView.string
+            guard !text.isEmpty else { return }
+
+            let snapshot = highlighter.highlight(filePath: filePath, text: text, theme: theme)
+            let currentFingerprint = EditorSyntaxFingerprint.compute(textView.string)
+            guard snapshot.contentFingerprint == currentFingerprint else { return }
+
+            applySnapshot(snapshot, to: textView, theme: theme)
+        }
+
+        /// 将快照属性应用到 NSTextStorage
+        private func applySnapshot(_ snapshot: EditorSyntaxSnapshot, to textView: UndoTrackingTextView, theme: EditorSyntaxTheme) {
+            guard let textStorage = textView.textStorage else { return }
+
+            isApplyingHighlight = true
+            let selectedRanges = textView.selectedRanges
+            let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+            let colorMap = EditorSyntaxColorMapMacOS.colors(for: theme)
+
+            textStorage.beginEditing()
+
+            // 重置全部属性为默认
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: colorMap[.plain] ?? NSColor.textColor,
+            ], range: fullRange)
+
+            // 逐条应用高亮
+            for run in snapshot.runs {
+                guard run.location + run.length <= textStorage.length else { continue }
+                let color = colorMap[run.role] ?? colorMap[.plain] ?? NSColor.textColor
+                textStorage.addAttributes([.foregroundColor: color], range: run.nsRange)
+            }
+
+            textStorage.endEditing()
+            textView.selectedRanges = selectedRanges
+            isApplyingHighlight = false
+
+            lastAppliedFingerprint = snapshot.contentFingerprint
+            lastAppliedTheme = theme
         }
     }
 }
