@@ -299,8 +299,7 @@ struct EvolutionPipelineView: View {
             // 标题
             EvolutionPipelineHeaderSectionView(
                 bottleneckCount: projection.activeBottleneckCount,
-                maxRiskScore: projection.maxRiskScore,
-                performanceDashboard: projection.performance.dashboard
+                maxRiskScore: projection.maxRiskScore
             )
             Divider()
 
@@ -438,6 +437,7 @@ struct EvolutionPipelineView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
+                        .padding(.leading, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(Color.secondary.opacity(0.10))
@@ -453,6 +453,7 @@ struct EvolutionPipelineView: View {
                     .pickerStyle(.menu)
                     .frame(maxWidth: 100)
                     .controlSize(.small)
+                    .padding(.leading, 8)
                     .disabled(!controlCapability.canStart)
                 }
 
