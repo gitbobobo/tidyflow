@@ -146,7 +146,7 @@ extension MobileAppState {
         }
         // 刷新列表和 status
         if result.ok || result.state == "conflict" {
-            wsClient?.requestGitStashList(project: result.project, workspace: result.workspace, cacheMode: .forceRefresh)
+            wsClient.requestGitStashList(project: result.project, workspace: result.workspace, cacheMode: .forceRefresh)
             applyGitInput(.gitStatusChanged, project: result.project, workspace: result.workspace)
         }
         // 冲突桥接到现有冲突向导
