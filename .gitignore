@@ -157,6 +157,9 @@ app/TidyFlow/Web/main/
 ANALYSIS.md
 CODE_INDEX.md
 *_EXPLORATION.md
+GIT_HISTORY_INDEX.md
+GIT_HISTORY_QUICK_REFERENCE.md
+GIT_HISTORY_UI_GUIDE.md
 
 # Python cache
 **/__pycache__/
