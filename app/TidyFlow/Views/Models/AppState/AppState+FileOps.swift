@@ -180,8 +180,12 @@ extension AppState {
     }
 
     func handleFileReadResult(_ result: FileReadResult) {
-        if let pendingPath = pendingEvolutionPlanDocumentReadPath, pendingPath == result.path {
-            pendingEvolutionPlanDocumentReadPath = nil
+        if matchesPendingEvolutionPlanDocumentRequest(
+            project: result.project,
+            workspace: result.workspace,
+            path: result.path
+        ) {
+            pendingEvolutionPlanDocumentRequest = nil
             evolutionPlanDocumentLoading = false
             let content = String(decoding: result.content, as: UTF8.self)
             if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -500,8 +500,9 @@ class AppState: ObservableObject {
     var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
     /// Evolution 面板性能监控：当前采样决策（按 workspaceContextKey）
     var evolutionPerformanceSamplingDecisions: [String: EvolutionRealtimeSamplingDecision] = [:]
-    /// Evolution：计划文档读取上下文（按 cycle 文件路径识别）
-    var pendingEvolutionPlanDocumentReadPath: String?
+    /// Evolution：计划文档读取上下文。
+    /// 记录完整请求作用域，避免默认工作区别名与多项目同路径场景下回包错配。
+    var pendingEvolutionPlanDocumentRequest: EvolutionPlanDocumentRequestDescriptor?
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]

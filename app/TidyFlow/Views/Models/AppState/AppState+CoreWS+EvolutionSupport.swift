@@ -130,8 +130,19 @@ extension AppState {
         evolutionPlanDocumentContent = nil
         evolutionPlanDocumentLoading = true
         evolutionPlanDocumentError = nil
-        pendingEvolutionPlanDocumentReadPath = descriptor.path
+        pendingEvolutionPlanDocumentRequest = descriptor
         wsClient.requestFileRead(project: descriptor.projectName, workspace: descriptor.workspaceName, path: descriptor.path)
+    }
+
+    func matchesPendingEvolutionPlanDocumentRequest(
+        project: String,
+        workspace: String,
+        path: String
+    ) -> Bool {
+        guard let request = pendingEvolutionPlanDocumentRequest else { return false }
+        return request.projectName == project &&
+            normalizeEvolutionWorkspaceName(request.workspaceName) == normalizeEvolutionWorkspaceName(workspace) &&
+            request.path == path
     }
 
     func consumeAIChatOneShotHint(project: String, workspace: String) -> String? {

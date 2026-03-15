@@ -1148,8 +1148,8 @@ extension AppState {
             }
         }
 
-        if pendingEvolutionPlanDocumentReadPath != nil {
-            pendingEvolutionPlanDocumentReadPath = nil
+        if pendingEvolutionPlanDocumentRequest != nil {
+            pendingEvolutionPlanDocumentRequest = nil
             evolutionPlanDocumentLoading = false
             evolutionPlanDocumentError = errorMsg
         }
@@ -1205,10 +1205,12 @@ extension AppState {
                 kind: .agentList
             )
         case let .fileRead(project, workspace, path):
-            if pendingEvolutionPlanDocumentReadPath == path,
-               selectedProjectName == project,
-               selectedWorkspaceKey == workspace {
-                pendingEvolutionPlanDocumentReadPath = nil
+            if matchesPendingEvolutionPlanDocumentRequest(
+                project: project,
+                workspace: workspace,
+                path: path
+            ) {
+                pendingEvolutionPlanDocumentRequest = nil
                 evolutionPlanDocumentLoading = false
                 evolutionPlanDocumentError = failure.message
             }
