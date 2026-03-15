@@ -78,6 +78,8 @@
   - `GET /api/v1/projects/:project/git/integration-status`
   - `GET /api/v1/projects/:project/workspaces/:workspace/git/up-to-date`
   - `GET /api/v1/projects/:project/workspaces/:workspace/git/conflicts/detail?path=...&context=...`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/stashes`
+  - `GET /api/v1/projects/:project/workspaces/:workspace/git/stashes/:stash_id`
 - AI：
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/sessions`
   - `GET /api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/messages`
@@ -321,7 +323,7 @@ idle → entering → active ⇄ resuming
   - Settings：`get_client_settings`
   - Terminal：`term_list`
   - File：`file_list` `file_index` `file_read` `file_content_search`
-  - Git：`git_status` `git_diff` `git_branches` `git_log` `git_show` `git_op_status` `git_integration_status` `git_check_branch_up_to_date` `git_conflict_detail`
+  - Git：`git_status` `git_diff` `git_branches` `git_log` `git_show` `git_op_status` `git_integration_status` `git_check_branch_up_to_date` `git_conflict_detail` `git_stash_list` `git_stash_show`
   - AI：`ai_session_list` `ai_session_messages` `ai_session_status` `ai_provider_list` `ai_agent_list` `ai_slash_commands` `ai_session_config_options`
   - Evolution：`evo_get_snapshot` `evo_get_agent_profile` `evo_list_cycle_history`
   - 保留：
@@ -1341,6 +1343,82 @@ v1.48 新增 `recovery` 可选字段，透传到 `EvolutionWorkspaceItem`、`Evo
 1. `conflict_files` 是 `conflicts`（路径列表）的语义增强替代，客户端应优先使用 `conflict_files`。
 2. 冲突向导 UI 状态（当前选中文件、可用动作、continue/abort 可用条件）必须以 Core 下发的 snapshot 为权威，不得客户端自行推导。
 3. macOS 与 iOS 必须使用同一套共享冲突向导语义模型，禁止各自独立维护 conflicts 推导规则。
+
+## Git Stash 协议（v1.50）
+
+#### git_stash_save（保存 Stash）
+
+**请求**（WS action）：
+```json
+{
+  "type": "git_stash_save",
+  "project": "my-project",
+  "workspace": "default",
+  "message": "optional description",
+  "include_untracked": false,
+  "keep_index": false,
+  "paths": []
+}
+```
+
+**响应** (`git_stash_op_result`)：
+```json
+{
+  "action": "git_stash_op_result",
+  "project": "my-project",
+  "workspace": "default",
+  "op": "save",
+  "stash_id": "stash@{0}",
+  "ok": true,
+  "state": "completed",
+  "message": null,
+  "affected_paths": [],
+  "conflict_files": []
+}
+```
+
+#### git_stash_apply / git_stash_pop / git_stash_drop（Stash 恢复与删除）
+
+**请求**（WS action）：
+```json
+{
+  "type": "git_stash_apply",
+  "project": "my-project",
+  "workspace": "default",
+  "stash_id": "stash@{0}"
+}
+```
+
+- `apply`：恢复 stash 内容，保留 stash 条目。
+- `pop`：恢复 stash 内容，仅在 `state = completed` 时删除条目；冲突时保留条目。
+- `drop`：直接删除 stash 条目。
+
+**响应**：同 `git_stash_op_result`。`state` 可为 `completed`、`conflict`、`noop`、`failed`。
+
+#### git_stash_restore_paths（按文件恢复）
+
+**请求**（WS action）：
+```json
+{
+  "type": "git_stash_restore_paths",
+  "project": "my-project",
+  "workspace": "default",
+  "stash_id": "stash@{0}",
+  "paths": ["src/main.rs", "src/lib.rs"]
+}
+```
+
+**响应**：同 `git_stash_op_result`。Core 根据文件来源分类（tracked/untracked）恢复对应树内容。
+
+#### Stash 载荷类型
+
+| 类型 | 字段 | 说明 |
+|------|------|------|
+| `GitStashEntryInfo` | `stash_id`, `title`, `message`, `branch_name`, `created_at`, `file_count` | Stash 条目摘要 |
+| `GitStashFileInfo` | `path`, `status`, `source_kind`, `additions`, `deletions` | Stash 文件摘要 |
+| `GitStashListResult` | `project`, `workspace`, `entries: [GitStashEntryInfo]` | Stash 列表响应 |
+| `GitStashShowResult` | `project`, `workspace`, `stash_id`, `entry: GitStashEntryInfo`, `files: [GitStashFileInfo]`, `diff_text` | Stash 详情响应 |
+| `GitStashOpResult` | `project`, `workspace`, `op`, `stash_id`, `ok`, `state`, `message`, `affected_paths`, `conflict_files` | Stash 操作结果 |
 
 ## 系统健康诊断与自修复域（v1.41）
 

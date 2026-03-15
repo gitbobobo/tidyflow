@@ -53,6 +53,23 @@ domains:
     #   error_code:   失败诊断码（仅 status=failed 时填充）
     #   error_detail:  失败诊断详情（仅 status=failed 时填充）
     #   retryable:    是否可安全重试（bool，Core 根据 task_type + 错误类型判定）
+    # v1.50 Stash 能力（read_via_http + WS 写操作）
+    http_read_endpoints:
+      - GET /api/v1/projects/:project/workspaces/:workspace/git/stashes
+      - GET /api/v1/projects/:project/workspaces/:workspace/git/stashes/:stash_id
+    ws_read_via_http_required:
+      - git_stash_list
+      - git_stash_show
+    ws_write_actions:
+      - git_stash_save
+      - git_stash_apply
+      - git_stash_pop
+      - git_stash_drop
+      - git_stash_restore_paths
+    ws_result_actions:
+      - git_stash_list_result
+      - git_stash_show_result
+      - git_stash_op_result
   - id: project
     action_rule: prefix("list_","select_","import_","create_","remove_","project_","workspace_","save_project_commands","run_project_command","cancel_project_command")
   - id: settings

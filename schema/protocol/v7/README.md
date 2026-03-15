@@ -430,6 +430,25 @@ Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Co
 
 详见 `docs/PROTOCOL.md` 的"系统健康诊断与自修复域"章节。
 
+### Stash 读写边界（v1.50+）
+
+| 操作 | 传输方式 | 端点/Action |
+|------|---------|------------|
+| 列表 | HTTP GET | `/api/v1/projects/:project/workspaces/:workspace/git/stashes` |
+| 详情 | HTTP GET | `/api/v1/projects/:project/workspaces/:workspace/git/stashes/:stash_id` |
+| 保存 | WS action | `git_stash_save` |
+| Apply | WS action | `git_stash_apply` |
+| Pop | WS action | `git_stash_pop` |
+| Drop | WS action | `git_stash_drop` |
+| 按文件恢复 | WS action | `git_stash_restore_paths` |
+
+**载荷类型**：`GitStashEntryInfo`、`GitStashFileInfo`、`GitStashListResult`、`GitStashShowResult`、`GitStashOpResult`。
+
+**语义约束**：
+- `pop` 冲突时保留 stash 条目（`state = conflict`），不自动删除。
+- `restore_paths` 不走 `git stash apply` 隐式 pathspec，Core 按文件来源分类恢复。
+- 所有响应必须携带 `project` / `workspace` 多工作区边界字段。
+
 ## AI 会话上下文快照（Context Snapshot）
 
 每个 `(project, workspace, ai_tool, session_id)` 会话在 `ai_chat_done` 时保存上下文快照。
