@@ -14,6 +14,11 @@ struct WorkspaceGitView: View {
     @State private var discardTargetPath: String? = nil
     @State private var showDiscardConfirm: Bool = false
     @State private var showConflictWizard: Bool = false
+    @State private var showStashDetail: Bool = false
+    @State private var showStashSaveForm: Bool = false
+    @State private var stashSaveMessage: String = ""
+    @State private var stashIncludeUntracked: Bool = false
+    @State private var stashKeepIndex: Bool = false
 
     private var gitState: MobileWorkspaceGitDetailState {
         appState.gitDetailStateForWorkspace(project: project, workspace: workspace)
@@ -69,6 +74,9 @@ struct WorkspaceGitView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
+                // MARK: - Stash
+                stashSection
+
                 // MARK: - 暂存区
                 if projection.hasStagedChanges {
                     stagedSection
@@ -144,15 +152,25 @@ struct WorkspaceGitView: View {
                     .environmentObject(appState)
             }
         }
+        .sheet(isPresented: $showStashDetail) {
+            MobileStashDetailSheet(
+                project: project,
+                workspace: workspace,
+                isPresented: $showStashDetail
+            )
+            .environmentObject(appState)
+        }
         .onAppear {
             projectionStore.bind(appState: appState, project: project, workspace: workspace)
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
+            appState.fetchStashList(project: project, workspace: workspace)
         }
         .onDisappear {
             perfFixtureRunner.cancel()
         }
         .refreshable {
             appState.fetchGitDetailForWorkspace(project: project, workspace: workspace)
+            appState.fetchStashList(project: project, workspace: workspace)
         }
         .accessibilityIdentifier("tf.ios.git.panel")
         .overlay(alignment: .topLeading) {
@@ -395,6 +413,126 @@ struct WorkspaceGitView: View {
             }
         }
     }
+
+    // MARK: - Stash 区域
+
+    private var stashSection: some View {
+        let stashList = appState.getStashListCache(project: project, workspace: workspace)
+        let cacheKey = appState.stashCacheKey(project: project, workspace: workspace)
+        let isOpInFlight = appState.stashOpInFlight[cacheKey] ?? false
+
+        return Section {
+            if stashList.isLoading && stashList.entries.isEmpty {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("加载中…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if stashList.entries.isEmpty {
+                HStack {
+                    Image(systemName: "tray")
+                        .foregroundColor(.secondary)
+                    Text("没有 stash 记录")
+                        .foregroundColor(.secondary)
+                }
+
+                Button {
+                    showStashSaveForm = true
+                } label: {
+                    Label("保存当前更改为 Stash", systemImage: "square.and.arrow.down")
+                }
+            } else {
+                // 最新 stash 条目摘要
+                ForEach(stashList.entries.prefix(3)) { entry in
+                    Button {
+                        appState.selectedStashId[cacheKey] = entry.stashId
+                        appState.fetchStashShow(project: project, workspace: workspace, stashId: entry.stashId)
+                        showStashDetail = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.message.isEmpty ? entry.title : entry.message)
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                HStack(spacing: 4) {
+                                    Text(entry.branchName)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    if entry.fileCount > 0 {
+                                        Text("· \(entry.fileCount) 个文件")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                if stashList.entries.count > 3 {
+                    Button {
+                        if let first = stashList.entries.first {
+                            appState.selectedStashId[cacheKey] = first.stashId
+                            appState.fetchStashShow(project: project, workspace: workspace, stashId: first.stashId)
+                        }
+                        showStashDetail = true
+                    } label: {
+                        Text("查看全部 \(stashList.entries.count) 条 Stash")
+                            .font(.caption)
+                    }
+                }
+            }
+
+            // 错误提示
+            if let error = appState.stashLastError[cacheKey] {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+
+            if isOpInFlight {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("操作进行中…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Stashes (\(stashList.entries.count))")
+                Spacer()
+                Button {
+                    showStashSaveForm = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
+        }
+        .sheet(isPresented: $showStashSaveForm) {
+            MobileStashSaveSheet(
+                project: project,
+                workspace: workspace,
+                isPresented: $showStashSaveForm
+            )
+            .environmentObject(appState)
+        }
+    }
 }
 
 // MARK: - 文件行视图
@@ -542,6 +680,317 @@ private struct MobileBranchListSheet: View {
                     isPresented = false
                 }
             }
+        }
+    }
+}
+
+// MARK: - Stash 保存 Sheet
+
+private struct MobileStashSaveSheet: View {
+    @EnvironmentObject var appState: MobileAppState
+    let project: String
+    let workspace: String
+    @Binding var isPresented: Bool
+
+    @State private var message: String = ""
+    @State private var includeUntracked: Bool = false
+    @State private var keepIndex: Bool = false
+
+    private var isOpInFlight: Bool {
+        let key = appState.stashCacheKey(project: project, workspace: workspace)
+        return appState.stashOpInFlight[key] ?? false
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Stash 信息") {
+                    TextField("备注（可选）", text: $message, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+
+                Section("选项") {
+                    Toggle("包含未跟踪文件", isOn: $includeUntracked)
+                    Toggle("保留已暂存内容", isOn: $keepIndex)
+                }
+
+                Section {
+                    Button {
+                        let msg = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                        appState.stashSave(
+                            project: project,
+                            workspace: workspace,
+                            message: msg.isEmpty ? nil : msg,
+                            includeUntracked: includeUntracked,
+                            keepIndex: keepIndex
+                        )
+                        isPresented = false
+                    } label: {
+                        HStack {
+                            if isOpInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                            Text("保存 Stash")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .disabled(isOpInFlight)
+                }
+            }
+            .navigationTitle("保存 Stash")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { isPresented = false }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Stash 详情 Sheet
+
+private struct MobileStashDetailSheet: View {
+    @EnvironmentObject var appState: MobileAppState
+    let project: String
+    let workspace: String
+    @Binding var isPresented: Bool
+
+    @State private var selectedFilesForRestore: Set<String> = []
+    @State private var showConflictWizard: Bool = false
+
+    private var cacheKey: String {
+        appState.stashCacheKey(project: project, workspace: workspace)
+    }
+
+    private var stashList: GitStashListCache {
+        appState.getStashListCache(project: project, workspace: workspace)
+    }
+
+    private var selectedId: String? {
+        appState.selectedStashId[cacheKey]
+    }
+
+    private var isOpInFlight: Bool {
+        appState.stashOpInFlight[cacheKey] ?? false
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                // Stash 列表
+                Section("Stash 列表") {
+                    ForEach(stashList.entries) { entry in
+                        Button {
+                            appState.selectedStashId[cacheKey] = entry.stashId
+                            appState.fetchStashShow(project: project, workspace: workspace, stashId: entry.stashId)
+                        } label: {
+                            HStack {
+                                Image(systemName: entry.stashId == selectedId ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(entry.stashId == selectedId ? .accentColor : .secondary)
+                                    .font(.caption)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.message.isEmpty ? entry.title : entry.message)
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(1)
+                                    HStack(spacing: 4) {
+                                        Text(entry.branchName)
+                                        if entry.fileCount > 0 {
+                                            Text("· \(entry.fileCount) 个文件")
+                                        }
+                                    }
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+
+                // 选中 stash 的详情
+                if let stashId = selectedId {
+                    let showCache = appState.getStashShowCache(project: project, workspace: workspace, stashId: stashId)
+
+                    if showCache.isLoading && showCache.entry == nil {
+                        Section {
+                            HStack {
+                                ProgressView()
+                                Text("加载详情…")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    } else if let entry = showCache.entry {
+                        // 元数据
+                        Section("详情") {
+                            LabeledContent("分支", value: entry.branchName)
+                            LabeledContent("文件数", value: "\(showCache.files.count)")
+                            if !entry.message.isEmpty {
+                                LabeledContent("备注", value: entry.message)
+                            }
+                        }
+
+                        // 操作按钮
+                        Section("操作") {
+                            Button {
+                                appState.stashApply(project: project, workspace: workspace, stashId: stashId)
+                            } label: {
+                                Label("Apply（保留 Stash）", systemImage: "arrow.uturn.backward")
+                            }
+                            .disabled(isOpInFlight)
+
+                            Button {
+                                appState.stashPop(project: project, workspace: workspace, stashId: stashId)
+                            } label: {
+                                Label("Pop（恢复并删除 Stash）", systemImage: "arrow.uturn.backward.circle")
+                            }
+                            .disabled(isOpInFlight)
+
+                            Button(role: .destructive) {
+                                appState.stashDrop(project: project, workspace: workspace, stashId: stashId)
+                            } label: {
+                                Label("Drop（删除 Stash）", systemImage: "trash")
+                            }
+                            .disabled(isOpInFlight)
+
+                            if isOpInFlight {
+                                HStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("操作进行中…")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+
+                        // 文件列表（支持按文件恢复）
+                        Section("文件列表") {
+                            ForEach(showCache.files) { file in
+                                Button {
+                                    if selectedFilesForRestore.contains(file.path) {
+                                        selectedFilesForRestore.remove(file.path)
+                                    } else {
+                                        selectedFilesForRestore.insert(file.path)
+                                    }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: selectedFilesForRestore.contains(file.path) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(selectedFilesForRestore.contains(file.path) ? .accentColor : .secondary)
+                                            .font(.caption)
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(file.path)
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                                .lineLimit(2)
+                                            HStack(spacing: 6) {
+                                                Text(file.status)
+                                                    .font(.caption2.monospaced())
+                                                    .foregroundColor(fileStatusColor(file.status))
+                                                if file.sourceKind == "untracked" {
+                                                    Text("未跟踪")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.gray)
+                                                }
+                                                if file.additions > 0 {
+                                                    Text("+\(file.additions)")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.green)
+                                                }
+                                                if file.deletions > 0 {
+                                                    Text("-\(file.deletions)")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.red)
+                                                }
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                }
+                            }
+
+                            if !selectedFilesForRestore.isEmpty {
+                                Button {
+                                    appState.stashRestorePaths(
+                                        project: project,
+                                        workspace: workspace,
+                                        stashId: stashId,
+                                        paths: Array(selectedFilesForRestore)
+                                    )
+                                    selectedFilesForRestore.removeAll()
+                                } label: {
+                                    Label("恢复选中文件（\(selectedFilesForRestore.count) 个）", systemImage: "arrow.uturn.backward.square")
+                                }
+                                .disabled(isOpInFlight)
+                            }
+                        }
+
+                        // Diff 预览
+                        if !showCache.diffText.isEmpty {
+                            Section("Diff 预览") {
+                                ScrollView(.horizontal) {
+                                    Text(showCache.diffText)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 错误提示
+                if let error = appState.stashLastError[cacheKey] {
+                    Section {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.orange)
+                            Text(error)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Stash 管理")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { isPresented = false }
+                }
+            }
+            .sheet(isPresented: $showConflictWizard) {
+                if let (ws, ctx) = conflictContext {
+                    GitConflictWizardSheet(project: project, workspace: ws, context: ctx)
+                        .environmentObject(appState)
+                }
+            }
+            .onChange(of: appState.conflictWizardCache) { _, newValue in
+                // stash 恢复导致冲突时，自动弹出冲突向导
+                let wsKey = "\(project):\(workspace)"
+                if let wiz = newValue[wsKey], wiz.hasActiveConflicts {
+                    showConflictWizard = true
+                }
+            }
+        }
+    }
+
+    private var conflictContext: (workspace: String, context: String)? {
+        let wsKey = "\(project):\(workspace)"
+        if let wiz = appState.conflictWizardCache[wsKey], wiz.hasActiveConflicts {
+            return (workspace, "workspace")
+        }
+        return nil
+    }
+
+    private func fileStatusColor(_ status: String) -> Color {
+        switch status {
+        case "M": return .orange
+        case "A": return .green
+        case "D": return .red
+        default: return .secondary
         }
     }
 }

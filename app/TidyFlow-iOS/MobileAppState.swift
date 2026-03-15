@@ -1277,6 +1277,63 @@ final class MobileAppState: ObservableObject {
         applyGitInput(.createBranch(name: branch), project: project, workspace: workspace)
     }
 
+    // MARK: - Stash 操作
+
+    func stashCacheKey(project: String, workspace: String) -> String {
+        globalWorkspaceKey(project: project, workspace: workspace)
+    }
+
+    func getStashListCache(project: String, workspace: String) -> GitStashListCache {
+        stashListCache[stashCacheKey(project: project, workspace: workspace)] ?? GitStashListCache()
+    }
+
+    func getStashShowCache(project: String, workspace: String, stashId: String) -> GitStashShowCache {
+        let key = "\(stashCacheKey(project: project, workspace: workspace)):stash:\(stashId)"
+        return stashShowCache[key] ?? GitStashShowCache(stashId: stashId)
+    }
+
+    func fetchStashList(project: String, workspace: String) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashListCache[key] = GitStashListCache(entries: stashListCache[key]?.entries ?? [], isLoading: true)
+        wsClient?.requestGitStashList(project: project, workspace: workspace)
+    }
+
+    func fetchStashShow(project: String, workspace: String, stashId: String) {
+        let showKey = "\(stashCacheKey(project: project, workspace: workspace)):stash:\(stashId)"
+        stashShowCache[showKey] = GitStashShowCache(stashId: stashId, isLoading: true)
+        wsClient?.requestGitStashShow(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    func stashSave(project: String, workspace: String, message: String?, includeUntracked: Bool = false, keepIndex: Bool = false, paths: [String] = []) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashSave(project: project, workspace: workspace, message: message, includeUntracked: includeUntracked, keepIndex: keepIndex, paths: paths)
+    }
+
+    func stashApply(project: String, workspace: String, stashId: String) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashApply(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    func stashPop(project: String, workspace: String, stashId: String) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashPop(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    func stashDrop(project: String, workspace: String, stashId: String) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashDrop(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    func stashRestorePaths(project: String, workspace: String, stashId: String, paths: [String]) {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashRestorePaths(project: project, workspace: workspace, stashId: stashId, paths: paths)
+    }
+
     func tasksForWorkspace(project: String, workspace: String) -> [WorkspaceTaskItem] {
         let key = globalWorkspaceKey(project: project, workspace: workspace)
         return taskStore.allTasks(for: key).sorted { lhs, rhs in
