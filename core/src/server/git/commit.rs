@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use super::sequencer::{is_cherry_picking, is_reverting, read_current_sequencer_commit, read_sequencer_pending_commits};
 use super::status::invalidate_git_status_cache;
 use super::utils::*;
 
@@ -143,6 +144,10 @@ pub fn git_op_status(workspace_root: &Path) -> Result<GitOpStatusResult, GitErro
 
     let state = if is_rebasing(workspace_root) {
         GitOpState::Rebasing
+    } else if is_cherry_picking(workspace_root) {
+        GitOpState::CherryPicking
+    } else if is_reverting(workspace_root) {
+        GitOpState::Reverting
     } else if is_merging(workspace_root) {
         GitOpState::Merging
     } else {
@@ -187,12 +192,35 @@ pub fn git_op_status(workspace_root: &Path) -> Result<GitOpStatusResult, GitErro
         None
     };
 
+    // v1.60: sequencer 扩展字段
+    let (operation_kind, pending_commits, current_commit) = match state {
+        GitOpState::Rebasing => (
+            Some("rebase".to_string()),
+            vec![],
+            None,
+        ),
+        GitOpState::CherryPicking => (
+            Some("cherry_pick".to_string()),
+            read_sequencer_pending_commits(workspace_root),
+            read_current_sequencer_commit(workspace_root),
+        ),
+        GitOpState::Reverting => (
+            Some("revert".to_string()),
+            read_sequencer_pending_commits(workspace_root),
+            read_current_sequencer_commit(workspace_root),
+        ),
+        _ => (None, vec![], None),
+    };
+
     Ok(GitOpStatusResult {
         state,
         conflicts,
         conflict_files,
         head,
         onto,
+        operation_kind,
+        pending_commits,
+        current_commit,
     })
 }
 

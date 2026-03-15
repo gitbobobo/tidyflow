@@ -193,10 +193,26 @@ pub(crate) async fn query_git_op_status(
         .await
         .map_err(|e| e.to_string())?;
     let root = ws_ctx.root_path;
-    let result = tokio::task::spawn_blocking(move || git::git_op_status(&root))
-        .await
-        .map_err(|e| format!("Git op status task failed: {}", e))?
-        .map_err(|e| format!("Git op status failed: {}", e))?;
+    let project_c = project.to_string();
+    let workspace_c = workspace.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        let status = git::git_op_status(&root)?;
+        let receipt = git::sequencer::get_rollback_receipt(&project_c, &workspace_c);
+        Ok::<_, git::GitError>((status, receipt))
+    })
+    .await
+    .map_err(|e| format!("Git op status task failed: {}", e))?
+    .map_err(|e| format!("Git op status failed: {}", e))?;
+
+    let (result, receipt) = result;
+
+    let rollback_receipt = receipt.map(|r| crate::server::protocol::RollbackReceiptInfo {
+        operation_kind: r.operation_kind.as_str().to_string(),
+        original_head: r.original_head,
+        result_head: r.result_head,
+        commit_shas: r.commit_shas,
+        created_at: r.created_at,
+    });
 
     Ok(ServerMessage::GitOpStatusResult {
         project: project.to_string(),
@@ -214,6 +230,10 @@ pub(crate) async fn query_git_op_status(
             .collect(),
         head: result.head,
         onto: result.onto,
+        operation_kind: result.operation_kind,
+        pending_commits: result.pending_commits,
+        current_commit: result.current_commit,
+        rollback_receipt,
     })
 }
 

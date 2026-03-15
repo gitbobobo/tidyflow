@@ -78,12 +78,14 @@ pub struct GitCommitResult {
     pub sha: Option<String>,
 }
 
-/// Git operation state (for rebase/merge)
+/// Git operation state (for rebase/merge/cherry-pick/revert)
 #[derive(Debug, Clone, PartialEq)]
 pub enum GitOpState {
     Normal,
     Rebasing,
     Merging,
+    CherryPicking,
+    Reverting,
 }
 
 impl GitOpState {
@@ -92,6 +94,8 @@ impl GitOpState {
             GitOpState::Normal => "normal",
             GitOpState::Rebasing => "rebasing",
             GitOpState::Merging => "merging",
+            GitOpState::CherryPicking => "cherry_picking",
+            GitOpState::Reverting => "reverting",
         }
     }
 }
@@ -114,6 +118,10 @@ pub struct GitOpStatusResult {
     pub conflict_files: Vec<ConflictFileEntry>,
     pub head: Option<String>,
     pub onto: Option<String>,
+    // v1.60: workspace sequencer 扩展字段
+    pub operation_kind: Option<String>,
+    pub pending_commits: Vec<String>,
+    pub current_commit: Option<String>,
 }
 
 /// Git log entry (single commit)
@@ -505,6 +513,8 @@ mod tests {
         assert_eq!(GitOpState::Normal.as_str(), "normal");
         assert_eq!(GitOpState::Rebasing.as_str(), "rebasing");
         assert_eq!(GitOpState::Merging.as_str(), "merging");
+        assert_eq!(GitOpState::CherryPicking.as_str(), "cherry_picking");
+        assert_eq!(GitOpState::Reverting.as_str(), "reverting");
     }
 
     #[test]

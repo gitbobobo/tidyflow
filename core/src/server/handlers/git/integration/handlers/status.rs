@@ -42,6 +42,10 @@ pub(crate) async fn handle_git_op_status(
                         .collect(),
                     head: r.head,
                     onto: r.onto,
+                    operation_kind: r.operation_kind,
+                    pending_commits: r.pending_commits,
+                    current_commit: r.current_commit,
+                    rollback_receipt: None,
                 },
             )
             .await?;

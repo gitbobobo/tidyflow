@@ -8,6 +8,7 @@ mod history;
 mod integration;
 pub(crate) mod query;
 mod route;
+mod sequencer;
 mod stage_ops;
 mod stash;
 mod status_diff;

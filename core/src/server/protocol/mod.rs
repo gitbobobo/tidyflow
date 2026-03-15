@@ -906,6 +906,38 @@ pub enum ClientMessage {
     HealthRepair {
         request: health::RepairActionRequest,
     },
+
+    // v1.60: Workspace sequencer 操作（cherry-pick / revert / rollback）
+    GitCherryPick {
+        project: String,
+        workspace: String,
+        commit_shas: Vec<String>,
+    },
+    GitCherryPickContinue {
+        project: String,
+        workspace: String,
+    },
+    GitCherryPickAbort {
+        project: String,
+        workspace: String,
+    },
+    GitRevert {
+        project: String,
+        workspace: String,
+        commit_shas: Vec<String>,
+    },
+    GitRevertContinue {
+        project: String,
+        workspace: String,
+    },
+    GitRevertAbort {
+        project: String,
+        workspace: String,
+    },
+    GitWorkspaceOpRollback {
+        project: String,
+        workspace: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -1151,7 +1183,7 @@ pub enum ServerMessage {
     GitOpStatusResult {
         project: String,
         workspace: String,
-        state: String, // "normal", "rebasing", "merging"
+        state: String, // "normal", "rebasing", "merging", "cherry_picking", "reverting"
         #[serde(default)]
         conflicts: Vec<String>,
         /// 语义化冲突文件列表（v1.40+）
@@ -1161,6 +1193,15 @@ pub enum ServerMessage {
         head: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         onto: Option<String>,
+        // v1.60: workspace sequencer 扩展字段
+        #[serde(skip_serializing_if = "Option::is_none")]
+        operation_kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pending_commits: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_commit: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rollback_receipt: Option<RollbackReceiptInfo>,
     },
 
     // v1.12: Git merge to default result (UX-3b)
@@ -2059,6 +2100,38 @@ pub enum ServerMessage {
         version: u64,
         /// 状态生成时间（ISO 8601）
         generated_at: String,
+    },
+
+    // v1.60: Workspace sequencer 统一结果（cherry-pick / revert）
+    GitSequencerResult {
+        project: String,
+        workspace: String,
+        /// 操作类型：cherry_pick | revert
+        operation_kind: String,
+        ok: bool,
+        /// completed | conflict | aborted | error
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
+        #[serde(default)]
+        completed_count: usize,
+        #[serde(default)]
+        pending_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_commit: Option<String>,
+    },
+
+    // v1.60: 回滚操作结果
+    GitWorkspaceOpRollbackResult {
+        project: String,
+        workspace: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
 }
 

@@ -4,7 +4,7 @@ use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
-use super::{branch_commit, history, integration, stage_ops, stash, status_diff};
+use super::{branch_commit, history, integration, sequencer, stage_ops, stash, status_diff};
 
 /// 标准 Git 消息路由（按既有顺序短路匹配）。
 pub async fn handle_standard_git_routes(
@@ -152,6 +152,7 @@ pub async fn handle_standard_git_routes(
         status_diff::handle_message(client_msg, socket, app_state),
         stage_ops::handle_message(client_msg, socket, app_state),
         stash::handle_message(client_msg, socket, app_state),
+        sequencer::handle_message(client_msg, socket, app_state),
         branch_commit::handle_message(client_msg, socket, app_state, ctx),
         integration::handle_message(client_msg, socket, app_state, ctx),
         history::handle_message(client_msg, socket, app_state),
