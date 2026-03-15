@@ -107,6 +107,62 @@ extension MobileAppState {
         conflictWizardCache[key] = wizard
     }
 
+    // v1.50: Stash handlers
+
+    func handleGitStashListResult(_ result: GitStashListResult) {
+        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        stashListCache[key] = GitStashListCache(
+            entries: result.entries,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+        if selectedStashId[key] == nil, let first = result.entries.first {
+            selectedStashId[key] = first.stashId
+        }
+    }
+
+    func handleGitStashShowResult(_ result: GitStashShowResult) {
+        let key = "\(globalWorkspaceKey(project: result.project, workspace: result.workspace)):stash:\(result.stashId)"
+        stashShowCache[key] = GitStashShowCache(
+            stashId: result.stashId,
+            entry: result.entry,
+            files: result.files,
+            diffText: result.diffText,
+            isBinarySummaryTruncated: result.isBinarySummaryTruncated,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+    }
+
+    func handleGitStashOpResult(_ result: GitStashOpResult) {
+        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        stashOpInFlight[key] = false
+        if result.ok {
+            stashLastError.removeValue(forKey: key)
+        } else {
+            stashLastError[key] = result.message ?? "Stash operation failed"
+        }
+        // 刷新列表和 status
+        if result.ok || result.state == "conflict" {
+            wsClient?.requestGitStashList(project: result.project, workspace: result.workspace, cacheMode: .forceRefresh)
+            applyGitInput(.gitStatusChanged, project: result.project, workspace: result.workspace)
+        }
+        // 冲突桥接到现有冲突向导
+        if result.state == "conflict" && !result.conflictFiles.isEmpty {
+            let wizardKey = "\(result.project):\(result.workspace)"
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: false
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
+    }
+
     // MARK: - Project
 
     func handleProjectsList(_ result: ProjectsListResult) {

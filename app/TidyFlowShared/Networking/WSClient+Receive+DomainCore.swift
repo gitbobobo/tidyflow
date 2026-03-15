@@ -331,6 +331,25 @@ extension WSClient {
                 gitMessageHandler?.handleGitConflictActionResult(result)
             }
             return true
+        // v1.50: Stash 结果
+        case "git_stash_list_result":
+            if let result = GitStashListResult.from(json: json) {
+                gitMessageHandler?.handleGitStashListResult(result)
+            }
+            return true
+        case "git_stash_show_result":
+            if let result = GitStashShowResult.from(json: json) {
+                gitMessageHandler?.handleGitStashShowResult(result)
+            }
+            return true
+        case "git_stash_op_result":
+            if let result = GitStashOpResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
+                gitMessageHandler?.handleGitStashOpResult(result)
+            }
+            return true
         default:
             return false
         }

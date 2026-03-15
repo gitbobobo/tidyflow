@@ -41,6 +41,16 @@ class GitCacheState: ObservableObject {
     // v1.40: 冲突向导缓存（key = "project:workspace" 或 "project:integration"）
     @Published var conflictWizardCache: [String: ConflictWizardCache] = [:]
 
+    // v1.50: Stash 缓存（key = "project:workspace"）
+    @Published var stashListCache: [String: GitStashListCache] = [:]
+    @Published var stashShowCache: [String: GitStashShowCache] = [:]
+    /// 当前选中的 stash ID（按 "project:workspace" 隔离）
+    @Published var selectedStashId: [String: String] = [:]
+    /// Stash 操作进行中标志（按 "project:workspace" 隔离）
+    @Published var stashOpInFlight: [String: Bool] = [:]
+    /// 最近一次 stash 操作错误（按 "project:workspace" 隔离）
+    @Published var stashLastError: [String: String] = [:]
+
     // Git 状态索引缓存（资源管理器用，workspace key -> GitStatusIndex）
     var gitStatusIndexCache: [String: GitStatusIndex] = [:]
 
@@ -116,6 +126,14 @@ class GitCacheState: ObservableObject {
         return "\(workspaceCacheKey(workspace: workspace, project: project)):\(sha)"
     }
 
+    func stashCacheKey(project: String, workspace: String) -> String {
+        return workspaceCacheKey(workspace: workspace, project: project)
+    }
+
+    func stashShowCacheKey(project: String, workspace: String, stashId: String) -> String {
+        return "\(workspaceCacheKey(workspace: workspace, project: project)):stash:\(stashId)"
+    }
+
     // MARK: - 资源管理：按工作区边界淘汰缓存
 
     /// 清除指定工作区的全部 Git 缓存数据。
@@ -130,6 +148,13 @@ class GitCacheState: ObservableObject {
         mergeInFlight.removeValue(forKey: globalKey)
         rebaseOntoDefaultInFlight.removeValue(forKey: globalKey)
         gitStatusIndexCache.removeValue(forKey: globalKey)
+        stashListCache.removeValue(forKey: globalKey)
+        selectedStashId.removeValue(forKey: globalKey)
+        stashOpInFlight.removeValue(forKey: globalKey)
+        stashLastError.removeValue(forKey: globalKey)
+        // Stash show 缓存键格式为 "project:workspace:stash:<stash_id>"
+        let stashPrefix = globalKey + ":stash:"
+        stashShowCache.keys.filter { $0.hasPrefix(stashPrefix) }.forEach { stashShowCache.removeValue(forKey: $0) }
         // Diff 缓存键格式为 "project:workspace:path:mode"，按前缀过滤
         let prefix = globalKey + ":"
         diffCache.keys.filter { $0.hasPrefix(prefix) }.forEach { diffCache.removeValue(forKey: $0) }
@@ -160,6 +185,11 @@ class GitCacheState: ObservableObject {
         evictSimpleCache(&gitStatusIndexCache)
         evictPrefixCache(&diffCache)
         evictPrefixCache(&gitShowCache)
+        evictSimpleCache(&stashListCache)
+        evictSimpleCache(&selectedStashId)
+        evictSimpleCache(&stashOpInFlight)
+        evictSimpleCache(&stashLastError)
+        evictPrefixCache(&stashShowCache)
     }
 
     // MARK: - 共享驱动辅助方法

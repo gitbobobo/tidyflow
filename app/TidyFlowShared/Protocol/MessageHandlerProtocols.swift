@@ -22,6 +22,10 @@ public protocol GitMessageHandler: AnyObject {
     // v1.40: 冲突向导响应
     func handleGitConflictDetailResult(_ result: GitConflictDetailResult)
     func handleGitConflictActionResult(_ result: GitConflictActionResult)
+    // v1.50: Stash results
+    func handleGitStashListResult(_ result: GitStashListResult)
+    func handleGitStashShowResult(_ result: GitStashShowResult)
+    func handleGitStashOpResult(_ result: GitStashOpResult)
 }
 
 /// 默认空实现，子类只需 override 关心的方法
@@ -44,6 +48,10 @@ public extension GitMessageHandler {
     // v1.40: 冲突向导响应默认空实现
     func handleGitConflictDetailResult(_ result: GitConflictDetailResult) {}
     func handleGitConflictActionResult(_ result: GitConflictActionResult) {}
+    // v1.50: Stash 默认空实现
+    func handleGitStashListResult(_ result: GitStashListResult) {}
+    func handleGitStashShowResult(_ result: GitStashShowResult) {}
+    func handleGitStashOpResult(_ result: GitStashOpResult) {}
 }
 
 public protocol ProjectMessageHandler: AnyObject {

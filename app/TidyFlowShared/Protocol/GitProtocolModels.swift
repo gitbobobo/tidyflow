@@ -1971,3 +1971,251 @@ public struct DiffDescriptor: Hashable, Equatable {
         DiffDescriptor(project: project, workspace: workspace, path: path, mode: "staged")
     }
 }
+
+// MARK: - v1.50: Git Stash Protocol Models
+
+/// Stash 条目
+public struct GitStashEntry: Identifiable, Equatable {
+    public let id: String      // stash_id, e.g. "stash@{0}"
+    public let stashId: String
+    public let title: String
+    public let message: String
+    public let branchName: String
+    public let createdAt: String
+    public let fileCount: Int
+    public let includesUntracked: Bool
+    public let includesIndex: Bool
+
+    public init(stashId: String, title: String, message: String, branchName: String, createdAt: String, fileCount: Int, includesUntracked: Bool, includesIndex: Bool) {
+        self.id = stashId
+        self.stashId = stashId
+        self.title = title
+        self.message = message
+        self.branchName = branchName
+        self.createdAt = createdAt
+        self.fileCount = fileCount
+        self.includesUntracked = includesUntracked
+        self.includesIndex = includesIndex
+    }
+
+    public static func from(dict: [String: Any]) -> GitStashEntry? {
+        guard let stashId = dict["stash_id"] as? String,
+              let title = dict["title"] as? String,
+              let message = dict["message"] as? String,
+              let branchName = dict["branch_name"] as? String,
+              let createdAt = dict["created_at"] as? String else {
+            return nil
+        }
+        return GitStashEntry(
+            stashId: stashId,
+            title: title,
+            message: message,
+            branchName: branchName,
+            createdAt: createdAt,
+            fileCount: dict["file_count"] as? Int ?? 0,
+            includesUntracked: dict["includes_untracked"] as? Bool ?? false,
+            includesIndex: dict["includes_index"] as? Bool ?? false
+        )
+    }
+
+    public static func listFrom(json: Any?) -> [GitStashEntry] {
+        guard let arr = json as? [[String: Any]] else { return [] }
+        return arr.compactMap { GitStashEntry.from(dict: $0) }
+    }
+}
+
+/// Stash 文件条目
+public struct GitStashFileEntry: Identifiable, Equatable {
+    public let id: String  // path
+    public let path: String
+    public let status: String
+    public let additions: Int
+    public let deletions: Int
+    public let sourceKind: String  // "tracked" | "untracked" | "index"
+
+    public init(path: String, status: String, additions: Int, deletions: Int, sourceKind: String) {
+        self.id = path
+        self.path = path
+        self.status = status
+        self.additions = additions
+        self.deletions = deletions
+        self.sourceKind = sourceKind
+    }
+
+    public static func from(dict: [String: Any]) -> GitStashFileEntry? {
+        guard let path = dict["path"] as? String,
+              let status = dict["status"] as? String else {
+            return nil
+        }
+        return GitStashFileEntry(
+            path: path,
+            status: status,
+            additions: dict["additions"] as? Int ?? 0,
+            deletions: dict["deletions"] as? Int ?? 0,
+            sourceKind: dict["source_kind"] as? String ?? "tracked"
+        )
+    }
+
+    public static func listFrom(json: Any?) -> [GitStashFileEntry] {
+        guard let arr = json as? [[String: Any]] else { return [] }
+        return arr.compactMap { GitStashFileEntry.from(dict: $0) }
+    }
+}
+
+/// Stash 列表结果
+public struct GitStashListResult {
+    public let project: String
+    public let workspace: String
+    public let entries: [GitStashEntry]
+
+    public static func from(json: [String: Any]) -> GitStashListResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        return GitStashListResult(
+            project: project,
+            workspace: workspace,
+            entries: GitStashEntry.listFrom(json: json["entries"])
+        )
+    }
+
+    public init(project: String, workspace: String, entries: [GitStashEntry]) {
+        self.project = project
+        self.workspace = workspace
+        self.entries = entries
+    }
+}
+
+/// Stash 详情结果
+public struct GitStashShowResult {
+    public let project: String
+    public let workspace: String
+    public let stashId: String
+    public let entry: GitStashEntry
+    public let files: [GitStashFileEntry]
+    public let diffText: String
+    public let isBinarySummaryTruncated: Bool
+
+    public static func from(json: [String: Any]) -> GitStashShowResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let stashId = json["stash_id"] as? String,
+              let entryDict = json["entry"] as? [String: Any],
+              let entry = GitStashEntry.from(dict: entryDict) else {
+            return nil
+        }
+        return GitStashShowResult(
+            project: project,
+            workspace: workspace,
+            stashId: stashId,
+            entry: entry,
+            files: GitStashFileEntry.listFrom(json: json["files"]),
+            diffText: json["diff_text"] as? String ?? "",
+            isBinarySummaryTruncated: json["is_binary_summary_truncated"] as? Bool ?? false
+        )
+    }
+
+    public init(project: String, workspace: String, stashId: String, entry: GitStashEntry, files: [GitStashFileEntry], diffText: String, isBinarySummaryTruncated: Bool) {
+        self.project = project
+        self.workspace = workspace
+        self.stashId = stashId
+        self.entry = entry
+        self.files = files
+        self.diffText = diffText
+        self.isBinarySummaryTruncated = isBinarySummaryTruncated
+    }
+}
+
+/// Stash 操作结果
+public struct GitStashOpResult {
+    public let project: String
+    public let workspace: String
+    public let op: String
+    public let stashId: String
+    public let ok: Bool
+    public let state: String  // "completed" | "conflict" | "noop" | "failed"
+    public let message: String?
+    public let affectedPaths: [String]
+    public let conflictFiles: [ConflictFileEntry]
+
+    public static func from(json: [String: Any]) -> GitStashOpResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let op = json["op"] as? String,
+              let stashId = json["stash_id"] as? String,
+              let ok = json["ok"] as? Bool,
+              let state = json["state"] as? String else {
+            return nil
+        }
+        return GitStashOpResult(
+            project: project,
+            workspace: workspace,
+            op: op,
+            stashId: stashId,
+            ok: ok,
+            state: state,
+            message: json["message"] as? String,
+            affectedPaths: json["affected_paths"] as? [String] ?? [],
+            conflictFiles: ConflictFileEntry.listFrom(json: json["conflict_files"])
+        )
+    }
+
+    public init(project: String, workspace: String, op: String, stashId: String, ok: Bool, state: String, message: String?, affectedPaths: [String], conflictFiles: [ConflictFileEntry]) {
+        self.project = project
+        self.workspace = workspace
+        self.op = op
+        self.stashId = stashId
+        self.ok = ok
+        self.state = state
+        self.message = message
+        self.affectedPaths = affectedPaths
+        self.conflictFiles = conflictFiles
+    }
+}
+
+/// Stash 列表缓存
+public struct GitStashListCache: Equatable {
+    public var entries: [GitStashEntry]
+    public var isLoading: Bool
+    public var error: String?
+    public var updatedAt: Date
+
+    public static func empty() -> GitStashListCache {
+        GitStashListCache(entries: [], isLoading: false, error: nil, updatedAt: .distantPast)
+    }
+
+    public init(entries: [GitStashEntry], isLoading: Bool, error: String?, updatedAt: Date) {
+        self.entries = entries
+        self.isLoading = isLoading
+        self.error = error
+        self.updatedAt = updatedAt
+    }
+}
+
+/// Stash 详情缓存
+public struct GitStashShowCache: Equatable {
+    public var stashId: String
+    public var entry: GitStashEntry?
+    public var files: [GitStashFileEntry]
+    public var diffText: String
+    public var isBinarySummaryTruncated: Bool
+    public var isLoading: Bool
+    public var error: String?
+    public var updatedAt: Date
+
+    public static func empty(stashId: String) -> GitStashShowCache {
+        GitStashShowCache(stashId: stashId, entry: nil, files: [], diffText: "", isBinarySummaryTruncated: false, isLoading: false, error: nil, updatedAt: .distantPast)
+    }
+
+    public init(stashId: String, entry: GitStashEntry?, files: [GitStashFileEntry], diffText: String, isBinarySummaryTruncated: Bool, isLoading: Bool, error: String?, updatedAt: Date) {
+        self.stashId = stashId
+        self.entry = entry
+        self.files = files
+        self.diffText = diffText
+        self.isBinarySummaryTruncated = isBinarySummaryTruncated
+        self.isLoading = isLoading
+        self.error = error
+        self.updatedAt = updatedAt
+    }
+}

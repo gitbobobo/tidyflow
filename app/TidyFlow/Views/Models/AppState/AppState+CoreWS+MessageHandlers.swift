@@ -45,6 +45,10 @@ final class AppStateGitMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>
     // v1.40: 冲突向导
     func handleGitConflictDetailResult(_ result: GitConflictDetailResult) { dispatchToTarget { $0.gitCache.handleGitConflictDetailResult(result) } }
     func handleGitConflictActionResult(_ result: GitConflictActionResult) { dispatchToTarget { $0.gitCache.handleGitConflictActionResult(result) } }
+    // v1.50: Stash
+    func handleGitStashListResult(_ result: GitStashListResult) { dispatchToTarget { $0.gitCache.handleGitStashListResult(result) } }
+    func handleGitStashShowResult(_ result: GitStashShowResult) { dispatchToTarget { $0.gitCache.handleGitStashShowResult(result) } }
+    func handleGitStashOpResult(_ result: GitStashOpResult) { dispatchToTarget { $0.gitCache.handleGitStashOpResult(result) } }
 }
 
 final class AppStateProjectMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, ProjectMessageHandler {

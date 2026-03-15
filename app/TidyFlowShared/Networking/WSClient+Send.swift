@@ -417,6 +417,64 @@ private struct GitDefaultBranchRequest: TypedWSRequest {
     }
 }
 
+private struct GitStashSaveRequest: TypedWSRequest {
+    public let project: String
+    public let workspace: String
+    public let message: String?
+    public let includeUntracked: Bool?
+    public let keepIndex: Bool?
+    public let paths: [String]?
+
+    public var action: String { "git_stash_save" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case message
+        case includeUntracked = "include_untracked"
+        case keepIndex = "keep_index"
+        case paths
+    }
+}
+
+private struct GitStashIdRequest: TypedWSRequest {
+    private let requestAction: String
+    public let project: String
+    public let workspace: String
+    public let stashId: String
+
+    public var action: String { requestAction }
+
+    public init(action: String, project: String, workspace: String, stashId: String) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.stashId = stashId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case stashId = "stash_id"
+    }
+}
+
+private struct GitStashRestorePathsRequest: TypedWSRequest {
+    public let project: String
+    public let workspace: String
+    public let stashId: String
+    public let paths: [String]
+
+    public var action: String { "git_stash_restore_paths" }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case stashId = "stash_id"
+        case paths
+    }
+}
+
 private struct ImportProjectRequest: TypedWSRequest {
     public let name: String
     public let path: String
@@ -1589,6 +1647,71 @@ extension WSClient {
     /// 手动标记文件已解决
     public func requestGitConflictMarkResolved(project: String, workspace: String, path: String, context: String) {
         sendTyped(ProjectWorkspacePathContextTypedWSRequest(action: "git_conflict_mark_resolved", project: project, workspace: workspace, path: path, context: context))
+    }
+
+    // MARK: - v1.50: Git Stash 请求方法
+
+    /// 请求 stash 列表
+    public func requestGitStashList(
+        project: String,
+        workspace: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/stashes",
+            fallbackAction: "git_stash_list_result",
+            cacheMode: cacheMode
+        )
+    }
+
+    /// 请求 stash 详情
+    public func requestGitStashShow(
+        project: String,
+        workspace: String,
+        stashId: String,
+        cacheMode: HTTPQueryCacheMode = .default
+    ) {
+        requestReadViaHTTP(
+            domain: "git",
+            path: "/api/v1/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/git/stashes/\(encodePathComponent(stashId))",
+            fallbackAction: "git_stash_show_result",
+            cacheMode: cacheMode
+        )
+    }
+
+    /// 保存新 stash
+    public func requestGitStashSave(project: String, workspace: String, message: String?, includeUntracked: Bool = false, keepIndex: Bool = false, paths: [String] = []) {
+        sendTyped(
+            GitStashSaveRequest(
+                project: project,
+                workspace: workspace,
+                message: message,
+                includeUntracked: includeUntracked ? true : nil,
+                keepIndex: keepIndex ? true : nil,
+                paths: paths.isEmpty ? nil : paths
+            )
+        )
+    }
+
+    /// Apply stash（保留 stash 条目）
+    public func requestGitStashApply(project: String, workspace: String, stashId: String) {
+        sendTyped(GitStashIdRequest(action: "git_stash_apply", project: project, workspace: workspace, stashId: stashId))
+    }
+
+    /// Pop stash（成功后删除条目，冲突时保留）
+    public func requestGitStashPop(project: String, workspace: String, stashId: String) {
+        sendTyped(GitStashIdRequest(action: "git_stash_pop", project: project, workspace: workspace, stashId: stashId))
+    }
+
+    /// Drop stash（仅删除条目）
+    public func requestGitStashDrop(project: String, workspace: String, stashId: String) {
+        sendTyped(GitStashIdRequest(action: "git_stash_drop", project: project, workspace: workspace, stashId: stashId))
+    }
+
+    /// 按文件恢复 stash
+    public func requestGitStashRestorePaths(project: String, workspace: String, stashId: String, paths: [String]) {
+        sendTyped(GitStashRestorePathsRequest(project: project, workspace: workspace, stashId: stashId, paths: paths))
     }
 
     // UX-2: Request import project

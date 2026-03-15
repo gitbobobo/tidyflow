@@ -537,4 +537,139 @@ extension GitCacheState {
         let key = conflictWizardKey(project: project, workspace: workspace, context: context)
         return conflictWizardCache[key] ?? ConflictWizardCache.empty()
     }
+
+    // MARK: - v1.50: Git Stash API
+
+    /// 接收 stash 列表结果
+    func handleGitStashListResult(_ result: GitStashListResult) {
+        let key = stashCacheKey(project: result.project, workspace: result.workspace)
+        stashListCache[key] = GitStashListCache(
+            entries: result.entries,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+        // 如果没有选中的 stash，自动选中最新条目
+        if selectedStashId[key] == nil, let first = result.entries.first {
+            selectedStashId[key] = first.stashId
+        }
+    }
+
+    /// 接收 stash 详情结果
+    func handleGitStashShowResult(_ result: GitStashShowResult) {
+        let showKey = stashShowCacheKey(project: result.project, workspace: result.workspace, stashId: result.stashId)
+        stashShowCache[showKey] = GitStashShowCache(
+            stashId: result.stashId,
+            entry: result.entry,
+            files: result.files,
+            diffText: result.diffText,
+            isBinarySummaryTruncated: result.isBinarySummaryTruncated,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+    }
+
+    /// 接收 stash 操作结果
+    func handleGitStashOpResult(_ result: GitStashOpResult) {
+        let key = stashCacheKey(project: result.project, workspace: result.workspace)
+        stashOpInFlight[key] = false
+
+        if result.ok {
+            stashLastError.removeValue(forKey: key)
+        } else {
+            stashLastError[key] = result.message ?? "Stash operation failed"
+        }
+
+        // 成功后刷新 stash 列表和 git status
+        if result.ok || result.state == "conflict" {
+            wsClient?.requestGitStashList(project: result.project, workspace: result.workspace, cacheMode: .forceRefresh)
+            applyGitInput(.gitStatusChanged, project: result.project, workspace: result.workspace)
+        }
+
+        // 如果产生冲突，桥接到现有冲突向导
+        if result.state == "conflict" && !result.conflictFiles.isEmpty {
+            let wizardKey = conflictWizardKey(project: result.project, workspace: result.workspace, context: "workspace")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: false
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
+    }
+
+    /// 请求 stash 列表
+    func fetchStashList(project: String, workspace: String, cacheMode: HTTPQueryCacheMode = .default) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        var cache = stashListCache[key] ?? GitStashListCache.empty()
+        cache.isLoading = true
+        stashListCache[key] = cache
+        wsClient?.requestGitStashList(project: project, workspace: workspace, cacheMode: cacheMode)
+    }
+
+    /// 请求 stash 详情
+    func fetchStashShow(project: String, workspace: String, stashId: String) {
+        guard connectionState == .connected else { return }
+        let showKey = stashShowCacheKey(project: project, workspace: workspace, stashId: stashId)
+        var cache = stashShowCache[showKey] ?? GitStashShowCache.empty(stashId: stashId)
+        cache.isLoading = true
+        stashShowCache[showKey] = cache
+        wsClient?.requestGitStashShow(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    /// 保存新 stash
+    func stashSave(project: String, workspace: String, message: String?, includeUntracked: Bool = false, keepIndex: Bool = false, paths: [String] = []) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashSave(project: project, workspace: workspace, message: message, includeUntracked: includeUntracked, keepIndex: keepIndex, paths: paths)
+    }
+
+    /// Apply stash
+    func stashApply(project: String, workspace: String, stashId: String) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashApply(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    /// Pop stash
+    func stashPop(project: String, workspace: String, stashId: String) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashPop(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    /// Drop stash
+    func stashDrop(project: String, workspace: String, stashId: String) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashDrop(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    /// 按文件恢复 stash
+    func stashRestorePaths(project: String, workspace: String, stashId: String, paths: [String]) {
+        guard connectionState == .connected else { return }
+        let key = stashCacheKey(project: project, workspace: workspace)
+        stashOpInFlight[key] = true
+        wsClient?.requestGitStashRestorePaths(project: project, workspace: workspace, stashId: stashId, paths: paths)
+    }
+
+    /// 查询 stash 列表缓存
+    func getStashListCache(project: String, workspace: String) -> GitStashListCache {
+        let key = stashCacheKey(project: project, workspace: workspace)
+        return stashListCache[key] ?? GitStashListCache.empty()
+    }
+
+    /// 查询 stash 详情缓存
+    func getStashShowCache(project: String, workspace: String, stashId: String) -> GitStashShowCache {
+        let showKey = stashShowCacheKey(project: project, workspace: workspace, stashId: stashId)
+        return stashShowCache[showKey] ?? GitStashShowCache.empty(stashId: stashId)
+    }
 }

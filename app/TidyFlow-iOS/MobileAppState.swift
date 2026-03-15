@@ -166,6 +166,12 @@ final class MobileAppState: ObservableObject {
     @Published var templates: [TemplateInfo] = []
     // v1.40: 冲突向导缓存（key = "project:workspace" 或 "project:integration"）
     @Published var conflictWizardCache: [String: ConflictWizardCache] = [:]
+    // v1.50: Stash 缓存（key = "project:workspace"）
+    @Published var stashListCache: [String: GitStashListCache] = [:]
+    @Published var stashShowCache: [String: GitStashShowCache] = [:]
+    @Published var selectedStashId: [String: String] = [:]
+    @Published var stashOpInFlight: [String: Bool] = [:]
+    @Published var stashLastError: [String: String] = [:]
     // 资源管理器（按 project/workspace/path 分桶）
     @Published var explorerFileListCache: [String: FileListCache] = [:]
     @Published var explorerDirectoryExpandState: [String: Bool] = [:]
