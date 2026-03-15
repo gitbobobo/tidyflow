@@ -449,6 +449,28 @@ Core 文件日志（`~/.tidyflow/logs/YYYY-MM-DD.log`）对客户端日志与 Co
 - `restore_paths` 不走 `git stash apply` 隐式 pathspec，Core 按文件来源分类恢复。
 - 所有响应必须携带 `project` / `workspace` 多工作区边界字段。
 
+### Workspace Sequencer 操作（v1.60+）
+
+v1.60 新增 workspace 级 `cherry-pick`、`revert` 顺序操作与回滚能力。
+
+| WS Action | 方向 | 说明 |
+|-----------|------|------|
+| `git_cherry_pick` | Client → Core | 启动 cherry-pick，payload 含 `commit_shas`（从旧到新） |
+| `git_cherry_pick_continue` | Client → Core | 冲突解决后继续 cherry-pick |
+| `git_cherry_pick_abort` | Client → Core | 中止 cherry-pick |
+| `git_revert` | Client → Core | 启动 revert，payload 含 `commit_shas`（从新到旧） |
+| `git_revert_continue` | Client → Core | 冲突解决后继续 revert |
+| `git_revert_abort` | Client → Core | 中止 revert |
+| `git_workspace_op_rollback` | Client → Core | 回滚最近一次成功的 cherry-pick/revert |
+
+**结果类型**：`GitSequencerResult`（统一 cherry-pick/revert 结果）、`GitWorkspaceOpRollbackResult`。
+
+**`GitOpStatusResult` 扩展字段（向后兼容）**：`operation_kind`、`pending_commits`、`current_commit`、`rollback_receipt`。
+
+**语义约束**：
+- 回滚仅在当前 HEAD 等于 `rollback_receipt.result_head` 且无未提交变更时允许执行。
+- 所有响应必须携带 `project` / `workspace` 多工作区边界字段。
+
 ## AI 会话上下文快照（Context Snapshot）
 
 每个 `(project, workspace, ai_tool, session_id)` 会话在 `ai_chat_done` 时保存上下文快照。

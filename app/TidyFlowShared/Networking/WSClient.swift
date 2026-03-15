@@ -107,6 +107,9 @@ public class WSClient: NSObject, ObservableObject {
     public var onGitRebaseOntoDefaultResult: ((GitRebaseOntoDefaultResult) -> Void)?
     // UX-5: Reset integration worktree handler
     public var onGitResetIntegrationWorktreeResult: ((GitResetIntegrationWorktreeResult) -> Void)?
+    // v1.60: Workspace sequencer handlers
+    public var onGitSequencerResult: ((GitSequencerResult) -> Void)?
+    public var onGitWorkspaceOpRollbackResult: ((GitWorkspaceOpRollbackResult) -> Void)?
     // UX-2: Project import handlers
     public var onProjectImported: ((ProjectImportedResult) -> Void)?
     public var onWorkspaceCreated: ((WorkspaceCreatedResult) -> Void)?

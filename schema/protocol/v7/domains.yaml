@@ -70,6 +70,23 @@ domains:
       - git_stash_list_result
       - git_stash_show_result
       - git_stash_op_result
+    # v1.60: Workspace sequencer operations (cherry-pick / revert / rollback)
+    ws_write_actions_v160:
+      - git_cherry_pick
+      - git_cherry_pick_continue
+      - git_cherry_pick_abort
+      - git_revert
+      - git_revert_continue
+      - git_revert_abort
+      - git_workspace_op_rollback
+    ws_result_actions_v160:
+      - git_sequencer_result
+      - git_workspace_op_rollback_result
+    # GitOpStatusResult 扩展字段（v1.60+，向后兼容）：
+    # operation_kind: string? (rebase | cherry_pick | revert)
+    # pending_commits: [string] (sequencer 中剩余提交)
+    # current_commit: string? (当前正在处理的提交)
+    # rollback_receipt: object? { operation_kind, original_head, result_head, commit_shas, created_at }
   - id: project
     action_rule: prefix("list_","select_","import_","create_","remove_","project_","workspace_","save_project_commands","run_project_command","cancel_project_command")
   - id: settings

@@ -475,6 +475,28 @@ private struct GitStashRestorePathsRequest: TypedWSRequest {
     }
 }
 
+private struct GitSequencerRequest: TypedWSRequest {
+    private let requestAction: String
+    public let project: String
+    public let workspace: String
+    public let commitShas: [String]
+
+    public var action: String { requestAction }
+
+    public init(action: String, project: String, workspace: String, commitShas: [String]) {
+        self.requestAction = action
+        self.project = project
+        self.workspace = workspace
+        self.commitShas = commitShas
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case project
+        case workspace
+        case commitShas = "commit_shas"
+    }
+}
+
 private struct ImportProjectRequest: TypedWSRequest {
     public let name: String
     public let path: String
@@ -1712,6 +1734,35 @@ extension WSClient {
     /// 按文件恢复 stash
     public func requestGitStashRestorePaths(project: String, workspace: String, stashId: String, paths: [String]) {
         sendTyped(GitStashRestorePathsRequest(project: project, workspace: workspace, stashId: stashId, paths: paths))
+    }
+
+    // MARK: - v1.60: Workspace Sequencer 请求方法
+
+    // v1.60: Cherry-pick
+    public func requestGitCherryPick(project: String, workspace: String, commitShas: [String]) {
+        sendTyped(GitSequencerRequest(action: "git_cherry_pick", project: project, workspace: workspace, commitShas: commitShas))
+    }
+    public func requestGitCherryPickContinue(project: String, workspace: String) {
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_cherry_pick_continue", project: project, workspace: workspace))
+    }
+    public func requestGitCherryPickAbort(project: String, workspace: String) {
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_cherry_pick_abort", project: project, workspace: workspace))
+    }
+
+    // v1.60: Revert
+    public func requestGitRevert(project: String, workspace: String, commitShas: [String]) {
+        sendTyped(GitSequencerRequest(action: "git_revert", project: project, workspace: workspace, commitShas: commitShas))
+    }
+    public func requestGitRevertContinue(project: String, workspace: String) {
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_revert_continue", project: project, workspace: workspace))
+    }
+    public func requestGitRevertAbort(project: String, workspace: String) {
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_revert_abort", project: project, workspace: workspace))
+    }
+
+    // v1.60: Rollback
+    public func requestGitWorkspaceOpRollback(project: String, workspace: String) {
+        sendTyped(ProjectWorkspaceTypedWSRequest(action: "git_workspace_op_rollback", project: project, workspace: workspace))
     }
 
     // UX-2: Request import project

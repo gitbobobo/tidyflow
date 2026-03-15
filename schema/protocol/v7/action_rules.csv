@@ -41,3 +41,5 @@ prefix,git,git_conflict_
 prefix,health,health_
 # v1.46: 统一协调层
 prefix,coordinator,coordinator_
+# v1.60: workspace sequencer operations (cherry-pick / revert / rollback)
+# 已由 git 前缀规则覆盖（git_cherry_pick*、git_revert*、git_workspace_op_rollback），此处作文档显式说明

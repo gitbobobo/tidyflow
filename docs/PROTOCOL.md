@@ -1420,6 +1420,113 @@ v1.48 新增 `recovery` 可选字段，透传到 `EvolutionWorkspaceItem`、`Evo
 | `GitStashShowResult` | `project`, `workspace`, `stash_id`, `entry: GitStashEntryInfo`, `files: [GitStashFileInfo]`, `diff_text` | Stash 详情响应 |
 | `GitStashOpResult` | `project`, `workspace`, `op`, `stash_id`, `ok`, `state`, `message`, `affected_paths`, `conflict_files` | Stash 操作结果 |
 
+## Workspace Sequencer 操作（v1.60+）
+
+### 概述
+
+v1.60 新增 workspace 级 `cherry-pick`、`revert` 顺序操作与回滚能力。
+
+### 新增动作
+
+#### git_cherry_pick（启动 Cherry-pick）
+
+**请求**（WS action）：
+```jsonc
+{
+  "type": "git_cherry_pick",
+  "project": "my-project",
+  "workspace": "default",
+  "commit_shas": ["abc1234", "def5678"]  // 从旧到新
+}
+```
+
+**响应**：`git_sequencer_result`。
+
+#### git_cherry_pick_continue / git_cherry_pick_abort
+
+**请求**（WS action）：
+```jsonc
+{
+  "type": "git_cherry_pick_continue",  // 或 git_cherry_pick_abort
+  "project": "my-project",
+  "workspace": "default"
+}
+```
+
+**响应**：`git_sequencer_result`。
+
+#### git_revert（启动 Revert）
+
+**请求**（WS action）：
+```jsonc
+{
+  "type": "git_revert",
+  "project": "my-project",
+  "workspace": "default",
+  "commit_shas": ["def5678", "abc1234"]  // 从新到旧
+}
+```
+
+**响应**：`git_sequencer_result`。
+
+#### git_revert_continue / git_revert_abort
+
+**请求**（WS action）：
+```jsonc
+{
+  "type": "git_revert_continue",  // 或 git_revert_abort
+  "project": "my-project",
+  "workspace": "default"
+}
+```
+
+**响应**：`git_sequencer_result`。
+
+#### git_workspace_op_rollback（回滚）
+
+**请求**（WS action）：
+```jsonc
+{
+  "type": "git_workspace_op_rollback",
+  "project": "my-project",
+  "workspace": "default"
+}
+```
+
+**响应**：`git_workspace_op_rollback_result`。
+
+#### Sequencer 载荷类型
+
+| 类型 | 字段 | 说明 |
+|------|------|------|
+| `GitSequencerResult` | `project`, `workspace`, `operation_kind`, `ok`, `state`, `message`, `conflicts`, `conflict_files`, `completed_count`, `pending_count`, `current_commit` | Sequencer 统一结果 |
+| `GitWorkspaceOpRollbackResult` | `project`, `workspace`, `ok`, `message` | 回滚操作结果 |
+
+#### `git_op_status_result` 扩展字段（向后兼容）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `operation_kind` | `string?` | `rebase` / `cherry_pick` / `revert`（仅非 normal/merging 时填充） |
+| `pending_commits` | `[string]` | sequencer 中剩余待处理的提交 SHA |
+| `current_commit` | `string?` | 当前正在处理的提交 SHA |
+| `rollback_receipt` | `object?` | 最近一次成功 cherry-pick/revert 的回滚收据 |
+
+#### 回滚收据 (`rollback_receipt`) 结构
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `operation_kind` | `string` | `cherry_pick` / `revert` |
+| `original_head` | `string` | 操作前的 HEAD SHA |
+| `result_head` | `string` | 操作完成后的 HEAD SHA |
+| `commit_shas` | `[string]` | 涉及的提交 SHA 列表 |
+| `created_at` | `string` | 创建时间（ISO 8601） |
+
+#### 回滚门禁条件（全部满足才允许执行）
+
+1. 当前 workspace 没有未提交变更。
+2. 当前 HEAD 仍等于 `result_head`。
+3. 收据对应最近一次成功的 cherry-pick/revert 批次。
+
 ## 系统健康诊断与自修复域（v1.41）
 
 ### 概述

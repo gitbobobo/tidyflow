@@ -350,6 +350,29 @@ extension WSClient {
                 gitMessageHandler?.handleGitStashOpResult(result)
             }
             return true
+        // v1.60: Workspace sequencer 结果
+        case "git_sequencer_result":
+            if let result = GitSequencerResult.from(json: json) {
+                invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                if let handler = gitMessageHandler {
+                    handler.handleGitSequencerResult(result)
+                } else {
+                    onGitSequencerResult?(result)
+                }
+            }
+            return true
+        case "git_workspace_op_rollback_result":
+            if let result = GitWorkspaceOpRollbackResult.from(json: json) {
+                if result.ok {
+                    invalidateHTTPQueries(.gitWorkspace(project: result.project, workspace: result.workspace))
+                }
+                if let handler = gitMessageHandler {
+                    handler.handleGitWorkspaceOpRollbackResult(result)
+                } else {
+                    onGitWorkspaceOpRollbackResult?(result)
+                }
+            }
+            return true
         default:
             return false
         }

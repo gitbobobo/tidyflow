@@ -2404,6 +2404,21 @@ pub struct GitStashFileInfo {
     pub source_kind: String,
 }
 
+/// v1.60: 回滚收据信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RollbackReceiptInfo {
+    /// 操作类型：cherry_pick | revert
+    pub operation_kind: String,
+    /// 操作前的 HEAD SHA
+    pub original_head: String,
+    /// 操作完成后的 HEAD SHA
+    pub result_head: String,
+    /// 涉及的提交 SHA 列表
+    pub commit_shas: Vec<String>,
+    /// 创建时间（ISO 8601）
+    pub created_at: String,
+}
+
 /// 快捷键绑定配置（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

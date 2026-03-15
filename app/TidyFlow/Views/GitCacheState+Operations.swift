@@ -175,6 +175,11 @@ extension GitCacheState {
         cache.conflictFiles = result.conflictFiles
         cache.isLoading = false
         cache.updatedAt = Date()
+        // v1.60: workspace sequencer 扩展字段
+        cache.operationKind = result.operationKind
+        cache.pendingCommits = result.pendingCommits
+        cache.currentCommit = result.currentCommit
+        cache.rollbackReceipt = result.rollbackReceipt
         gitOpStatusCache[wsCacheKey] = cache
         // 同步更新冲突向导缓存快照
         if result.state != .normal && !result.conflictFiles.isEmpty {

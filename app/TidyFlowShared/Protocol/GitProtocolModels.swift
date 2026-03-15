@@ -1146,12 +1146,26 @@ public enum GitOpState: String {
     case normal = "normal"
     case rebasing = "rebasing"
     case merging = "merging"
+    case cherryPicking = "cherry_picking"
+    case reverting = "reverting"
 
     public var displayName: String {
         switch self {
         case .normal: return "Normal"
         case .rebasing: return "Rebasing"
         case .merging: return "Merging"
+        case .cherryPicking: return "Cherry-picking"
+        case .reverting: return "Reverting"
+        }
+    }
+
+    /// 对应的 workspace 操作类型（仅对 sequencer 操作有效）
+    public var workspaceOperationKind: GitWorkspaceOperationKind? {
+        switch self {
+        case .rebasing: return .rebase
+        case .cherryPicking: return .cherryPick
+        case .reverting: return .revert
+        case .normal, .merging: return nil
         }
     }
 }
@@ -1209,6 +1223,11 @@ public struct GitOpStatusResult {
     public let conflictFiles: [ConflictFileEntry]
     public let head: String?
     public let onto: String?
+    // v1.60: workspace sequencer 扩展
+    public let operationKind: GitWorkspaceOperationKind?
+    public let pendingCommits: [String]
+    public let currentCommit: String?
+    public let rollbackReceipt: GitWorkspaceRollbackReceipt?
 
     public static func from(json: [String: Any]) -> GitOpStatusResult? {
         guard let project = json["project"] as? String,
@@ -1221,6 +1240,21 @@ public struct GitOpStatusResult {
         let conflictFiles = ConflictFileEntry.listFrom(json: json["conflict_files"])
         let head = json["head"] as? String
         let onto = json["onto"] as? String
+        // v1.60 扩展字段
+        let operationKind: GitWorkspaceOperationKind?
+        if let kindStr = json["operation_kind"] as? String {
+            operationKind = GitWorkspaceOperationKind(rawValue: kindStr)
+        } else {
+            operationKind = nil
+        }
+        let pendingCommits = json["pending_commits"] as? [String] ?? []
+        let currentCommit = json["current_commit"] as? String
+        let rollbackReceipt: GitWorkspaceRollbackReceipt?
+        if let receiptJson = json["rollback_receipt"] as? [String: Any] {
+            rollbackReceipt = GitWorkspaceRollbackReceipt.from(json: receiptJson)
+        } else {
+            rollbackReceipt = nil
+        }
         return GitOpStatusResult(
             project: project,
             workspace: workspace,
@@ -1228,11 +1262,15 @@ public struct GitOpStatusResult {
             conflicts: conflicts,
             conflictFiles: conflictFiles,
             head: head,
-            onto: onto
+            onto: onto,
+            operationKind: operationKind,
+            pendingCommits: pendingCommits,
+            currentCommit: currentCommit,
+            rollbackReceipt: rollbackReceipt
         )
     }
 
-    public init(project: String, workspace: String, state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], head: String?, onto: String?) {
+    public init(project: String, workspace: String, state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], head: String?, onto: String?, operationKind: GitWorkspaceOperationKind? = nil, pendingCommits: [String] = [], currentCommit: String? = nil, rollbackReceipt: GitWorkspaceRollbackReceipt? = nil) {
         self.project = project
         self.workspace = workspace
         self.state = state
@@ -1240,6 +1278,10 @@ public struct GitOpStatusResult {
         self.conflictFiles = conflictFiles
         self.head = head
         self.onto = onto
+        self.operationKind = operationKind
+        self.pendingCommits = pendingCommits
+        self.currentCommit = currentCommit
+        self.rollbackReceipt = rollbackReceipt
     }
 }
 
@@ -1251,6 +1293,11 @@ public struct GitOpStatusCache {
     public var conflictFiles: [ConflictFileEntry]
     public var isLoading: Bool
     public var updatedAt: Date
+    // v1.60: workspace sequencer 扩展
+    public var operationKind: GitWorkspaceOperationKind?
+    public var pendingCommits: [String]
+    public var currentCommit: String?
+    public var rollbackReceipt: GitWorkspaceRollbackReceipt?
 
     public static func empty() -> GitOpStatusCache {
         GitOpStatusCache(
@@ -1262,12 +1309,168 @@ public struct GitOpStatusCache {
         )
     }
 
-    public init(state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], isLoading: Bool, updatedAt: Date) {
+    public init(state: GitOpState, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], isLoading: Bool, updatedAt: Date, operationKind: GitWorkspaceOperationKind? = nil, pendingCommits: [String] = [], currentCommit: String? = nil, rollbackReceipt: GitWorkspaceRollbackReceipt? = nil) {
         self.state = state
         self.conflicts = conflicts
         self.conflictFiles = conflictFiles
         self.isLoading = isLoading
         self.updatedAt = updatedAt
+        self.operationKind = operationKind
+        self.pendingCommits = pendingCommits
+        self.currentCommit = currentCommit
+        self.rollbackReceipt = rollbackReceipt
+    }
+}
+
+// MARK: - v1.60: Workspace Sequencer Types
+
+/// Workspace 级操作类型
+public enum GitWorkspaceOperationKind: String, Equatable {
+    case rebase = "rebase"
+    case cherryPick = "cherry_pick"
+    case revert = "revert"
+
+    public var displayName: String {
+        switch self {
+        case .rebase: return "Rebase"
+        case .cherryPick: return "Cherry-pick"
+        case .revert: return "Revert"
+        }
+    }
+
+    /// 对应的 continue action 名
+    public var continueAction: String {
+        switch self {
+        case .rebase: return "git_rebase_continue"
+        case .cherryPick: return "git_cherry_pick_continue"
+        case .revert: return "git_revert_continue"
+        }
+    }
+
+    /// 对应的 abort action 名
+    public var abortAction: String {
+        switch self {
+        case .rebase: return "git_rebase_abort"
+        case .cherryPick: return "git_cherry_pick_abort"
+        case .revert: return "git_revert_abort"
+        }
+    }
+}
+
+/// 回滚收据
+public struct GitWorkspaceRollbackReceipt: Equatable {
+    public let operationKind: GitWorkspaceOperationKind
+    public let originalHead: String
+    public let resultHead: String
+    public let commitShas: [String]
+    public let createdAt: String
+
+    public static func from(json: [String: Any]) -> GitWorkspaceRollbackReceipt? {
+        guard let kindStr = json["operation_kind"] as? String,
+              let kind = GitWorkspaceOperationKind(rawValue: kindStr),
+              let originalHead = json["original_head"] as? String,
+              let resultHead = json["result_head"] as? String,
+              let commitShas = json["commit_shas"] as? [String],
+              let createdAt = json["created_at"] as? String else {
+            return nil
+        }
+        return GitWorkspaceRollbackReceipt(
+            operationKind: kind,
+            originalHead: originalHead,
+            resultHead: resultHead,
+            commitShas: commitShas,
+            createdAt: createdAt
+        )
+    }
+
+    public init(operationKind: GitWorkspaceOperationKind, originalHead: String, resultHead: String, commitShas: [String], createdAt: String) {
+        self.operationKind = operationKind
+        self.originalHead = originalHead
+        self.resultHead = resultHead
+        self.commitShas = commitShas
+        self.createdAt = createdAt
+    }
+}
+
+/// Workspace sequencer 统一结果
+public struct GitSequencerResult {
+    public let project: String
+    public let workspace: String
+    public let operationKind: GitWorkspaceOperationKind
+    public let ok: Bool
+    public let state: String
+    public let message: String?
+    public let conflicts: [String]
+    public let conflictFiles: [ConflictFileEntry]
+    public let completedCount: Int
+    public let pendingCount: Int
+    public let currentCommit: String?
+
+    public static func from(json: [String: Any]) -> GitSequencerResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let kindStr = json["operation_kind"] as? String,
+              let kind = GitWorkspaceOperationKind(rawValue: kindStr),
+              let ok = json["ok"] as? Bool,
+              let state = json["state"] as? String else {
+            return nil
+        }
+        return GitSequencerResult(
+            project: project,
+            workspace: workspace,
+            operationKind: kind,
+            ok: ok,
+            state: state,
+            message: json["message"] as? String,
+            conflicts: json["conflicts"] as? [String] ?? [],
+            conflictFiles: ConflictFileEntry.listFrom(json: json["conflict_files"]),
+            completedCount: json["completed_count"] as? Int ?? 0,
+            pendingCount: json["pending_count"] as? Int ?? 0,
+            currentCommit: json["current_commit"] as? String
+        )
+    }
+
+    public init(project: String, workspace: String, operationKind: GitWorkspaceOperationKind, ok: Bool, state: String, message: String?, conflicts: [String], conflictFiles: [ConflictFileEntry] = [], completedCount: Int = 0, pendingCount: Int = 0, currentCommit: String? = nil) {
+        self.project = project
+        self.workspace = workspace
+        self.operationKind = operationKind
+        self.ok = ok
+        self.state = state
+        self.message = message
+        self.conflicts = conflicts
+        self.conflictFiles = conflictFiles
+        self.completedCount = completedCount
+        self.pendingCount = pendingCount
+        self.currentCommit = currentCommit
+    }
+}
+
+/// 回滚操作结果
+public struct GitWorkspaceOpRollbackResult {
+    public let project: String
+    public let workspace: String
+    public let ok: Bool
+    public let message: String?
+
+    public static func from(json: [String: Any]) -> GitWorkspaceOpRollbackResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        return GitWorkspaceOpRollbackResult(
+            project: project,
+            workspace: workspace,
+            ok: ok,
+            message: json["message"] as? String
+        )
+    }
+
+    public init(project: String, workspace: String, ok: Bool, message: String?) {
+        self.project = project
+        self.workspace = workspace
+        self.ok = ok
+        self.message = message
     }
 }
 

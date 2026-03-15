@@ -26,6 +26,9 @@ public protocol GitMessageHandler: AnyObject {
     func handleGitStashListResult(_ result: GitStashListResult)
     func handleGitStashShowResult(_ result: GitStashShowResult)
     func handleGitStashOpResult(_ result: GitStashOpResult)
+    // v1.60: Workspace sequencer results
+    func handleGitSequencerResult(_ result: GitSequencerResult)
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult)
 }
 
 /// 默认空实现，子类只需 override 关心的方法
@@ -52,6 +55,9 @@ public extension GitMessageHandler {
     func handleGitStashListResult(_ result: GitStashListResult) {}
     func handleGitStashShowResult(_ result: GitStashShowResult) {}
     func handleGitStashOpResult(_ result: GitStashOpResult) {}
+    // v1.60: Workspace sequencer 默认空实现
+    func handleGitSequencerResult(_ result: GitSequencerResult) {}
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult) {}
 }
 
 public protocol ProjectMessageHandler: AnyObject {
