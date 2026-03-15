@@ -1286,7 +1286,7 @@ public struct GitOpStatusResult {
 }
 
 /// Cached git operation status for a workspace
-public struct GitOpStatusCache {
+public struct GitOpStatusCache: Equatable {
     public var state: GitOpState
     public var conflicts: [String]
     /// 语义化冲突文件列表（v1.40+）
@@ -1393,7 +1393,7 @@ public struct GitWorkspaceRollbackReceipt: Equatable {
 }
 
 /// Workspace sequencer 统一结果
-public struct GitSequencerResult {
+public struct GitSequencerResult: Equatable {
     public let project: String
     public let workspace: String
     public let operationKind: GitWorkspaceOperationKind
@@ -1471,6 +1471,65 @@ public struct GitWorkspaceOpRollbackResult {
         self.workspace = workspace
         self.ok = ok
         self.message = message
+    }
+}
+
+// MARK: - v1.60: 提交历史选择状态
+
+/// 共享的提交选择状态，按 (project, workspace) 隔离
+public struct GitCommitSelectionState: Equatable {
+    /// 是否处于多选模式
+    public var isSelectionMode: Bool
+    /// 已选中的提交 SHA 集合
+    public var selectedShas: Set<String>
+    /// 最近一次加载的历史日志条目（用于排序）
+    public var logEntries: [GitLogEntry]
+
+    public static let empty = GitCommitSelectionState(
+        isSelectionMode: false,
+        selectedShas: [],
+        logEntries: []
+    )
+
+    public init(isSelectionMode: Bool, selectedShas: Set<String>, logEntries: [GitLogEntry]) {
+        self.isSelectionMode = isSelectionMode
+        self.selectedShas = selectedShas
+        self.logEntries = logEntries
+    }
+
+    /// 按 cherry-pick 顺序排列选中提交（从旧到新：日志中靠后的先执行）
+    public func cherryPickOrder() -> [String] {
+        let ordered = logEntries.filter { selectedShas.contains($0.sha) }
+        return ordered.reversed().map(\.sha)
+    }
+
+    /// 按 revert 顺序排列选中提交（从新到旧：日志中靠前的先执行）
+    public func revertOrder() -> [String] {
+        let ordered = logEntries.filter { selectedShas.contains($0.sha) }
+        return ordered.map(\.sha)
+    }
+
+    /// 选中数量
+    public var selectionCount: Int { selectedShas.count }
+
+    /// 切换某个 SHA 的选中状态
+    public mutating func toggleSelection(_ sha: String) {
+        if selectedShas.contains(sha) {
+            selectedShas.remove(sha)
+        } else {
+            selectedShas.insert(sha)
+        }
+    }
+
+    /// 进入选择模式
+    public mutating func enterSelectionMode() {
+        isSelectionMode = true
+    }
+
+    /// 退出选择模式并清空选择
+    public mutating func exitSelectionMode() {
+        isSelectionMode = false
+        selectedShas.removeAll()
     }
 }
 

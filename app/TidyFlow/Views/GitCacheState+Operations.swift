@@ -543,6 +543,99 @@ extension GitCacheState {
         return conflictWizardCache[key] ?? ConflictWizardCache.empty()
     }
 
+    // MARK: - v1.60: Cherry-pick/Revert/Rollback
+
+    func gitCherryPickContinue(workspaceKey: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitCherryPickContinue(
+            project: selectedProjectName,
+            workspace: workspaceKey
+        )
+    }
+
+    func gitCherryPickAbort(workspaceKey: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitCherryPickAbort(
+            project: selectedProjectName,
+            workspace: workspaceKey
+        )
+    }
+
+    func gitRevertContinue(workspaceKey: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitRevertContinue(
+            project: selectedProjectName,
+            workspace: workspaceKey
+        )
+    }
+
+    func gitRevertAbort(workspaceKey: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitRevertAbort(
+            project: selectedProjectName,
+            workspace: workspaceKey
+        )
+    }
+
+    func gitWorkspaceOpRollback(workspaceKey: String) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitWorkspaceOpRollback(
+            project: selectedProjectName,
+            workspace: workspaceKey
+        )
+    }
+
+    func gitCherryPick(workspaceKey: String, commitShas: [String]) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitCherryPick(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            commitShas: commitShas
+        )
+    }
+
+    func gitRevert(workspaceKey: String, commitShas: [String]) {
+        guard connectionState == .connected else { return }
+        wsClient?.requestGitRevert(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            commitShas: commitShas
+        )
+    }
+
+    func handleGitSequencerResult(_ result: GitSequencerResult) {
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
+        // 刷新 status / log / op-status
+        fetchGitStatus(workspaceKey: result.workspace)
+        fetchGitLog(workspaceKey: result.workspace, cacheMode: .forceRefresh)
+        fetchGitOpStatus(workspaceKey: result.workspace)
+        // 冲突时同步更新冲突向导缓存
+        if result.state == "conflict" && !result.conflictFiles.isEmpty {
+            let wizardKey = conflictWizardKey(project: result.project, workspace: result.workspace, context: "workspace")
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
+        // 更新 op-status 缓存中间态
+        var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
+        cache.operationKind = result.operationKind
+        cache.currentCommit = result.currentCommit
+        cache.updatedAt = Date()
+        gitOpStatusCache[wsCacheKey] = cache
+    }
+
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult) {
+        // 刷新 status / log / op-status
+        fetchGitStatus(workspaceKey: result.workspace)
+        fetchGitLog(workspaceKey: result.workspace, cacheMode: .forceRefresh)
+        fetchGitOpStatus(workspaceKey: result.workspace)
+    }
+
     // MARK: - v1.50: Git Stash API
 
     /// 接收 stash 列表结果

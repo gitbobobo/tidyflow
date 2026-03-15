@@ -16,6 +16,8 @@ struct GitConflictWizardSheet: View {
     let workspace: String
     /// "workspace" 或 "integration"
     let context: String
+    /// Core 下发的操作类型（workspace 上下文使用）
+    var operationKind: GitWorkspaceOperationKind?
 
     var body: some View {
         NavigationStack {
@@ -177,7 +179,20 @@ struct GitConflictWizardSheet: View {
             // iOS 端 integration 冲突目前仅由 merge-to-default 触发
             appState.wsClient.requestGitMergeContinue(project: project)
         } else {
-            appState.wsClient.requestGitRebaseContinue(project: project, workspace: workspace)
+            // 根据 Core 下发的 operationKind 路由
+            if let kind = operationKind {
+                switch kind {
+                case .cherryPick:
+                    appState.wsClient.requestGitCherryPickContinue(project: project, workspace: workspace)
+                case .revert:
+                    appState.wsClient.requestGitRevertContinue(project: project, workspace: workspace)
+                case .rebase:
+                    appState.wsClient.requestGitRebaseContinue(project: project, workspace: workspace)
+                }
+            } else {
+                // 兜底：fallback to rebase（向后兼容）
+                appState.wsClient.requestGitRebaseContinue(project: project, workspace: workspace)
+            }
         }
         dismiss()
     }
@@ -186,7 +201,20 @@ struct GitConflictWizardSheet: View {
         if context == "integration" {
             appState.wsClient.requestGitMergeAbort(project: project)
         } else {
-            appState.wsClient.requestGitRebaseAbort(project: project, workspace: workspace)
+            // 根据 Core 下发的 operationKind 路由
+            if let kind = operationKind {
+                switch kind {
+                case .cherryPick:
+                    appState.wsClient.requestGitCherryPickAbort(project: project, workspace: workspace)
+                case .revert:
+                    appState.wsClient.requestGitRevertAbort(project: project, workspace: workspace)
+                case .rebase:
+                    appState.wsClient.requestGitRebaseAbort(project: project, workspace: workspace)
+                }
+            } else {
+                // 兜底：fallback to rebase（向后兼容）
+                appState.wsClient.requestGitRebaseAbort(project: project, workspace: workspace)
+            }
         }
         dismiss()
     }

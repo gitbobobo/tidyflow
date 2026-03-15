@@ -148,7 +148,9 @@ struct WorkspaceGitView: View {
         }
         .sheet(isPresented: $showConflictWizard) {
             if let (ws, ctx) = activeConflictContext {
-                GitConflictWizardSheet(project: project, workspace: ws, context: ctx)
+                let globalKey = appState.globalWorkspaceKey(project: project, workspace: ws)
+                let opKind = appState.workspaceGitState[globalKey]?.opStatusCache.operationKind
+                GitConflictWizardSheet(project: project, workspace: ws, context: ctx, operationKind: opKind)
                     .environmentObject(appState)
             }
         }
@@ -963,7 +965,9 @@ private struct MobileStashDetailSheet: View {
             }
             .sheet(isPresented: $showConflictWizard) {
                 if let (ws, ctx) = conflictContext {
-                    GitConflictWizardSheet(project: project, workspace: ws, context: ctx)
+                    let globalKey = appState.globalWorkspaceKey(project: project, workspace: ws)
+                    let opKind = appState.workspaceGitState[globalKey]?.opStatusCache.operationKind
+                    GitConflictWizardSheet(project: project, workspace: ws, context: ctx, operationKind: opKind)
                         .environmentObject(appState)
                 }
             }

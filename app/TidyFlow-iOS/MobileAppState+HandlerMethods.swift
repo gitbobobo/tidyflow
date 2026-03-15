@@ -107,6 +107,52 @@ extension MobileAppState {
         conflictWizardCache[key] = wizard
     }
 
+    // v1.60: Workspace sequencer handlers
+
+    func handleGitSequencerResult(_ result: GitSequencerResult) {
+        let key = globalWorkspaceKey(project: result.project, workspace: result.workspace)
+        // 共享驱动更新状态
+        applyGitInput(.gitSequencerResult(result), project: result.project, workspace: result.workspace)
+        // 冲突时同步更新冲突向导缓存
+        if result.state == "conflict" && !result.conflictFiles.isEmpty {
+            let wizardKey = "\(result.project):\(result.workspace)"
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
+        // 刷新 status
+        fetchGitDetailForWorkspace(project: result.project, workspace: result.workspace)
+    }
+
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult) {
+        // 共享驱动更新状态
+        applyGitInput(.gitWorkspaceOpRollbackResult(result), project: result.project, workspace: result.workspace)
+        // 刷新 status
+        fetchGitDetailForWorkspace(project: result.project, workspace: result.workspace)
+    }
+
+    func handleGitOpStatusResult(_ result: GitOpStatusResult) {
+        // 共享驱动更新 opStatusCache
+        applyGitInput(.gitOpStatusResult(result), project: result.project, workspace: result.workspace)
+        // 同步更新冲突向导缓存
+        if result.state != .normal && !result.conflictFiles.isEmpty {
+            let wizardKey = "\(result.project):\(result.workspace)"
+            var wizard = conflictWizardCache[wizardKey] ?? ConflictWizardCache.empty()
+            wizard.snapshot = ConflictSnapshot(
+                context: "workspace",
+                files: result.conflictFiles,
+                allResolved: result.conflictFiles.isEmpty
+            )
+            wizard.updatedAt = Date()
+            conflictWizardCache[wizardKey] = wizard
+        }
+    }
+
     // v1.50: Stash handlers
 
     func handleGitStashListResult(_ result: GitStashListResult) {
@@ -283,8 +329,12 @@ extension MobileAppState {
 
     func handleFileReadResult(_ result: FileReadResult) {
         // 1. 计划文档预览分流
-        if let pendingPath = pendingPlanDocumentReadPath, pendingPath == result.path {
-            pendingPlanDocumentReadPath = nil
+        if matchesPendingPlanDocumentRequest(
+            project: result.project,
+            workspace: result.workspace,
+            path: result.path
+        ) {
+            pendingPlanDocumentRequest = nil
             evolutionPlanDocumentLoading = false
             let bytes = Data(result.content)
             if let text = String(data: bytes, encoding: .utf8) {
@@ -907,8 +957,8 @@ extension MobileAppState {
             explorerPreviewError = message
             explorerPreviewContent = ""
         }
-        if pendingPlanDocumentReadPath != nil {
-            pendingPlanDocumentReadPath = nil
+        if pendingPlanDocumentRequest != nil {
+            pendingPlanDocumentRequest = nil
             evolutionPlanDocumentLoading = false
             evolutionPlanDocumentError = message
         }

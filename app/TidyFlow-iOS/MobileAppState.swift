@@ -270,7 +270,7 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionPlanDocumentLoading: Bool = false
     @Published var evolutionPlanDocumentError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
-    var pendingPlanDocumentReadPath: String?
+    var pendingPlanDocumentRequest: EvolutionPlanDocumentRequestDescriptor?
 
     /// Evolution 面板性能监控任务（按 workspaceContextKey，iOS 端同步支持）
     var evolutionPerformanceMonitorTasks: [String: Task<Void, Never>] = [:]
@@ -1072,8 +1072,19 @@ final class MobileAppState: ObservableObject {
         evolutionPlanDocumentContent = nil
         evolutionPlanDocumentLoading = true
         evolutionPlanDocumentError = nil
-        pendingPlanDocumentReadPath = descriptor.path
+        pendingPlanDocumentRequest = descriptor
         wsClient.requestFileRead(project: descriptor.projectName, workspace: descriptor.workspaceName, path: descriptor.path)
+    }
+
+    func matchesPendingPlanDocumentRequest(
+        project: String,
+        workspace: String,
+        path: String
+    ) -> Bool {
+        guard let request = pendingPlanDocumentRequest else { return false }
+        return request.projectName == project &&
+            normalizeEvolutionWorkspaceName(request.workspaceName) == normalizeEvolutionWorkspaceName(workspace) &&
+            request.path == path
     }
 
     func requestEvolutionCycleHistory(project: String, workspace: String) {
@@ -4766,6 +4777,23 @@ final class MobileAppState: ObservableObject {
                 wsClient.requestGitSwitchBranch(project: project, workspace: workspace, branch: name)
             case .requestCreateBranch(let name):
                 wsClient.requestGitCreateBranch(project: project, workspace: workspace, branch: name)
+            // v1.60: Sequencer 操作副作用
+            case .requestOpStatus(let cacheMode):
+                wsClient.requestGitOpStatus(project: project, workspace: workspace, cacheMode: cacheMode)
+            case .requestCherryPick(let commitShas):
+                wsClient.requestGitCherryPick(project: project, workspace: workspace, commitShas: commitShas)
+            case .requestRevert(let commitShas):
+                wsClient.requestGitRevert(project: project, workspace: workspace, commitShas: commitShas)
+            case .requestCherryPickContinue:
+                wsClient.requestGitCherryPickContinue(project: project, workspace: workspace)
+            case .requestCherryPickAbort:
+                wsClient.requestGitCherryPickAbort(project: project, workspace: workspace)
+            case .requestRevertContinue:
+                wsClient.requestGitRevertContinue(project: project, workspace: workspace)
+            case .requestRevertAbort:
+                wsClient.requestGitRevertAbort(project: project, workspace: workspace)
+            case .requestWorkspaceOpRollback:
+                wsClient.requestGitWorkspaceOpRollback(project: project, workspace: workspace)
             }
         }
     }
@@ -6436,10 +6464,12 @@ extension MobileAppState {
                 explorerPreviewContent = ""
             }
 
-            if pendingPlanDocumentReadPath == path,
-               aiActiveProject == project,
-               aiActiveWorkspace == workspace {
-                pendingPlanDocumentReadPath = nil
+            if matchesPendingPlanDocumentRequest(
+                project: project,
+                workspace: workspace,
+                path: path
+            ) {
+                pendingPlanDocumentRequest = nil
                 evolutionPlanDocumentLoading = false
                 evolutionPlanDocumentError = failure.message
             }

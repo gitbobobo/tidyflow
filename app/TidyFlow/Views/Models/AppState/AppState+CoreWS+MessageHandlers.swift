@@ -49,6 +49,9 @@ final class AppStateGitMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>
     func handleGitStashListResult(_ result: GitStashListResult) { dispatchToTarget { $0.gitCache.handleGitStashListResult(result) } }
     func handleGitStashShowResult(_ result: GitStashShowResult) { dispatchToTarget { $0.gitCache.handleGitStashShowResult(result) } }
     func handleGitStashOpResult(_ result: GitStashOpResult) { dispatchToTarget { $0.gitCache.handleGitStashOpResult(result) } }
+    // v1.60: Workspace sequencer
+    func handleGitSequencerResult(_ result: GitSequencerResult) { dispatchToTarget { $0.gitCache.handleGitSequencerResult(result) } }
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult) { dispatchToTarget { $0.gitCache.handleGitWorkspaceOpRollbackResult(result) } }
 }
 
 final class AppStateProjectMessageHandlerAdapter: WeakTargetMessageAdapter<AppState>, ProjectMessageHandler {

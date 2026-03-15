@@ -308,8 +308,18 @@ struct GitConflictWizardView: View {
                 gitCache.gitMergeContinue(workspaceKey: workspace)
             }
         } else {
-            let opState = gitCache.getGitOpStatusCache(workspaceKey: workspace)?.state ?? .normal
-            if opState == .merging {
+            // 根据 Core 下发的 operationKind 路由 continue
+            let cache = gitCache.getGitOpStatusCache(workspaceKey: workspace)
+            if let kind = cache?.operationKind {
+                switch kind {
+                case .cherryPick:
+                    gitCache.gitCherryPickContinue(workspaceKey: workspace)
+                case .revert:
+                    gitCache.gitRevertContinue(workspaceKey: workspace)
+                case .rebase:
+                    gitCache.gitRebaseContinue(workspaceKey: workspace)
+                }
+            } else if cache?.state == .merging {
                 gitCache.gitMergeContinue(workspaceKey: workspace)
             } else {
                 gitCache.gitRebaseContinue(workspaceKey: workspace)
@@ -326,8 +336,18 @@ struct GitConflictWizardView: View {
                 gitCache.gitMergeAbort(workspaceKey: workspace)
             }
         } else {
-            let opState = gitCache.getGitOpStatusCache(workspaceKey: workspace)?.state ?? .normal
-            if opState == .merging {
+            // 根据 Core 下发的 operationKind 路由 abort
+            let cache = gitCache.getGitOpStatusCache(workspaceKey: workspace)
+            if let kind = cache?.operationKind {
+                switch kind {
+                case .cherryPick:
+                    gitCache.gitCherryPickAbort(workspaceKey: workspace)
+                case .revert:
+                    gitCache.gitRevertAbort(workspaceKey: workspace)
+                case .rebase:
+                    gitCache.gitRebaseAbort(workspaceKey: workspace)
+                }
+            } else if cache?.state == .merging {
                 gitCache.gitMergeAbort(workspaceKey: workspace)
             } else {
                 gitCache.gitRebaseAbort(workspaceKey: workspace)

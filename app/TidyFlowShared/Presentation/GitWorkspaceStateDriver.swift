@@ -43,6 +43,15 @@ public enum GitWorkspaceEffect: Equatable {
     case requestCommit(message: String)
     case requestSwitchBranch(name: String)
     case requestCreateBranch(name: String)
+    // v1.60: Sequencer 操作副作用
+    case requestOpStatus(cacheMode: HTTPQueryCacheMode)
+    case requestCherryPick(commitShas: [String])
+    case requestRevert(commitShas: [String])
+    case requestCherryPickContinue
+    case requestCherryPickAbort
+    case requestRevertContinue
+    case requestRevertAbort
+    case requestWorkspaceOpRollback
 }
 
 // MARK: - GitWorkspaceInput
@@ -65,6 +74,10 @@ public enum GitWorkspaceInput {
     case gitOpResult(GitOpResult)
     case gitCommitResult(GitCommitResult)
     case gitStatusChanged
+    // v1.60: Sequencer 服务端结果
+    case gitSequencerResult(GitSequencerResult)
+    case gitWorkspaceOpRollbackResult(GitWorkspaceOpRollbackResult)
+    case gitOpStatusResult(GitOpStatusResult)
 
     // 环境变化
     case connectionChanged(isConnected: Bool)
@@ -94,6 +107,12 @@ public struct GitWorkspaceState: Equatable {
     public var commitResult: String?
     /// 是否已经至少收到过一次 Git 状态结果
     public var hasResolvedStatus: Bool
+    /// Git 操作状态缓存（op-status 命令结果）
+    public var opStatusCache: GitOpStatusCache
+    /// 提交历史选择状态
+    public var commitSelection: GitCommitSelectionState
+    /// 最近一次 sequencer 操作结果（用于显示结果 banner）
+    public var lastSequencerResult: GitSequencerResult?
 
     public static let empty = GitWorkspaceState(
         statusCache: .empty(),
@@ -104,7 +123,10 @@ public struct GitWorkspaceState: Equatable {
         commitInFlight: false,
         commitMessage: "",
         commitResult: nil,
-        hasResolvedStatus: false
+        hasResolvedStatus: false,
+        opStatusCache: .empty(),
+        commitSelection: .empty,
+        lastSequencerResult: nil
     )
 
     public init(
@@ -116,7 +138,10 @@ public struct GitWorkspaceState: Equatable {
         commitInFlight: Bool,
         commitMessage: String,
         commitResult: String?,
-        hasResolvedStatus: Bool
+        hasResolvedStatus: Bool,
+        opStatusCache: GitOpStatusCache = .empty(),
+        commitSelection: GitCommitSelectionState = .empty,
+        lastSequencerResult: GitSequencerResult? = nil
     ) {
         self.statusCache = statusCache
         self.branchCache = branchCache
@@ -127,6 +152,9 @@ public struct GitWorkspaceState: Equatable {
         self.commitMessage = commitMessage
         self.commitResult = commitResult
         self.hasResolvedStatus = hasResolvedStatus
+        self.opStatusCache = opStatusCache
+        self.commitSelection = commitSelection
+        self.lastSequencerResult = lastSequencerResult
     }
 
     // MARK: - 共享派生属性
@@ -311,6 +339,34 @@ public enum GitWorkspaceStateDriver {
         case .gitStatusChanged:
             effects.append(.requestStatus(cacheMode: .default))
             effects.append(.requestBranches(cacheMode: .default))
+
+        // MARK: - v1.60: Sequencer 服务端结果
+
+        case .gitSequencerResult(let result):
+            next.lastSequencerResult = result
+            // 操作完成后清空选择模式
+            next.commitSelection.exitSelectionMode()
+            // 刷新 status、op-status
+            effects.append(.requestStatus(cacheMode: .default))
+            effects.append(.requestOpStatus(cacheMode: .default))
+
+        case .gitWorkspaceOpRollbackResult:
+            next.lastSequencerResult = nil
+            effects.append(.requestStatus(cacheMode: .default))
+            effects.append(.requestOpStatus(cacheMode: .default))
+
+        case .gitOpStatusResult(let result):
+            next.opStatusCache = GitOpStatusCache(
+                state: result.state,
+                conflicts: result.conflicts,
+                conflictFiles: result.conflictFiles,
+                isLoading: false,
+                updatedAt: Date(),
+                operationKind: result.operationKind,
+                pendingCommits: result.pendingCommits,
+                currentCommit: result.currentCommit,
+                rollbackReceipt: result.rollbackReceipt
+            )
 
         // MARK: - 环境变化
 

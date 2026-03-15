@@ -40,6 +40,10 @@ final class MobileAppStateGitMessageHandlerAdapter: WeakTargetMessageAdapter<Mob
     func handleGitStashListResult(_ result: GitStashListResult) { dispatchToTarget { $0.handleGitStashListResult(result) } }
     func handleGitStashShowResult(_ result: GitStashShowResult) { dispatchToTarget { $0.handleGitStashShowResult(result) } }
     func handleGitStashOpResult(_ result: GitStashOpResult) { dispatchToTarget { $0.handleGitStashOpResult(result) } }
+    // v1.60: Workspace sequencer
+    func handleGitSequencerResult(_ result: GitSequencerResult) { dispatchToTarget { $0.handleGitSequencerResult(result) } }
+    func handleGitWorkspaceOpRollbackResult(_ result: GitWorkspaceOpRollbackResult) { dispatchToTarget { $0.handleGitWorkspaceOpRollbackResult(result) } }
+    func handleGitOpStatusResult(_ result: GitOpStatusResult) { dispatchToTarget { $0.handleGitOpStatusResult(result) } }
     /// iOS Diff 数据闭环：显式转发 handleGitDiffResult，由 MobileAppState 解析并回填 iOS Diff 缓存。
     func handleGitDiffResult(_ result: GitDiffResult) { dispatchToTarget { $0.handleGitDiffResult(result) } }
 }
