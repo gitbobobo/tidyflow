@@ -374,6 +374,50 @@ pub enum ClientMessage {
         context: String,
     },
 
+    // v1.50: Git stash 操作
+    GitStashList {
+        project: String,
+        workspace: String,
+    },
+    GitStashShow {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashSave {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        include_untracked: bool,
+        #[serde(default)]
+        keep_index: bool,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    GitStashApply {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashPop {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashDrop {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashRestorePaths {
+        project: String,
+        workspace: String,
+        stash_id: String,
+        paths: Vec<String>,
+    },
+
     // v1.21: Client settings
     GetClientSettings,
     SaveClientSettings {
@@ -1361,6 +1405,36 @@ pub enum ServerMessage {
         snapshot: ConflictSnapshotInfo,
     },
 
+    // v1.50: Git stash 结果
+    GitStashListResult {
+        project: String,
+        workspace: String,
+        entries: Vec<GitStashEntryInfo>,
+    },
+    GitStashShowResult {
+        project: String,
+        workspace: String,
+        stash_id: String,
+        entry: GitStashEntryInfo,
+        files: Vec<GitStashFileInfo>,
+        diff_text: String,
+        is_binary_summary_truncated: bool,
+    },
+    GitStashOpResult {
+        project: String,
+        workspace: String,
+        op: String,
+        stash_id: String,
+        ok: bool,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        affected_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<ConflictFileEntryInfo>,
+    },
+
     // v1.23: File rename/delete results
     FileRenameResult {
         project: String,
@@ -2303,6 +2377,31 @@ pub struct ConflictSnapshotInfo {
     pub files: Vec<ConflictFileEntryInfo>,
     /// 是否所有冲突已解决
     pub all_resolved: bool,
+}
+
+/// Stash 条目协议 DTO（v1.50: stash 管理）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStashEntryInfo {
+    pub stash_id: String,
+    pub title: String,
+    pub message: String,
+    pub branch_name: String,
+    pub created_at: String,
+    pub file_count: usize,
+    #[serde(default)]
+    pub includes_untracked: bool,
+    #[serde(default)]
+    pub includes_index: bool,
+}
+
+/// Stash 文件条目协议 DTO（v1.50: stash 管理）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStashFileInfo {
+    pub path: String,
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
+    pub source_kind: String,
 }
 
 /// 快捷键绑定配置（用于协议传输）

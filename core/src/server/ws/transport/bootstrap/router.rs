@@ -118,6 +118,14 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             get(crate::server::ws::http_api::git_conflict_detail_handler),
         )
         .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/stashes",
+            get(crate::server::ws::http_api::git_stash_list_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/git/stashes/:stash_id",
+            get(crate::server::ws::http_api::git_stash_show_handler),
+        )
+        .route(
             "/api/v1/projects/:project/workspaces/:workspace/ai/sessions",
             get(crate::server::ws::http_api::ai_sessions_handler),
         )

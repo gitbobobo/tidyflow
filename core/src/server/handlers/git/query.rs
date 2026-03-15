@@ -3,8 +3,8 @@ use crate::server::context::{
 };
 use crate::server::git;
 use crate::server::protocol::{
-    ConflictFileEntryInfo, GitBranchInfo, GitLogEntryInfo, GitShowFileInfo, GitStatusEntry,
-    ServerMessage,
+    ConflictFileEntryInfo, GitBranchInfo, GitLogEntryInfo, GitShowFileInfo, GitStashEntryInfo,
+    GitStashFileInfo, GitStatusEntry, ServerMessage,
 };
 
 pub(crate) async fn query_git_status(
@@ -375,5 +375,88 @@ pub(crate) async fn query_git_conflict_detail(
         current_content: detail.current_content,
         conflict_markers_count: detail.conflict_markers_count,
         is_binary: detail.is_binary,
+    })
+}
+
+pub(crate) async fn query_git_stash_list(
+    app_state: &SharedAppState,
+    project: &str,
+    workspace: &str,
+) -> Result<ServerMessage, String> {
+    let ws_ctx = resolve_workspace(app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_string())?;
+    let root = ws_ctx.root_path;
+
+    let result = tokio::task::spawn_blocking(move || git::git_stash_list(&root))
+        .await
+        .map_err(|e| format!("Git stash list task failed: {}", e))?
+        .map_err(|e| format!("Git stash list failed: {}", e))?;
+
+    Ok(ServerMessage::GitStashListResult {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        entries: result
+            .entries
+            .into_iter()
+            .map(|e| GitStashEntryInfo {
+                stash_id: e.stash_id,
+                title: e.title,
+                message: e.message,
+                branch_name: e.branch_name,
+                created_at: e.created_at,
+                file_count: e.file_count,
+                includes_untracked: e.includes_untracked,
+                includes_index: e.includes_index,
+            })
+            .collect(),
+    })
+}
+
+pub(crate) async fn query_git_stash_show(
+    app_state: &SharedAppState,
+    project: &str,
+    workspace: &str,
+    stash_id: &str,
+) -> Result<ServerMessage, String> {
+    let ws_ctx = resolve_workspace(app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_string())?;
+    let root = ws_ctx.root_path;
+    let stash_id_clone = stash_id.to_string();
+
+    let result =
+        tokio::task::spawn_blocking(move || git::git_stash_show(&root, &stash_id_clone))
+            .await
+            .map_err(|e| format!("Git stash show task failed: {}", e))?
+            .map_err(|e| format!("Git stash show failed: {}", e))?;
+
+    Ok(ServerMessage::GitStashShowResult {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        stash_id: stash_id.to_string(),
+        entry: GitStashEntryInfo {
+            stash_id: result.entry.stash_id,
+            title: result.entry.title,
+            message: result.entry.message,
+            branch_name: result.entry.branch_name,
+            created_at: result.entry.created_at,
+            file_count: result.entry.file_count,
+            includes_untracked: result.entry.includes_untracked,
+            includes_index: result.entry.includes_index,
+        },
+        files: result
+            .files
+            .into_iter()
+            .map(|f| GitStashFileInfo {
+                path: f.path,
+                status: f.status,
+                additions: f.additions,
+                deletions: f.deletions,
+                source_kind: f.source_kind,
+            })
+            .collect(),
+        diff_text: result.diff_text,
+        is_binary_summary_truncated: result.is_binary_summary_truncated,
     })
 }

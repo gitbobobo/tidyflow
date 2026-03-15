@@ -9,6 +9,7 @@ mod integration;
 pub(crate) mod query;
 mod route;
 mod stage_ops;
+mod stash;
 mod status_diff;
 
 /// 处理 Git 相关的客户端消息

@@ -12,6 +12,7 @@ pub mod branches;
 pub mod commit;
 pub mod integration;
 pub mod operations;
+pub mod stash;
 pub mod status;
 pub mod utils;
 
@@ -20,5 +21,6 @@ pub use branches::*;
 pub use commit::*;
 pub use integration::*;
 pub use operations::*;
+pub use stash::*;
 pub use status::*;
 pub use utils::*;

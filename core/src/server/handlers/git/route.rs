@@ -4,7 +4,7 @@ use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
-use super::{branch_commit, history, integration, stage_ops, status_diff};
+use super::{branch_commit, history, integration, stage_ops, stash, status_diff};
 
 /// 标准 Git 消息路由（按既有顺序短路匹配）。
 pub async fn handle_standard_git_routes(
@@ -121,12 +121,37 @@ pub async fn handle_standard_git_routes(
             .await?;
             return Ok(true);
         }
+        ClientMessage::GitStashList { project, workspace } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_stash_list",
+                "/api/v1/projects/:project/workspaces/:workspace/git/stashes",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
+        ClientMessage::GitStashShow {
+            project, workspace, ..
+        } => {
+            crate::server::handlers::send_read_via_http_required(
+                socket,
+                "git_stash_show",
+                "/api/v1/projects/:project/workspaces/:workspace/git/stashes/:stash_id",
+                Some(project.clone()),
+                Some(workspace.clone()),
+            )
+            .await?;
+            return Ok(true);
+        }
         _ => {}
     }
 
     dispatch_handlers!(
         status_diff::handle_message(client_msg, socket, app_state),
         stage_ops::handle_message(client_msg, socket, app_state),
+        stash::handle_message(client_msg, socket, app_state),
         branch_commit::handle_message(client_msg, socket, app_state, ctx),
         integration::handle_message(client_msg, socket, app_state, ctx),
         history::handle_message(client_msg, socket, app_state),

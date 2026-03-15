@@ -24,7 +24,7 @@ pub(in crate::server::ws) use file::{
 pub(in crate::server::ws) use git::{
     git_branches_handler, git_check_branch_up_to_date_handler, git_commit_show_handler,
     git_conflict_detail_handler, git_diff_handler, git_integration_status_handler, git_log_handler,
-    git_op_status_handler, git_status_handler,
+    git_op_status_handler, git_stash_list_handler, git_stash_show_handler, git_status_handler,
 };
 pub(in crate::server::ws) use node::{
     node_discovery_handler, node_network_handler, node_pair_register_handler,

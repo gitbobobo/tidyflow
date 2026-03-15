@@ -59,6 +59,19 @@ pub(in crate::server::ws) struct GitConflictDetailQuery {
     token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(in crate::server::ws) struct StashPath {
+    project: String,
+    workspace: String,
+    stash_id: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(in crate::server::ws) struct StashShowQuery {
+    #[serde(default)]
+    token: Option<String>,
+}
+
 fn map_git_error(qctx: &WorkspaceQueryContext, err: String) -> ApiError {
     qctx.map_query_error(err)
 }
@@ -224,6 +237,43 @@ pub(in crate::server::ws) async fn git_conflict_detail_handler(
         &path.workspace,
         &query.path,
         &query.context,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_stash_list_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<WorkspacePath>,
+    Query(query): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_stash_list(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+    )
+    .await
+    .map_err(|e| map_git_error(&qctx, e))?;
+    json_from_server_message(response)
+}
+
+pub(in crate::server::ws) async fn git_stash_show_handler(
+    State(ctx): State<crate::server::ws::transport::bootstrap::AppContext>,
+    headers: HeaderMap,
+    Path(path): Path<StashPath>,
+    Query(query): Query<StashShowQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _identity = ensure_http_authorized(&ctx, &headers, query.token.as_deref()).await?;
+    let qctx = WorkspaceQueryContext::new(&path.project, &path.workspace);
+    let response = crate::server::handlers::git::query::query_git_stash_show(
+        &ctx.app_state,
+        &path.project,
+        &path.workspace,
+        &path.stash_id,
     )
     .await
     .map_err(|e| map_git_error(&qctx, e))?;

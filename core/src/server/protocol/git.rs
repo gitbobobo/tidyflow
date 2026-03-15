@@ -178,6 +178,50 @@ pub enum GitRequest {
         path: String,
         context: String,
     },
+
+    // v1.50: Git stash 操作
+    GitStashList {
+        project: String,
+        workspace: String,
+    },
+    GitStashShow {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashSave {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        include_untracked: bool,
+        #[serde(default)]
+        keep_index: bool,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    GitStashApply {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashPop {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashDrop {
+        project: String,
+        workspace: String,
+        stash_id: String,
+    },
+    GitStashRestorePaths {
+        project: String,
+        workspace: String,
+        stash_id: String,
+        paths: Vec<String>,
+    },
 }
 
 /// Git 相关的服务端消息
@@ -381,5 +425,35 @@ pub enum GitResponse {
         message: Option<String>,
         /// 操作后的冲突快照
         snapshot: super::ConflictSnapshotInfo,
+    },
+
+    // v1.50: Git stash 结果
+    GitStashListResult {
+        project: String,
+        workspace: String,
+        entries: Vec<super::GitStashEntryInfo>,
+    },
+    GitStashShowResult {
+        project: String,
+        workspace: String,
+        stash_id: String,
+        entry: super::GitStashEntryInfo,
+        files: Vec<super::GitStashFileInfo>,
+        diff_text: String,
+        is_binary_summary_truncated: bool,
+    },
+    GitStashOpResult {
+        project: String,
+        workspace: String,
+        op: String,
+        stash_id: String,
+        ok: bool,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        affected_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflict_files: Vec<super::ConflictFileEntryInfo>,
     },
 }
