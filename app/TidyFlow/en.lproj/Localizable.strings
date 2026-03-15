@@ -218,6 +218,16 @@
 "git.deleteFile.message" = "This file will be permanently deleted";
 "git.discardChanges.message" = "All local changes to this file will be discarded";
 
+// Git Stash
+"git.stash.save" = "Save Stash";
+"git.stash.refresh" = "Refresh Stash List";
+"git.stash.empty" = "No stashes";
+"git.stash.saveNow" = "Save current changes as stash";
+"git.stash.selectToView" = "Select a stash to view details";
+"git.stash.messagePlaceholder" = "Stash message (optional)";
+"git.stash.includeUntracked" = "Include untracked";
+"git.stash.keepIndex" = "Keep staged";
+
 /* Right Panel */
 "rightPanel.files" = "Files";
 "rightPanel.search" = "Search";

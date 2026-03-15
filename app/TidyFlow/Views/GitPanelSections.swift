@@ -394,3 +394,477 @@ struct GitConflictBannerSection: View {
         EmptyView()
     }
 }
+
+// MARK: - v1.50: Stash 区域
+
+/// Stash 可折叠区域，位于变更区和提交历史之间
+struct GitStashSection: View {
+    @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
+    let project: String
+    let workspace: String
+    @Binding var isExpanded: Bool
+    @State private var showSaveForm: Bool = false
+    @State private var saveMessage: String = ""
+    @State private var includeUntracked: Bool = false
+    @State private var keepIndex: Bool = false
+
+    private var stashListCache: GitStashListCache {
+        gitCache.getStashListCache(project: project, workspace: workspace)
+    }
+
+    private var cacheKey: String {
+        gitCache.stashCacheKey(project: project, workspace: workspace)
+    }
+
+    private var selectedStashId: String? {
+        gitCache.selectedStashId[cacheKey]
+    }
+
+    private var isOpInFlight: Bool {
+        gitCache.stashOpInFlight[cacheKey] ?? false
+    }
+
+    private var lastError: String? {
+        gitCache.stashLastError[cacheKey]
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SectionHeader(
+                title: "Stashes",
+                count: stashListCache.entries.count,
+                isExpanded: $isExpanded
+            ) {
+                HStack(spacing: 4) {
+                    Button(action: { showSaveForm.toggle() }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("git.stash.save".localized)
+
+                    Button(action: refreshStashList) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("git.stash.refresh".localized)
+                }
+            }
+
+            if isExpanded {
+                // 保存表单
+                if showSaveForm {
+                    stashSaveForm
+                    Divider()
+                }
+
+                // 错误提示
+                if let error = lastError {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                        Text(error)
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                            .lineLimit(2)
+                        Spacer()
+                        Button {
+                            gitCache.stashLastError.removeValue(forKey: cacheKey)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+
+                if stashListCache.isLoading && stashListCache.entries.isEmpty {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Loading...")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 8)
+                } else if stashListCache.entries.isEmpty {
+                    VStack(spacing: 6) {
+                        Text("git.stash.empty".localized)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        if !showSaveForm {
+                            Button("git.stash.saveNow".localized) {
+                                showSaveForm = true
+                            }
+                            .font(.system(size: 11))
+                            .buttonStyle(.link)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                } else {
+                    // 左右两栏布局
+                    HSplitView {
+                        // 左侧：stash 列表
+                        stashListPanel
+                            .frame(minWidth: 140, idealWidth: 180)
+
+                        // 右侧：stash 详情
+                        stashDetailPanel
+                            .frame(minWidth: 200)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 保存表单
+
+    private var stashSaveForm: some View {
+        VStack(spacing: 6) {
+            TextField("git.stash.messagePlaceholder".localized, text: $saveMessage)
+                .font(.system(size: 11))
+                .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 12) {
+                Toggle("git.stash.includeUntracked".localized, isOn: $includeUntracked)
+                    .font(.system(size: 10))
+                Toggle("git.stash.keepIndex".localized, isOn: $keepIndex)
+                    .font(.system(size: 10))
+                Spacer()
+                Button("common.cancel".localized) {
+                    showSaveForm = false
+                    saveMessage = ""
+                }
+                .font(.system(size: 11))
+                Button("git.stash.save".localized) {
+                    performSave()
+                }
+                .font(.system(size: 11))
+                .disabled(isOpInFlight)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - 列表面板
+
+    private var stashListPanel: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(stashListCache.entries) { entry in
+                    StashListRow(
+                        entry: entry,
+                        isSelected: entry.stashId == selectedStashId
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectStash(entry.stashId)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 详情面板
+
+    private var stashDetailPanel: some View {
+        Group {
+            if let stashId = selectedStashId {
+                StashDetailView(
+                    project: project,
+                    workspace: workspace,
+                    stashId: stashId,
+                    isOpInFlight: isOpInFlight
+                )
+                .environmentObject(appState)
+                .environmentObject(gitCache)
+            } else {
+                VStack {
+                    Spacer()
+                    Text("git.stash.selectToView".localized)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func selectStash(_ stashId: String) {
+        gitCache.selectedStashId[cacheKey] = stashId
+        gitCache.fetchStashShow(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    private func refreshStashList() {
+        gitCache.fetchStashList(project: project, workspace: workspace, cacheMode: .forceRefresh)
+    }
+
+    private func performSave() {
+        let msg = saveMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        gitCache.stashSave(
+            project: project,
+            workspace: workspace,
+            message: msg.isEmpty ? nil : msg,
+            includeUntracked: includeUntracked,
+            keepIndex: keepIndex
+        )
+        saveMessage = ""
+        showSaveForm = false
+    }
+}
+
+// MARK: - Stash 列表行
+
+struct StashListRow: View {
+    let entry: GitStashEntry
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.message.isEmpty ? entry.title : entry.message)
+                    .font(.system(size: 11))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    Text(entry.branchName)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text("·")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(relativeTime(from: entry.createdAt))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    if entry.fileCount > 0 {
+                        Text("·")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text("\(entry.fileCount) files")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+    }
+
+    private func relativeTime(from dateStr: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: dateStr) else {
+            // 尝试不含毫秒的解析
+            let alt = ISO8601DateFormatter()
+            alt.formatOptions = [.withInternetDateTime]
+            guard let d = alt.date(from: dateStr) else { return dateStr }
+            return RelativeDateTimeFormatter().localizedString(for: d, relativeTo: Date())
+        }
+        return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Stash 详情视图
+
+struct StashDetailView: View {
+    @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
+    let project: String
+    let workspace: String
+    let stashId: String
+    let isOpInFlight: Bool
+    @State private var selectedFiles: Set<String> = []
+
+    private var showCache: GitStashShowCache {
+        gitCache.getStashShowCache(project: project, workspace: workspace, stashId: stashId)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showCache.isLoading && showCache.entry == nil {
+                Spacer()
+                ProgressView()
+                Spacer()
+            } else if let entry = showCache.entry {
+                // 元数据
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(entry.message.isEmpty ? entry.title : entry.message)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(2)
+                    HStack(spacing: 8) {
+                        Label(entry.branchName, systemImage: "arrow.triangle.branch")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Text("\(showCache.files.count) files")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+
+                Divider()
+
+                // 操作按钮
+                HStack(spacing: 6) {
+                    Button("Apply") {
+                        gitCache.stashApply(project: project, workspace: workspace, stashId: stashId)
+                    }
+                    .disabled(isOpInFlight)
+
+                    Button("Pop") {
+                        gitCache.stashPop(project: project, workspace: workspace, stashId: stashId)
+                    }
+                    .disabled(isOpInFlight)
+
+                    Button("Drop") {
+                        gitCache.stashDrop(project: project, workspace: workspace, stashId: stashId)
+                    }
+                    .disabled(isOpInFlight)
+                    .foregroundColor(.red)
+
+                    Spacer()
+
+                    if !selectedFiles.isEmpty {
+                        Button("Restore Selected (\(selectedFiles.count))") {
+                            gitCache.stashRestorePaths(
+                                project: project,
+                                workspace: workspace,
+                                stashId: stashId,
+                                paths: Array(selectedFiles)
+                            )
+                            selectedFiles.removeAll()
+                        }
+                        .disabled(isOpInFlight)
+                    }
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+
+                if isOpInFlight {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .padding(.vertical, 2)
+                }
+
+                Divider()
+
+                // 文件列表
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(showCache.files) { file in
+                            StashFileRow(
+                                file: file,
+                                isSelected: selectedFiles.contains(file.path),
+                                onToggle: {
+                                    if selectedFiles.contains(file.path) {
+                                        selectedFiles.remove(file.path)
+                                    } else {
+                                        selectedFiles.insert(file.path)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Diff 预览
+                if !showCache.diffText.isEmpty {
+                    Divider()
+                    ScrollView {
+                        Text(showCache.diffText)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(6)
+                    }
+                    .frame(maxHeight: 200)
+                }
+            } else {
+                Spacer()
+                Text("git.stash.selectToView".localized)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+        }
+    }
+}
+
+// MARK: - Stash 文件行
+
+struct StashFileRow: View {
+    let file: GitStashFileEntry
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 11))
+                .foregroundColor(isSelected ? .accentColor : .secondary)
+                .onTapGesture { onToggle() }
+
+            Text(file.path.split(separator: "/").last.map(String.init) ?? file.path)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+
+            Spacer()
+
+            if file.sourceKind == "untracked" {
+                Text("U")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.gray)
+            }
+
+            HStack(spacing: 2) {
+                if file.additions > 0 {
+                    Text("+\(file.additions)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.green)
+                }
+                if file.deletions > 0 {
+                    Text("-\(file.deletions)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.red)
+                }
+            }
+
+            Text(file.status)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(statusColor(file.status))
+                .frame(width: 16, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggle() }
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        switch status {
+        case "M": return .orange
+        case "A": return .green
+        case "D": return .red
+        default: return .secondary
+        }
+    }
+}

@@ -18,6 +18,7 @@ struct NativeGitPanelView: View {
     @State private var isStagedExpanded: Bool = true
     @State private var isChangesExpanded: Bool = true
     @State private var isGraphExpanded: Bool = true
+    @State private var isStashesExpanded: Bool = false
     @State private var isRequestingAIReview: Bool = false
     @State private var aiReviewSessionId: String? = nil
 
@@ -111,7 +112,18 @@ struct NativeGitPanelView: View {
                 .environmentObject(appState)
                 .modifier(EqualExpandModifier(isExpanded: isChangesExpanded))
 
-            // 5. 图形/提交历史
+            // 5. Stash 区域
+            Divider()
+            GitStashSection(
+                project: appState.selectedProjectName,
+                workspace: appState.selectedWorkspaceKey ?? "default",
+                isExpanded: $isStashesExpanded
+            )
+            .environmentObject(appState)
+            .environmentObject(gitCache)
+            .modifier(EqualExpandModifier(isExpanded: isStashesExpanded))
+
+            // 6. 图形/提交历史
             Divider()
             GitGraphSection(isExpanded: $isGraphExpanded)
                 .environmentObject(appState)
@@ -173,6 +185,13 @@ struct NativeGitPanelView: View {
         // 加载 Git 日志
         if gitCache.shouldFetchGitLog(workspaceKey: ws) {
             gitCache.fetchGitLog(workspaceKey: ws)
+        }
+
+        // 加载 Stash 列表
+        let project = appState.selectedProjectName
+        let stashCache = gitCache.getStashListCache(project: project, workspace: ws)
+        if stashCache.entries.isEmpty && !stashCache.isLoading {
+            gitCache.fetchStashList(project: project, workspace: ws)
         }
     }
 
